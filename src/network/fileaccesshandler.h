@@ -36,6 +36,19 @@ public:
     static QByteArray schemeName();
     static QUrl urlForLocalPath(const QString &path);
 
+    // WK17: the engine-agnostic serving halves — the SEC02 initiator
+    // allowlist and the directory-listing builder, shared with the
+    // non-WebEngine scheme adapters (WPE WebKit's URISchemeRequest
+    // path) so a second backend refuses and serves identically.
+    // directoryListing() is the GUI-thread work replyToJob() always
+    // did; iconSizePx is caller-supplied (backend-0 reads it from
+    // QWebEngineSettings, other engines pick their own metric).
+    static bool initiatorAllowed(const QString &scheme);
+    enum class ListingError { None, NotFound, Unreadable, Internal };
+    static ListingError directoryListing(const QString &path,
+                                         int iconSizePx,
+                                         QByteArray *html);
+
     virtual void requestStarted(QWebEngineUrlRequestJob *job) override;
 
 private:

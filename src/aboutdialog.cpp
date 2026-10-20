@@ -21,6 +21,8 @@
 #include "aboutdialog.h"
 
 #include "arktosstyle.h"
+#include "engineinterface.h"
+#include "engineregistry.h"
 
 #include <qdialogbuttonbox.h>
 #include <qfile.h>
@@ -39,6 +41,14 @@ AboutDialog::AboutDialog(QWidget *parent)
     version->setText(qApp->applicationVersion());
     // QtWebKit is gone — report the Qt (QtWebEngine/Chromium) version.
     qtVersion->setText(tr("Qt version: %1").arg(QLatin1String(qVersion())));
+    // WK19: the engine line — every registered backend's displayName
+    // ("QtWebEngine 6.12", "WebKit 2.54.1", ...), the same spelling the
+    // engine indicator and --engine-list print.
+    QStringList engineNames;
+    for (Engine::Backend *backend : EngineRegistry::backends())
+        engineNames << backend->displayName();
+    engines->setText(tr("Engines: %1")
+            .arg(engineNames.join(QLatin1String(", "))));
     connect(authorsButton, &QPushButton::clicked,
             this, &AboutDialog::authorsButtonClicked);
     connect(licenseButton, &QPushButton::clicked,

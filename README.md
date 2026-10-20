@@ -279,9 +279,30 @@ browsing profile:
   .devin/webkit-env.sh) registers alongside it and reports its real
   version ("WebKit x.y.z") in the selector surfaces; it hosts tabs
   through the same engine-neutral page/view pair — pages render
-  headlessly over WPE and blit into an ordinary widget — while the
-  still-minimal feature set (no history, input, or persistence yet)
-  keeps it experimental.
+  headlessly over WPE and blit into an ordinary widget, session
+  history maps the real WebKitBackForwardList, named profiles get
+  isolated on-disk stores under profiles/<id>/WebKit, widget input
+  is translated into wpe-platform events, zoom and find-in-page are
+  live, and tab suspend/discard maps onto the honest primitives
+  (process terminate + reload — this WPE build exports no
+  suspend/resume). Custom schemes serve on WPE the same way they do
+  on Chromium — arktos-file: directory listings, abp: subscription
+  prompts, the adblock stub resources and the nonce-backed
+  interstitials — and profile RequestPolicy vetoes navigation and
+  new-window actions through the same policy object, while
+  subresources and cosmetic hiding run declaratively: the profile's
+  filter-list rules compile through WebKitUserContentFilterStore
+  into a per-page content filter ($redirect degrades to a plain
+  block, and constructs Safari cannot express surface in a counted
+  drop channel rather than vanishing). The everyday surfaces are
+  wired too — TLS failures raise the same nonce-bound certificate
+  interstitial as Chromium (proceeding installs a session-scoped
+  exception, never persisted), right-click presents WebKit's own
+  context-menu item model, page permission asks route through the
+  shared permission broker, and downloads hand off to the download
+  manager (or the Rust accelerated engine) through the generic
+  DownloadRequest channel; extensions and devtools are still ahead —
+  keeping it experimental.
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.
@@ -372,9 +393,10 @@ browsing profile:
   builds without the engine behave exactly like the built-in matcher.
   The crate can also export a rule set as a Safari-format
   content-blocker JSON document (`AdBlockRustEngine::contentBlockerJson`)
-  — the format WebKit's `WebKitUserContentFilterStore` consumes —
-  with an explicit per-rule drop channel for constructs Safari
-  cannot express.
+  — the format WebKit's `WebKitUserContentFilterStore` consumes,
+  which is exactly how the WPE WebKit backend gets its declarative
+  subresource blocking and cosmetic hiding — with an explicit
+  per-rule drop channel for constructs Safari cannot express.
 - **Subscription-centric UI** — preset filter-list catalog, per-list
   enable/update, custom rules editor, toolbar blocker button with
   per-page counts and per-site toggle.
@@ -972,8 +994,11 @@ the distro's *webengine*, *webchannel*, *core5compat*, *svg* and
   `CONFIG-=webkit`. A `webkit=1` build on a WPE-less host still
   compiles the backend TU — it just reports the engine unavailable
   (compile-but-inert, same contract as the Servo backend). The
-  backend is a skeleton for now and registers nothing; WK07 wires
-  the engine entry.
+  backend registers as "WebKit x.y.z" in the engine switcher and
+  hosts real tabs — rendering, navigation, history, per-profile
+  storage, cookies, input, zoom/find and lifecycle all mapped onto
+  the WPE surface (see the engine notes above for what is still
+  missing).
 - `CONFIG+=sanitize` — ASan+UBSan instrumented build for the test
   suite
 

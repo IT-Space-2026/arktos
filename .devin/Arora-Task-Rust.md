@@ -120,17 +120,20 @@ Rules for the agent working this file:
 | WK08 | WebkitView/Page minimal — headless WPEView + raster paint in a QWidget + EngineTab hosts it unchanged — details below | done | 0 | needs:task:WK07 — landed: WebkitPage wraps WebKitWebView+internal WPEView on per-page WPEToplevel over shared headless WPEDisplay (GUI-thread glib-dispatcher model); WebkitView imports "buffer-rendered" via wpe_buffer_import_to_pixels→ARGB32 QImage→paintEvent blit, resize→wpe_toplevel_resize, focus↔wpe_view_focus_in/out; WebkitProfile carries lazy WebKitNetworkSession (ephemeral OTR); load→webkit_web_view_load_uri; load-changed/load-failed/notify::uri/title/progress wired; createPage/createView real, pageUnavailableReason empty when linked; engine.pri adds wpe-platform-headless-2.0 + baked ARKTOS_WPE_PREFIX_DIR — verified: tst_engineswitch 28/28 incl. new webkitViewRenders leg (EngineTab file:// fixture, loadFinished(true), title, non-blank grab w/ witness colors), --engine-list 3 backends, --engine-smoke PASS incl. webkit page/view/load/zoom/eval legs, inert TU compiles clean — offscreen |
 | WK09 | Load signals — load-changed/progress/title/uri/favicon → Page signal contract; stop/reload — details below | done | 1 | needs:task:WK08 — notify::page-icons→iconChanged (favicon db enabled per session — opt-in, ephemeral stays in-memory — WebKitImage BGRA→ARGB32-premul→QIcon, content-deduped); load-failed claims the failure so WebKit's error page can't emit a fake-success pair; progress gated on live load (cancel reset can't post late); REDIRECTED/COMMITTED refresh urlChanged; observe-only decide-policy maps WebKitNavigationType→lastNavigationType (WK17 reuses the hook); inert runJavaScript warning fixed — verified: tst_engineswitch 29/29 incl. new webkitLoadSignals (HTTP fixture: order started→progress→finished, url/title/icon arrival + icon pixel, reload→Reload, stop→loadFinished(false)), engineadapter 13/13, tabwidget 36/36, --engine-smoke PASS, check-warnings PASS, inert TU clean — offscreen --disable-gpu |
 | WK10 | History — WebKitBackForwardList → historyItems/backItems/goToHistoryEntry — details below | done | 0 | real WebKitBackForwardList mapped both GList slices; bf navs stamp BackOrForward + suppress spurious cancel; tst_engineswitch 30/30 incl webkitHistory |
-| WK11 | Profile storage — per-id WebsiteDataManager under profiles/<id>/WebKit + OTR ephemeral session — details below | pending | 0 | needs:task:WK09 |
-| WK12 | clear(StorageAreas) + cookie accept-policy mapping — details below | pending | 0 | needs:task:WK11 |
-| WK13 | Input — pointer/scroll/key events → wpe event API + resize — details below | pending | 0 | needs:task:WK08 |
-| WK14 | Zoom + find + lifecycle — set_zoom_level, WebKitFindController, suspend/resume (symbol-gated) — details below | pending | 0 | needs:task:WK09 |
-| WK15 | JS eval typed results — evaluate_javascript + JSCValue→QVariant marshaling — details below | pending | 0 | needs:task:WK09 |
-| WK16 | Script injection + worlds + host channel — UserContentManager, world-name mapping, script-message reply — details below | pending | 0 | needs:task:WK11 needs:task:WK15 |
-| WK17 | Navigation veto + custom schemes — decide-policy → RequestPolicy; register_uri_scheme → arktos-file:/abp: — details below | pending | 0 | needs:task:WK11 |
-| WK18 | Content-blocker adblock — rule→JSON subset converter + capability honesty — details below | pending | 0 | needs:task:WK17 |
-| WK19 | Capabilities + surfaces — cert errors, context menu, permissions, downloads, settings/About/"WebKit x.y.z" consistency — details below | pending | 0 | needs:task:WK16 needs:task:WK18 |
-| WK20 | Perf — dmabuf/EGLImage → GL texture path (raster stays fallback) — details below | pending | 0 | needs:task:WK08 |
-| WK21 | Stretch audit — SOCKS5/Tor leak check, WebExtensions probe, WebKitWebInspector embed — details below | pending | 0 | needs:task:WK19 |
+| WK11 | Profile storage — per-id WebsiteDataManager under profiles/<id>/WebKit + OTR ephemeral session — details below | done | 0 | needs:task:WK09; named sessions root at profiles/<id>/WebKit + profiles/<id>/cache/WebKit, OTR ephemeral writes nothing; also fixed bwrap worker wrap for WPE-linked binary (~/wpe symlink); verified: tst_engineswitch 31/31 incl. new webkitProfileStorage, tst_rustdownload 30/30, tst_sandbox 18/18, check-warnings+audit+supplychain PASS |
+| WK12 | clear(StorageAreas) + cookie accept-policy mapping — details below | done | 0 | needs:task:WK11; StorageAreas→WebKitWebsiteDataTypes (VisitedLinks honest no-op, AllAreas→DATA_ALL); persona cookies/* → set_accept_policy + cookies.sqlite persistent storage on named sessions (KeepUntilExit stays memory-only); ProfileSettings read gated on existing store so OTR mints no dir; verified: tst_engineswitch 32/32 incl. new webkitClearAndCookiePolicy (cookie-manager read-back proves clear wipe, second page proves DOM-storage drop, 4 policy legs + OTR), inert TU syntax clean — offscreen --disable-gpu |
+| WK13 | Input — pointer/scroll/key events → wpe event API + resize — details below | done | 0 | needs:task:WK08; WebkitView overrides → wpe event API (move/button/scroll tick+precise/key+focus re-assert), Qt::Key→XKB keysym+keycode (evdev+8, shift-level keyval), resize→wpe_toplevel_resize; verified: tst_engineswitch 33/33 incl. new webkitInput (keydown a|KeyA+B|KeyB via JS log, wheel tick scrollY 0→71, precise pixel scroll, click→/two, Return→/one, resize 640×480 frame), check-warnings+audit+supplychain+rustcoverage PASS — offscreen |
+| WK14 | Zoom + find + lifecycle — set_zoom_level, WebKitFindController, suspend/resume (symbol-gated) — details below | done | 1 | needs:task:WK09; findText→WebKitFindController (FindFlags→WebKitFindOptions: CASE_INSENSITIVE default-on, WRAP_AROUND always; same query→search_next/previous, empty needle→search_finish; found/failed/counted-matches→FindResult w/ locally-tracked ordinal — WebKit exposes none), zoom non-positive guard, lifecycle dlsym-gated (no suspend/resume export on WPE 2.54: Frozen→wpe_view_unmap+focus_out "loaded but not compositing", Discarded→terminate_web_process+reload-on-wake, b/f list survives as UI-process state, any navigation auto-revives), engine.pri -ldl; verified: tst_engineswitch 34/34 incl. new webkitZoomFindLifecycle (zoom read-back+innerWidth shrink, 3/2-match case legs, ordinal step/backward, miss+clear, Frozen unmap+marker-alive, discard→marker gone after wake reload), inert TU syntax clean — offscreen --disable-gpu |
+| WK15 | JS eval typed results — evaluate_javascript + JSCValue→QVariant marshaling — details below | done | 1 | needs:task:WK09; jscValueToVariant matrix finalized — null→valid QMetaType::Nullptr variant (QJsonValue::Null spelling, distinct from undefined→invalid), scalars typed, object/array→JSON text (documented limit), exception/syntax error→invalid QVariant via callback (never crash/drop); toHtml→document.documentElement.outerHTML eval — verified: tst_engineswitch 35/35 incl. new webkitJsEval (scalar typeIds, null-vs-undefined, JSON object/array, throw+syntax-error legs, outerHTML markup), --engine-smoke PASS script-eval QVariant(double,2), inert TU syntax clean — offscreen --disable-gpu |
+| WK16 | Script injection + worlds + host channel — UserContentManager, world-name mapping, script-message reply — details below | done | 0 | insertScript/removeScript drive the page UCM (start/end + frame-scope + world-name mapping, 0xa0→"arktos-channel"); profile scripts propagate to live pages (per-view UCMs); runJavaScriptLifted evals in the named world (unanchored names transient — documented); "arktosChannel" script-message handler in the channel world, _with_reply dlsym-gated → Promise resolved by listener QVariant, honest no-promise fallback; JS-asset verdict: autofill DOM-fill OK, channel/QWebChannel surfaces stay gated — verified: tst_engineswitch 36/36 incl webkitScriptWorlds (doc-start marker@loading, SEC24 isolation + handler unenumerable in main, ack:WK16 reply round-trip, profile live insert/remove, removeScript+reload), app link clean, inert TU clean — offscreen --disable-gpu |
+| WK17 | Navigation veto + custom schemes — decide-policy → RequestPolicy; register_uri_scheme → arktos-file:/abp: — details below | done | 0 | needs:task:WK11 — decide-policy consults the profile's RequestPolicy for navigation+new-window actions (Block→ignore, Redirect→refuse+re-issue at verdict URL, no rewrites faked); file: dir navs reroute to arktos-file:; register_uri_scheme installs arktos-file/abp/arktos-resource/arktos-cert-error/arktos-http-warning/arktos-site-block on the shared context reusing the handlers' now-shared serving halves (SEC02 via Referer+nav-target match; abp:→persona promptSubscribe; security-manager flags mirror QWebEngineUrlScheme); external schemes refuse + run a queued SEC02 consent prompt→desktop handoff on the shared isBrowserHandledScheme allowlist; swap tabs get the adblock binding like Servo — verified: tst_engineswitch 37/37 incl. new webkitPolicySchemes (veto never wires, file-dir listing serves marker, interstitial+stub serve, abp prompt reached, external-scheme consent refused), tst_schemehandlers 25/25, tst_webpage 73/73, app+test link clean, inert TU syntax clean — offscreen |
+| WK18 | Content-blocker adblock — rule→JSON subset converter + capability honesty — details below | done | 0 | needs:task:WK17 — RequestPolicy::contentBlockerJson() (default empty) feeds WebkitProfile::syncContentBlocker from setRequestPolicy; rules[] compiles in a process-shared WebKitUserContentFilterStore keyed by SHA-256(rules) + installs on every page UCM (ctor-time for new pages, ref-before-unref swap keeps coverage, rulesChanged re-push via installOnProfile recompiles); dropped[] logged with reason codes + meta.emitted/dropped/degraded surfaced for tests; converter: $redirect/$redirect-rule degrade→block (meta.degraded, never dropped), $cookie rescued past the parser's unknown option→block-cookies (@@ exception stays ignore-previous-rules); new declarativeBlocking cap separates the subresource lane from WK17's navigation-veto requestInterception — verified: cargo 14/14, tst_engineswitch 38/38 incl new webkitContentBlocking (tracker URL never reaches the wire, cosmetic element computes display:none, emitted/dropped/degraded printed, re-push recompiles), no-rust + inert TU syntax clean — offscreen |
+| WK19 | Capabilities + surfaces — cert errors, context menu, permissions, downloads, settings/About/"WebKit x.y.z" consistency — details below | done | 2 | needs:task:WK16 needs:task:WK18 — resumed interrupted run (impl landed uncommitted; finished DownloadManager binding + shared TlsFixture + fixed WK18's stale tst_contentblocker counts); landed: load-failed-with-tls-errors→SEC06 contract verbatim (neutral certificateError→nonce interstitial via shared WebPage::certificateErrorHtml on CertificateErrorInfo; proceed→allow_tls_certificate_for_host session-scoped + noteCertErrorOverride padlock), context-menu→ContextMenuInfo + WebKit item-model popup anchored at last right-press (WPE carries no coords), permission-request→WebPermissionManager's new engine-neutral resolve overload (geo/notif/pointer-lock prompt, media/device-info deny-list, EME/XR deny outright), RESPONSE decide-policy download verdict + download-started→WebkitDownloadRequest (Engine::DownloadRequest; decide-destination is the only honest request point — accept/cancel resolve synchronously inside the emission, pause/resume honest no-ops) + addEngineTab installs DownloadManager on caps.downloads profiles; renderProcessId stays -1 (no WebProcess pid API); "WebKit 2.54.1" identical via displayName in indicator/menu/settings-combo/About(new engines line)/--engine-list; Tor stays Chromium-locked (isTorMode gates swap+indicator); tst_contentblocker resynced to WK18's $redirect-degrades-to-block (emitted 14/dropped 9/degraded 1) — verified: tst_engineswitch 42/42 incl. 4 new legs (cert interstitial end-to-end w/ forged-nonce refusal + proceed-serves, context-menu hit-test marshal + popup, permission broker deny, attachment+download() land bytes), tst_certerror 10/10, tst_webpermissions 22/22, tst_webpage 73/73, tst_schemehandlers 25/25, tst_contentblocker 7/7, --engine-smoke PASS, check-warnings+supplychain+engine-audit+rustcoverage PASS, runTests.sh 96 binaries 0 failed — offscreen --disable-gpu |
+| WK20 | Perf — dmabuf/EGLImage → GL texture path (raster stays fallback) — details below | done | 1 | needs:task:WK08 — landed WkGlPipe (own surfaceless GLES2 ctx on the WPE EGLDisplay; import_to_egl_image→texture→FBO→readback→QImage, rendering/release fence hooks, raster fallback on any decline, ARKTOS_WEBKIT_GL=0 pins raster, empirical channel-order calibration vs raster ground truth); GL ~2ms/frame vs raster ~7-8ms; verified: tst_engineswitch 44/44 offscreen incl. new webkitGlPath + webkitGlRasterFallback legs, no-GL and no-WPE TUs still compile |
+| WK21 | Stretch audit — SOCKS5/Tor leak check, WebExtensions probe, WebKitWebInspector embed — details below | done | 1 | needs:task:WK19 — landed spikes/webkit/wk21 (dns-shim LD_PRELOAD logger covering getaddrinfo/gethostbyname{,2}{,_r}/res_*/connect/sendto/sendmsg pid+comm tagged, fixture.py SOCKS5+HTTP (domain CONNECTs tunnel to local fixture; atyp=3 = remote DNS proof), wk21-probe.c phased probe, run-wk21.sh, ext-fixture MV3 manifest). Measured on WPE 2.54.1, sandbox off for shim reach: (a) socks5 page+img+ws loads all arrive atyp=3 remote-DNS, ZERO stray RESOLVE/non-loopback-connect/:53/:5353, socks5h rejected-but-moot, WebRTC compiled out (RTCPeerConnection undefined even enabled), no captive-portal/aux traffic — BUT prefetch_dns() resolves locally under proxy (embedder-gated; pages can't reach it; page dns-prefetch inert even forced on) → NOT clean, Tor stays Chromium-locked (tabwidget comment records why); (b) WebKitWebExtension headers+48 syms ship but every entry point is a stub (webkit_web_extension_new = xor eax;ret — NULL, GError unset), no ExtensionContext/Manager exists → caps.extensions=false verified; (c) no inspector API exported (toggle only) + inspector.gresource not installed (toggle spawns a dying web process) → caps.devTools=false verified. Verdicts appended to WEBKIT-SPIKE.md (new WK21 section + updated proxy/devtools/extensions rows + gaps/triggers); caps flags already matched reality — only comments changed; incremental build+link clean |
+| MEM11 | Post-spine leak re-audit — instrumented ASan/LSan scan over the NEW surfaces (webkit backend, extension runtime, multi-view servo shim) — details below | done | 2 | needs:task:WK21 — third sweep after MEM02/09/10; ~40 lane commits landed since; report at .devin/MEM11-scan.md: resumed interrupted attempt-1 (its GBytes fix + churn legs were already landed uncommitted, throwaway tree survived at /tmp/arktos-mem11.z5sUXp); 20 focused binaries under ASan/LSan fresh-HOME — found+fixed: webkitbackend.cpp cbContentFilterLoad GBytes transfer-none leak (one per WK18 filter compile) and a tst_browsermainwindow servoStartPage UAF (firstEngine->page() after closeWindow, aborted the binary mid-suite under ASan — fix moved the check before teardown); DownloadManager island in 3 custom-main binaries classified measurement artifact (process-lifetime singleton, statics die before at-exit check — pre-teardown seam applied throwaway-only); new churn legs engineTabChurn (4× tab create/destroy across fake/webkit/servo) + hostedHostChurn (3× extension enable/disable) PASS with zero src/-sited blocks — verified: re-sweep 0 ours / 96 upstream blocks, both churn legs 3/3 on plain build and under detect_leaks=1, tst_browsermainwindow 77/77 under ASan, servoStartPage+legs green on main tree, make check 4 gates PASS — fileSchemeErrors intermittent ASan-only waitFor flake documented (passes plain + standalone) |
+| DEAD01 | Dead code + duplicate sweep — unreachable-code/unused-symbol scan + copy-paste duplication across the four fast lanes — details below | done | 1 | needs:task:WK21 — dead code removed (8): ServoView::instanceInUse (ENG36 superseded by instanceActive), ChromeBridge::contextPage, ProfileButton::profileMenu, WebkitView::noteImportFailure/m_importFails (counted-never-read), write-only m_attributes bags in all 3 profile adapters + WebkitProfile m_userAgent/m_cookieFilter (setters now explicit Q_UNUSED no-ops); dup consolidated (1): webkitbackend's confirmAndOpenExternalUrl clone → shared WebPage::promptOpenExternalUrl (one modal at a time across engines); flagged intentional: NavigationPolicy rust/no-rust dual impl, per-backend adapter parity, extension host-pattern helpers — engines diverge on purpose; stale docs fixed: ENGINE.md "no refactor/planned" → live 3-backend table, enginetab single-instance-slot comments → per-view SeInstance teardown; .devin hygiene: 14 tracked taskloop/mergewatch *.log/*.lock runtime artifacts untracked + gitignored — verified: build clean, 4 gates PASS (warnings 0, supplychain clean, engine-audit 179 files documented, rustcoverage 94/92/89%), tst_engineswitch 44/44 + tst_webpage 73/73 offscreen; suite's one AddSearchProvider modal flake + WPE-env crashes reproduced env-only (missing webkit-env/scratch-HOME), clean on rerun |
+| SEC26 | Security re-audit of new attack surface — extension-runtime boundary, webkit injection paths, shim ABI, permission gates — details below | done | 1 | needs:task:WK21 — report .devin/SEC26-audit.md: 3 real findings fixed — ExtensionChromePage nav-lock (own chrome-extension origin/about:blank main-frame, own origin subframes) applied to action popup + health probe so ER20 JS lift can't leak to foreign content; relayPortConnect sender.url now host-verified from contextPage not caller-supplied; relay bookkeeping bounded (512 pending mids/1024 port chans/64 ends) + dup-mid rejected + port-end dedup; webkit marshal/schemes/decide-policy/worlds/channel + servo per-view routing/pending-load + profile paths clean — verified: make check 4 gates PASS, tst_extensionmanager 29/29 incl new nav-matrix + 3 relay legs offscreen |
 
 ## Task details
 
@@ -1064,6 +1067,38 @@ Verify: autotest legs pass on the GL path; a rough frame-time log
 shows the difference; raster fallback still works when import is
 unavailable.
 
+Result (2026-10-19): GL path proven end-to-end in a private
+surfaceless GLES2 context created on the WPE display's own EGLDisplay
+(wpe_display_get_egl_display — Mesa surfaceless; a QOpenGLWidget/
+QRhiWidget cannot bind images on that display and Qt's offscreen
+platform has no GL at all, so the spec's widget wording resolved to
+an internally managed EGL context). Per buffer-rendered emission:
+wpe_buffer_import_to_egl_image → glEGLImageTargetTexture2DOES →
+texture draw into an FBO → glReadPixels → QImage the widget presents
+(compositor leg stays the proven raster blit). The EGLImage is
+buffer-owned ((transfer none)) — never destroyed. Fences honored
+when present: take_rendering_fence → eglCreateSyncKHR
+(EGL_SYNC_NATIVE_FENCE_ANDROID) + eglWaitSyncKHR before sampling;
+EGL_SYNC_FENCE_KHR + eglDupNativeFenceFDANDROID →
+wpe_buffer_set_release_fence after use (headless display reports
+use_explicit_sync=0 so fds are -1 today — paths exercised by code
+review + ext presence verified). Raster stays the fallback on every
+decline: EGL display/context/extension missing, import failure, GL
+error, or ARKTOS_WEBKIT_GL=0. Two hard-won details: (a) uSwap must be
+applied via uniform — the producer's channel order for the SAME XR24
+X-tiled dmabuf measured B,G,R,A in one process and R,G,B,A in
+another, so wkGlCalibrate compares the first GL readback against the
+raster ground truth (opaque-pixel vote, >=4x majority) instead of
+trusting a fourcc table; (b) init's own GL errors must be cleared or
+they poison the first frame's error gate. Rough frame times
+(ARKTOS_WEBKIT_FRAME_TIMING=1, 800x600): GL total ~2ms (import ~0.1,
+draw+fence ~0.2, readback ~1.7) vs raster ~7-8ms. Verified:
+tst_engineswitch 44/44 offscreen incl. new webkitGlPath (witness
+colors through calibrated GL frames) + webkitGlRasterFallback
+(ARKTOS_WEBKIT_GL=0 → 0 GL attempts, raster paints); webkitbackend.cpp
+still compiles without ARKTOS_WEBKIT_GL (pkg-config egl/glesv2 gate)
+and without WPE entirely.
+
 ### WK21
 
 Stretch audit — needs:task:WK19. (a) SOCKS5: set a session
@@ -1078,3 +1113,81 @@ only — affects the devTools capability.
 
 Verify: verdict entries appended to .devin/WEBKIT-SPIKE.md;
 capability flags match measured reality.
+
+## Post-spine audit pass (queued 2026-10-19, runs after WK21)
+
+### MEM11
+
+Memory-leak re-audit — the MEM02/09/10 methodology applied to the NEW
+code since those scans: `src/engine/webkitbackend.*` (WPEView/Page
+lifecycle, WKWebsiteDataManager per profile), `src/extensions/*`
+(hosted runtime: ExtensionPageBridge, ExtensionBackgroundHost,
+ExtensionShimBackend, idle watcher, notification center, request
+watcher, event hub), multi-view servo shim (per-view
+RenderingContext/WebView/SeInstance churn, view create/destroy loops),
+plus new autotest fixtures.
+
+- Reuse the MEM09 approach: ASan/UBSan throwaway tree +
+  __lsan_do_leak_check before qtest_arktos.h's _exit; run the focused
+  binaries (tst_extension*, tst_engine*, tst_webkit* if any,
+  profile/vault churn legs) under detect_leaks=1 fresh-HOME each.
+- Churn emphasis: create/destroy cycles — open/close EngineTabs per
+  backend, extension enable/disable cycles, profile create/delete,
+  servo view create/destroy×N (the ENG36 churn path is brand new).
+- Tally ours-vs-upstream like MEM09/10; any `src/` leak gets fixed in
+  this task, upstream noise gets classified, not fixed.
+
+Verify: scan report at .devin/MEM11-scan.md (tally per binary +
+verdicts); zero leaks sited in src/ OR all found leaks fixed and
+re-verified; make check 4 gates PASS on the main tree.
+
+### DEAD01
+
+Dead code + duplicate sweep — four lanes landed ~60 commits in two
+days; find what they left behind.
+
+- Unused symbols/functions: -Wunused* warnings already gated; go
+  deeper with a symbol-reachability pass (nm on objects + call-site
+  grep for exported-looking helpers with zero callers — esp. in
+  extensions/*, engine/*, and the spike/harness dirs).
+- Duplicated logic: copy-paste clones across lanes (e.g. permission
+  gating reimplemented in 3 extension files, URL-gate helpers copied
+  between servobackend/webkitbackend/webenginebackend). Consolidate
+  only where the duplication is mechanical and a shared helper is
+  obvious — flag anything where engines diverge on purpose.
+- Stale comments/dead docs: references to removed single-instance
+  Servo constraints, ENG-era "one tab" notes now wrong post-ENG36,
+  task files claiming pending state for shipped work.
+- .devin/: stale task/prompt/log hygiene (delete generated *.log
+  rotation if the repo tracks any).
+
+Verify: tally in the row notes (dead code removed count, duplications
+consolidated vs flagged-intentional); build + make check 4 gates
+PASS; no behavior change (pure cleanup — any behavior-impacting
+consolidation gets its own careful commit, not folded in).
+
+### SEC26
+
+Security re-audit of the new attack surface — ER16 already gated the
+extension-runtime boundary, but the full new surface spans:
+
+- **Hosted chrome.* runtime**: host-permission scoping on every
+  injection path (post-ER16 state), consent honoring, message
+  validation across the page-agent↔host bridge (size caps, type
+  confusion, spoofed sender IDs), extension-page JS exemption scope
+  (ER20 change — verify it can't leak to normal pages).
+- **WebKit backend**: evaluate_javascript result marshaling
+  (JSCValue→QVariant type confusion), custom-scheme serving
+  (path/response injection), decide-policy veto bypasses (about:,
+  data:, file:, blob:), UserContentManager world isolation, the
+  arktosChannel transport (page→native trust boundary).
+- **Servo shim ABI**: multi-view delegate routing by webview.id —
+  can a view's callback reach a sibling view's SeInstance? pending-
+  load queue shared across views (ENG36 fix — cross-view flush)?
+- **Cross-cutting**: profile-data paths stay home-dir-scoped,
+  per-call permission gates on every new IPC seam, no new
+  credentials/secret handling.
+
+Verify: findings doc .devin/SEC26-audit.md (per-surface verdicts,
+any real finding gets a fix + test in this task); hostile-fixture
+legs where a gate exists; make check 4 gates PASS.

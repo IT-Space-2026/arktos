@@ -131,9 +131,12 @@ void tst_ContentBlocker::fixtureCoverage()
     const QJsonObject doc = convertDoc(f.readAll());
     QVERIFY(!doc.isEmpty());
     const QJsonObject meta = doc.value(QLatin1String("meta")).toObject();
-    QCOMPARE(meta.value(QLatin1String("emitted")).toInt(), 13);
-    QCOMPARE(meta.value(QLatin1String("dropped")).toInt(), 10);
-    QCOMPARE(doc.value(QLatin1String("dropped")).toArray().size(), 10);
+    // WK18: the fixture's $redirect rule degrades to a block — it is
+    // emitted and counted under meta.degraded, not dropped.
+    QCOMPARE(meta.value(QLatin1String("emitted")).toInt(), 14);
+    QCOMPARE(meta.value(QLatin1String("dropped")).toInt(), 9);
+    QCOMPARE(meta.value(QLatin1String("degraded")).toInt(), 1);
+    QCOMPARE(doc.value(QLatin1String("dropped")).toArray().size(), 9);
 }
 
 void tst_ContentBlocker::dropChannelHonest()
@@ -146,7 +149,11 @@ void tst_ContentBlocker::dropChannelHonest()
         "||param.example^$removeparam=utm\n"
         "example.com##+js(set-constant)\n");
     const QJsonArray dropped = doc.value(QLatin1String("dropped")).toArray();
-    QCOMPARE(dropped.size(), 4);
+    // WK18: $redirect is no longer a drop — Safari cannot serve a
+    // stub, so the rule degrades to an honest block counted under
+    // meta.degraded.  The three truly unexpressible rules still land
+    // in dropped with their reason codes.
+    QCOMPARE(dropped.size(), 3);
 
     QSet<QString> whys;
     for (const QJsonValue &v : dropped) {
@@ -154,10 +161,25 @@ void tst_ContentBlocker::dropChannelHonest()
         QVERIFY(!d.value(QLatin1String("rule")).toString().isEmpty());
         whys.insert(d.value(QLatin1String("why")).toString());
     }
-    QVERIFY(whys.contains(QLatin1String("redirect")));
     QVERIFY(whys.contains(QLatin1String("csp")));
     QVERIFY(whys.contains(QLatin1String("removeparam")));
     QVERIFY(whys.contains(QLatin1String("scriptlet")));
+
+    QCOMPARE(doc.value(QLatin1String("meta")).toObject()
+                 .value(QLatin1String("degraded")).toInt(), 1);
+    bool sawDegradedBlock = false;
+    for (const QJsonValue &v : doc.value(QLatin1String("rules")).toArray()) {
+        const QJsonObject r = v.toObject();
+        if (r.value(QLatin1String("trigger")).toObject()
+                .value(QLatin1String("url-filter")).toString()
+                .contains(QLatin1String("redir"))) {
+            QCOMPARE(r.value(QLatin1String("action")).toObject()
+                         .value(QLatin1String("type")).toString(),
+                     QLatin1String("block"));
+            sawDegradedBlock = true;
+        }
+    }
+    QVERIFY(sawDegradedBlock);
 }
 
 void tst_ContentBlocker::safariRuleOrdering()

@@ -4125,3 +4125,230 @@ WebKit session history (WK10): the webkit backend's Page history
     genuine errors still report failure. The bf entry points stamp
     NavigationType::BackOrForward themselves because decide-policy
     never fires for back-forward hops.
+WebKit profile storage (WK11): the webkit backend's profiles now own
+    real per-profile storage. A profile carrying a storage identity
+    (storageName and/or dataPath from ProfileOptions) builds a private
+    WebKitNetworkSession via webkit_network_session_new with its own
+    WebKitWebsiteDataManager, rooted inside the profile's storage
+    tree: persona storage names ("arktos", "arktos-<id>") land at
+    profiles/<id>/WebKit with the cache at profiles/<id>/cache/WebKit
+    — the sealed-vault layout's VSEC02 sibling of the QtWebEngine dir;
+    an explicit dataPath/cachePath pair (the container contract) gains
+    a "WebKit" leaf so both engines can never share a directory; a
+    foreign name isolates under profiles/<active>/WebKit/<slug>.
+    Off-the-record profiles always get an ephemeral session that owns
+    no directories and writes nothing; a named session that fails to
+    create refuses the page rather than silently sharing the global
+    store. Identity-less options keep the engine-default session.
+    WK11 also fixed the bwrap download/pdf worker wrap for
+    WPE-linked binaries: PT_INTERP and the compat shim's DT_NEEDED are
+    absolute ~/wpe paths the kernel resolves literally, so the sandbox
+    now bind-mounts the WPE prefix under /arktos-rt and plants a
+    --symlink at the real path — workers exec again without exposing
+    $HOME content.
+WebKit clear + cookie policy (WK12): the webkit backend's
+    Profile::clear(StorageAreas) now drives
+    webkit_website_data_manager_clear on the profile's session —
+    cache, cookies, DOM storage and service-worker registrations map
+    onto their WebKitWebsiteDataTypes stores, AllAreas performs a
+    full wipe, and VisitedLinksArea honestly reports as a no-op
+    (WebKit keeps visited-link state in-process, outside the
+    WebsiteDataManager). The app's cookie policy rides on the
+    session's WebKitCookieManager at materialization: the persona's
+    persisted accept policy maps onto WebKit's three-state model
+    (AcceptNever / AcceptAlways / first-party-only), and named
+    sessions persist cookies to <dataDir>/cookies.sqlite unless the
+    keep policy is KeepUntilExit, which stays memory-only. Reading
+    the policy never mints a persona directory, so off-the-record
+    profiles still write nothing.
+WebKit input bridge (WK13): the webkit backend now routes Qt widget
+    input into WPE WebKit. Pointer move/press/release, wheel scroll,
+    key press/release and resize on a webkit tab's view are translated
+    into wpe-platform events and dispatched through wpe_view_event —
+    so clicking page links, scrolling, and typing into the page all
+    work on the experimental WebKit engine. Scroll honors both Qt
+    delta surfaces (line ticks and precise touchpad pixels), and keys
+    are mapped to DOM-standard key/code values (a→"a"/KeyA,
+    shift+b→"B"/KeyB).
+WebKit zoom, find, and lifecycle (WK14): the webkit backend's page
+    now drives real zoom (webkit_web_view_set_zoom_level, with a
+    non-positive-factor guard), find-in-page (the view's
+    WebKitFindController — case-insensitive by default, wrap-around
+    always on, a repeated query steps to the next/previous match, an
+    empty needle clears the highlights, and the search bar's match
+    counter is fed by the found/failed/count signals), and the
+    SLEEP01 tab-sleep lifecycle: Discarded terminates the WebProcess
+    outright and reloads on wake (session history survives — it is
+    UI-process state), and Frozen uses webkit_web_view_suspend when
+    the resolved WPE exports it (symbol-gated, so newer builds get
+    the real suspend) or honestly degrades to "loaded but not
+    compositing" via unmap + unfocus on the current 2.54 stack, which
+    has no suspend/resume export. Navigating a discarded tab revives
+    it automatically.
+WebKit typed script results (WK15): the webkit backend's runJavaScript
+    marshaling now distinguishes JavaScript null from undefined the
+    way QtWebEngine does — null arrives as a valid null QVariant
+    (QMetaType::Nullptr, the QJsonValue::Null spelling) while
+    undefined stays the invalid variant; numbers, strings and
+    booleans keep their types, and objects/arrays arrive as their
+    serialized JSON text (the documented limit of this channel — the
+    backend hands back real JSON instead of faking a QVariantMap
+    decode). A thrown exception or a syntax error answers the result
+    callback with the invalid variant rather than crashing or
+    silently dropping the call. View Source / reader markup now works
+    too: toHtml evaluates document.documentElement.outerHTML over the
+    same channel.
+WebKit script injection, worlds, and host channel (WK16): the
+    webkit backend's insertScript/removeScript now drive the page's
+    WebKitUserContentManager — DocumentCreation injects at
+    document-start, DocumentReady/Deferred at document-end (the only
+    two boundaries WebKit exposes), runsOnSubFrames maps onto
+    all-frames vs top-frame injection, and worldId maps onto WebKit
+    named script worlds: the private channel world
+    (Engine::ArktosChannelWorld) is the stable "arktos-channel" name,
+    so page script running in the main world can neither see the
+    channel world's objects nor enumerate
+    window.webkit.messageHandlers — the same isolation contract the
+    engine's QWebChannel world provides. runJavaScriptLifted now
+    evaluates inside the selected world rather than always running
+    in the main world, and profile-scope scripts propagate to every
+    page that already exists (WebKit scopes user-content managers
+    per view, so the profile tracks its live pages and pushes
+    changes out to them). A native arktos-channel transport rides
+    WebKit's script-message mechanism: script in the channel world
+    can postMessage to the "arktosChannel" handler, and on WPE
+    builds exporting the _with_reply variant (2.5x API, present on
+    2.54 — dynamically symbol-gated, one-way fallback elsewhere) the
+    call returns a Promise that the native listener's return value
+    resolves. Honest capability verdict for the shared JS assets:
+    autofill.js's DOM-only fill path runs as injected, while
+    arktos-channel.js, autofill capture, and reader's
+    channel-object surface still key on qt.webChannelTransport —
+    they stay gated until a real transport shim bridges this handler
+    to the QWebChannel wire protocol rather than faking success.
+WebKit navigation veto and custom schemes (WK17): the webkit
+    backend's decide-policy signal now consults the page's profile
+    RequestPolicy for navigation and new-window actions — a Block
+    verdict refuses the decision outright (the request never reaches
+    the wire), a Redirect verdict re-issues the load at the verdict's
+    URL (WebKit navigation decisions cannot rewrite their request,
+    and a new-window redirect degrades to the refusal rather than
+    faking a rewrite), and allowed decisions are recorded
+    affirmatively instead of falling through to WebKit's default.
+    External schemes ride the same consult — mailto:/tel:/magnet:
+    navigations are refused in engine and a queued SEC02 consent
+    prompt hands them to the desktop only on explicit approval
+    (subframe attempts are dropped silently), sharing WebPage's
+    isBrowserHandledScheme allowlist. A main-frame file: navigation
+    at a directory
+    reroutes onto the arktos-file: listing, matching the Chromium
+    lane's behavior. The custom-scheme serving set registers once on
+    the shared web context via webkit_web_context_register_uri_scheme:
+    arktos-file: serves the same directory listings backend-0's
+    FileAccessHandler produces (with the SEC02 remote-initiator rules
+    enforced off the Referer header and the recorded navigation
+    target), abp:subscribe routes to the requesting page's persona
+    AdBlockManager prompt, arktos-resource: serves the compiled
+    $redirect stub table, and the arktos-cert-error:/arktos-
+    http-warning:/arktos-site-block: carriers serve the same
+    nonce-backed interstitial registry. The serving halves of
+    FileAccessHandler and AdBlockSchemeAccessHandler were factored
+    into engine-agnostic statics so both backends share them rather
+    than carrying divergent copies, and engine-swap tabs on the
+    webkit backend now get the same adblock policy binding Servo
+    profiles already receive.
+WebKit content-blocker adblock (WK18): the webkit backend gains
+    real subresource blocking — WebKit has no per-request veto, so
+    the profile's filter-list rules render through the Rust
+    content-blocker converter and compile in a process-shared
+    WebKitUserContentFilterStore (content-addressed by the rules
+    SHA-256), then install onto every page's user content manager.
+    URL filters, resource types, block, block-cookies ($cookie) and
+    cosmetic css-display-none rules carry across; $redirect rules —
+    whose stub-serving has no declarative equivalent — degrade to an
+    honest block counted in the document's "degraded" tally, and
+    anything Safari cannot express lands in a dropped-rule channel
+    with a reason code the browser logs instead of losing silently.
+    A new declarativeBlocking capability reports the lane honestly —
+    requestInterception still means only WK17's navigation and
+    new-window consult, no interception parity is claimed — and
+    subscription rule changes re-push the document so a refresh
+    recompiles and swaps the filter on live pages without an
+    unfiltered gap.
+WebKit user-facing surfaces (WK19): the WPE WebKit backend now
+    exercises the same chrome contracts as Chromium end to end.
+    TLS failures claim load-failed-with-tls-errors and run the
+    certificate-error contract verbatim — the neutral
+    certificateError signal first, then the nonce-bound
+    arktos-cert-error: interstitial (the markup builder moved onto
+    the engine-neutral CertificateErrorInfo so both backends render
+    the identical page); "proceed" installs the certificate on the
+    page's network session — session-scoped, never persisted, and
+    the padlock still reports the proceeded host as overridden.
+    Right-click marshals the WebKitHitTestResult into the shared
+    ContextMenuInfo and presents WebKit's own context-menu item
+    model as a Qt popup. Page permission asks map onto the shared
+    permission broker through its new engine-neutral entry point —
+    geolocation/notifications/pointer-lock prompt, capture and
+    device-info requests deny without prompting. Downloads work:
+    response policy decisions route attachments and unrenderable
+    MIMEs onto WebKit's download channel, WebKitDownload surfaces
+    as an Engine::DownloadRequest, and engine-tab profiles now get
+    the DownloadManager installOnProfile binding so the same card
+    UI and Rust accelerated engine consume them (pause/resume stay
+    honest no-ops — the API offers none). The About dialog gained
+    an "Engines:" line listing each registered backend's
+    displayName, so "WebKit 2.54.1" reads identically in the
+    indicator tooltip, the switcher menu, the settings combo, About
+    and --engine-list. Tor stays Chromium-locked — webkit is never
+    offered there pending the leak audit.
+- WebKit frames now take a hardware path when one is available:
+  each rendered buffer is imported as an EGLImage on the WPE
+  display's own EGL connection, sampled as an OpenGL ES texture,
+  and handed to the widget (about four times faster per frame than
+  the CPU pixel copy in this environment). GPU producer/consumer
+  fences are honored when the display advertises them, and the
+  channel order of imported frames is auto-calibrated against the
+  proven raster copy on the first frame. The raster path remains
+  the automatic fallback whenever EGL import is unavailable or is
+  disabled with ARKTOS_WEBKIT_GL=0.
+- WebKit backend stretch audit (WK21): the SOCKS5/Tor leak check now
+  has measured answers — proxied page, image and WebSocket traffic
+  reaches the SOCKS peer carrying the hostname (remote DNS), with no
+  stray lookups or direct connections observed; but the embedder's
+  explicit DNS-prefetch API resolves locally even under the proxy,
+  so Tor stays locked to Chromium rather than being offered on
+  webkit. The WebExtensions and inspector questions are settled too:
+  WPE 2.54.1 ships the WebKitWebExtension headers and symbols but
+  every entry point is a compiled-out stub, and no inspector API is
+  exported (its UI resource isn't even installed) — both capabilities
+  stay off, now verified rather than merely unprobed.
+- Memory-leak re-audit (MEM11): an instrumented AddressSanitizer/
+  LeakSanitizer sweep over the surfaces added since the last audit —
+  the WPE WebKit backend, the hosted extension runtime, and the
+  multi-view Servo shim — found and fixed a filter-compile buffer
+  leaked once per ad-block rules compile in the WebKit backend.
+  Tab create/destroy cycles across every engine backend and
+  extension enable/disable cycles are exercised by two new self-test
+  legs and report no leaks in Arktos code; the full report lives at
+  .devin/MEM11-scan.md.
+- Dead-code cleanup (DEAD01): a reachability sweep over the engine
+  backends, extension runtime, and UI helpers removed unreachable
+  symbols left by the recent lanes (a pre-multi-view Servo helper, an
+  unused extension-bridge and profile-button getter, a raster
+  failure counter that was never read, and write-only
+  attribute/user-agent/cookie-filter stores in the engine profile
+  adapters whose setters are now explicit no-ops). The WebKit
+  backend's copy of the external-scheme consent prompt now shares
+  WebPage's single implementation, stale engine-architecture docs
+  and single-instance Servo comments were corrected, and generated
+  task-loop logs/locks are no longer tracked in .devin.
+- Security re-audit (SEC26): the hosted extension runtime, WebKit
+  injection paths, Servo shim ABI and IPC gates were re-audited and
+  three real gaps were closed. Extension popup and health-probe pages
+  are now navigation-locked to their own chrome-extension origin so
+  the forced JavaScript exemption cannot leak onto foreign pages;
+  message-relay sender URLs are verified against the actual host page
+  instead of trusting the caller; and relay bookkeeping is bounded
+  with duplicate message-ID rejection to stop response races and
+  memory growth. The full audit report lives at .devin/SEC26-audit.md.

@@ -22,6 +22,7 @@
 #include "arktosicon.h"
 #include "arktosstyle.h"
 #include "browserapplication.h"
+#include "extensionbackgroundhost.h"
 #include "extensionmanager.h"
 
 #include <qevent.h>
@@ -345,10 +346,13 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     layout->setSpacing(0);
 
     QWebEngineView *view = new QWebEngineView(popup);
-    // A plain page on the extension's own profile — deliberately not
-    // the app's WebPage subclass, so no arktos QWebChannel objects or
-    // app page policy leak into extension chrome (SEC24 split).
-    QWebEnginePage *page = new QWebEnginePage(profile, view);
+    // An extension-chrome page on the extension's own profile —
+    // deliberately not the app's WebPage subclass, so no arktos
+    // QWebChannel objects or app page policy leak into extension
+    // chrome (SEC24 split).  ExtensionChromePage navigation-locks the
+    // bubble to the extension's own origin (SEC26 — the ER20
+    // JavascriptEnabled lift must never serve foreign web content).
+    QWebEnginePage *page = new ExtensionChromePage(profile, id, view);
     // ER20: extension chrome is exempt from the profile's
     // JavascriptEnabled web-content preference — the popup must run
     // even when the user has scripts off (Chrome parity).

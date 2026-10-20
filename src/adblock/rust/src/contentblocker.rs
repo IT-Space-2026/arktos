@@ -47,6 +47,7 @@ use std::ptr;
 use adblock::content_blocking::{
     self, CbRule, CbRuleCreationFailure, CbRuleEquivalent, CbType,
 };
+use adblock::filters::network::NetworkFilterFeaturesMask;
 use adblock::lists::{parse_filter, FilterParseError, ParseOptions, ParsedLine};
 
 use crate::to_c_string;
@@ -70,6 +71,12 @@ pub(crate) struct ContentBlockerOutput {
     pub parsed: usize,
     /// Source rules that produced at least one output rule.
     pub converted: usize,
+    /// WK18: converted rules whose output is a degradation — a
+    /// `$redirect`/`$redirect-rule` WebKit cannot express, re-emitted
+    /// as a plain block (the resource still never reaches the wire).
+    /// A subset of `converted`, counted so the honesty channel can
+    /// tell a real translation from a degraded one.
+    pub degraded: usize,
 }
 
 impl ContentBlockerOutput {
@@ -88,6 +95,7 @@ impl ContentBlockerOutput {
                 "converted": self.converted,
                 "emitted": self.rules.len(),
                 "dropped": self.dropped.len(),
+                "degraded": self.degraded,
             },
         })
         .to_string()
@@ -132,6 +140,36 @@ fn drop_reason(err: &CbRuleCreationFailure) -> &'static str {
     }
 }
 
+/// WK18 block-cookies lane.  The crate's option table does not know
+/// ABP's `$cookie` flag (it parses nothing for it — Safari's
+/// `block-cookies` action exists in `CbType` but no translator emits
+/// it).  When a network line fails to parse, see if removing a bare
+/// `cookie` option lets the remainder through; the reparsed rule is
+/// later emitted with its action re-flagged to BlockCookies.
+/// Returns the stripped line, or None when `cookie` was not the
+/// offending option (or options were absent entirely).
+fn strip_cookie_option(line: &str) -> Option<String> {
+    let dollar = line.find('$')?;
+    let (pattern, opts) = line.split_at(dollar);
+    let mut kept: Vec<&str> = Vec::new();
+    let mut saw = false;
+    for opt in opts[1..].split(',') {
+        if opt.trim() == "cookie" {
+            saw = true;
+        } else {
+            kept.push(opt);
+        }
+    }
+    if !saw {
+        return None;
+    }
+    if kept.is_empty() {
+        Some(pattern.trim_end().to_string())
+    } else {
+        Some(format!("{}${}", pattern, kept.join(",")))
+    }
+}
+
 fn push_partitioned(rule: CbRule, rules: &mut Vec<CbRule>, exceptions: &mut Vec<CbRule>) {
     if rule.action.typ == CbType::IgnorePreviousRules {
         exceptions.push(rule);
@@ -145,6 +183,10 @@ pub(crate) fn convert(text: &str) -> ContentBlockerOutput {
     let opts = ParseOptions::default();
     let mut parsed: Vec<ParsedLine<'_>> = Vec::new();
     let mut dropped: Vec<DroppedRule> = Vec::new();
+    // Lines deferred for the $cookie rescue: (original, stripped).
+    // They reparse after this loop — the stripped string must live in
+    // this frame because ParsedLine borrows its input text.
+    let mut cookie_fixups: Vec<(String, String)> = Vec::new();
     let mut lines = 0usize;
 
     // Pass 1 — parse every rule-shaped line through the crate's own
@@ -160,13 +202,45 @@ pub(crate) fn convert(text: &str) -> ContentBlockerOutput {
         match parse_filter(line, /* debug = */ true, opts) {
             Ok(p) => parsed.push(p),
             Err(FilterParseError::Empty) => {}
-            Err(e) => dropped.push(DroppedRule {
-                rule: line.to_string(),
-                why: match e {
-                    FilterParseError::Network(_) => "network-parse-error",
-                    FilterParseError::Cosmetic(_) => "cosmetic-parse-error",
-                    _ => "unsupported-syntax",
-                },
+            Err(e) => {
+                // $cookie rescue: the parser rejects the option
+                // outright, so a line that only fails because of it
+                // never reaches the translators.  Defer a
+                // strip-and-reparse — a second unsupported option
+                // still lands in dropped.
+                if matches!(e, FilterParseError::Network(_)) {
+                    if let Some(stripped) = strip_cookie_option(line) {
+                        cookie_fixups.push((line.to_string(), stripped));
+                        continue;
+                    }
+                }
+                dropped.push(DroppedRule {
+                    rule: line.to_string(),
+                    why: match e {
+                        FilterParseError::Network(_) => "network-parse-error",
+                        FilterParseError::Cosmetic(_) => "cosmetic-parse-error",
+                        _ => "unsupported-syntax",
+                    },
+                });
+            }
+        }
+    }
+
+    // Pass 1b — the deferred $cookie rescues.  raw_line is restored
+    // to the ORIGINAL text so the drop channel and $domain= lookup
+    // never quote the doctored spelling; the filter id marks the rule
+    // for the pass-3 re-flag to block-cookies.
+    let mut cookie_ids = HashSet::new();
+    for (orig, stripped) in &cookie_fixups {
+        match parse_filter(stripped, true, opts) {
+            Ok(ParsedLine::Network(mut f)) => {
+                cookie_ids.insert(f.get_id());
+                f.raw_line = Some(std::borrow::Cow::Borrowed(orig.as_str()));
+                parsed.push(ParsedLine::Network(f));
+            }
+            _ => dropped.push(DroppedRule {
+                rule: orig.clone(),
+                why: "network-parse-error",
             }),
         }
     }
@@ -189,6 +263,7 @@ pub(crate) fn convert(text: &str) -> ContentBlockerOutput {
     let mut rules: Vec<CbRule> = Vec::new();
     let mut exceptions: Vec<CbRule> = Vec::new();
     let mut converted = 0usize;
+    let mut degraded = 0usize;
     let parsed_count = parsed.len();
 
     let (network, cosmetic): (Vec<ParsedLine<'_>>, Vec<ParsedLine<'_>>) = parsed
@@ -210,11 +285,49 @@ pub(crate) fn convert(text: &str) -> ContentBlockerOutput {
                 rule: line,
                 why: "badfilter-disabled",
             });
+        } else if f.is_redirect() {
+            // WK18 degrade-to-block: Safari has no $redirect or
+            // $redirect-rule action — the stub-serving contract has
+            // no content-blocker equivalent.  Clearing the redirect
+            // features re-emits the same trigger as a plain block,
+            // which is the honest fallback (the resource stays off
+            // the wire) — the rule counts as degraded, not dropped.
+            // A filter that STILL fails (a second unsupported option)
+            // lands in dropped with the retry's reason.
+            let mut filter = f;
+            filter.features_mask.remove(
+                NetworkFilterFeaturesMask::IS_REDIRECT
+                    | NetworkFilterFeaturesMask::ALSO_BLOCK_REDIRECT,
+            );
+            filter.modifier_option = None;
+            match TryInto::<CbRuleEquivalent>::try_into(filter) {
+                Ok(equivalent) => {
+                    converted += 1;
+                    degraded += 1;
+                    for rule in equivalent {
+                        push_partitioned(rule, &mut rules, &mut exceptions);
+                    }
+                }
+                Err(e) => dropped.push(DroppedRule {
+                    rule: line,
+                    why: drop_reason(&e),
+                }),
+            }
         } else {
+            let cookie = cookie_ids.contains(&f.get_id());
             match TryInto::<CbRuleEquivalent>::try_into(f) {
                 Ok(equivalent) => {
                     converted += 1;
-                    for rule in equivalent {
+                    for mut rule in equivalent {
+                        // $cookie is "block cookies, not the load" —
+                        // the exact `block-cookies` action.  Exceptions
+                        // (@@$cookie) keep ignore-previous-rules:
+                        // Safari cannot scope an exemption to one
+                        // action type, and upstream already maps every
+                        // exception to that approximation.
+                        if cookie && rule.action.typ == CbType::Block {
+                            rule.action.typ = CbType::BlockCookies;
+                        }
                         push_partitioned(rule, &mut rules, &mut exceptions);
                     }
                 }
@@ -254,6 +367,7 @@ pub(crate) fn convert(text: &str) -> ContentBlockerOutput {
         lines,
         parsed: parsed_count,
         converted,
+        degraded,
     }
 }
 
@@ -328,10 +442,13 @@ mod tests {
         // parse, one badfilter pair, six option-class drops.
         assert_eq!(out.lines, 22);
         assert_eq!(out.parsed, 21);
-        assert_eq!(out.converted, 12);
-        // 5 blocks + 5 hides + 2 exceptions + fp-document guard.
-        assert_eq!(out.rules.len(), 13);
-        assert_eq!(out.dropped.len(), 10);
+        assert_eq!(out.converted, 13);
+        // WK18: the $redirect rule degrades to a block — converted,
+        // counted separately, never dropped.
+        assert_eq!(out.degraded, 1);
+        // 6 blocks + 5 hides + 2 exceptions + fp-document guard.
+        assert_eq!(out.rules.len(), 14);
+        assert_eq!(out.dropped.len(), 9);
     }
 
     #[test]
@@ -463,12 +580,59 @@ mod tests {
     }
 
     #[test]
-    fn drop_list_covers_every_unconvertible_rule() {
+    fn redirect_degrades_to_block() {
+        // WK18: $redirect/$redirect-rule have no Safari action —
+        // clearing the redirect features re-emits the same trigger
+        // as a plain block.  The rule is neither dropped nor silently
+        // full-fidelity: meta.degraded is the honesty counter.
         let out = fixture();
+        assert!(blocks(&out)
+            .any(|r| r.trigger.url_filter.contains("redir\\.example")));
         assert_eq!(
             drop_why(&out, "||redir.example/vast.xml$redirect=noop-vast"),
-            Some("redirect")
+            None
         );
+        assert_eq!(out.degraded, 1);
+    }
+
+    #[test]
+    fn cookie_option_emits_block_cookies() {
+        // WK18: ABP's $cookie ("strip cookies, let the load through")
+        // maps to Safari's block-cookies action.  The option is
+        // unknown to the parser, so the converter strips+reparses it
+        // and re-flags the emitted rule.  @@ exceptions keep the
+        // normal ignore-previous-rules mapping.
+        let out = convert(
+            "||ck.example^$cookie\n\
+             @@||ok.example^$cookie\n\
+             ||y.example^$cookie,image\n",
+        );
+        let cookies: Vec<&CbRule> = out
+            .rules
+            .iter()
+            .filter(|r| r.action.typ == CbType::BlockCookies)
+            .collect();
+        assert_eq!(cookies.len(), 2);
+        assert!(cookies
+            .iter()
+            .any(|r| r.trigger.url_filter.contains("ck\\.example")));
+        let img = cookies
+            .iter()
+            .find(|r| r.trigger.url_filter.contains("y\\.example"))
+            .unwrap();
+        assert_eq!(
+            img.trigger.resource_type.as_ref().unwrap(),
+            &HashSet::from([CbResourceType::Image])
+        );
+        // The @@ exception stays an exception — never a block-cookies.
+        assert!(exceptions(&out).any(|r| r.trigger.url_filter.contains("ok\\.example")));
+        assert!(out.dropped.is_empty());
+        assert_eq!(out.converted, 3);
+    }
+
+    #[test]
+    fn drop_list_covers_every_unconvertible_rule() {
+        let out = fixture();
         assert_eq!(
             drop_why(&out, "||csp.example^$csp=script-src 'none'"),
             Some("csp")
@@ -542,6 +706,10 @@ mod tests {
             v["meta"]["converted"].as_u64().unwrap() as usize,
             out.converted
         );
+        assert_eq!(
+            v["meta"]["degraded"].as_u64().unwrap() as usize,
+            out.degraded
+        );
     }
 
     #[test]
@@ -556,8 +724,8 @@ mod tests {
             crate::arktos_adblock_string_free(json);
             serde_json::from_str(&s).unwrap()
         };
-        assert!(v["rules"].as_array().unwrap().len() >= 13);
-        assert_eq!(v["dropped"].as_array().unwrap().len(), 10);
+        assert!(v["rules"].as_array().unwrap().len() >= 14);
+        assert_eq!(v["dropped"].as_array().unwrap().len(), 9);
         assert_eq!(v["meta"]["lines"].as_u64().unwrap(), 22);
 
         // Bad inputs degrade to null, never to a crash.

@@ -119,8 +119,6 @@ public:
     // build (se_engine_init): a live sibling view is no longer a
     // reason to refuse.
     static bool instanceAvailable();
-    // Any ServoView currently holds a live instance.
-    static bool instanceInUse();
     // ENG27/ENG36: the shim-side live-view registry — true while at
     // least one SeInstance is live, false once se_view_destroy
     // released the last one (even when teardown panicked).  false on
@@ -351,7 +349,6 @@ private:
     LifecycleState m_lifecycle;
     Engine::Profile *m_profile;
     QHash<QString, Engine::Script> m_scripts;
-    QHash<QString, bool> m_attributes;
 };
 
 class ServoProfile : public Engine::Profile
@@ -377,11 +374,8 @@ public:
 
 private:
     QString m_storageName;
-    QString m_userAgent;
     Engine::RequestPolicy *m_policy = nullptr;
-    std::function<bool(const Engine::CookieAttempt &)> m_cookieFilter;
     QHash<QString, Engine::Script> m_scripts;
-    QHash<QString, QVariant> m_attributes;
 };
 
 class ServoBackend : public Engine::Backend

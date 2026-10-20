@@ -710,12 +710,6 @@ bool ServoView::instanceActive()
     return api().instanceActive && api().instanceActive();
 }
 
-bool ServoView::instanceInUse()
-{
-    QMutexLocker lock(&servoMutex());
-    return !g_views.isEmpty();
-}
-
 void ServoView::load(const QUrl &url)
 {
     if (m_instance && !isPoisoned())
@@ -1430,7 +1424,11 @@ bool ServoPage::isOffTheRecord() const
 
 void ServoPage::setPageAttribute(const QString &name, bool on)
 {
-    m_attributes.insert(name, on);
+    // No per-page attribute application on this backend — the
+    // override exists so the interface's free-form keys are ignored
+    // harmlessly instead of misapplied.
+    Q_UNUSED(name);
+    Q_UNUSED(on);
 }
 
 void ServoPage::setLifecycleState(LifecycleState state)
@@ -1513,8 +1511,8 @@ QString ServoProfile::storageName() const
 
 void ServoProfile::setUserAgent(const QString &userAgent)
 {
-    // Stored only — no UA override hook in the shim.
-    m_userAgent = userAgent;
+    // No UA override hook in the shim — accepted and ignored.
+    Q_UNUSED(userAgent);
 }
 
 void ServoProfile::setRequestPolicy(Engine::RequestPolicy *policy)
@@ -1535,7 +1533,9 @@ Engine::RequestPolicy *ServoProfile::requestPolicy() const
 void ServoProfile::setCookieFilter(
         const std::function<bool(const Engine::CookieAttempt &)> &filter)
 {
-    m_cookieFilter = filter;
+    // The shim has no per-cookie consult — accepted and ignored
+    // (capabilities().cookieFilter stays false).
+    Q_UNUSED(filter);
 }
 
 void ServoProfile::insertScript(const Engine::Script &script)
@@ -1559,7 +1559,10 @@ void ServoProfile::clear(Engine::StorageAreas)
 
 void ServoProfile::setProfileAttribute(const QString &name, const QVariant &value)
 {
-    m_attributes.insert(name, value);
+    // Free-form keys land here when the apply path doesn't know the
+    // backend — ignored rather than misapplied.
+    Q_UNUSED(name);
+    Q_UNUSED(value);
 }
 
 // ---- ServoBackend ----------------------------------------------------

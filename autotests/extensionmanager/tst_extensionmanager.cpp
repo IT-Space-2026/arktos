@@ -87,8 +87,10 @@ private slots:
     void runtimeHealthRegrade();
     void backgroundHealthProbe();
     void hostedBackgroundRuntime();
+    void hostedHostChurn();
     void extensionShimBackend();
     void extensionMessageRelay();
+    void extensionChromeNavLock();
     void extensionEventSurfaces();
     void extensionWebRequest();
     void extensionRuntimeLifecycle();
@@ -1654,6 +1656,79 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
     QDir(dir).removeRecursively();
 }
 
+// MEM11 — enable/disable churn for the hosted runtime: every cycle
+// mints a full ExtensionBackgroundHost (hidden view + page +
+// channel + bridge + timers) and disable must tear ALL of it down —
+// the leak sweep's in-test half is that each host object really
+// dies (a retained one fails here AND in the LSan report).
+void tst_ExtensionManager::hostedHostChurn()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extchurn-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile manifestFile(dir + QLatin1String("/manifest.json"));
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly));
+        manifestFile.write(
+            "{\"manifest_version\":3,\"name\":\"tst-churn\","
+            "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+            "\"background\":{\"service_worker\":\"sw.js\"}}");
+        manifestFile.close();
+        QFile worker(dir + QLatin1String("/sw.js"));
+        QVERIFY(worker.open(QIODevice::WriteOnly));
+        worker.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        worker.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-churn")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        manager->setExtensionEnabled(id, true);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            runtime->host(id)
+                && runtime->host(id)->state()
+                       == ExtensionBackgroundHost::State::Ready,
+            45000);
+        ExtensionBackgroundHost *host = runtime->host(id);
+        QPointer<ExtensionBackgroundHost> hostGuard(host);
+        QPointer<QWebEngineView> viewGuard(host->view());
+        QPointer<QWebEnginePage> pageGuard(host->page());
+        QPointer<ChromeBridge> bridgeGuard(host->bridge());
+
+        manager->setExtensionEnabled(id, false);
+        QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 15000);
+        // disable's teardown is deleteLater — the QTRY above pumped
+        // the deferred deletes already.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !hostGuard && !viewGuard && !pageGuard && !bridgeGuard,
+            15000);
+    }
+
+    manager->removeExtension(id);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 15000);
+    QDir(dir).removeRecursively();
+}
+
 // EXT15: the host-side backend behind ChromeBridge::invoke() —
 // per-extension storage namespaces (local persisted, session
 // in-memory), QTimer-backed alarms, the action-state registry, i18n
@@ -2357,6 +2432,48 @@ void tst_ExtensionManager::extensionMessageRelay()
                  &popup, chan, QStringLiteral("pA"),
                  QJsonValue(QStringLiteral("back"))), 1);
 
+    // SEC26: a still-pending mid must not re-send — a duplicate would
+    // overwrite the pending entry and orphan the first send's timer.
+    const QString m5 = QStringLiteral("relayext0000000001#5#t");
+    QCOMPARE(runtime->relaySend(&bg, m5, QJsonObject()), 1);
+    QCOMPARE(popupEvents.size(), 5);
+    QCOMPARE(runtime->relaySend(&bg, m5, QJsonObject()), 0);
+    QCOMPARE(popupEvents.size(), 5);   // no second fan-out
+
+    // SEC26: portConnect dedups an already-registered end — a page
+    // re-firing connect must not grow the chan's end list.
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, chan, QStringLiteral("p1b"),
+                 QString(), QString()), 1);
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, chan, QStringLiteral("p1b"),
+                 QString(), QString()), 0);
+
+    // SEC26: sender.url is host-verified — the bridge's context page
+    // answers it, never the caller-supplied senderUrl.  A bridge with
+    // no page keeps the arg (tests and diagnostics only).
+    auto *contextView = new QWebEngineView;
+    auto *contextPage = new QWebEnginePage(contextView);
+    contextView->setPage(contextPage);
+    contextPage->load(QUrl(QStringLiteral("about:blank")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        contextPage->url() == QUrl(QStringLiteral("about:blank")),
+        10000);
+    bg.setContextPage(contextPage);
+    const QString chan2 = QStringLiteral("relayext0000000001#p2");
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, chan2, QStringLiteral("p2"),
+                 QString(),
+                 QStringLiteral("https://forged.example/evil")), 1);
+    QCOMPARE(popupEvents.last().at(0).toString(),
+             QStringLiteral("__arktos.portConnect"));
+    QCOMPARE(popupEvents.last().at(1).toJsonObject()
+             .value(QLatin1String("sender")).toObject()
+             .value(QLatin1String("url")).toString(),
+             QStringLiteral("about:blank"));
+    contextView->deleteLater();
+    bg.setContextPage(nullptr);
+
     // Teardown unregisters; a further send finds no peers.
     runtime->unregisterRelayContext(&popup);
     QCOMPARE(runtime->relaySend(
@@ -2365,6 +2482,58 @@ void tst_ExtensionManager::extensionMessageRelay()
     runtime->unregisterRelayContext(&other);
 
     QDir(dir).removeRecursively();
+}
+
+// SEC26: the extension-chrome navigation lock — the action popup
+// and the health probe carry the ER20 JavascriptEnabled lift, so
+// their main frame may only ever hold the extension's own origin
+// (or about:blank); foreign web content and other extensions'
+// documents are refused, and subframes stay inside the origin too.
+void tst_ExtensionManager::extensionChromeNavLock()
+{
+    const QString id = QStringLiteral("chromeext00000000000000001");
+    using NP = ExtensionChromePage;
+    // Main frame: own origin + about:blank pass.
+    QVERIFY(NP::navigationAllowed(
+        QUrl(QStringLiteral("chrome-extension://") + id
+             + QStringLiteral("/popup.html")),
+        id, true));
+    QVERIFY(NP::navigationAllowed(
+        QUrl(QStringLiteral("chrome-extension://") + id
+             + QStringLiteral("/manifest.json#arktos-healthprobe")),
+        id, true));
+    QVERIFY(NP::navigationAllowed(
+        QUrl(QStringLiteral("about:blank")), id, true));
+    // Main frame: foreign web content and a DIFFERENT extension's
+    // document are refused.
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral("https://forged.example/evil")),
+        id, true));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral("file:///etc/passwd")), id, true));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral(
+            "chrome-extension://otherext000000000000002/x.html")),
+        id, true));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral("javascript:alert(1)")), id, true));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral("data:text/html,<b>x</b>")), id, true));
+    // Subframes: only the extension's own origin — no about:blank
+    // exemption and no foreign content.
+    QVERIFY(NP::navigationAllowed(
+        QUrl(QStringLiteral("chrome-extension://") + id
+             + QStringLiteral("/frame.html")),
+        id, false));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral("https://tracker.example/px")),
+        id, false));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral("about:blank")), id, false));
+    QVERIFY(!NP::navigationAllowed(
+        QUrl(QStringLiteral(
+            "chrome-extension://otherext000000000000002/f.html")),
+        id, false));
 }
 
 // EXT16: the event surfaces.  Two hosted extensions — one declaring

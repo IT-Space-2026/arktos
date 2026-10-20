@@ -31,6 +31,7 @@
 
 #include <qobject.h>
 
+#include <qbytearray.h>
 #include <qpointer.h>
 
 class QUrl;
@@ -169,6 +170,15 @@ public:
     // (::Engine — this class has a nested enum Engine.)
     void installOnProfile(::Engine::Profile *profile);
 
+    // WK18: this persona's rules rendered as a WebKit/Safari
+    // content-blocker document — {"rules":[...],"dropped":[...],
+    // "meta":{...}} — for engines whose interception surface is a
+    // compiled declarative filter (WebKitUserContentFilterStore).
+    // Empty when the blocker is disabled or the Rust converter is
+    // not in this build.  GUI thread only; the document is memoized
+    // per rules generation — a rulesChanged emission invalidates it.
+    QByteArray contentBlockerJson();
+
     // ADB06: which matcher answers requests, picked at runtime in
     // Preferences (persisted as AdBlock/engine = "cpp"|"rust").
     // RustEngine is Brave's adblock-rust — reachable only in
@@ -218,6 +228,10 @@ private:
     // objects — lives as long as this singleton (outlives profiles).
     AdBlockEnginePolicy *m_enginePolicy = nullptr;
     QList<AdBlockSubscription*> m_subscriptions;
+    // WK18: the memoized contentBlockerJson() document, invalidated
+    // by rulesChanged.
+    QByteArray m_contentBlockerDoc;
+    bool m_contentBlockerDocValid = false;
 
 };
 

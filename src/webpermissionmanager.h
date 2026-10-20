@@ -27,6 +27,8 @@
 #include <qurl.h>
 #include <qwebenginepermission.h>
 
+#include <functional>
+
 class QWidget;
 
 // SEC05: default-deny broker for QWebEnginePage::permissionRequested.
@@ -91,6 +93,14 @@ public:
     // QWebEnginePermission stays resolvable until grant()/deny().
     void handleRequest(QWidget *parent, const QWebEnginePermission &request,
                        bool offTheRecord);
+    // WK19: the engine-neutral form — a foreign backend wraps its own
+    // permission object in `resolve` (called exactly once, possibly
+    // asynchronously) and gets the same deny-list, remembered-decision
+    // and serialized-prompt treatment as QWebEnginePermission.
+    void handleRequest(QWidget *parent, const QUrl &origin,
+                       QWebEnginePermission::PermissionType type,
+                       bool offTheRecord,
+                       const std::function<void(bool)> &resolve);
 
 signals:
     void changed();
@@ -118,7 +128,15 @@ private:
 
     struct Pending {
         QPointer<QWidget> parent;
-        QWebEnginePermission permission;
+        // WK19: the prompt needs the origin+type regardless of the
+        // carrier — a foreign request is identified by them directly,
+        // the WebEngine request unwraps to the same pair.
+        QUrl origin;
+        QWebEnginePermission::PermissionType type;
+        // One-shot answer — for WebEngine it wraps
+        // QWebEnginePermission::grant()/deny() (with the isValid
+        // recheck); a foreign backend resolves its own object.
+        std::function<void(bool)> resolve;
         bool offTheRecord;
     };
     QList<Pending> m_pending;

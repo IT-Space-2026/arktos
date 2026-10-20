@@ -1246,13 +1246,22 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
 
     Engine::Profile *profile =
         backend->createProfile(Engine::ProfileOptions(), nullptr);
-    // ENG35: profiles on policy-hooked backends (Servo's load gate)
-    // get the adblock binding the way prepareProfile installs the
-    // interceptor on Chromium profiles — the profile owns it, the
-    // backend resolves it per load.  WebEngine profiles keep their
-    // interceptor path (setRequestPolicy would replace it).
-    if (profile && backend->id() == QLatin1String("servo"))
+    // ENG35/WK17: profiles on policy-hooked backends (Servo's load
+    // gate, WebKit's decide-policy consult) get the adblock binding
+    // the way prepareProfile installs the interceptor on Chromium
+    // profiles — the profile owns it, the backend resolves it per
+    // load.  WebEngine profiles keep their interceptor path
+    // (setRequestPolicy would replace it).
+    if (profile && (backend->id() == QLatin1String("servo")
+                    || backend->id() == QLatin1String("webkit")))
         AdBlockManager::instance()->installOnProfile(profile);
+    // WK19: a backend that streams its own transfers (WebKit's
+    // WebKitDownload -> Engine::DownloadRequest) needs the same
+    // DownloadManager binding prepareProfile gives Chromium
+    // profiles — with no consumer the request's decision point
+    // cancels itself.
+    if (profile && backend->capabilities().downloads)
+        DownloadManager::instance()->installOnProfile(profile);
     EngineTab *tab = new EngineTab(backend, profile, this);
     // The profile is the tab's context — give it the tab as owner so
     // tab teardown frees it.  Backends that hand out a shared object
@@ -1433,6 +1442,10 @@ bool TabWidget::reloadTabInEngine(int index, const QString &engineId)
         return false;
     // Tor windows are locked to Chromium — servo has no SOCKS5
     // support, so a swapped tab would leak traffic off the proxy.
+    // WK21 audited WPE WebKit's per-session socks5 too: proxied loads
+    // do resolve remotely, but webkit_network_session_prefetch_dns()
+    // still resolves locally under the proxy — a local-DNS channel in
+    // the shipped engine — so the lock stays (see WEBKIT-SPIKE.md).
     if (BrowserApplication::isTorMode())
         return false;
     // A private tab has no off-the-record equivalent on a foreign

@@ -207,7 +207,6 @@ private:
     QWebEngineProfile *m_profile;
     Engine::RequestPolicy *m_policy = nullptr;
     QWebEngineUrlRequestInterceptor *m_policyInterceptor = nullptr;
-    QHash<QString, QVariant> m_attributes;
 };
 
 class WebEngineBackend : public Engine::Backend

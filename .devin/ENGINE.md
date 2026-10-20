@@ -1,11 +1,12 @@
 # ENGINE.md — engine-portability coupling map (ENG01)
 
 Groundwork for the selectable-engine effort (user directive: the Qt UI
-shell stays; the web engine becomes selectable per tab —
-QtWebEngine/Chromium vs Servo).  **No refactor yet** — this document is
-the coupling audit + interface spec; `src/engine/engineinterface.h` is
-the compiled-but-unused header sketch; ENG04 does the WebView refactor,
-ENG05 the per-tab switcher.
+shell stays; the web engine becomes selectable per tab).  This document
+is the ENG01 coupling audit + interface spec — the refactor it sketched
+has since landed: `src/engine/engineinterface.h` is the live boundary
+behind three backends (QtWebEngine, Servo, WPE WebKit), and the
+per-tab switcher is shipping.  The audit table below is the historical
+record of what had to move; the Backends table reflects today's state.
 
 Maintained by `.devin/check-engine-audit.sh` (wired into `make check`):
 every C/C++ source file that names a `QWebEngine*`/`QtWebEngine*` symbol
@@ -16,8 +17,9 @@ an engine dependency without documenting it and the gate fails.
 
 | # | Engine | Status |
 |---|--------|--------|
-| 0 | QtWebEngine (Chromium 140.0.7339.225, Qt 6.12.0) | the only backend today |
-| 1 | Servo | planned — ENG03 spike gates viability (interception, SOCKS5, cookie/storage, download, JS-eval hooks are the open questions) |
+| 0 | QtWebEngine (Chromium 140.0.7339.225, Qt 6.12.0) | default backend — full capability set |
+| 1 | Servo | landed — `src/engine/servobackend.*` over the `servo-embed` shim (multi-view post-ENG36) |
+| 2 | WPE WebKit | landed — `src/engine/webkitbackend.*`, capability-gated (WK21 measured devTools/extensions unavailable) |
 
 ### Qt 6.12 gotcha — named-profile storage paths MUST go through `QWebEngineProfileBuilder`
 
@@ -36,9 +38,8 @@ post-construction path setters.
 
 ## Adapter boundary (where engine types are allowed to live)
 
-The future `Engine::Backend` implementations wrap this layer.  Today
-these files *are* the engine — ENG04 splits each into a neutral core +
-a thin WebEngine adapter:
+The `Engine::Backend` implementations wrap this layer — post-refactor
+these files are the backend-0 (WebEngine) side plus the neutral core:
 
 - `src/webpage.h`, `src/webpage.cpp` / `src/webview.h`, `src/webview.cpp` — the page/view pair.
 - `src/browserprofile.h`, `src/browserprofile.cpp` — profile lifecycle + settings apply.
@@ -140,7 +141,8 @@ inherently Chromium — capability-gated, degrades on Servo; **comment**
 
 ## Engine-neutral interface surface (`src/engine/engineinterface.h`)
 
-Sketched (compiled, unused) from the audit above.  `Engine::` namespace:
+Landed from the audit above (the list records the designed surface —
+`src/engine/engineinterface.h` is authoritative).  `Engine::` namespace:
 
 - `Backend` — id/displayName/`capabilities()`, `initialize()`, profile/
   page/view factories.

@@ -20,6 +20,7 @@
 #ifndef WEBPAGE_H
 #define WEBPAGE_H
 
+#include "engineinterface.h"
 #include "tabwidget.h"
 
 #include <qlist.h>
@@ -135,6 +136,18 @@ public:
     static QString userAgent();
     static void setUserAgent(const QString &userAgent);
 
+    // SEC02: the scheme allowlist behind confirmAndOpenExternalUrl —
+    // schemes the engine/app itself serves; anything else is a
+    // desktop hand-off needing consent.  WK17: shared with the WPE
+    // backend's decide-policy path so both engines run the same list.
+    static bool isBrowserHandledScheme(const QString &scheme);
+
+    // SEC02/WK17: the consent prompt behind the external-scheme
+    // hand-off — one modal at a time across every engine, queued so
+    // the exec() never nests inside a navigation callback.
+    static void promptOpenExternalUrl(QWidget *parent, const QUrl &url,
+                                      const QString &source);
+
     // UA02: Google's "/sorry/" bot-check interstitial — detected after
     // the navigation commits so the page can carry a readable notice.
     static bool isRateLimitInterstitialUrl(const QUrl &url);
@@ -146,6 +159,20 @@ public:
     // verified.  Session-scoped like the whitelist it reads; nothing
     // is persisted.
     static bool certificateErrorOverridden(const QString &host);
+    // WK19: a foreign backend (WPE WebKit) records its session
+    // cert-error overrides here — WebKit's network session holds the
+    // certificate exception itself, this flag only feeds the padlock
+    // red verdict so a foreign tab can't wear green over a chain the
+    // user proceeded past.
+    static void noteCertErrorOverride(const QString &host);
+
+    // WK19: the interstitial markup builder lifted off the
+    // QWebEngineCertificateError carrier so foreign backends fill
+    // Engine::CertificateErrorInfo and render the identical page —
+    // one interstitial contract, one HTML body.
+    static QString certificateErrorHtml(
+            const Engine::CertificateErrorInfo &error,
+            const QString &typeName, const QString &nonce);
 
     // JSCTL: whether the current page's scripts are blocked by the
     // per-site rules/security tier (meaningful for http/https pages).

@@ -1646,7 +1646,10 @@ void ExtensionManager::startNextHealthProbe()
     // A bare page on the extension's profile — deliberately not the
     // app's WebPage subclass, same as the EXT08 popup host: no arktos
     // channel objects or page policy leak into extension chrome.
-    QWebEnginePage *page = new QWebEnginePage(profile);
+    // ExtensionChromePage navigation-locks the probe to the
+    // extension's own origin (SEC26 — the ER20 JavascriptEnabled lift
+    // must never serve foreign web content).
+    QWebEnginePage *page = new ExtensionChromePage(profile, info.id);
     // ER20: the probe evals inside an extension context — exempt from
     // the web-content JavascriptEnabled preference, same as the
     // hosted pages, or a JS-off session would grade live extensions

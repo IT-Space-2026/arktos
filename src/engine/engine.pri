@@ -83,6 +83,17 @@ equals(ARKTOS_WEBKIT_ENABLED, true) {
         DEFINES += ARKTOS_WEBKIT_LINKED
         CONFIG += link_pkgconfig
         PKGCONFIG += wpe-webkit-2.0 wpe-platform-2.0 wpe-platform-headless-2.0
+        # WK20: the dmabuf -> EGLImage -> GL texture import compiles in
+        # only when the system EGL/GLESv2 dev files resolve — without
+        # them the backend stays raster-only (ARKTOS_WEBKIT_GL unset).
+        system(pkg-config --exists egl glesv2) {
+            DEFINES += ARKTOS_WEBKIT_GL
+            PKGCONFIG += egl glesv2
+        }
+        # WK14: dlsym() for the optional webkit_web_view_suspend/
+        # resume exports — folded into libc on glibc >= 2.34, a stub
+        # archive elsewhere, harmless either way.
+        unix:!mac: LIBS += -ldl
         # The ~/wpe sideloaded-glibc recipe (.devin/webkit-env.sh +
         # ~/wpe/ACQUIRED.md): every binary carrying the backend TU —
         # app, tools, autotests — links libWPEWebKit, so every binary

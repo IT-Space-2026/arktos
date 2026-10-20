@@ -4318,19 +4318,21 @@ void tst_BrowserMainWindow::servoStartPage()
         domTab->grab().save(dir + QLatin1String("/servo-startpage.png"));
     }
 
-    closeWindow(window);
-    ProfileSettings().remove(engineKey);
-
     QCOMPARE(mapped, servoStart);
     QCOMPARE(guessed, servoStart);
     if (firstEngine) {
         // The pick spawned the real engine tab — the branded qrc
         // page is not servo's to render, so a live page on the slot
-        // is the check.
+        // is the check.  Runs before closeWindow: the raw EngineTab
+        // dies with the window and reading page() off it afterwards
+        // is a use-after-free (ASan-caught, MEM11).
         QVERIFY(firstEngine->page());
     } else {
         QCOMPARE(firstUrl, servoStart);
     }
+
+    closeWindow(window);
+    ProfileSettings().remove(engineKey);
     QCOMPARE(servoTabUrl, servoStart);
     // The DOM handshake only exists on a WebEngine tab — under a live
     // servo backend BOTH tabs can be EngineTabs (multi-view), leaving

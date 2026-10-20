@@ -216,14 +216,14 @@ TOTAL regions 79.11% (25900/32739)  functions 89.21% (3375/3783)  lines 85.50% (
 
 ## Rust crates (COV05)
 
-Generated: 2026-10-19 09:16 UTC on commit e6048059
+Generated: 2026-10-19 22:52 UTC on commit 0b8a3b71
 Toolchain: cargo-llvm-cov 0.9.1
 
 Per-crate total LINE coverage from `cargo llvm-cov --workspace --json --summary-only`, gated at 85% minimum per crate by `make check` (.devin/check-rustcoverage.sh; `ARKTOS_RUST_COVERAGE_MIN` overrides).
 
 | Crate | Lines |
 |-------|-------|
-| src/adblock/rust | 95.05% |
+| src/adblock/rust | 94.11% |
 | src/rustcore | 91.78% |
 | src/rustdl | 89.25% |
 

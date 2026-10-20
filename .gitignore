@@ -41,6 +41,11 @@ spikes/webkit/wpe-harness/.xdg-*
 # check-leaks.sh raw gate output — the curated report is .devin/MEM02-report.md
 .devin/LEAKS.md
 
+# taskloop/mergewatch runtime artifacts — regenerated and mutated by
+# every lane run; the queues (.devin/Arora-Task*.md) are the record
+.devin/*.log
+.devin/*.lock
+
 # autotest binaries and in-tree moc artifacts
 autotests/**/tst_*
 !autotests/**/*.cpp
@@ -75,3 +80,8 @@ flatpak/.build.log
 # stale pre-rebrand build outputs
 /arora
 /tools/placesimport/arora-placesimport
+
+# WK21 audit spike build + run artifacts
+spikes/webkit/wk21/dns-shim.so
+spikes/webkit/wk21/wk21-probe
+spikes/webkit/wk21/.wk21-run/

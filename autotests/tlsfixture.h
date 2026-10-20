@@ -63,8 +63,12 @@ public:
     }
 
     // base is the fixture name ("valid", "expired", ...) — cert/key
-    // PEMs sit in src/rustcore/data/testcerts.
-    bool start(const QString &base)
+    // PEMs sit in src/rustcore/data/testcerts.  WK19: www=true runs
+    // s_server -www so the peer answers requests with its HTML status
+    // page — needed when the test proceeds past the TLS rejection and
+    // expects a real response; stdout goes to null so the request log
+    // can never fill the pipe and stall the server.
+    bool start(const QString &base, bool www = false)
     {
         const QString cert =
             TlsFixtureData::certDir() + QLatin1Char('/') + base
@@ -75,15 +79,21 @@ public:
             return false;
         quint16 candidate = freePort();
         m_proc.setProgram(QStringLiteral("openssl"));
-        m_proc.setArguments({
+        QStringList args{
             QStringLiteral("s_server"),
             QStringLiteral("-accept"),
             QLatin1String("127.0.0.1:") + QString::number(candidate),
             QStringLiteral("-cert"), cert,
             QStringLiteral("-key"), key,
             QStringLiteral("-alpn"), QStringLiteral("http/1.1"),
-            QStringLiteral("-quiet"),
-        });
+        };
+        if (www) {
+            args << QStringLiteral("-www");
+            m_proc.setStandardOutputFile(QProcess::nullDevice());
+        } else {
+            args << QStringLiteral("-quiet");
+        }
+        m_proc.setArguments(args);
         m_proc.start();
         if (!m_proc.waitForStarted(5000))
             return false;
