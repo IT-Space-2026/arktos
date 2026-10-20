@@ -28,6 +28,7 @@
 #include <qtcpsocket.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+#include <qwebenginesettings.h>
 
 #include <memory>
 
@@ -88,6 +89,8 @@ private slots:
     void backgroundHealthProbe();
     void hostedBackgroundRuntime();
     void hostedHostChurn();
+    void chromePageChurn();
+    void relayPortChurn();
     void extensionShimBackend();
     void extensionMessageRelay();
     void extensionChromeNavLock();
@@ -1726,6 +1729,392 @@ void tst_ExtensionManager::hostedHostChurn()
 
     manager->removeExtension(id);
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 15000);
+    QDir(dir).removeRecursively();
+}
+
+// MRG07 — the merge's newest allocation path under churn: the
+// ExtensionChromePage surfaces (action popup + health probe).  Every
+// popup open mints a Qt::Popup frame + view + nav-locked page with the
+// ER20 JavascriptEnabled lift, and every forced probe mints its own
+// parentless ExtensionChromePage — dismiss/finish must tear ALL of it
+// down.  The QPointer guards are the in-test half of the leak sweep:
+// a retained page fails here AND in the LSan report.
+void tst_ExtensionManager::chromePageChurn()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-chromechurn-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile manifestFile(dir + QLatin1String("/manifest.json"));
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly));
+        manifestFile.write(
+            "{\"manifest_version\":3,\"name\":\"tst-chromechurn\","
+            "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+            "\"action\":{\"default_popup\":\"popup.html\"},"
+            "\"background\":{\"service_worker\":\"sw.js\"}}");
+        manifestFile.close();
+        QFile worker(dir + QLatin1String("/sw.js"));
+        QVERIFY(worker.open(QIODevice::WriteOnly));
+        worker.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        worker.close();
+        QFile html(dir + QLatin1String("/popup.html"));
+        QVERIFY(html.open(QIODevice::WriteOnly));
+        html.write("<!doctype html><html><body>churn</body></html>");
+        html.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-chromechurn")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    // --- action popup open/dismiss cycles --------------------------
+    ExtensionActionBar bar;
+    bar.show();
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        QVERIFY(bar.triggerAction(id, QStringLiteral("popup.html")));
+        QFrame *popup = nullptr;
+        QTRY_VERIFY_WITH_TIMEOUT(
+            (popup = bar.findChild<QFrame *>(
+                 QStringLiteral("extensionActionPopup"))) != nullptr,
+            10000);
+        QWebEngineView *view = popup->findChild<QWebEngineView *>();
+        QVERIFY(view);
+        ExtensionChromePage *page =
+            qobject_cast<ExtensionChromePage *>(view->page());
+        QVERIFY2(page,
+                 "action popup must carry the nav-locked "
+                 "ExtensionChromePage, not a plain QWebEnginePage");
+        QVERIFY(page->settings()->testAttribute(
+                    QWebEngineSettings::JavascriptEnabled));
+        QSignalSpy loadSpy(page, &QWebEnginePage::loadFinished);
+        const QUrl popupUrl(QStringLiteral("chrome-extension://") + id
+                            + QStringLiteral("/popup.html"));
+        // loadFinished may already have fired before the spy existed
+        // — a committed popup url is the same proof.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            loadSpy.count() >= 1 || page->url() == popupUrl, 30000);
+        const QPointer<QFrame> popupGuard(popup);
+        const QPointer<QWebEngineView> viewGuard(view);
+        const QPointer<QWebEnginePage> pageGuard(page);
+        popup->close();
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !popupGuard && !viewGuard && !pageGuard, 15000);
+    }
+
+    // --- health-probe mint/destroy cycles --------------------------
+    // force re-measures: each pass deletes the prior verdict, mints a
+    // fresh probe page, runs the ping, and finishHealthProbe deletes
+    // it.  The guard asserts every minted page dies.
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        manager->requestHealthProbe(id, true);
+        QWebEnginePage *probe = nullptr;
+        QTRY_VERIFY_WITH_TIMEOUT(
+            (probe = qobject_cast<ExtensionChromePage *>(
+                 manager->healthProbePage())) != nullptr,
+            15000);
+        const QPointer<QWebEnginePage> probeGuard(probe);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !manager->healthProbeDetail(id).isEmpty(), 60000);
+        QTRY_VERIFY_WITH_TIMEOUT(!probeGuard, 15000);
+    }
+
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->removeExtension(id);
+    QDir(dir).removeRecursively();
+}
+
+// MRG07 — PortEnd + pending-mid churn, the second merge seam: the
+// relay's register/expire cycles exercised AT and PAST the SEC26-3
+// bounds (kMaxPortEndsPerChan = 64, kMaxPortChans = 1024,
+// kMaxRelayPending = 512), on BOTH kinds merged master's generalized
+// PortEnd::target carries — ChromeBridge shim contexts and
+// ExtensionPageBridge page agents — plus every removal path
+// (respond/disconnect, the 30 s expiry timers, unregister death).
+void tst_ExtensionManager::relayPortChurn()
+{
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-relaychurn-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-relaychurn\","
+                "\"version\":\"1.0\"}");
+        f.close();
+    }
+    const QString extId = QStringLiteral("relaychurn00000000000001");
+    ChromeBridge bg(extId, QStringLiteral("tst-relaychurn"), dir);
+    ChromeBridge peer(extId, QStringLiteral("tst-relaychurn"), dir);
+    QVERIFY(!runtime->registerRelayContext(
+                &bg, QStringLiteral("background")).isEmpty());
+    QVERIFY(!runtime->registerRelayContext(
+                &peer, QStringLiteral("popup")).isEmpty());
+
+    // --- per-chan end cap, at and past ------------------------------
+    const QString capChan = extId + QStringLiteral("#cap");
+    for (int i = 0; i < 64; ++i)
+        QCOMPARE(runtime->relayPortConnect(
+                     &bg, capChan, QStringLiteral("e%1").arg(i),
+                     QString(), QString()), 1);
+    // End 65 is refused — no append, no fan-out.
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, capChan, QStringLiteral("e64"),
+                 QString(), QString()), 0);
+    // Dedup under the cap: re-registering e0 refuses too.
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, capChan, QStringLiteral("e0"),
+                 QString(), QString()), 0);
+    // The 63 non-sender ends still deliver.
+    QCOMPARE(runtime->relayPortMessage(
+                 &bg, capChan, QStringLiteral("e0"),
+                 QJsonValue(QStringLiteral("m"))), 63);
+    // Expire half: disconnect every end — the chan dies on empty.
+    for (int i = 0; i < 64; ++i)
+        runtime->relayPortDisconnect(
+            &bg, capChan, QStringLiteral("e%1").arg(i));
+    QCOMPARE(runtime->relayPortMessage(
+                 &bg, capChan, QStringLiteral("e0"),
+                 QJsonValue(1)), 0);
+
+    // --- channel-count cap, at and past -----------------------------
+    // The check runs AFTER m_portEnds[chan] inserts the empty list,
+    // so the bound is map-size 1024 = at most 1023 populated chans —
+    // the 1024th distinct new channel is the first refusal.
+    int accepted = 0;
+    for (int i = 0; i < 1100; ++i) {
+        if (runtime->relayPortConnect(
+                &bg, extId + QStringLiteral("#c%1").arg(i),
+                QStringLiteral("x"), QString(), QString()) == 1)
+            ++accepted;
+        else
+            break;
+    }
+    QCOMPARE(accepted, 1023);
+    // An existing chan still accepts ends under its per-chan cap.
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, extId + QStringLiteral("#c0"),
+                 QStringLiteral("y"), QString(), QString()), 1);
+    QCOMPARE(runtime->relayPortMessage(
+                 &bg, extId + QStringLiteral("#c0"),
+                 QStringLiteral("x"), QJsonValue(1)), 1);
+    // Disconnect a slice; the rest die wholesale on the unregister
+    // below — the death-path sweep of the same ends.
+    for (int i = 1; i < 16; ++i)
+        runtime->relayPortDisconnect(
+            &bg, extId + QStringLiteral("#c%1").arg(i),
+            QStringLiteral("x"));
+
+    // --- pending-mid churn ------------------------------------------
+    // Resolved cycles: send -> respond clears entry AND its timer.
+    for (int cycle = 0; cycle < 4; ++cycle) {
+        const QString mid = extId + QStringLiteral("#m%1").arg(cycle);
+        QCOMPARE(runtime->relaySend(&bg, mid, QJsonObject()), 1);
+        QVERIFY(runtime->relayRespond(
+                    &peer, mid, QJsonValue(cycle)));
+    }
+    // Fill the pending bound; the send past it is refused.
+    for (int i = 0; i < 512; ++i) {
+        const QString mid = extId + QStringLiteral("#f%1").arg(i);
+        QCOMPARE(runtime->relaySend(&bg, mid, QJsonObject()), 1);
+    }
+    QCOMPARE(runtime->relaySend(
+                 &bg, extId + QStringLiteral("#f512"),
+                 QJsonObject()), 0);
+    // Death-path expire: unregister removes every pending mid this
+    // bridge owns AND its expiry timer (and sweeps the ~1000 live
+    // port-end channels above, pushing disconnects at survivors).
+    runtime->unregisterRelayContext(&bg);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(!runtime->relayRespond(
+                &peer, extId + QStringLiteral("#f0"),
+                QJsonValue(1)));
+    QVERIFY(!runtime->registerRelayContext(
+                &bg, QStringLiteral("background")).isEmpty());
+
+    // --- page-agent ends: the OTHER PortEnd::target kind ------------
+    auto *view = new QWebEngineView;
+    auto *page = new QWebEnginePage(
+        BrowserApplication::instance()->webEngineProfile(), view);
+    view->setPage(page);
+    page->load(QUrl(QStringLiteral("about:blank")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        page->url() == QUrl(QStringLiteral("about:blank")), 15000);
+    auto *agent = new ExtensionPageBridge(page);
+    QSignalSpy agentSpy(agent, &ExtensionPageBridge::extEvent);
+    QSignalSpy bgSpy(&bg, &ChromeBridge::hostEvent);
+
+    // Page + bridge ends share one chan — deliveries cross kinds.
+    const QString pageChan = extId + QStringLiteral("#pg");
+    QVERIFY(runtime->pagePortConnect(
+                agent, extId, pageChan, QStringLiteral("pg0"),
+                QStringLiteral("n"), QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, pageChan, QStringLiteral("bg0"),
+                 QString(), QString()), 1);
+    // page -> bridge end.
+    QCOMPARE(runtime->pagePortMessage(
+                 agent, pageChan, QStringLiteral("pg0"),
+                 QJsonValue(QStringLiteral("hi")))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("delivered")).toInt(),
+             1);
+    // bridge -> page end: '__arktos.portMessage' lands on extEvent.
+    QCOMPARE(runtime->relayPortMessage(
+                 &bg, pageChan, QStringLiteral("bg0"),
+                 QJsonValue(QStringLiteral("yo"))), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(agentSpy.size() >= 1, 10000);
+    QCOMPARE(agentSpy.last().at(0).toString(),
+             QStringLiteral("__arktos.portMessage"));
+
+    // Register/disconnect cycles on the page end.
+    for (int cycle = 0; cycle < 8; ++cycle) {
+        const QString pid = QStringLiteral("pc%1").arg(cycle);
+        QVERIFY(runtime->pagePortConnect(
+                    agent, extId, pageChan, pid, QString(),
+                    QJsonObject())
+                    .value(QLatin1String("ok")).toBool());
+        runtime->pagePortMessage(agent, pageChan, pid, QJsonValue(1));
+        runtime->pagePortDisconnect(agent, pageChan, pid);
+    }
+
+    // Page-originated send resolves back onto the agent's extEvent.
+    const QString pmid = extId + QStringLiteral("#ps0");
+    QVERIFY(runtime->pageSend(
+                agent, extId, pmid, QJsonValue(1), QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    QVERIFY(runtime->relayRespond(&peer, pmid,
+                                  QJsonValue(QStringLiteral("pong"))));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ([&]() {
+            for (const QList<QVariant> &args : agentSpy) {
+                if (args.value(0).toString()
+                        == QLatin1String("__arktos.extResponse")
+                    && args.value(1).toJsonObject()
+                           .value(QLatin1String("mid")).toString()
+                       == pmid)
+                    return true;
+            }
+            return false;
+        }()), 10000);
+
+    // Host->page delivery + respond round trip: bg waits, the agent
+    // answers, the reply resolves as '__arktos.deliverResponse'.
+    const QString dmid = extId + QStringLiteral("#pd0");
+    runtime->pageDeliver(agent, extId, dmid, QJsonValue(2),
+                         QJsonObject(), &bg);
+    QVERIFY(runtime->pageRespond(agent, dmid,
+                                 QJsonValue(QStringLiteral("ok")), true)
+                .value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ([&]() {
+            for (const QList<QVariant> &args : bgSpy) {
+                if (args.value(0).toString()
+                        == QLatin1String("__arktos.deliverResponse")
+                    && args.value(1).toJsonObject()
+                           .value(QLatin1String("mid")).toString()
+                       == dmid)
+                    return true;
+            }
+            return false;
+        }()), 10000);
+
+    // The real expire path: one pending mid and one page delivery
+    // left unanswered until their 30 s timeout lambdas run — the same
+    // teardown unregister takes, through the timer instead.
+    const QString xmid = extId + QStringLiteral("#xpire");
+    QCOMPARE(runtime->relaySend(&bg, xmid, QJsonObject()), 1);
+    const QString dexpire = extId + QStringLiteral("#dxpire");
+    runtime->pageDeliver(agent, extId, dexpire, QJsonValue(3),
+                         QJsonObject(), &bg);
+    QTest::qWait(32000);
+    // Both entries are gone — late answers find no slot, and the
+    // delivery timeout resolved its waiter with the honest
+    // no-response shape.
+    QVERIFY(!runtime->relayRespond(&peer, xmid, QJsonValue(1)));
+    QCOMPARE(runtime->pageRespond(agent, dexpire, QJsonValue(1), false)
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unknown-mid"));
+    {
+        bool resolved = false;
+        for (const QList<QVariant> &args : bgSpy) {
+            if (args.value(0).toString()
+                    != QLatin1String("__arktos.deliverResponse"))
+                continue;
+            const QJsonObject payload = args.value(1).toJsonObject();
+            if (payload.value(QLatin1String("mid")).toString() == dexpire
+                    && payload.value(QLatin1String("response")).isNull()
+                    && !payload.value(QLatin1String("hadListeners"))
+                            .toBool())
+                resolved = true;
+        }
+        QVERIFY(resolved);
+    }
+
+    // Page-death expire: ~ExtensionPageBridge runs
+    // unregisterPageContext — the page's ends and pending sends die
+    // with it and survivors get the disconnect push.
+    const QString deadChan = extId + QStringLiteral("#dead");
+    QVERIFY(runtime->pagePortConnect(
+                agent, extId, deadChan, QStringLiteral("d0"),
+                QString(), QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, deadChan, QStringLiteral("bgd"),
+                 QString(), QString()), 1);
+    QVERIFY(runtime->pageSend(
+                agent, extId, extId + QStringLiteral("#pend"),
+                QJsonValue(1), QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    const QPointer<ExtensionPageBridge> agentGuard(agent);
+    const QPointer<QWebEnginePage> pageObjGuard(page);
+    view->deleteLater();
+    QTRY_VERIFY_WITH_TIMEOUT(!agentGuard && !pageObjGuard, 15000);
+    // The agent's ends died with it — survivors got the disconnect
+    // push, and only bg's end remains on the chan.
+    bool pushedDisconnect = false;
+    for (const QList<QVariant> &args : bgSpy) {
+        if (args.value(0).toString()
+            == QLatin1String("__arktos.portDisconnect"))
+            pushedDisconnect = true;
+    }
+    QVERIFY(pushedDisconnect);
+    QCOMPARE(runtime->relayPortMessage(
+                 &bg, deadChan, QStringLiteral("bgd"),
+                 QJsonValue(1)), 0);
+
+    runtime->unregisterRelayContext(&bg);
+    runtime->unregisterRelayContext(&peer);
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QDir(dir).removeRecursively();
 }
 

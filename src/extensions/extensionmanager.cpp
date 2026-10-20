@@ -1824,6 +1824,11 @@ QString ExtensionManager::healthProbeDetail(const QString &id) const
     return m_healthDetails.value(id);
 }
 
+QWebEnginePage *ExtensionManager::healthProbePage() const
+{
+    return m_healthPage;
+}
+
 void ExtensionManager::abandonHealthProbe()
 {
     // The profile under the probe page is going away — drop the page

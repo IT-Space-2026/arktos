@@ -4357,3 +4357,11 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   instead of trusting the caller; and relay bookkeeping is bounded
   with duplicate message-ID rejection to stop response races and
   memory growth. The full audit report lives at .devin/SEC26-audit.md.
+- Post-merge extension leak sweep (MRG07): an instrumented
+  AddressSanitizer/LeakSanitizer churn pass over the newest extension
+  object paths — action-popup open/dismiss and health-probe
+  mint/destroy cycles on the navigation-locked chrome page, and
+  message-relay port/message/channel register-expire cycles at and
+  past their bounds, on both endpoint kinds — reports zero leaks
+  allocated in Arktos code. Two new self-test legs keep the coverage
+  permanent; the full report lives at .devin/MRG07-scan.md.

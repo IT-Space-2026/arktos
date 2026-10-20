@@ -353,7 +353,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MRG01 | Post-merge integration A — default-flavor build+link (webengine+servo) on merged master — details below | done | 0 | clean make -j4 build+link on merged master — arktos links host ld.so, 0 WPE, --quit-after-load rc=0; merge-artifact fixes folded in (avatar reload after wipe, Q_UNUSED, offscreen test fixes, ENGINE.md ledger); pre-reslice webkit=1 gates+suite evidence in details for MRG05/06 reuse |
 | MRG05 | Post-merge integration B — `make check` 4 gates + focused extension/engine autotest legs on the default build — details below | done | 0 | 4 gates PASS (warnings 0 diags, supplychain clean, engine-audit 185 files, rustcov 94.11/91.83/89.25 >=85); suite 2210p/2f/42s over 96 binaries — both reds load flakes re-verified standalone; focused legs green: extensionmanager 48/0/4 (nav-lock+ER20 lift+relay+actionPopup together), engineswitch 27/0/18, engine-audit gate |
 | MRG06 | Post-merge integration C — webkit=1 three-engine build+link + webkit legs (source webkit-env.sh) — details below | done | 2 | webkit=1 build+link clean; --engine-list lists all 3 (Chromium 140 / Servo 0.7.0 / WebKit 2.54.1) after rebuilding stale Oct-14 libservo_embed.so (pre-ENG36 symbols); 18/18 webkit* legs PASS standalone; NEW BUG diagnosed: engineTabChurn's servo cycles poison the next webkit GL page (SIGSEGV — EGL display terminated by surfman teardown; raster unaffected; details+repro filed for MRG08) |
-| MRG07 | Post-merge leak sweep A — ASan/LSan churn on extension merge seams (ExtensionChromePage popup/probe cycles, relay PortEnd register/expire at caps) — details below | pending | 0 | needs:task:MRG05 |
+| MRG07 | Post-merge leak sweep A — ASan/LSan churn on extension merge seams (ExtensionChromePage popup/probe cycles, relay PortEnd register/expire at caps) — details below | done | 1 | .devin/MRG07-scan.md: new chromePageChurn+relayPortChurn legs green plain & ASan; full tst_extensionmanager 50/0f/4s under LSan; 0 src/-sited leak records (10 upstream only); chan-cap observed boundary 1023 pinned in test |
 | MRG08 | Post-merge leak sweep B — ASan/LSan per-backend EngineTab churn on merged master (webengine+servo, webkit when built) — details below | pending | 0 | needs:task:MRG05 |
 | MRG09 | Post-merge dead-code/duplicate sweep — resolve-level leftovers, double-tracked logs, task-file/doc rot — details below | pending | 0 | needs:task:MRG05 — was MRG03 |
 | MRG10 | Post-merge security re-check — SEC26 findings survived merge: nav-lock+lift both active, sender-url verification, bounds+dedup on generalized PortEnd — details below | pending | 0 | needs:task:MRG05 — was MRG04 |
@@ -2474,6 +2474,28 @@ Post-merge leak sweep A — extension merge seams under ASan/LSan.
 
 Verify: .devin/MRG07-scan.md; zero src/-sited leaks or all
 fixed+re-verified.
+
+Result (2026-10-20, on 4548d884): DONE — full evidence in
+.devin/MRG07-scan.md.  Two new committed churn legs:
+`tst_extensionmanager::chromePageChurn` (3x action-popup open/dismiss
+with ExtensionChromePage-type+nav-lock+JS-on assertions and QPointer
+teardown guards; 3x forced health-probe mint/destroy via a new
+`ExtensionManager::healthProbePage()` test seam) and
+`relayPortChurn` (per-chan 64-end cap + #65/dedup refusal + 63-way
+fan-out; chan-count cap to first refusal — observed boundary 1023
+populated channels, pinned in test; 512-deep pending-mid fill + 513th
+refusal + unregister death-expire over ~1000 live chans; page-agent
+ends — connect/message/disconnect cycles, pageSend resolve,
+pageDeliver/pageRespond round-trip, real 30 s expiries, and a
+page-death unregister sweep).  Sweep on a throwaway tree
+(`qmake6 -spec linux-clang CONFIG+=sanitize`, `no-rust nowebkit=1`
+flavor — prebuilt artifacts don't exist in a git-ls-files copy and
+neither lane participates in the seams): focused legs 9+3 allocs
+upstream-only, full binary 50 PASS / 4 skips / 0 fails with 12 allocs
+upstream-only — zero src/-sited records by the check-leaks.sh
+allocation-site rule.  One benign UBSan vptr note (QPointer get()
+polling a mid-teardown QFrame) analyzed in the scan; no leaks found,
+no fixes needed, no suppressions added.
 
 ### MRG08
 

@@ -411,6 +411,12 @@ public:
     // the Preferences details pane; empty until a probe finishes.
     QString healthProbeDetail(const QString &id) const;
 
+    // Test seam (MRG07): the live probe page while a measurement is
+    // in flight — lets churn tests guard that each forced probe mints
+    // AND tears down its ExtensionChromePage.  (Out-of-line — QPointer
+    // needs the complete type.)
+    QWebEnginePage *healthProbePage() const;
+
     // SEC25 install-integrity pin: hex sha256 over an unpacked
     // extension's whole file tree — every file's relative path and
     // contents, hashed in sorted order.  Empty when the directory
