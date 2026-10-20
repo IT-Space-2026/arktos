@@ -81,6 +81,9 @@ bool XbelWriter::write(const QString &fileName, const BookmarkNode *root)
 
 bool XbelWriter::write(QIODevice *device, const BookmarkNode *root)
 {
+    if (!device || !root)
+        return false;
+
     setDevice(device);
 
     writeStartDocument();
@@ -95,7 +98,7 @@ bool XbelWriter::write(QIODevice *device, const BookmarkNode *root)
     }
 
     writeEndDocument();
-    return true;
+    return !hasError();
 }
 
 void XbelWriter::writeItem(const BookmarkNode *parent)
@@ -105,6 +108,8 @@ void XbelWriter::writeItem(const BookmarkNode *parent)
         writeStartElement(QLatin1String("folder"));
         writeAttribute(QLatin1String("folded"), parent->expanded ? QLatin1String("no") : QLatin1String("yes"));
         writeTextElement(QLatin1String("title"), parent->title);
+        if (!parent->desc.isEmpty())
+            writeTextElement(QLatin1String("desc"), parent->desc);
         for (int i = 0; i < parent->children().count(); ++i)
             writeItem(parent->children().at(i));
         writeEndElement();
@@ -114,8 +119,12 @@ void XbelWriter::writeItem(const BookmarkNode *parent)
         if (!parent->url.isEmpty())
             writeAttribute(QLatin1String("href"), parent->url);
         writeTextElement(QLatin1String("title"), parent->title);
+        // <desc> is an ELEMENT in XBEL and in XbelReader.  The old code
+        // wrote it as an attribute AFTER the title element — past
+        // content, so QXmlStreamWriter emitted the "desc=" pair as
+        // stray text and the description was lost on re-read.
         if (!parent->desc.isEmpty())
-            writeAttribute(QLatin1String("desc"), parent->desc);
+            writeTextElement(QLatin1String("desc"), parent->desc);
         writeEndElement();
         break;
     case BookmarkNode::Separator:

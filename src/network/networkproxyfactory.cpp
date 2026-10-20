@@ -38,6 +38,12 @@ QList<QNetworkProxy> NetworkProxyFactory::queryProxy(const QNetworkProxyQuery &q
 {
     QList<QNetworkProxy> ret;
 
+    // Returned entries of type DefaultProxy defer to
+    // QNetworkProxy::applicationProxy() at connect time — this is what
+    // keeps app-side requests inside a tor process routed through the
+    // managed SOCKS5 listener instead of bypassing it (see the class
+    // comment in the header).
+
     if (query.protocolTag() == QLatin1String("http") && m_httpProxy.type() != QNetworkProxy::DefaultProxy)
         ret << m_httpProxy;
     ret << m_globalProxy;

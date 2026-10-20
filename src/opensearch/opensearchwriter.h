@@ -29,11 +29,13 @@ class OpenSearchWriter : public QXmlStreamWriter
 public:
     OpenSearchWriter();
 
-    bool write(QIODevice *device, OpenSearchEngine *engine);
+    // Opens \a device for writing when it is closed; \a engine is only
+    // read from.  Returns false when the device cannot be opened or
+    // \a engine is null.
+    [[nodiscard]] bool write(QIODevice *device, const OpenSearchEngine *engine);
 
 private:
-    void write(OpenSearchEngine *engine);
-
+    void write(const OpenSearchEngine *engine);
 };
 
 #endif // OPENSEARCHWRITER_H

@@ -57,9 +57,9 @@ OpenSearchWriter::OpenSearchWriter()
 
     \return true on success and false on failure.
 */
-bool OpenSearchWriter::write(QIODevice *device, OpenSearchEngine *engine)
+bool OpenSearchWriter::write(QIODevice *device, const OpenSearchEngine *engine)
 {
-    if (!engine)
+    if (!engine || !device)
         return false;
 
     if (!device->isOpen()) {
@@ -69,10 +69,10 @@ bool OpenSearchWriter::write(QIODevice *device, OpenSearchEngine *engine)
 
     setDevice(device);
     write(engine);
-    return true;
+    return !hasError();
 }
 
-void OpenSearchWriter::write(OpenSearchEngine *engine)
+void OpenSearchWriter::write(const OpenSearchEngine *engine)
 {
     writeStartDocument();
     writeStartElement(QStringLiteral("OpenSearchDescription"));

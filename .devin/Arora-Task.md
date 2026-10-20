@@ -359,7 +359,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MRG10 | Post-merge security re-check — SEC26 findings survived merge: nav-lock+lift both active, sender-url verification, bounds+dedup on generalized PortEnd — details below | done | 1 | SEC26-1/2 hold; SEC26-3 gap fixed — pageSend/pagePortConnect/pagePortAccept/pageDeliver merged in without bridge-side dup-mid+bounds; now parity + tst legs covering both PortEnd kinds; 4 gates PASS, suite green (extensionCommands = known offscreen SIGTRAP, PASS --disable-gpu) |
 | PRIV07 | Private-mode teardown: destroy the shared OTR profile when the last private page closes (Chrome-incognito lifecycle) — details below | blocked | 5 | blocked:exceeded 5 restarts |
 | PRIV08 | Global Privacy Control (the working successor to DNT): Sec-GPC header + navigator.globalPrivacyControl, settings toggle — details below | done | 0 | Sec-GPC+JS behind privacy/gpcSignal, default on, tor unconditional; gpc-smoke 12/12 rc0, settings round-trip test PASS, 4 gates PASS, suite red only env WPE g_sort_array |
-| LEG01 | Untouched-source review: xbelwriter, networkproxyfactory, treesortfilterproxymodel, opensearch headers, fetchLinks.js — modernize+secure, fix in-task — details below | pending | 0 | user request — 6 code files survived the Qt6 port with zero edits; review for correctness/security (proxy URL parsing, page-injected JS, XML escaping), apply CPP01-era best practices, kill dead paths |
+| LEG01 | Untouched-source review: xbelwriter, networkproxyfactory, treesortfilterproxymodel, opensearch headers, fetchLinks.js — modernize+secure, fix in-task — details below | done | 0 | user request — DONE: real bug fixed — xbelwriter wrote bookmark desc as a late attribute (Qt6 emits it as stray text, desc lost; folder desc never written) → now <desc> elements; +null/device guards, hasError() returns, [[nodiscard]] (flushed 2 ignored results: bookmarksmodel drop-data, opensearchmanager saveDirectory); proxy factory documented (DefaultProxy result defers to applicationProxy — tor-mode safe, can't fight setApplicationProxy); fetchLinks.js new Object/Array→literals (page-clobberable globals); qtry.h dead Qt4 macro block deleted (Qt6 qtest.h provides QTRY_*); tst_lineedit (QWidget*)0→nullptr; treesortfilterproxymodel clean. Verified: build 0 warnings, tst_xbel 14/14 incl new writeDescription round-trip, tst_opensearchengine 55/55, tst_opensearchwriter 7/7, tst_networkaccessmanager 9/9, tst_lineedit 17/17, --quit-after-load rc=0 offscreen |
 | LEG02 | Untouched-data audit: searchengine XMLs (dead providers? http->https?), useragents.qrc staleness, icon assets still referenced?, licenses — details below | pending | 0 | user request — ~40 asset/data files never touched incl. 2008-era provider configs and UA strings that may be stale or mislead fingerprinting |
 | LEG03 | Dead-pipeline sweep: src/locale tooling, generateAuthors/generateReleaseContributors vs new AUTHORS policy, tools/htmlToXBel fixtures — wire-in or remove — details below | pending | 0 | user request — locale machinery never activated under Arktos; upstream scripts may contradict the maintainer+Devin credit policy |
 | LEG04 | Untouched test-infra review: qtry.h usage, tst_lineedit.cpp build status, stale .gitignores, fixture validity — wire in or delete — details below | pending | 0 | user request — qtry.h and an untouched tst_lineedit may be orphaned outside the autotest SUBDIRS |
@@ -2808,6 +2808,58 @@ Verify: build + check-warnings clean; any behavioral change covered
 by the existing autotest for that component (xbelwriter has
 autotests/xbel fixtures, proxy factory has manual config paths —
 exercise via a leg if logic changes).
+
+DONE (LEG01 run, 2026-10-20) — findings per file:
+
+- `xbelwriter.{h,cpp}`: real defect — `<desc>` was written with
+  writeAttribute() AFTER the `<title>` element; past content Qt6 emits
+  the `desc="..."` pair as stray character data inside the element
+  (verified against Qt 6.12: `<title>T</title> desc="x"` comes out as
+  text), so bookmark descriptions were silently corrupted on every
+  save and never re-read — XbelReader parses `<desc>` as a child
+  element (xbelreader.cpp:199-223).  Folder `desc` was never written
+  at all (the reader accepts it).  Both now go through
+  writeTextElement(); write(QIODevice*,root) gained !device/!root
+  guards, returns !hasError() so write failures propagate, and the
+  overloads are [[nodiscard]] — which flagged two callers ignoring the
+  result: bookmarksmodel.cpp:327 mimeData (now skips the entry) and
+  opensearchmanager.cpp saveDirectory (now warns).
+- `networkproxyfactory.{h,cpp}`: no defect.  queryProxy() returns
+  {m_httpProxy?, m_globalProxy}; a per-NAM factory result replaces
+  QNetworkProxy::applicationProxy() but entries typed DefaultProxy
+  defer back to it at connect time — in tor mode loadSettings() never
+  loads a proxy (isTorMode() guard), so the factory yields
+  {DefaultProxy} and app-side fetches still resolve through the
+  managed SOCKS5 listener.  Contract documented in the header; dropped
+  redundant `virtual` (override already implies it).
+- `treesortfilterproxymodel.cpp`: clean — hasChildren() folder pass-
+  through is deliberate tree-filter semantics; no Qt4 idioms/UB found.
+- `opensearchenginedelegate.h`: includes are load-bearing (nested
+  QNAM::Operation enum can't be fwd-declared); added the ownership/
+  threading contract comment.  NOTE: setDelegate/requestSearchResults
+  have no production callers, but the hook is covered by
+  tst_opensearchengine::delegate() — kept deliberately, not dead-
+  deleted.
+- `opensearchwriter.h`: write() is now const-correct on the engine
+  (readers only), gained [[nodiscard]] + device-null guard +
+  hasError() return matching xbelwriter.
+- `fetchLinks.js`: IIFE already exposes nothing to page JS; `new
+  Array`/`new Object` → literals so a hostile page reassigning those
+  globals can't shape the runJavaScript result.  Deliberately NOT
+  converted to the contextimage.js namespace pattern — the IIFE
+  returns the list directly and needs no follow-up calls.
+- `qtry.h`: the whole macro body was dead — Qt6 <qtest.h> defines
+  QTRY_COMPARE first, so the #ifndef guard never let it compile.
+  Deleted; file kept as the include point (per AUD01 it is listed in
+  autotests.pri).
+- `tst_lineedit.cpp`: `(QWidget*)0` → nullptr x3 (the code under test
+  already null-guards — behavior unchanged).
+
+Verified: clean qmake6+make 0 warnings; tst_xbel 14/14 incl. new
+writeDescription round-trip (folder+bookmark desc with entity-heavy
+strings); tst_opensearchengine 55/55, tst_opensearchwriter 7/7,
+tst_networkaccessmanager 9/9, tst_lineedit 17/17;
+`./arktos --quit-after-load` rc=0 offscreen.
 
 
 ### LEG02

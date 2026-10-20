@@ -71,8 +71,8 @@ class XbelWriter : public QXmlStreamWriter
 {
 public:
     XbelWriter();
-    bool write(const QString &fileName, const BookmarkNode *root);
-    bool write(QIODevice *device, const BookmarkNode *root);
+    [[nodiscard]] bool write(const QString &fileName, const BookmarkNode *root);
+    [[nodiscard]] bool write(QIODevice *device, const BookmarkNode *root);
 
 private:
     void writeItem(const BookmarkNode *parent);

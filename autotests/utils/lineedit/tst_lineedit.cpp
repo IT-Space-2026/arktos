@@ -84,9 +84,9 @@ void tst_LineEdit::lineedit_data()
 void tst_LineEdit::lineedit()
 {
     SubLineEdit edit;
-    edit.addWidget((QWidget*)0, LineEdit::LeftSide);
-    edit.addWidget((QWidget*)0, LineEdit::RightSide);
-    edit.removeWidget((QWidget*)0);
+    edit.addWidget(nullptr, LineEdit::LeftSide);
+    edit.addWidget(nullptr, LineEdit::RightSide);
+    edit.removeWidget(nullptr);
     QCOMPARE(edit.widgetSpacing(), 3);
     edit.setWidgetSpacing(-1);
     QCOMPARE(edit.textMargin(LineEdit::LeftSide), 0);

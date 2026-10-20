@@ -4416,3 +4416,16 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   lists — Bitwarden/hosted-runtime, the extensions overview, Tor,
   downloads, the per-tab engine switcher, Rust stores, site trust
   and the profile menu — same content, readable layout.
+- Bookmark descriptions now actually save (LEG01): the XBEL writer
+  emitted a bookmark's description as an attribute placed after the
+  element's text content, which Qt writes out as stray text — so
+  descriptions were silently lost on every save, and folder
+  descriptions were never written at all. Descriptions are now stored
+  as proper <desc> elements for both bookmarks and folders and survive
+  a save/reload round-trip (covered by a new autotest leg). The same
+  pass hardened the small untouched core: bookmark/search-description
+  exports report write failures instead of pretending success, two
+  spots that silently dropped a failed write were fixed, the in-page
+  linked-resource collector no longer relies on globals a hostile page
+  can replace, and the per-connection proxy factory's interaction with
+  the process-wide (Tor) proxy is documented — it cannot override it.

@@ -324,7 +324,8 @@ QMimeData *BookmarksModel::mimeData(const QModelIndexList &indexes) const
         buffer.open(QBuffer::ReadWrite);
         XbelWriter writer;
         const BookmarkNode *parentNode = node(index);
-        writer.write(&buffer, parentNode);
+        if (!writer.write(&buffer, parentNode))
+            continue;
         stream << encodedData;
         urls.append(index.data(BookmarksModel::UrlRole).toUrl());
     }

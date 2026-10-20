@@ -32,6 +32,7 @@
 #include "opensearchwriter.h"
 #include "startupprofile.h"
 
+#include <qdebug.h>
 #include <qdir.h>
 #include <qdiriterator.h>
 #include <qfile.h>
@@ -631,7 +632,8 @@ void OpenSearchManager::saveDirectory(const QString &dirName)
         if (!file.open(QIODevice::WriteOnly))
             continue;
 
-        writer.write(&file, engine);
+        if (!writer.write(&file, engine))
+            qWarning() << "OpenSearchManager: failed to write" << fileName;
     }
 }
 

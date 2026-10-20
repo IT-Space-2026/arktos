@@ -48,6 +48,7 @@ private slots:
 
     void write_data();
     void write();
+    void writeDescription();
 
     void hostileInput();
     void errorPaths();
@@ -236,6 +237,37 @@ void tst_Xbel::write()
     BookmarkNode *writtenRoot = reader.read(file.fileName());
     QVERIFY(*writtenRoot == *root);
     delete root;
+    delete writtenRoot;
+}
+
+// LEG01: <desc> round-trip — an XBEL child element (what the reader
+// parses), which the writer used to emit as an attribute placed after
+// the <title> element: QXmlStreamWriter renders late attributes as
+// stray text, so the description never came back on re-read — and
+// folder descriptions were never written at all.  No fixture carries
+// a <desc>, so this builds the tree by hand (entity-heavy values also
+// cover the escaping path).
+void tst_Xbel::writeDescription()
+{
+    BookmarkNode root(BookmarkNode::Root);
+    BookmarkNode *folder = new BookmarkNode(BookmarkNode::Folder, &root);
+    folder->title = QLatin1String("Folder");
+    folder->desc = QLatin1String("folder <desc> & \"entities\"");
+    BookmarkNode *bookmark = new BookmarkNode(BookmarkNode::Bookmark, folder);
+    bookmark->url = QLatin1String("http://b.example/?a=1&b=2");
+    bookmark->title = QLatin1String("Bookmark");
+    bookmark->desc = QString::fromUtf8("bookmark desc \xc3\xa9\xc3\xbc");
+
+    QTemporaryFile file;
+    QVERIFY(file.open());
+    SubXbelWriter writer;
+    QVERIFY(writer.write(file.fileName(), &root));
+
+    SubXbelReader reader;
+    BookmarkNode *writtenRoot = reader.read(file.fileName());
+    QVERIFY(writtenRoot);
+    QCOMPARE(reader.error(), QXmlStreamReader::NoError);
+    QVERIFY(*writtenRoot == root);
     delete writtenRoot;
 }
 

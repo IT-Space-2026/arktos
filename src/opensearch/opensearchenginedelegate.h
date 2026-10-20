@@ -23,6 +23,11 @@
 #include <qnetworkaccessmanager.h>
 #include <qnetworkrequest.h>
 
+// Contract: OpenSearchEngine never takes ownership of a delegate
+// passed to setDelegate() — the delegate must outlive every engine it
+// is set on, or be unset first.  performSearchRequest() is invoked
+// synchronously from requestSearchResults() on the engine's thread;
+// \a data carries the POST body (empty for GET).
 class OpenSearchEngineDelegate
 {
 public:
