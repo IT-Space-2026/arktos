@@ -1,4 +1,13 @@
-The list of the maintainers for each translation.  Patches should be reviewed by them before being merged in.
+Translation provenance for Arktos.
+
+The people below authored the upstream Arora translations these
+catalogs grew from.  The list is kept as attribution only — they are
+not reviewers for this project and patches are not routed to them.
+
+Current flow: catalogs are completed on the `lang-work` branch by the
+translation task lane (.devin/taskloop-lang.sh) and reviewed by the
+Arktos maintainer before merge.  Run calculate_completion.sh in this
+directory for per-catalog progress.
 
 cs_CZ - David Kolibáč <david@kolibac.cz>
 es - Miguel Anxo Bouzada <mbouzada@gmail.com>

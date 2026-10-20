@@ -1621,6 +1621,17 @@ Build, tests & tools:
   the restored data outside the sealed tree on unlock, and the
   same instant-swap window on the hold restore is now re-verified.
   Consolidated report: .devin/security/AUDIT02-report.md.
+- Dead-pipeline sweep (LEG03): the upstream `generateAuthors` and
+  `generateReleaseContributors` scripts are removed — they regenerate
+  upstream-era contributor lists and contradict the maintainer+Devin
+  AUTHORS policy; `src/locale/maintainers` is reframed as upstream
+  attribution and the translation pipeline (TRANSLATIONS catalogs →
+  build-time `lrelease` into src/.qm/locale → LanguageManager, plus
+  the lang-work task lane) is documented in the README; the
+  htmlToXBel browser-export fixtures are exercised by a new
+  `make check-htmltoxbel` gate wired into `make check`;
+  `autotests/modeltest` is confirmed live (autotests.pri, five
+  consumers).
 0.2 (unreleased) — Qt 6 port in progress
 Build system:
     The Rust components are now the default code path: a plain `qmake` auto-detects a cargo toolchain (PATH, then ~/.cargo/bin) and builds rustcore (credential/autofill/session/bookmark/history stores, the OpenSearch engine registry, per-site decisions, url-strip, blocklist, TLS probe), rustdl (accelerated downloads) and the adblock-rust engine as part of `make`. The C++ implementations remain as the no-toolchain fallback — opt out with `qmake CONFIG+=no-rust` or per crate with `CONFIG-=rustcore` / `CONFIG-=rustdl` / `CONFIG-=adblock_rust`. With no Rust toolchain at all qmake warns loudly and builds the Qt paths so the tree always configures.

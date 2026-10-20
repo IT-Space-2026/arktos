@@ -36,7 +36,18 @@ unix {
 check.target = check
 check.commands = cd autotests && ./runTests.sh
 check.depends = check-warnings check-supplychain check-engine-audit check-rustcoverage sub-src sub-autotests
+unix:check.depends += check-htmltoxbel
 QMAKE_EXTRA_TARGETS += check
+
+# `make check-htmltoxbel` converts the bundled browser-export fixtures
+# in tools/htmlToXBel/tests/ — keeps the dead-pipeline sweep's kept
+# fixtures exercised by the suite instead of rotting (LEG03).
+unix {
+    check-htmltoxbel.target = check-htmltoxbel
+    check-htmltoxbel.commands = cd tools/htmlToXBel && $(MAKE) check
+    check-htmltoxbel.depends = sub-tools
+    QMAKE_EXTRA_TARGETS += check-htmltoxbel
+}
 
 # `make check-engine-audit` is the ENG01 coupling-map gate — every
 # source file naming a QtWebEngine symbol must be documented in

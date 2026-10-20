@@ -18,6 +18,19 @@ UI_DIR      = $$PWD/.ui
 MOC_DIR     = $$PWD/.moc
 OBJECTS_DIR = $$PWD/.obj
 
+# `make check` here converts every bundled browser-export fixture
+# (tests/*-bookmarks.html) and requires real <bookmark> output — keeps
+# the fixtures honest as the converter changes.  Reached from the root
+# `make check` via the check-htmltoxbel target.
+unix {
+    check.target = check
+    check.commands = $$OUT_PWD/htmlToXBel $$PWD/tests/firefox3-bookmarks.html > /dev/null && \
+        $$OUT_PWD/htmlToXBel $$PWD/tests/ie7-bookmarks.html > /dev/null && \
+        $$OUT_PWD/htmlToXBel $$PWD/tests/opera9-bookmarks.html > /dev/null && \
+        echo "htmlToXBel fixtures OK"
+    QMAKE_EXTRA_TARGETS += check
+}
+
 include(../../BuildProcess/install.pri)
 
 !mac {

@@ -1078,6 +1078,25 @@ the distro's *webengine*, *webchannel*, *core5compat*, *svg* and
 
 On Windows `nmake`/`jom` replaces `make`; macOS uses `make` as usual.
 
+### Translations
+
+UI catalogs live in `src/locale/*.ts` (21 locales) and are listed in
+`TRANSLATIONS` by `src/locale/locale.pri` (included from
+`src/src.pro`). Every build runs `lrelease` through the `updateqm`
+extra compiler into `src/.qm/locale/` — one of the directories
+`LanguageManager` scans at startup, alongside the installed
+`<datadir>/arktos/locale` and the bundle layout. Pick a language
+under Preferences → General → Language; "System default" follows
+`QLocale::system()`.
+
+To refresh the catalogs after source-string changes run `lupdate`
+against the project (`lupdate src/src.pro`), then build as usual.
+`src/locale/calculate_completion.sh` prints a per-catalog
+percent-done table. `src/locale/maintainers` is attribution for the
+upstream Arora translation authors — Arktos catalogs are completed on
+the `lang-work` branch by the translation task lane and reviewed by
+the maintainer.
+
 ## Testing & diagnostics
 
 - `make check` — the qtest suite (offscreen-safe); each test binary

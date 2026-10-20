@@ -361,7 +361,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | PRIV08 | Global Privacy Control (the working successor to DNT): Sec-GPC header + navigator.globalPrivacyControl, settings toggle — details below | done | 0 | Sec-GPC+JS behind privacy/gpcSignal, default on, tor unconditional; gpc-smoke 12/12 rc0, settings round-trip test PASS, 4 gates PASS, suite red only env WPE g_sort_array |
 | LEG01 | Untouched-source review: xbelwriter, networkproxyfactory, treesortfilterproxymodel, opensearch headers, fetchLinks.js — modernize+secure, fix in-task — details below | done | 0 | user request — DONE: real bug fixed — xbelwriter wrote bookmark desc as a late attribute (Qt6 emits it as stray text, desc lost; folder desc never written) → now <desc> elements; +null/device guards, hasError() returns, [[nodiscard]] (flushed 2 ignored results: bookmarksmodel drop-data, opensearchmanager saveDirectory); proxy factory documented (DefaultProxy result defers to applicationProxy — tor-mode safe, can't fight setApplicationProxy); fetchLinks.js new Object/Array→literals (page-clobberable globals); qtry.h dead Qt4 macro block deleted (Qt6 qtest.h provides QTRY_*); tst_lineedit (QWidget*)0→nullptr; treesortfilterproxymodel clean. Verified: build 0 warnings, tst_xbel 14/14 incl new writeDescription round-trip, tst_opensearchengine 55/55, tst_opensearchwriter 7/7, tst_networkaccessmanager 9/9, tst_lineedit 17/17, --quit-after-load rc=0 offscreen |
 | LEG02 | Untouched-data audit: searchengine XMLs (dead providers? http->https?), useragents.qrc staleness, icon assets still referenced?, licenses — details below | done | 0 | user request — DONE: dropped dead Google I'm Feeling Lucky (btnI redirect needs ephemeral iflsig token — lands on redirect notice); Google/Yahoo/Wikipedia/YouTube/Reddit descriptors http->https; UA presets resynced Chrome/141->presented/155 (FF 157, Safari 27); orphaned assets deleted (addtab/closetab/history.png, 128x128/run.png+license — 0 live refs, chrome uses themed icons); rustcore vendored copy + smoke/test refs updated. Verified: full build clean, 4 gates PASS (warnings, supplychain, engine-audit, rustcov 94.11/91.82/89.25), runTests.sh rc=0, --quit-after-load + --search-smoke rc=0, opensearchmanager 24/24 opensearchengine 55/55 tabwidget 36/36 useragent 9/9 |
-| LEG03 | Dead-pipeline sweep: src/locale tooling, generateAuthors/generateReleaseContributors vs new AUTHORS policy, tools/htmlToXBel fixtures — wire-in or remove — details below | pending | 0 | user request — locale machinery never activated under Arktos; upstream scripts may contradict the maintainer+Devin credit policy |
+| LEG03 | Dead-pipeline sweep: src/locale tooling, generateAuthors/generateReleaseContributors vs new AUTHORS policy, tools/htmlToXBel fixtures — wire-in or remove — details below | done | 0 | user request — DONE: generate* scripts removed (contradict AUTHORS); locale kept+documented (was already live: lrelease→src/.qm/locale→LanguageManager, maintainers→attribution); htmlToXBel fixtures verified + wired via make check-htmltoxbel; modeltest confirmed live. Verified: clean build, 4 gates PASS, check-htmltoxbel PASS, quit-after-load rc=0 |
 | LEG04 | Untouched test-infra review: qtry.h usage, tst_lineedit.cpp build status, stale .gitignores, fixture validity — wire in or delete — details below | pending | 0 | user request — qtry.h and an untouched tst_lineedit may be orphaned outside the autotest SUBDIRS |
 
 ## Task details
@@ -2973,6 +2973,45 @@ delete and note.  Nothing stays as unexplained ballast.
 Verify: build + gates; if generateAuthors is removed, README/AUTHORS
 must not reference it; if locale tooling is kept, document the flow
 in .devin or README.
+
+DONE (LEG03 run, 2026-10-20) — findings per item:
+
+- `src/locale/` — KEPT, already live (the row's premise was stale):
+  locale.pri is included by src.pro, its TRANSLATIONS + updateqm
+  extra compiler lrelease all 21 catalogs into src/.qm/locale/ on
+  every build (verified present), and LanguageManager scans
+  <appdir>/src/.qm/locale plus installed/bundle paths — the
+  Preferences > General > Language selector consumes it.  The
+  catalogs are 100% translated by the lang-work task lane
+  (.devin/taskloop-lang.sh).  Changes made: `maintainers` rewritten —
+  the upstream Arora translator list is now framed as attribution
+  (they were never Arktos reviewers; new patches go to the
+  maintainer via the lang lane); `calculate_completion.sh` kept
+  (still runs, all catalogs 100%) and `.gitattributes`
+  (`*.ts -crlf -diff -merge`) kept — correct for wholesale-
+  regenerated catalogs.  Flow documented in README §Translations.
+- `generateAuthors` + `generateReleaseContributors` — REMOVED.
+  Both mined `git log` into upstream contributor lists / gravatar
+  HTML, contradicting the maintainer+Devin AUTHORS file.  Zero live
+  references (grep over README, AUTHORS, packaging, CI, .pro/.pri).
+- `tools/htmlToXBel/` — KEPT + wired: all three fixtures
+  (firefox3/ie7/opera9) convert to valid XBEL with real bookmark
+  counts (18/13/8, verified 2026-10-20 against the Qt6 tag-tokenizer
+  converter).  New `check` target in htmlToXBel.pro runs each fixture
+  and requires the converter's non-empty result; new root
+  `check-htmltoxbel` target (unix, depends sub-tools) is a `make
+  check` prerequisite so the fixtures can't rot.
+- `autotests/modeltest/` — KEPT, already wired: autotests.pri
+  includes modeltest.pri and five live tests (notesmodel,
+  bookmarksmodel, historymanager, cookiemodel, historyui, dialogs)
+  consume the header — which TST01 already turned into a
+  QAbstractItemModelTester shim.  README/LICENSE.GPL stay per LEG01.
+
+Verified: qmake -r + make -j2 clean; make check-htmltoxbel →
+"htmlToXBel fixtures OK"; --quit-after-load rc=0 offscreen;
+check-engine-audit PASS; check-supplychain PASS;
+check-rustcoverage PASS (94.11/91.82/89.25 >= 85);
+check-warnings PASS (no-rust throwaway build, 0 diagnostics).
 
 
 ### LEG04
