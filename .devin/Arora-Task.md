@@ -358,6 +358,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MRG09 | Post-merge dead-code/duplicate sweep — resolve-level leftovers, double-tracked logs, task-file/doc rot — details below | done | 1 | untracked 2 runtime files, 3 ExtensionChromePage swaps, WK queue superseded — build+4 gates+suite PASS |
 | MRG10 | Post-merge security re-check — SEC26 findings survived merge: nav-lock+lift both active, sender-url verification, bounds+dedup on generalized PortEnd — details below | done | 1 | SEC26-1/2 hold; SEC26-3 gap fixed — pageSend/pagePortConnect/pagePortAccept/pageDeliver merged in without bridge-side dup-mid+bounds; now parity + tst legs covering both PortEnd kinds; 4 gates PASS, suite green (extensionCommands = known offscreen SIGTRAP, PASS --disable-gpu) |
 | PRIV07 | Private-mode teardown: destroy the shared OTR profile when the last private page closes (Chrome-incognito lifecycle) — details below | pending | 0 | user request — audit found s_privateProfile is qApp-owned and lives to process exit; closing all private tabs leaves in-memory cookies/logins/storage reachable by the NEXT private tab in the same run |
+| PRIV08 | Global Privacy Control (the working successor to DNT): Sec-GPC header + navigator.globalPrivacyControl, settings toggle — details below | pending | 0 | user request — audit confirmed no DNT/GPC exists; GPC is the legally-backed opt-out signal (CCPA/CPRA, Colorado) Brave/Mullvad ship; header goes via the proven setHttpHeader interceptor path, JS surface via document-creation script |
 
 ## Task details
 
@@ -2655,3 +2656,59 @@ Verify:
 - ASan/LSan leg over open/close-all/reopen churn — no UAF on the
   destroyed profile, no leaked QWebEngineProfile.
 - `make check` gates + tst_browserapp/tst_tabwidget green.
+
+
+### PRIV08
+
+Global Privacy Control — the successor to Do Not Track that sites
+must actually honor.  DNT is dead (never implemented in Chrome,
+removed from Firefox); GPC carries legal weight — California
+(CCPA/CPRA), Colorado, Connecticut and other US-state laws treat
+`Sec-GPC: 1` as a binding opt-out-of-sale/share signal, and the GPC
+spec is what Brave and Mullvad Browser ship.
+
+Two surfaces, both behind one settings toggle:
+
+- **Header**: `Sec-GPC: 1` on every outgoing request — main frame and
+  subresources.  PrivacyRequestInterceptor's setHttpHeader path is
+  proven to reach the wire on Qt 6.12 (REF01 verified it against a
+  loopback matrix — the earlier "subresource writes are a no-op"
+  comment was stale).  Add the header in the same verdict stage that
+  writes Referer/UA overrides.
+- **JS surface**: `navigator.globalPrivacyControl === true` — a
+  document-creation script in the isolated world (same pattern as the
+  referrer-meta + fingerprint scripts BrowserProfile installs), using
+  Object.defineProperty so it's stable against page tampering.
+
+Settings:
+
+- New checkbox in Settings > Privacy near the anti-tracking group —
+  "Send a Global Privacy Control signal (Sec-GPC)" with honest helper
+  text: sites in GPC-jurisdictions must treat it as a binding
+  opt-out, elsewhere it's advisory.
+- Default ON (project is privacy-first; Brave ships it always-on).
+  Off = send NOTHING — GPC spec: absence means no preference, never
+  send `Sec-GPC: 0`.
+- Applies on all profiles — normal, OTR, containers.  Tor decision
+  belongs in the task: Tor Browser ships no GPC (fingerprint-uniformity
+  doctrine — a header few send stands out), but Mullvad Browser DOES
+  send it unconditionally for uniformity-across-users.  Pick one and
+  document why; the navpolicy tor_mode flag controls the override.
+
+Engines — honest scoping, don't fake it:
+
+- WebEngine: interceptor path works, implement there.
+- Servo: check `caps.requestInterception` — if the load gate can't
+  inject headers, the toggle's site-panel/shield copy must not claim
+  GPC on servo tabs (same honesty pattern as other caps).
+- WebKit: decide-policy consult exists (WK17) — header injection may
+  need pluming through; if absent, same honest-degradation rule.
+
+Verify:
+
+- Smoke leg: loopback HTTP server captures request headers — assert
+  Sec-GPC: 1 on main-frame AND subresource legs; off → assert absent.
+- JS leg: page-side read of navigator.globalPrivacyControl === true.
+- Settings round-trip + privacyChanged propagation to live profiles.
+- make check gates; note the fingerprint-bit addition in PRIV02's
+  doc (one more distinguishing bit when on).
