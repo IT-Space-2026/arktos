@@ -2467,13 +2467,23 @@ void TabWidget::syncContainerStrip()
 // reopen-in-container swap is the one caller today).
 void TabWidget::closeHiddenTab(WebView *view)
 {
+    closeHiddenPage(tabPageWidget(view));
+}
+
+// closeHiddenTab() keyed on the page widget instead of the view —
+// the closeOtherTabs() sweep builds its kill list on page widgets and
+// the store can also hold non-web tabs a WebView* cannot reach.
+void TabWidget::closeHiddenPage(QWidget *page)
+{
     for (auto it = m_containerHidden.begin();
          it != m_containerHidden.end(); ++it) {
         for (int k = 0; k < it->size(); ++k) {
-            WebViewWithSearch *withSearch =
-                qobject_cast<WebViewWithSearch*>(it->at(k).tab);
-            if (!withSearch || withSearch->m_webView != view)
+            if (it->at(k).tab != page)
                 continue;
+            WebView *view = nullptr;
+            if (WebViewWithSearch *withSearch =
+                    qobject_cast<WebViewWithSearch*>(page))
+                view = withSearch->m_webView;
             const QString closingGroup = m_tabGroups.value(view);
             // TABS05: off the strip means no index — the record keeps
             // the level id it was filtered into as its container.
@@ -3124,16 +3134,53 @@ void TabWidget::closeOtherTabs(int index)
 {
     if (-1 == index)
         return;
-    // TABS04: pinned tabs survive "Close Other Tabs" in both
-    // directions — closing indices above first keeps each lower
-    // index stable when the check runs.
-    for (int i = count() - 1; i > index; --i) {
-        if (!isTabPinned(i))
-            closeTab(i);
+    // TAB01: close by page-widget identity, not strip index.  Closing
+    // a collapsed group's chip expands it mid-sweep and re-inserts the
+    // hidden members right after the group's first visible tab —
+    // positions an index loop has already passed — so the members
+    // survived (and re-appeared) where Chrome closes them.  Expand
+    // every collapsed group up front so no member stays parked in a
+    // group's hidden list, then collect the kill set once — every
+    // page that is neither the anchor nor pinned, on the strip or
+    // detached into a filtered container level alike — and re-resolve
+    // each target's position inside the loop as the strip shifts.
+    QWidget *anchor = widget(index);
+    if (!anchor)
+        return;
+    // A close can cascade — an emptied container level re-filters the
+    // strip — and an observer of the close signals can tear the window
+    // (and this) down mid-sweep.
+    QPointer<TabWidget> guard(this);
+    const QStringList groups = m_tabGroupInfo.keys();
+    for (const QString &gid : groups) {
+        if (m_tabGroupInfo.value(gid).collapsed)
+            setTabGroupCollapsed(gid, false);
+        if (!guard)
+            return;
     }
-    for (int i = index - 1; i >= 0; --i) {
-        if (!isTabPinned(i))
+    // TABS04: pinned tabs survive "Close Other Tabs" — the flag keys
+    // on the page widget, so the check reads the same on the strip
+    // and inside the hidden stores.
+    QList<QWidget*> doomed;
+    for (int i = 0; i < count(); ++i) {
+        QWidget *page = widget(i);
+        if (page && page != anchor && !m_pinnedTabs.contains(page))
+            doomed.append(page);
+    }
+    for (const QList<HiddenGroupTab> &level : std::as_const(m_containerHidden)) {
+        for (const HiddenGroupTab &hidden : level) {
+            if (hidden.tab && !m_pinnedTabs.contains(hidden.tab))
+                doomed.append(hidden.tab);
+        }
+    }
+    for (QWidget *page : std::as_const(doomed)) {
+        const int i = indexOf(page);
+        if (i >= 0)
             closeTab(i);
+        else
+            closeHiddenPage(page);
+        if (!guard)
+            return;
     }
 }
 

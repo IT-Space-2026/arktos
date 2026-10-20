@@ -365,7 +365,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | LEG04 | Untouched test-infra review: qtry.h usage, tst_lineedit.cpp build status, stale .gitignores, fixture validity — wire in or delete — details below | done | 0 | user request — DONE: qtry.h shim deleted (44 includers use Qt6-native QTRY_*); tst_lineedit confirmed wired (utils.pro→make check, 17/17); 26 stale .gitignores removed (root tst_* rule covers; rules2.txt kept); all fixtures grep-proven live — verified: make check rc=0, 4 gates PASS, 99 programs 0 failed |
 | PRIV09 | PRIV07 slice A — ASan/LSan churn leg for the committed OTR teardown (the only unrun spec item; do NOT re-implement) — details below | done | 0 | 50-cycle --otr-teardown-smoke under ASan+UBSan+LSan (linux-clang): 48 PASS 13/13, 2 upstream FcInit startup flakes; 0 ASan/UBSan reports, 0 our-code leak blocks (all upstream widget/fontconfig), no leaked QWebEngineProfile — report .devin/PRIV09-scan.md |
 | PRIV10 | PRIV07 slice B — post-commit review of the OTR teardown diff landed inside b6494e58 (lifetime races, refcount edges) — details below | done | 0 | 1 real bug fixed: upstream QWebEngineDownloadRequest::page() derefs a dead adapterClient after closeTab (UAF in hasActiveDownloadForPage/restartDownload) → guarded QPointer snapshot in WebEngineDownloadRequest; rest of checklist clean — full verdict in details. Verified: otr-teardown-smoke 13/13, tst_privatebrowsing 13/13, tst_downloadmanager 46/46, quit-after-load rc0 |
-| TAB01 | closeOtherTabs skips collapsed-group members: closing a group chip expands it mid-sweep, members land at i+1..i+n (already iterated) and survive — Chrome closes them. Fix: pre-expand collapsed groups before the loops, or close by view identity — details below | pending | 0 | |
+| TAB01 | closeOtherTabs skips collapsed-group members: closing a group chip expands it mid-sweep, members land at i+1..i+n (already iterated) and survive — Chrome closes them. Fix: pre-expand collapsed groups before the loops, or close by view identity — details below | done | 0 | identity sweep: pre-expand collapsed groups + kill list of page widgets (strip + container-hidden stores), pinned+anchor exempt; closeHiddenPage(QWidget*) generalizes closeHiddenTab for non-web pages. Verified: build 0 warnings; tst_tabwidget 37/37 incl new closeOtherTabsCollapsedGroup (3 legs); --quit-after-load rc=0 offscreen --disable-gpu |
 | TAB02 | moveTabTo × collapsed group: dragging a chip to another window strands hidden members (leaderless group on source, lost member on target) + sibling bulk-index paths (close-to-right, window close) — details below | pending | 0 | |
 | TAB03 | Deferred-deletion sweep: singleShot/invokeMethod lambdas capturing raw WebView*/Engine::Page* without QPointer guard — details below | pending | 0 | |
 | CONT01 | Container/profile teardown: deleting a container with bound tabs (incl. m_containerHidden strays) and restart-deleted profile vs queued signals — details below | pending | 0 | |
@@ -3236,6 +3236,24 @@ Watch the second loop's `index` anchor too — expansion above it can
 shift the "other" boundary.  Verify with a tst_tabwidget leg: pin
 one tab, collapse a group, "Close Other Tabs" on a third tab —
 expect only the pinned + current left, group fully gone.
+
+Done — both fix directions applied together: closeOtherTabs
+pre-expands every collapsed group (draining each group's hidden list
+onto the strip or into its container store), then builds one kill
+list of page widgets — every page that is neither the anchor nor
+pinned, on-strip and in m_containerHidden alike — and re-resolves
+each target with indexOf() inside the loop, so mid-sweep expansion
+or level re-filtering cannot skip a tab.  Hidden-store kills went
+through the new closeHiddenPage(QWidget*) — closeHiddenTab's body
+re-keyed on the page widget, with closeHiddenTab(WebView*) left as
+a delegate so EngineTab/widget pages parked in a container level
+close too.  Semantics now: "Close Other Tabs" leaves exactly the
+anchor + pinned tabs — a collapsed group whose chip is the anchor
+shrinks to a one-member group (Chrome parity), never dissolves.
+QPointer<TabWidget> guards both loops.  Verified: clean qmake+make
+0 warnings; tst_tabwidget 37/37 incl new closeOtherTabsCollapsedGroup
+(spec leg + chip-anchor leg + container-hidden-member leg);
+--quit-after-load rc=0 offscreen --disable-gpu.
 
 ### TAB02
 

@@ -114,6 +114,7 @@ private slots:
     void omniboxTabScope();
     void tabGroups();
     void closeTabGroup();
+    void closeOtherTabsCollapsedGroup();
     void groupWorkspaceSignals();
     void pinnedTabs();
     void iconOnlyTabStrip();
@@ -1694,6 +1695,96 @@ void tst_TabWidget::closeTabGroup()
     QCOMPARE(widget.count(), 0);
 
     settings.remove(QLatin1String("tabs/confirmClosingMultipleTabs"));
+}
+
+// TAB01: "Close Other Tabs" is an identity sweep, not an index loop —
+// closing a collapsed group's chip used to expand it mid-sweep and the
+// re-inserted members landed at positions already passed, so they
+// survived (Chrome closes them).  Everything that is neither the
+// anchor nor pinned dies — hidden group members and tabs detached
+// into a filtered container level included.
+void tst_TabWidget::closeOtherTabsCollapsedGroup()
+{
+    // The reported bug: pin one tab, collapse a group, "Close Other
+    // Tabs" on a third — only pinned + current remain and the group
+    // is fully gone.
+    SubTabWidget widget;
+    for (int i = 0; i < 6; ++i)
+        widget.newTab();
+    QCOMPARE(widget.count(), 6);
+    WebView *pinned = widget.webView(0);
+    WebView *keep = widget.webView(5);
+    QVERIFY(pinned && keep);
+    widget.setTabPinned(0, true);
+    const QString gid = widget.createTabGroup(2);
+    widget.addTabToGroup(3, gid);
+    widget.addTabToGroup(4, gid);
+    QCOMPARE(widget.tabGroupSize(gid), 3);
+    widget.setTabGroupCollapsed(gid, true);
+    QCOMPARE(widget.count(), 4);   // [pinned, plain, chip, keep]
+    widget.closeOtherTabs(3);
+    QCOMPARE(widget.count(), 2);
+    QCOMPARE(widget.webView(0), pinned);
+    QCOMPARE(widget.webView(1), keep);
+    QVERIFY(widget.tabGroupIds().isEmpty());
+    QCOMPARE(widget.totalTabCount(), 2);
+
+    // The anchor can be the collapsed group's chip itself — the
+    // hidden members are still "other tabs" and die with the rest.
+    // The chip keeps its membership: Chrome shrinks the group to the
+    // one surviving tab rather than dissolving it.
+    {
+        SubTabWidget w2;
+        for (int i = 0; i < 4; ++i)
+            w2.newTab();
+        const QString g2 = w2.createTabGroup(0);
+        w2.addTabToGroup(1, g2);
+        w2.addTabToGroup(2, g2);
+        w2.setTabGroupCollapsed(g2, true);
+        QCOMPARE(w2.count(), 2);   // chip + one ungrouped tab
+        WebView *chip = w2.webView(0);
+        w2.closeOtherTabs(0);
+        QCOMPARE(w2.count(), 1);
+        QCOMPARE(w2.webView(0), chip);
+        QCOMPARE(w2.tabGroupIds(), QStringList() << g2);
+        QCOMPARE(w2.tabGroupSize(g2), 1);
+        QCOMPARE(w2.totalTabCount(), 1);
+    }
+
+    // A group member parked in a filtered-out container level dies
+    // too — the sweep is by identity, not strip position.
+    {
+        ContainerManager *manager = ContainerManager::instance();
+        const ContainerManager::Container container =
+            manager->createContainer(QLatin1String("Tab01Ctx"),
+                                     QColor(Qt::green));
+        QVERIFY(!container.id.isEmpty());
+
+        SubTabWidget w3;
+        for (int i = 0; i < 3; ++i)
+            w3.newTab();
+        const QString g3 = w3.createTabGroup(0);
+        w3.addTabToGroup(1, g3);
+        QCOMPARE(w3.tabGroupSize(g3), 2);
+        // The re-homed member's replacement lives in the container's
+        // hidden store once the strip falls back to the default level.
+        w3.reopenTabInContainer(1, container.id);
+        w3.setActiveContainerHeader(
+            ContainerManager::defaultContainerId());
+        QCOMPARE(w3.count(), 2);
+        QCOMPARE(w3.totalTabCount(), 3);
+        w3.setTabGroupCollapsed(g3, true);
+        QCOMPARE(w3.count(), 2);
+        WebView *keep3 = w3.webView(1);
+        w3.closeOtherTabs(1);
+        QCOMPARE(w3.count(), 1);
+        QCOMPARE(w3.webView(0), keep3);
+        QVERIFY(w3.tabGroupIds().isEmpty());
+        QCOMPARE(w3.totalTabCount(), 1);
+
+        // Live container tabs block deletion — the sweep cleared them.
+        QVERIFY(manager->deleteContainer(container.id));
+    }
 }
 
 // TABGRP03: the Workspaces overview consumes group metadata live —

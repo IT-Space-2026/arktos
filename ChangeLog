@@ -124,6 +124,13 @@ UI:
   by tinting the hovered tab's middle band (or a collapsed group's
   chip) with the group color while the edge quarters keep the reorder
   meaning (TABGRP02).
+- Close Other Tabs now reaches the tabs a collapsed group hides —
+  closing the group chip used to expand it mid-sweep, landing the
+  restored members at strip positions the sweep had already passed,
+  so they silently survived and re-appeared. The sweep now closes by
+  tab identity, so hidden group members — and tabs parked on a
+  filtered-out container level — close like every other tab while
+  the current tab and pinned tabs stay (TAB01).
 - Compact tab strip: a container tab no longer inflates the whole
   bar — the container's accent line and name chip now paint inside a
   standard-height tab row instead of stacking a chip band on top of

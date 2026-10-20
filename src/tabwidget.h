@@ -601,6 +601,7 @@ private:
     void detachTabIntoContainerStore(int index);
     void restoreHiddenContainerTabs(const QString &containerId);
     void closeHiddenTab(WebView *view);
+    void closeHiddenPage(QWidget *page);
 
     // TABS05: one undo-close record — url + the session-format
     // history blob (RCORE03) carry the page, title/icon feed the
