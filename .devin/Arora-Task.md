@@ -352,7 +352,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | WKB05 | WebKit-lane packaging strategy — how the WPE .so set ships inside our deb/rpm/flatpak + dep-manifest script — details below | done | 1 | .devin/WEBKIT-PACKAGING.md + .devin/wpe-deps.sh — measured on live ~/wpe sid-2.54.1: 72-file closure ~223M, floor GLIBC_2.43; deb/rpm = bundle under /usr/lib/arktos/wpe (noble ships no WPE, Fedora COPR-only, TW 2.52<floor), flatpak = in-manifest source build (KDE 6.11 glibc 2.42 kills sid binaries); staged diffs in doc; selftest+scan verified |
 | MRG01 | Post-merge integration A — default-flavor build+link (webengine+servo) on merged master — details below | done | 0 | clean make -j4 build+link on merged master — arktos links host ld.so, 0 WPE, --quit-after-load rc=0; merge-artifact fixes folded in (avatar reload after wipe, Q_UNUSED, offscreen test fixes, ENGINE.md ledger); pre-reslice webkit=1 gates+suite evidence in details for MRG05/06 reuse |
 | MRG05 | Post-merge integration B — `make check` 4 gates + focused extension/engine autotest legs on the default build — details below | done | 0 | 4 gates PASS (warnings 0 diags, supplychain clean, engine-audit 185 files, rustcov 94.11/91.83/89.25 >=85); suite 2210p/2f/42s over 96 binaries — both reds load flakes re-verified standalone; focused legs green: extensionmanager 48/0/4 (nav-lock+ER20 lift+relay+actionPopup together), engineswitch 27/0/18, engine-audit gate |
-| MRG06 | Post-merge integration C — webkit=1 three-engine build+link + webkit legs (source webkit-env.sh) — details below | in_progress | 0 | needs:task:MRG05 |
+| MRG06 | Post-merge integration C — webkit=1 three-engine build+link + webkit legs (source webkit-env.sh) — details below | done | 2 | webkit=1 build+link clean; --engine-list lists all 3 (Chromium 140 / Servo 0.7.0 / WebKit 2.54.1) after rebuilding stale Oct-14 libservo_embed.so (pre-ENG36 symbols); 18/18 webkit* legs PASS standalone; NEW BUG diagnosed: engineTabChurn's servo cycles poison the next webkit GL page (SIGSEGV — EGL display terminated by surfman teardown; raster unaffected; details+repro filed for MRG08) |
 | MRG07 | Post-merge leak sweep A — ASan/LSan churn on extension merge seams (ExtensionChromePage popup/probe cycles, relay PortEnd register/expire at caps) — details below | pending | 0 | needs:task:MRG05 |
 | MRG08 | Post-merge leak sweep B — ASan/LSan per-backend EngineTab churn on merged master (webengine+servo, webkit when built) — details below | pending | 0 | needs:task:MRG05 |
 | MRG09 | Post-merge dead-code/duplicate sweep — resolve-level leftovers, double-tracked logs, task-file/doc rot — details below | pending | 0 | needs:task:MRG05 — was MRG03 |
@@ -2416,6 +2416,49 @@ Post-merge integration C — the three-engine flavor.
 
 Verify: three-engine binary links + registry lists all three;
 legs green or diagnosed; row notes record results.
+
+Run evidence (2026-10-20) — three-engine flavor built and verified:
+
+- Build: `source .devin/webkit-env.sh && qmake webkit=1 && make -j4`
+  (attempt 1 did clean qmake_all + full rebuild; src Makefile carries
+  -DARKTOS_WEBKIT/-DARKTOS_WEBKIT_LINKED/-DARKTOS_WEBKIT_GL). arktos
+  links under the sid ld.so with libWPEWebKit-2.0 + compat shim, all
+  96 autotest binaries relinked webkit-flavor.
+- Blocker found + fixed in-run: `--engine-list` reported only
+  webengine+webkit — libservo_embed.so was a stale Oct-14 artifact
+  exporting the pre-ENG36 API while merged master requires
+  se_engine_init/se_view_create/se_view_destroy. Rebuilt with
+  `cargo build --release` in spikes/servo/servo-embed (dep tree was
+  re-fingerprinted by the merge — full ~700-crate rebuild, 5m44s at
+  -j1 detached; two earlier attempts OOM-killed by the 4GB tree cap
+  running parallel builds).
+- `--engine-list` now lists ALL THREE: webengine "Chromium
+  (QtWebEngine 140.0.7339.225)", servo "Servo 0.7.0", webkit
+  "WebKit 2.54.1" — registry smoke satisfied.
+- WebKit legs: all 18 webkit* legs of tst_engineswitch PASS
+  standalone (20/20 incl init/cleanup, ~19s, offscreen). No separate
+  webkitSmoke binary exists — the legs ARE the smoke.
+- NEW BUG diagnosed (not this task's fix scope — cross-engine state,
+  filed for MRG08 churn/ENG follow-up): with the servo artifact
+  present, `engineTabChurn` (which now exercises servo for real —
+  pre-reslice it silently skipped on missing symbols) deterministically
+  poisons the next webkit page: `webkitViewRenders` SIGSEGVs at
+  addr 0x8 ~272ms into the leg. Servo-hidden => same pair PASSES.
+  ARKTOS_WEBKIT_GL=0 => PASSES (raster path fine). fake+webkit-only
+  churn => PASSES. Reads as surfman's teardown eglTerminate()ing the
+  shared Mesa surfaceless display the WPE headless platform caches —
+  the next EGL touch (view construction or wkGlImport's makeCurrent)
+  dereferences the terminated handle. Checkpoint prints in wkGlInit
+  never fired, but a Ready state left by churn's own webkit cycles
+  would skip them anyway, so the fault site is between leg start and
+  the GL import — needs a real backtrace (no gdb on box, core_pattern
+  "core" produced no file). A speculative eglInitialize re-init in
+  WebkitPage's ctor did NOT cure it (reverted). Repro:
+  `tst_engineswitch engineTabChurn webkitViewRenders`. Suite-order
+  consequence: full-binary run = 27 pass + this crash — not seen
+  pre-merge because the servo legs skipped on the stale artifact.
+  The signal spam is the test binary's own WPE-installed crash
+  handler re-faulting, not a WebProcess.
 
 ### MRG07
 
