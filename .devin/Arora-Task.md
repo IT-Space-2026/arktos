@@ -370,6 +370,11 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | TAB03 | Deferred-deletion sweep: singleShot/invokeMethod lambdas capturing raw WebView*/Engine::Page* without QPointer guard — details below | pending | 0 | |
 | CONT01 | Container/profile teardown: deleting a container with bound tabs (incl. m_containerHidden strays) and restart-deleted profile vs queued signals — details below | pending | 0 | |
 | SESS01 | Session restore × engine/container matrix: engine-tagged tab on a webkit=0 build, lazy restore inside container level/group, restore racing an active container filter — details below | pending | 0 | |
+| TAB04 | Private tabs get thumbnails: captureTabThumbnail/scheduleThumbnailCapture have no OTR check — private page pixels land in m_tabThumbnails + hover previews. Skip capture+preview for OTR views — details below | pending | 0 | |
+| SEC27 | Sanitizer audit: readersanitizer.cpp (article HTML into chrome-privileged reader context) + pdfsanitize.rs/pdfworker ("sanitized before view" claim) — XSS-bypass review — details below | pending | 0 | |
+| SEC28 | Vault crypto coverage check: confirm VSEC01 audited KDF params + seal/unseal of the credential/autofill stores, not just the FFI seam — fill any gap — details below | pending | 0 | |
+| CONC01 | Concurrent store writers: two windows writing bookmarks.xbel + history.db — xbel write atomicity across windows, SQLite writer contention — details below | pending | 0 | |
+| INFRA01 | taskloop task-file race: runner read-modify-write clobbers concurrent edits (lost-update hit twice today) — flock around the row update — details below | pending | 0 | |
 
 ## Task details
 
@@ -3260,3 +3265,101 @@ the new dimensions:
   OTR tabs never create a pending record either.
 
 Verify: tst_sessionrestore-style legs for each cell of the matrix.
+
+### TAB04
+
+Private-tab thumbnail leak (found in the tab-handling audit):
+captureTabThumbnail() (tabwidget.cpp ~2981) and
+scheduleThumbnailCapture() (~2994) snapshot the visible tab's
+rendered page into m_tabThumbnails for hover previews — with no
+off-the-record check.  A private tab's page pixels are therefore
+held in the thumbnail cache and shown on hover.  Exposure is
+memory-only and cleared on closeTab (m_tabThumbnails.remove), but
+incognito semantics say no rendered-content artifacts, and the
+hover preview can flash private content a user tabbed away from.
+
+Fix: skip capture (scheduleThumbnailCapture early-out) and skip
+serve (tabThumbnail returns empty → title+url card fallback already
+exists) when view->enginePage()->isOffTheRecord().  Also check the
+same-page cache insert at the bottom of tabThumbnail() and the
+tabBar preview path for any second capture site.
+
+Verify: tst leg or smoke — open private tab, hover/preview, assert
+no pixmap is cached for the OTR view while a normal tab still
+captures.
+
+### SEC27
+
+Sanitizer audit — two paths that ingest hostile document content
+into privileged contexts:
+
+A) readersanitizer.cpp — article HTML extracted by readability and
+   re-serialized into the reader-mode page, which runs in a chrome-
+   adjacent context.  Review the allowlist (tags/attributes/URI
+   schemes), URI rewriting, and any attribute that can carry event
+   handlers or javascript:/data: payloads.  Look for allowlist gaps
+   (svg, mathml, srcset, style, meta refresh, base href) — the
+   classic reader-mode XSS classes.  Confirm the output document is
+   served under a locked-down CSP/origin, not the source origin.
+
+B) pdfsanitize.rs + pdfworker.cpp — README claims "PDFs open in a
+   browser, sanitized before view".  Verify what the sanitize pass
+   actually rewrites (JS actions, launch/uri actions, embedded
+   files, xref stream tricks), whether output is byte-structural or
+   a lossy raster/flatten, and that an unsanitizable file fails
+   closed (refuses view, does not pass the raw bytes through).
+
+Fix real bypasses in-task; document residual limits honestly.
+
+### SEC28
+
+Vault crypto coverage check.  .devin/security/VSEC01-report.md
+exists — read it and determine whether it audited the cryptographic
+core or only the FFI seam:
+
+- KDF: which algorithm, parameters (work factor), salt handling in
+  the credential store (rustcore cred.rs / securestore) and the
+  sealed autofill-store.dat.
+- Seal/unseal: AEAD construction, nonce handling, key custody
+  (where does the unsealed key live between unlocks, is it
+  zeroized), wrong-passphrase behavior (no oracle), concurrent
+  unlock prompts.
+- Import path of the legacy autofill.dat — sealed or plaintext —
+  does a plaintext legacy file get wiped after import?
+
+If VSEC01 covered it, note that and close; if it only covered the
+seam, audit the gaps and fix what's found.
+
+### CONC01
+
+Concurrent store writers.  Two Arktos windows share one browsing
+profile; both can write the stores:
+
+- bookmarks.xbel — check the write path: is it tmp-file+rename
+  atomic?  Two windows saving a bookmark concurrently — last-writer
+  wins is acceptable, torn/partial file is not; also check a
+  write racing a read in the other window.
+- history.db — SQLite handles multi-connection writers; verify the
+  schema/pragma setup (WAL? busy timeout?) tolerates it without
+  SQLITE_BUSY surfacing to users, and whether the Rust store opens
+  one connection per process.
+- session.dat — last-writer-wins on exit is documented behavior;
+  confirm no mid-write read can produce a torn session (atomic
+  rename already claimed — verify).
+- Also the settings QSettings file and container/persona stores.
+
+Fix: add file-level locking or single-writer arbitration where a
+torn write is possible; leave benign last-writer-wins documented.
+
+### INFRA01
+
+taskloop task-file lost-update race.  The runner marks rows
+in_progress/done by rewriting .devin/Arora-Task.md wholesale; a
+concurrent human/agent edit between its read and write is silently
+clobbered (happened twice today — an appended PRIV10 bullet and
+row updates vanished).  Fix in .devin/taskloop.sh (and any
+taskcheck.sh helper that writes): take flock on the task file
+(flock .devin/Arora-Task.md.lock) around the read-modify-write, or
+use a sed in-place row update instead of full-file rewrite.
+Verify: queue a dummy task edit while a run is mid-task; both the
+row mark and the edit survive.
