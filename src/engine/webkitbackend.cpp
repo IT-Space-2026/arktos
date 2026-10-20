@@ -3486,10 +3486,10 @@ void WebkitPage::onTlsError(const QString &failingUri,
     }
     if (accepted && info.overridable) {
         allowCertificateForHost(m_session, certificate, url.host());
-        const QPointer<WebkitPage> page(this);
-        QTimer::singleShot(0, this, [page, url]() {
-            if (page)
-                page->load(url);
+        const QPointer<WebkitPage> livePage(this);
+        QTimer::singleShot(0, this, [livePage, url]() {
+            if (livePage)
+                livePage->load(url);
         });
         return;
     }
@@ -3516,10 +3516,10 @@ void WebkitPage::onTlsError(const QString &failingUri,
     // signal would re-enter WebKit's navigation machinery.
     const QUrl interstitial(QStringLiteral(
         "arktos-cert-error:interstitial?n=") + m_certErrorNonce);
-    const QPointer<WebkitPage> page(this);
-    QTimer::singleShot(0, this, [page, interstitial]() {
-        if (page)
-            page->load(interstitial);
+    const QPointer<WebkitPage> livePage(this);
+    QTimer::singleShot(0, this, [livePage, interstitial]() {
+        if (livePage)
+            livePage->load(interstitial);
     });
 #else
     Q_UNUSED(failingUri);
@@ -3534,7 +3534,7 @@ void WebkitPage::resolveCertificateErrorLink(const QUrl &command)
     const bool proceed = command.path() == QLatin1String("proceed")
         && m_certErrorOverridable && m_certErrorCert;
     m_certErrorPending = false;
-    const QPointer<WebkitPage> page(this);
+    const QPointer<WebkitPage> livePage(this);
     if (proceed) {
         // Session-scoped only — nothing is persisted to a trust
         // store; a fresh session (or a different profile) prompts
@@ -3542,9 +3542,9 @@ void WebkitPage::resolveCertificateErrorLink(const QUrl &command)
         allowCertificateForHost(m_session, m_certErrorCert,
                                 m_certErrorHost);
         const QUrl url = m_certErrorUrl;
-        QTimer::singleShot(0, this, [page, url]() {
-            if (page)
-                page->load(url);
+        QTimer::singleShot(0, this, [livePage, url]() {
+            if (livePage)
+                livePage->load(url);
         });
         return;
     }
@@ -3552,15 +3552,15 @@ void WebkitPage::resolveCertificateErrorLink(const QUrl &command)
     // interstitial — back in history when there is one, otherwise
     // the start page.  Queued for the same re-entrancy reason as
     // WebPage's resolveCertificateErrorLink.
-    QTimer::singleShot(0, this, [page]() {
-        if (!page)
+    QTimer::singleShot(0, this, [livePage]() {
+        if (!livePage)
             return;
-        if (page->canGoBack())
-            page->back();
+        if (livePage->canGoBack())
+            livePage->back();
         else
-            page->load(BrowserApplication::startPageUrl(
+            livePage->load(BrowserApplication::startPageUrl(
                 BrowserApplication::defaultEngineId(),
-                page->isOffTheRecord()));
+                livePage->isOffTheRecord()));
     });
 #else
     Q_UNUSED(command);

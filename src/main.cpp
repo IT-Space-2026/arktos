@@ -2003,9 +2003,17 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
         application.exit(rc);
     };
 
-    const auto dumpResults = [view, &application, outPath, mode,
+    // Guard snapshot at scheduling time — building the QPointer inside
+    // a callback that ran after the view died would itself dereference
+    // freed memory (TAB03).
+    const QPointer<WebView> liveView(view);
+    const auto dumpResults = [liveView, &application, outPath, mode,
                               finish](bool complete) {
-        view->enginePage()->runJavaScript(
+        if (!liveView) {
+            finish(3, QStringLiteral("FAIL (view gone before dump)"));
+            return;
+        }
+        liveView->enginePage()->runJavaScript(
             QStringLiteral(
                 "JSON.stringify(window.xsLeakDump && "
                 "window.xsLeakDump())"),
@@ -2107,12 +2115,17 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
         qEnvironmentVariableIntValue("ARKTOS_XSLEAK_TIMEOUT_MS");
     if (timeoutMs <= 0)
         timeoutMs = 20 * 60 * 1000;
-    QTimer::singleShot(timeoutMs, &application, [=, &application]() {
+    QTimer::singleShot(timeoutMs, &application,
+                       [&application, liveView, dumpResults]() {
         // Still dump whatever the suite produced — a partial result
         // table distinguishes a stalled run from a dead page.
-        view->enginePage()->runJavaScript(
+        if (!liveView) {
+            dumpResults(false);
+            return;
+        }
+        liveView->enginePage()->runJavaScript(
             QStringLiteral("window.__arktosTimedOut = true"),
-            [=, &application](const QVariant &) { dumpResults(false); });
+            [dumpResults](const QVariant &) { dumpResults(false); });
     });
 
     return application.exec();
@@ -2880,6 +2893,7 @@ static int bidiNetworkSmoke(BrowserApplication &application,
     panel->show();
 
     auto navigated = std::make_shared<bool>(false);
+    const QPointer<WebView> liveView(view);
     QTimer *poll = new QTimer(panel);
     QObject::connect(poll, &QTimer::timeout, panel, [=]() mutable {
         QComboBox *combo = panel->findChild<QComboBox *>(
@@ -2896,10 +2910,11 @@ static int bidiNetworkSmoke(BrowserApplication &application,
             if (combo->currentData().toString().isEmpty())
                 return;
             *navigated = true;
-            const QUrl page(QStringLiteral(
+            const QUrl pageUrl(QStringLiteral(
                 "http://127.0.0.1:%1/").arg(port));
-            QTimer::singleShot(1500, panel, [view, page]() {
-                view->loadUrl(page);
+            QTimer::singleShot(1500, panel, [liveView, pageUrl]() {
+                if (liveView)
+                    liveView->loadUrl(pageUrl);
             });
             return;
         }
@@ -3077,6 +3092,7 @@ static int bidiSourcesSmoke(BrowserApplication &application,
 
     auto stage = std::make_shared<int>(0);
     auto navigated = std::make_shared<bool>(false);
+    const QPointer<WebView> liveView(view);
     QTimer *poll = new QTimer(panel);
     QObject::connect(poll, &QTimer::timeout, panel, [=]() {
         QComboBox *combo = panel->findChild<QComboBox *>(
@@ -3107,7 +3123,9 @@ static int bidiSourcesSmoke(BrowserApplication &application,
             // targets too, so the first row is not reliably ours),
             // then give attach + Debugger.enable a beat before the
             // page load.
-            const QString want = view->page()->devToolsId();
+            if (!liveView)
+                return;
+            const QString want = liveView->page()->devToolsId();
             if (want.isEmpty())
                 return;
             int row = -1;
@@ -3122,10 +3140,11 @@ static int bidiSourcesSmoke(BrowserApplication &application,
             if (combo->currentIndex() != row)
                 combo->setCurrentIndex(row);
             *navigated = true;
-            const QUrl page(QStringLiteral(
+            const QUrl pageUrl(QStringLiteral(
                 "http://127.0.0.1:%1/").arg(port));
-            QTimer::singleShot(1500, panel, [view, page]() {
-                view->loadUrl(page);
+            QTimer::singleShot(1500, panel, [liveView, pageUrl]() {
+                if (liveView)
+                    liveView->loadUrl(pageUrl);
             });
             return;
         }
@@ -3314,6 +3333,7 @@ static int bidiPerfMemSmoke(BrowserApplication &application,
     auto stage = std::make_shared<int>(0);
     auto navigated = std::make_shared<bool>(false);
     auto cpuStopAt = std::make_shared<qint64>(0);
+    const QPointer<WebView> liveView(view);
     QTimer *poll = new QTimer(panel);
     QObject::connect(poll, &QTimer::timeout, panel, [=]() {
         QComboBox *combo = panel->findChild<QComboBox *>(
@@ -3345,7 +3365,9 @@ static int bidiPerfMemSmoke(BrowserApplication &application,
             // Pin the combo to THIS view's page target — the browser
             // exposes sibling targets too (same convention as
             // --bidi-sources-smoke).
-            const QString want = view->page()->devToolsId();
+            if (!liveView)
+                return;
+            const QString want = liveView->page()->devToolsId();
             if (want.isEmpty())
                 return;
             int row = -1;
@@ -3360,10 +3382,11 @@ static int bidiPerfMemSmoke(BrowserApplication &application,
             if (combo->currentIndex() != row)
                 combo->setCurrentIndex(row);
             *navigated = true;
-            const QUrl page(QStringLiteral(
+            const QUrl pageUrl(QStringLiteral(
                 "http://127.0.0.1:%1/").arg(port));
-            QTimer::singleShot(1500, panel, [view, page]() {
-                view->loadUrl(page);
+            QTimer::singleShot(1500, panel, [liveView, pageUrl]() {
+                if (liveView)
+                    liveView->loadUrl(pageUrl);
             });
             return;
         }
@@ -6986,8 +7009,12 @@ int main(int argc, char **argv)
         const QUrl certUrl(qEnvironmentVariable("ARKTOS_CLIENTCERT_URL",
                 QStringLiteral("https://client.badssl.com/")));
         view->window()->show();
+        const QPointer<WebView> liveView(view);
         QTimer::singleShot(0, &application,
-                           [view, certUrl]() { view->loadUrl(certUrl); });
+                           [liveView, certUrl]() {
+            if (liveView)
+                liveView->loadUrl(certUrl);
+        });
         QObject::connect(view, &QWebEngineView::loadFinished,
                          &application, [&application, view](bool ok) {
             if (!ok) {
@@ -10121,15 +10148,16 @@ int main(int argc, char **argv)
                         "document.getElementById('u').value='otruser';"
                         "document.getElementById('p').value='otrpass';"
                         "document.forms[0].requestSubmit();"));
+                    const QPointer<WebView> liveOtrView(otrView);
                     QTimer::singleShot(2000, &application,
                                        [&application, hasElement,
-                                        otrView]() {
+                                        liveOtrView]() {
                         const bool pass = !hasElement(
                             QLatin1String("user"), QLatin1String("otruser"));
                         qInfo() << "autofill-smoke: otr capture dropped"
                                 << (pass ? "PASS" : "FAIL");
                         if (!pass) {
-                            delete otrView;
+                            delete liveOtrView;
                             application.exit(1);
                             return;
                         }
@@ -10202,7 +10230,7 @@ int main(int argc, char **argv)
 
                         // Delete the OTR view before exit — its page
                         // must die before the OTR profile is released.
-                        delete otrView;
+                        delete liveOtrView;
                         application.exit(stored && sealed && crypto
                                          ? 0 : 1);
                     });
@@ -10230,8 +10258,11 @@ int main(int argc, char **argv)
                     application.exit(1);
                     return;
                 }
-                QTimer::singleShot(700, &application, [view]() {
-                    view->enginePage()->runJavaScript(QLatin1String(
+                const QPointer<WebView> liveView(view);
+                QTimer::singleShot(700, &application, [liveView]() {
+                    if (!liveView)
+                        return;
+                    liveView->enginePage()->runJavaScript(QLatin1String(
                         "document.getElementById('u').value='newuser';"
                         "document.getElementById('p').value='newpass';"
                         "document.forms[0].requestSubmit();"));
@@ -11452,11 +11483,16 @@ int main(int argc, char **argv)
                     fail("surface");
                     return;
                 }
+                // The overlay view dies with reader exit — the qApp-
+                // rooted poll outlives it, so guard the capture.
+                const QPointer<QWebEngineView> liveSurface(surface);
                 auto tries = std::make_shared<int>(0);
                 QTimer *poll = new QTimer(qApp);
                 QObject::connect(poll, &QTimer::timeout, qApp,
-                    [&, poll, tries, surface]() {
-                    surface->page()->runJavaScript(QLatin1String(
+                    [&, poll, tries, liveSurface]() {
+                    if (!liveSurface)
+                        return;
+                    liveSurface->page()->runJavaScript(QLatin1String(
                         "document.readyState==='complete'&&"
                         "!!(document.querySelector('.content')&&"
                         "document.querySelector('.content').innerText"
@@ -12215,23 +12251,30 @@ int main(int argc, char **argv)
                 QCoreApplication::sendEvent(proxy, &press);
                 QCoreApplication::sendEvent(proxy, &release);
             });
+            const QPointer<BrowserMainWindow> liveWindow(browserWindow);
+            const QPointer<TabWidget> liveTabs(tabWidget);
             QTimer::singleShot(3000, &application,
-                               [&application, tabWidget, browserWindow,
+                               [&application, liveTabs, liveWindow,
                                 fixturePath]() {
-                const bool pass = tabWidget->count() == 3;
+                // The timeout watchdog below can have already torn the
+                // window down — a dead tab strip must read as FAIL,
+                // not UAF.
+                const bool pass = liveTabs && liveTabs->count() == 3;
                 qInfo() << "browser-smoke: target=_blank tab"
                         << (pass ? "PASS" : "FAIL")
-                        << "tabs:" << tabWidget->count();
+                        << "tabs:"
+                        << (liveTabs ? liveTabs->count() : -1);
                 qInfo() << "browser-smoke:" << (pass ? "PASS" : "FAIL");
                 QFile::remove(fixturePath);
-                delete browserWindow;
+                delete liveWindow;
                 application.exit(pass ? 0 : 1);
             });
         });
+        const QPointer<BrowserMainWindow> liveWindow(browserWindow);
         QTimer::singleShot(20000, &application,
-                           [&application, browserWindow]() {
+                           [&application, liveWindow]() {
             qInfo() << "browser-smoke: FAIL (timeout)";
-            delete browserWindow;
+            delete liveWindow;
             application.exit(1);
         });
         tabWidget->loadUrl(fixtureUrl, TabWidget::CurrentTab);
@@ -12827,9 +12870,10 @@ int main(int argc, char **argv)
             QUrl(base + QLatin1String("/form")),        // 5: dirty form
         };
 
-        auto fail = [&application, browserWindow](const char *stage) {
+        const QPointer<BrowserMainWindow> liveWindow(browserWindow);
+        auto fail = [&application, liveWindow](const char *stage) {
             qInfo() << "sleep-smoke: FAIL at" << stage;
-            delete browserWindow;
+            delete liveWindow.data();
             application.exit(1);
         };
         auto pollUntil = [](std::function<bool()> condition,
@@ -12890,9 +12934,10 @@ int main(int argc, char **argv)
                 QLatin1String("window.scrollTo(0, 5000);"));
             // recentlyAudible latches a few seconds of playback —
             // wait for it before the sweep so the exemption is live.
-            pollUntil([audioView]() {
-                return audioView->page()
-                    && audioView->page()->recentlyAudible();
+            const QPointer<WebView> liveAudio(audioView);
+            pollUntil([liveAudio]() {
+                return liveAudio && liveAudio->page()
+                    && liveAudio->page()->recentlyAudible();
             }, [&, stageSweep](bool audible) {
                 qInfo() << "sleep-smoke: audio tab audible"
                         << (audible ? "PASS" : "FAIL");
@@ -12908,40 +12953,50 @@ int main(int argc, char **argv)
         stageSweep = [&]() {
             *rssBefore = processTreeRssKb();
             tabWidget->suspendIdleTabs(0);
-            pollUntil([tabWidget]() {
-                return tabWidget->sleepingTabCount() == 3;
-            }, [&, stageMemory](bool slept) {
+            const QPointer<TabWidget> liveTabs(tabWidget);
+            pollUntil([liveTabs]() {
+                return liveTabs && liveTabs->sleepingTabCount() == 3;
+            }, [&, liveTabs, stageMemory](bool slept) {
+                if (!liveTabs) {
+                    fail("sweep");
+                    return;
+                }
                 const bool right =
-                    tabWidget->isTabSleeping(2)
-                    && tabWidget->isTabSleeping(3)
-                    && tabWidget->isTabSleeping(4)
-                    && !tabWidget->isTabSleeping(0)
-                    && !tabWidget->isTabSleeping(1)
-                    && !tabWidget->isTabSleeping(5);
+                    liveTabs->isTabSleeping(2)
+                    && liveTabs->isTabSleeping(3)
+                    && liveTabs->isTabSleeping(4)
+                    && !liveTabs->isTabSleeping(0)
+                    && !liveTabs->isTabSleeping(1)
+                    && !liveTabs->isTabSleeping(5);
                 qInfo() << "sleep-smoke: sweep discards heavy three"
                         << ((slept && right) ? "PASS" : "FAIL")
-                        << "sleeping:" << tabWidget->sleepingTabCount();
+                        << "sleeping:" << liveTabs->sleepingTabCount();
                 if (!slept || !right) {
-                    for (int i = 0; i < tabWidget->count(); ++i)
+                    for (int i = 0; i < liveTabs->count(); ++i)
                         qInfo() << "sleep-smoke:   tab" << i
-                                << tabWidget->sleepBlockReason(i);
+                                << liveTabs->sleepBlockReason(i);
                     fail("sweep");
                     return;
                 }
                 // The form tab's dirty latch lands in the same async
                 // capture callback the heavies used — give it a beat
                 // before reading the reason.
-                pollUntil([tabWidget]() {
-                    return !tabWidget->sleepBlockReason(5).isEmpty()
-                        && tabWidget->sleepBlockReason(5)
+                pollUntil([liveTabs]() {
+                    return liveTabs
+                        && !liveTabs->sleepBlockReason(5).isEmpty()
+                        && liveTabs->sleepBlockReason(5)
                                != QLatin1String("inflight");
-                }, [&, stageMemory](bool settled) {
+                }, [&, liveTabs, stageMemory](bool settled) {
+                    if (!liveTabs) {
+                        fail("exemptions");
+                        return;
+                    }
                     const QString reason0 =
-                        tabWidget->sleepBlockReason(0);
+                        liveTabs->sleepBlockReason(0);
                     const QString reason1 =
-                        tabWidget->sleepBlockReason(1);
+                        liveTabs->sleepBlockReason(1);
                     const QString reason5 =
-                        tabWidget->sleepBlockReason(5);
+                        liveTabs->sleepBlockReason(5);
                     const bool exemptions = settled
                         && reason0 == QLatin1String("current")
                         && (reason1 == QLatin1String("audible")
@@ -13000,19 +13055,20 @@ int main(int argc, char **argv)
         stageWake = [&]() {
             WebView *heavy2 = tabWidget->webView(2);
             tabWidget->setCurrentIndex(2);
-            pollUntil([heavy2]() {
-                return heavy2->page()
-                    && !heavy2->page()->isLoading()
-                    && heavy2->page()->lifecycleState()
+            const QPointer<WebView> liveHeavy(heavy2);
+            pollUntil([liveHeavy]() {
+                return liveHeavy && liveHeavy->page()
+                    && !liveHeavy->page()->isLoading()
+                    && liveHeavy->page()->lifecycleState()
                            == QWebEnginePage::LifecycleState::Active;
-            }, [&, heavy2, stageManual](bool woke) {
+            }, [&, liveHeavy, stageManual](bool woke) {
                 qInfo() << "sleep-smoke: wake reloads page"
                         << (woke ? "PASS" : "FAIL");
-                if (!woke) {
+                if (!woke || !liveHeavy) {
                     fail("wake");
                     return;
                 }
-                heavy2->enginePage()->runJavaScript(
+                liveHeavy->enginePage()->runJavaScript(
                     QLatin1String("JSON.stringify({"
                                   "y:window.scrollY,"
                                   "title:document.title})"),
@@ -13041,19 +13097,21 @@ int main(int argc, char **argv)
         stageManual = [&]() {
             WebView *audioView = tabWidget->webView(1);
             tabWidget->sleepTab(1);
-            pollUntil([tabWidget]() {
-                return tabWidget->isTabSleeping(1);
-            }, [&, audioView](bool slept) {
+            const QPointer<TabWidget> liveTabs(tabWidget);
+            const QPointer<WebView> liveAudio(audioView);
+            pollUntil([liveTabs]() {
+                return liveTabs && liveTabs->isTabSleeping(1);
+            }, [&, liveTabs, liveAudio](bool slept) {
                 qInfo() << "sleep-smoke: manual sleep over audio"
                         << (slept ? "PASS" : "FAIL");
-                if (!slept) {
+                if (!slept || !liveTabs || !liveAudio) {
                     fail("manual-sleep");
                     return;
                 }
-                tabWidget->wakeTab(1);
-                pollUntil([audioView]() {
-                    return audioView->page()
-                        && audioView->page()->lifecycleState()
+                liveTabs->wakeTab(1);
+                pollUntil([liveAudio]() {
+                    return liveAudio && liveAudio->page()
+                        && liveAudio->page()->lifecycleState()
                                == QWebEnginePage::LifecycleState::Active;
                 }, [&](bool woke) {
                     qInfo() << "sleep-smoke: manual wake"
@@ -13061,7 +13119,7 @@ int main(int argc, char **argv)
                     qInfo() << "sleep-smoke:"
                             << (woke ? "PASS" : "FAIL");
                     QFile::remove(fixturePath);
-                    delete browserWindow;
+                    delete liveWindow.data();
                     application.exit(woke ? 0 : 1);
                 });
             });
@@ -13080,9 +13138,9 @@ int main(int argc, char **argv)
         }, 600);
 
         QTimer::singleShot(120000, &application,
-                           [&application, browserWindow]() {
+                           [&application, liveWindow]() {
             qInfo() << "sleep-smoke: FAIL (timeout)";
-            delete browserWindow;
+            delete liveWindow.data();
             application.exit(1);
         });
         return application.exec();
@@ -16065,9 +16123,11 @@ int main(int argc, char **argv)
             popupPage->load(mv3PopupUrl);
             // Watchdog: the popup load wedging must not strand the
             // run — proceed with whatever the report holds.
+            const QPointer<QWebEngineView> livePopup(popupView);
             QTimer::singleShot(30000, &application,
-                               [popupView, proceed]() {
-                popupView->deleteLater();
+                               [livePopup, proceed]() {
+                if (livePopup)
+                    livePopup->deleteLater();
                 proceed();
             });
         };
@@ -17089,8 +17149,10 @@ int main(int argc, char **argv)
 
             // Close the real window once the loads have settled; the
             // quit path saves the session, then lastWindowClosed quits.
-            QTimer::singleShot(2500, &application, [browserWindow]() {
-                browserWindow->close();
+            const QPointer<BrowserMainWindow> liveWindow(browserWindow);
+            QTimer::singleShot(2500, &application, [liveWindow]() {
+                if (liveWindow)
+                    liveWindow->close();
             });
             QTimer::singleShot(30000, &application, [&application]() {
                 qInfo() << "session-smoke: FAIL (save phase timeout)";
@@ -17224,7 +17286,7 @@ int main(int argc, char **argv)
                 killSignal = SIGHUP;
             else if (signalName == QLatin1String("int"))
                 killSignal = SIGINT;
-            QTimer::singleShot(400, [killSignal]() {
+            QTimer::singleShot(400, &application, [killSignal]() {
                 ::kill(::getpid(), killSignal);
             });
 #else

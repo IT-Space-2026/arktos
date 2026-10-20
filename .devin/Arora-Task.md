@@ -367,7 +367,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | PRIV10 | PRIV07 slice B — post-commit review of the OTR teardown diff landed inside b6494e58 (lifetime races, refcount edges) — details below | done | 0 | 1 real bug fixed: upstream QWebEngineDownloadRequest::page() derefs a dead adapterClient after closeTab (UAF in hasActiveDownloadForPage/restartDownload) → guarded QPointer snapshot in WebEngineDownloadRequest; rest of checklist clean — full verdict in details. Verified: otr-teardown-smoke 13/13, tst_privatebrowsing 13/13, tst_downloadmanager 46/46, quit-after-load rc0 |
 | TAB01 | closeOtherTabs skips collapsed-group members: closing a group chip expands it mid-sweep, members land at i+1..i+n (already iterated) and survive — Chrome closes them. Fix: pre-expand collapsed groups before the loops, or close by view identity — details below | done | 0 | identity sweep: pre-expand collapsed groups + kill list of page widgets (strip + container-hidden stores), pinned+anchor exempt; closeHiddenPage(QWidget*) generalizes closeHiddenTab for non-web pages. Verified: build 0 warnings; tst_tabwidget 37/37 incl new closeOtherTabsCollapsedGroup (3 legs); --quit-after-load rc=0 offscreen --disable-gpu |
 | TAB02 | moveTabTo × collapsed group: dragging a chip to another window strands hidden members (leaderless group on source, lost member on target) + sibling bulk-index paths (close-to-right, window close) — details below | done | 0 | carry-the-run: chip drag transfers every member (strip + container-hidden stores) into a pre-created target group, fresh id keeps name/color, re-collapses with dragged tab still chip; tearTabToNewWindow no longer strands a window on refused move. Verified: tst_tabwidget 39/39 incl new collapsedChipTransfer + restoreGroupedTabUnderFilter legs; src build clean; --quit-after-load rc=0 offscreen --disable-gpu |
-| TAB03 | Deferred-deletion sweep: singleShot/invokeMethod lambdas capturing raw WebView*/Engine::Page* without QPointer guard — details below | pending | 0 | |
+| TAB03 | Deferred-deletion sweep: singleShot/invokeMethod lambdas capturing raw WebView*/Engine::Page* without QPointer guard — details below | done | 0 | QPointer guards on every deferred capture lacking a receiver context (download-settle watch, ext health-probe watchdog, file/abp job hops, OTR-autofill + sleep/browser/xsleak/bidi/reader/mv3/session smoke legs); engine-audit gate now rejects context-free singleShot/connect lambdas. Verified: build clean; otr-teardown 13/13, autofill/sleep/browser smokes PASS, tst_downloadmanager 46/46, tst_privatebrowsing 13/13, quit-after-load rc=0, gate PASS offscreen |
 | CONT01 | Container/profile teardown: deleting a container with bound tabs (incl. m_containerHidden strays) and restart-deleted profile vs queued signals — details below | pending | 0 | |
 | SESS01 | Session restore × engine/container matrix: engine-tagged tab on a webkit=0 build, lazy restore inside container level/group, restore racing an active container filter — details below | pending | 0 | |
 | TAB04 | Private tabs get thumbnails: captureTabThumbnail/scheduleThumbnailCapture have no OTR check — private page pixels land in m_tabThumbnails + hover previews. Skip capture+preview for OTR views — details below | pending | 0 | |
@@ -3339,6 +3339,66 @@ Sweep src/ for:
 
 Fix each finding with a QPointer guard or a context object; add the
 pattern to the engine-audit gate checklist if a cheap grep exists.
+
+#### TAB03 outcome
+
+Real hazards fixed (callback could fire after the captured object
+was destroyed):
+
+- downloadmanager.cpp `whenProfileDownloadsSettle`: both re-check
+  connects captured a raw `QWebEngineProfile *` — an OTR profile torn
+  down while a private download settles would re-enter the watch on
+  a dead profile.  Now `QPointer<QWebEngineProfile> liveProfile`; a
+  dead profile settles the watch via `callback()` directly.
+- extensionmanager.cpp health-probe watchdog (30s singleShot on
+  `this`) compared `m_healthPage == page` with a raw `page` — the
+  probe page dies with its profile inside the window.  Guarded with
+  `QPointer<QWebEnginePage>`.
+- network/fileaccesshandler.cpp + adblock/adblockschemeaccesshandler
+  .cpp: requestStarted queues GUI-thread work capturing the raw
+  `QWebEngineUrlRequestJob *` — WebEngine deletes the job when the
+  request aborts before the queued call lands.  `jobGuard` QPointer
+  is taken at capture time and passed through to replyToJob/
+  handleSubscribe (signatures take QPointer).
+- main.cpp smoke legs scheduled on qApp/&application outliving their
+  targets: OTR-autofill verification timer (`liveOtrView`), the
+  three BiDi panel smokes' deferred navigation (`liveView`),
+  reader-live overlay poll (`liveSurface`), browser-smoke settle +
+  timeout (`liveTabs`/`liveWindow`), session-smoke close
+  (`liveWindow`), MV3 popup watchdog (`livePopup`), sleep-smoke
+  pollUntil conditions + fail/watchdog (`liveTabs`/`liveAudio`/
+  `liveHeavy`/`liveWindow`), xsleak dump (`liveView` snapshot taken
+  at scheduling time — building the QPointer inside the callback
+  would itself dereference a dead pointer), and the signal-kill
+  singleShot gained `&application` context.
+
+Judged safe and left alone: every `singleShot/invokeMethod` whose
+receiver is the object the lambda dereferences (Qt drops queued
+calls to destroyed receivers — enginetab, enginetab servo restart,
+rustcorebridge, bidiclient's inFlight-joined posts, servobackend's
+invokeMethod(view,…) with view as context), destroyed-signal cleanup
+lambdas that only compare/remove the pointer identity, and all
+already-guarded sites (webpage cert/http interstitials,
+webenginebackend/webkitbackend livePage, readermode, sourceviewer,
+commandpalette Item QPointers, extensionbackgroundhost).
+
+Also normalized the existing guards' naming (`page` → `livePage`,
+`view`/`parent` → `liveView`/`liveParent` in webpage.cpp and
+webkitbackend.cpp) so unguarded raw captures stand out in review.
+
+Gate: check-engine-audit.sh now fails on the two context-free
+shapes — `QTimer::singleShot(<ms>, [lambda])` (incl. the multi-line
+`singleShot(<ms>,\n [lambda])` form) and
+`connect(sender, &Cls::signal, [lambda])`.  No cheap grep can prove
+a context-carried lambda's captures are guarded, so that half stays
+a review rule; the gate comment says so.
+
+Verified: qmake + make -j2 clean (0 warnings on touched TUs);
+check-engine-audit.sh PASS; QT_QPA_PLATFORM=offscreen —
+--otr-teardown-smoke 13/13 (incl. "download settle releases the
+profile"), --autofill-smoke PASS, --sleep-smoke PASS, --browser-smoke
+PASS, --quit-after-load rc=0; tst_downloadmanager 46/46,
+tst_privatebrowsing 13/13.
 
 ### CONT01
 

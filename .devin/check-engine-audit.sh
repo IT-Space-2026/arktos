@@ -50,5 +50,34 @@ if [ "$missing" -gt 0 ]; then
     echo "engine-audit: FAIL — $missing undocumented QtWebEngine touchpoint(s)" >&2
     exit 1
 fi
-echo "engine-audit: PASS — $count files reference QtWebEngine ($whitelisted whitelisted, rest documented)"
+
+# TAB03 deferred-lambda lifetime gate: a functor scheduled without a
+# receiver context survives the objects it captures — WebView/page/
+# profile teardown deleteLater()s the target but the timer still fires.
+# Flag the two shapes that carry no context at all:
+#   QTimer::singleShot(<ms>, [lambda])          (2-arg overload)
+#   connect(sender, &Cls::signal, [lambda])     (context-less connect)
+# Captured raw pointers inside a context-carried lambda are caught in
+# review — there is no cheap grep for "capture lacks a QPointer" that
+# does not false-positive on receivers like [this].
+raw=$(grep -rnE 'QTimer::singleShot\([^,()]*,[[:space:]]*\[|connect\([^,()]*,[^,()]*::[a-zA-Z]+,[[:space:]]*\[' \
+    src tools autotests fuzz manualtests \
+    --include='*.h' --include='*.hpp' --include='*.cpp' --include='*.c' 2>/dev/null)
+# Multi-line 2-arg form: singleShot(<ms>, on one line, [lambda] on the
+# next — only flagged when the continuation starts the functor (a
+# context argument would be a name/expression, not '[').
+multiline=$(grep -rnA1 'QTimer::singleShot\([^,()]*,$' \
+    src tools autotests fuzz manualtests \
+    --include='*.h' --include='*.hpp' --include='*.cpp' --include='*.c' 2>/dev/null \
+    | grep -E '^[^:]+[-:][0-9]+-[[:space:]]*\[')
+[ -n "$multiline" ] && raw="$raw
+$multiline"
+if [ -n "$raw" ]; then
+    echo "engine-audit: deferred lambda scheduled without a receiver context:" >&2
+    echo "$raw" >&2
+    echo "engine-audit: FAIL — pass a context object or guard captures with QPointer" >&2
+    exit 1
+fi
+
+echo "engine-audit: PASS — $count files reference QtWebEngine ($whitelisted whitelisted, rest documented); no context-free deferred lambdas"
 exit 0

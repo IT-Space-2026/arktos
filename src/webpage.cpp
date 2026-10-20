@@ -117,13 +117,13 @@ void JavaScriptExternalObject::AddSearchProvider(const QString &url)
     QWebEnginePage *page = qobject_cast<QWebEnginePage*>(parent());
     const QString source = page
             ? QString::fromUtf8(page->url().toEncoded()) : QString();
-    QPointer<QWidget> view = page
+    QPointer<QWidget> liveView = page
             ? WebEnginePageAdapter::forPage(page)->view() : nullptr;
 
     // Queued: a modal exec() inside the channel dispatch stack is
     // asking for re-entrancy trouble — same pattern as the
     // external-url consent prompt in WebPage::confirmAndOpenExternalUrl.
-    QMetaObject::invokeMethod(qApp, [view, descriptorUrl, source]() {
+    QMetaObject::invokeMethod(qApp, [liveView, descriptorUrl, source]() {
         QString shown = QString::fromUtf8(descriptorUrl.toEncoded());
         if (shown.size() > 256)
             shown = shown.left(256) + QLatin1String("…");
@@ -132,7 +132,7 @@ void JavaScriptExternalObject::AddSearchProvider(const QString &url)
             WebPage::tr("The page at %1 wants to add a search engine "
                         "described by:\n\n%2\n\nDownload and inspect "
                         "it?").arg(source, shown),
-            QMessageBox::Yes | QMessageBox::No, view);
+            QMessageBox::Yes | QMessageBox::No, liveView);
         // URLs are page-controlled; render the prompt literally.
         box.setTextFormat(Qt::PlainText);
         box.setDefaultButton(QMessageBox::No);
@@ -662,8 +662,8 @@ void WebPage::promptOpenExternalUrl(QWidget *parentWidget,
     // Queued: a modal exec() inside the navigation verdict would
     // re-enter the engine's navigation machinery while it waits for
     // an answer.
-    QPointer<QWidget> parent = parentWidget;
-    QMetaObject::invokeMethod(qApp, [parent, url, source]() {
+    QPointer<QWidget> liveParent = parentWidget;
+    QMetaObject::invokeMethod(qApp, [liveParent, url, source]() {
         // The percent-encoded form keeps control characters and
         // embedded newlines from spoofing the dialog text.
         QString shown = QString::fromUtf8(url.toEncoded());
@@ -674,7 +674,7 @@ void WebPage::promptOpenExternalUrl(QWidget *parentWidget,
             WebPage::tr("The page at %1 wants to open an external "
                         "application to handle this link:\n\n%2\n\n"
                         "Allow it?").arg(source, shown),
-            QMessageBox::Open | QMessageBox::Cancel, parent);
+            QMessageBox::Open | QMessageBox::Cancel, liveParent);
         // URLs are page-controlled; render the prompt literally.
         box.setTextFormat(Qt::PlainText);
         box.setDefaultButton(QMessageBox::Cancel);
@@ -1929,7 +1929,7 @@ void WebPage::resolveCertificateErrorLink(const QUrl &command)
 {
     const QWebEngineCertificateError error = m_pendingCertError;
     m_certErrorPending = false;
-    QPointer<WebPage> page(this);
+    QPointer<WebPage> livePage(this);
     if (command.path() == QLatin1String("proceed") && error.isOverridable()) {
         // Session-scoped override only: the (host, certificate) pair is
         // whitelisted for this profile and the original URL reloaded —
@@ -1941,24 +1941,24 @@ void WebPage::resolveCertificateErrorLink(const QUrl &command)
         certErrorWhitelistFor(profile()).insert(key);
         // Queued: navigating from inside acceptNavigationRequest would
         // re-enter Chromium's navigation machinery (CHECK failure).
-        QTimer::singleShot(0, this, [page, url]() {
-            if (page)
-                page->load(url);
+        QTimer::singleShot(0, this, [livePage, url]() {
+            if (livePage)
+                livePage->load(url);
         });
         return;
     }
     // "back to safety" (or anything unrecognised): leave the
     // interstitial — back in history when there is one, otherwise the
     // start page.  Queued for the same re-entrancy reason.
-    QTimer::singleShot(0, this, [page]() {
-        if (!page)
+    QTimer::singleShot(0, this, [livePage]() {
+        if (!livePage)
             return;
-        if (page->history()->canGoBack())
-            page->history()->back();
+        if (livePage->history()->canGoBack())
+            livePage->history()->back();
         else
-            page->load(BrowserApplication::startPageUrl(
+            livePage->load(BrowserApplication::startPageUrl(
                 BrowserApplication::defaultEngineId(),
-                page->profile()->isOffTheRecord()));
+                livePage->profile()->isOffTheRecord()));
     });
 }
 
@@ -2050,10 +2050,10 @@ void WebPage::showHttpWarning(const QUrl &target)
     const QUrl interstitial(
         QLatin1String("arktos-http-warning:interstitial?n=")
         + m_httpWarningNonce);
-    QPointer<WebPage> page(this);
-    QTimer::singleShot(0, this, [page, interstitial]() {
-        if (page)
-            page->load(interstitial);
+    QPointer<WebPage> livePage(this);
+    QTimer::singleShot(0, this, [livePage, interstitial]() {
+        if (livePage)
+            livePage->load(interstitial);
     });
     emit httpOnlyInterstitial(target);
 }
@@ -2114,7 +2114,7 @@ void WebPage::resolveHttpWarningLink(const QUrl &command)
 {
     const QUrl target = m_httpWarningUrl;
     m_httpWarningPending = false;
-    QPointer<WebPage> page(this);
+    QPointer<WebPage> livePage(this);
     if (command.path() == QLatin1String("proceed")
         || command.path() == QLatin1String("always")) {
         // "proceed" remembers the host for the session; "always"
@@ -2127,24 +2127,24 @@ void WebPage::resolveHttpWarningLink(const QUrl &command)
                                                   persist);
         // Queued: navigating from inside acceptNavigationRequest
         // would re-enter Chromium's navigation machinery.
-        QTimer::singleShot(0, this, [page, target]() {
-            if (page)
-                page->load(target);
+        QTimer::singleShot(0, this, [livePage, target]() {
+            if (livePage)
+                livePage->load(target);
         });
         return;
     }
     // "back to safety" (or anything unrecognised): leave the
     // interstitial — back in history when there is one, otherwise the
     // start page.  Queued for the same re-entrancy reason.
-    QTimer::singleShot(0, this, [page]() {
-        if (!page)
+    QTimer::singleShot(0, this, [livePage]() {
+        if (!livePage)
             return;
-        if (page->history()->canGoBack())
-            page->history()->back();
+        if (livePage->history()->canGoBack())
+            livePage->history()->back();
         else
-            page->load(BrowserApplication::startPageUrl(
+            livePage->load(BrowserApplication::startPageUrl(
                 BrowserApplication::defaultEngineId(),
-                page->profile()->isOffTheRecord()));
+                livePage->profile()->isOffTheRecord()));
     });
 }
 
@@ -2167,10 +2167,10 @@ void WebPage::showDomainBlockWarning(const QUrl &target)
     const QUrl interstitial(
         QLatin1String("arktos-site-block:interstitial?n=")
         + m_domainBlockNonce);
-    QPointer<WebPage> page(this);
-    QTimer::singleShot(0, this, [page, interstitial]() {
-        if (page)
-            page->load(interstitial);
+    QPointer<WebPage> livePage(this);
+    QTimer::singleShot(0, this, [livePage, interstitial]() {
+        if (livePage)
+            livePage->load(interstitial);
     });
     emit domainBlockInterstitial(target);
 }
@@ -2229,7 +2229,7 @@ void WebPage::resolveDomainBlockLink(const QUrl &command)
 {
     const QUrl target = m_domainBlockUrl;
     m_domainBlockPending = false;
-    QPointer<WebPage> page(this);
+    QPointer<WebPage> livePage(this);
     if (command.path() == QLatin1String("proceed")) {
         // Session-scoped only — the choice is logged for the session
         // and never written to settings.
@@ -2238,24 +2238,24 @@ void WebPage::resolveDomainBlockLink(const QUrl &command)
         PrivacyRequestInterceptor::allowBlockedDomain(target.host());
         // Queued: navigating from inside acceptNavigationRequest
         // would re-enter Chromium's navigation machinery.
-        QTimer::singleShot(0, this, [page, target]() {
-            if (page)
-                page->load(target);
+        QTimer::singleShot(0, this, [livePage, target]() {
+            if (livePage)
+                livePage->load(target);
         });
         return;
     }
     // "back to safety" (or anything unrecognised): leave the
     // interstitial — back in history when there is one, otherwise the
     // start page.  Queued for the same re-entrancy reason.
-    QTimer::singleShot(0, this, [page]() {
-        if (!page)
+    QTimer::singleShot(0, this, [livePage]() {
+        if (!livePage)
             return;
-        if (page->history()->canGoBack())
-            page->history()->back();
+        if (livePage->history()->canGoBack())
+            livePage->history()->back();
         else
-            page->load(BrowserApplication::startPageUrl(
+            livePage->load(BrowserApplication::startPageUrl(
                 BrowserApplication::defaultEngineId(),
-                page->profile()->isOffTheRecord()));
+                livePage->profile()->isOffTheRecord()));
     });
 }
 

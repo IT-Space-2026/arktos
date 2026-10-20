@@ -75,9 +75,13 @@ void AdBlockSchemeAccessHandler::requestStarted(QWebEngineUrlRequestJob *job)
 
     // requestStarted() runs on the IO thread; the subscription prompt
     // is GUI work, so it is queued onto the thread that owns this
-    // handler (same pattern as FileAccessHandler).
-    QMetaObject::invokeMethod(this, [this, job]() {
-        handleSubscribe(job);
+    // handler (same pattern as FileAccessHandler).  The job is
+    // QPointer-guarded at capture time — constructing the guard inside
+    // handleSubscribe would already be too late if WebEngine aborted
+    // and deleted the request meanwhile (TAB03).
+    const QPointer<QWebEngineUrlRequestJob> jobGuard(job);
+    QMetaObject::invokeMethod(this, [this, jobGuard]() {
+        handleSubscribe(jobGuard);
     }, Qt::QueuedConnection);
 }
 

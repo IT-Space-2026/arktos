@@ -4481,3 +4481,14 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   adapter now keeps a guarded reference taken when the download
   starts, so a closed tab's download reports no page instead of
   reading dead objects.
+- Hardened deferred callbacks against teardown races (TAB03): timers
+  and queued invocations that captured a raw web view, page, profile
+  or request-job pointer could fire after the object was deleted —
+  e.g. a download-settle watch on a private profile mid-teardown, an
+  extension health-probe watchdog outliving its probe page, and
+  scheme-handler replies to already-aborted requests. Every such
+  capture now holds a QPointer taken when the work is scheduled (or
+  runs under a receiver context that drops the call), so the
+  callback quietly no-ops instead of touching freed objects. The
+  engine-audit gate now also rejects new context-free timer lambdas
+  and context-less signal connections.

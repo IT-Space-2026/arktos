@@ -95,9 +95,12 @@ void FileAccessHandler::requestStarted(QWebEngineUrlRequestJob *job)
 
     // requestStarted() runs on the IO thread, but building the listing
     // needs QFileIconProvider/QStyle pixmaps, so it is queued onto the
-    // GUI thread that owns this handler.
-    QMetaObject::invokeMethod(this, [this, job]() {
-        replyToJob(job);
+    // GUI thread that owns this handler.  The job is QPointer-guarded:
+    // WebEngine deletes it if the request is aborted before the queued
+    // call lands (TAB03).
+    const QPointer<QWebEngineUrlRequestJob> jobGuard(job);
+    QMetaObject::invokeMethod(this, [this, jobGuard]() {
+        replyToJob(jobGuard);
     }, Qt::QueuedConnection);
 }
 

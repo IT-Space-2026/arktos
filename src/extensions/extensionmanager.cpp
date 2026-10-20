@@ -1691,8 +1691,11 @@ void ExtensionManager::startNextHealthProbe()
                         .arg(info.id)));
     // Watchdog: a wedged load or a dropped eval must not stall the
     // queue — an unmeasurable extension stays static-classified.
-    QTimer::singleShot(30000, this, [this, page]() {
-        if (m_healthPage == page)
+    // The page is guarded — it can die with its profile inside the
+    // 30s window (TAB03).
+    QPointer<QWebEnginePage> livePage(page);
+    QTimer::singleShot(30000, this, [this, livePage]() {
+        if (livePage && m_healthPage == livePage)
             finishHealthProbe(ProbeVerdict::None,
                 tr("health probe timed out"));
     });

@@ -1362,14 +1362,25 @@ void DownloadManager::whenProfileDownloadsSettle(
                 // covers an item torn down with its manager before
                 // reaching a terminal state — the re-check is queued
                 // so it never reads a half-destructed item.
+                // TAB03: the profile (e.g. an OTR profile mid-teardown)
+                // can die while the watch still pends — a dead profile
+                // has no pending downloads by definition, so the watch
+                // settles by running the callback without re-checking.
+                const QPointer<QWebEngineProfile> liveProfile(profile);
                 QObject::connect(item, &DownloadItem::downloadFinished,
-                                 context, [profile, context, callback]() {
-                    whenProfileDownloadsSettle(profile, context, callback);
+                                 context, [liveProfile, context, callback]() {
+                    if (liveProfile)
+                        whenProfileDownloadsSettle(liveProfile, context, callback);
+                    else
+                        callback();
                 });
                 QObject::connect(item, &QObject::destroyed,
-                                 context, [profile, context, callback](QObject *) {
-                    QMetaObject::invokeMethod(context, [profile, context, callback]() {
-                        whenProfileDownloadsSettle(profile, context, callback);
+                                 context, [liveProfile, context, callback](QObject *) {
+                    QMetaObject::invokeMethod(context, [liveProfile, context, callback]() {
+                        if (liveProfile)
+                            whenProfileDownloadsSettle(liveProfile, context, callback);
+                        else
+                            callback();
                     }, Qt::QueuedConnection);
                 });
             }
