@@ -57,6 +57,11 @@
 #include <qwebenginehistory.h>
 #include <qsettings.h>
 
+#ifdef ARKTOS_RUSTCORE
+#include <QJsonArray>
+#include <QJsonObject>
+#endif
+
 class tst_TabWidget : public QObject
 {
     Q_OBJECT
@@ -127,6 +132,10 @@ private slots:
     void tabSlotDrive();
     void newTabStartPage();
     void lazySessionRestore();
+    void engineSessionRestore();
+    void lazyRestoreUnderContainerFilter();
+    void lazyRestoreInsideCollapsedGroup();
+    void otrPendingRestoreExcluded();
     void renameTab();
     void tabTransfer();
     void collapsedChipTransfer();
@@ -201,6 +210,10 @@ void tst_TabWidget::cleanup()
     // Same guard for the icon-only mode (TABS09) — a leaked key would
     // pin every later test's strip to the icon tile width.
     settings.remove(QLatin1String("tabs/iconOnlyTabs"));
+    // CONT06: same guard for the two-level strip — a leaked
+    // non-default display mode silently filters every later test's
+    // tabs into hidden stores.
+    settings.remove(QLatin1String("tabs/containerDisplay"));
     // TABS13: same guard for the process-private flag — a mid-test
     // exit would leave every later transfer refused.
     BrowserApplication::setPrivate(false);
@@ -3002,6 +3015,440 @@ void tst_TabWidget::lazySessionRestore()
 
     settings.remove(QLatin1String("performance/lazyRestoreTabs"));
     settings.remove(QLatin1String("performance/alwaysLoadPinnedTabs"));
+}
+
+// SESS01 — session restore × engine matrix: a foreign-engine tab
+// serializes its backend tag + flat url; on a build that still offers
+// the backend it restores natively, everywhere else it degrades to a
+// WebEngine tab at the flat url — never stranded, never a crash.
+void tst_TabWidget::engineSessionRestore()
+{
+    // Deterministic restore: the lazy legs own the deferred path.
+    ProfileSettings settings;
+    settings.setValue(QLatin1String("performance/lazyRestoreTabs"),
+                      false);
+
+    FakeEngineBackend fake;
+    EngineRegistry::registerBackend(&fake);
+    const QUrl u1("data:text/plain,web-one");
+    const QUrl u3("data:text/plain,web-three");
+    const QUrl uf("data:text/plain,foreign");
+
+    // Save: a fake-engine tab between two web tabs keeps its slot and
+    // serializes with the backend tag; the pinned+renamed lead tab
+    // exercises the v3 manifest keys.
+    QByteArray blob;
+#ifdef ARKTOS_RUSTCORE
+    QJsonObject manifest;
+#endif
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        widget.loadUrl(u1, TabWidget::CurrentTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), u1, 15000);
+        widget.newTab();
+        QVERIFY(widget.reloadTabInEngine(1, QStringLiteral("fake")));
+        EngineTab *ftab = widget.engineTab(1);
+        QVERIFY(ftab);
+        ftab->load(uf);
+        QCOMPARE(ftab->url(), uf);
+        widget.loadUrl(u3, TabWidget::NewTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(2)->url(), u3, 15000);
+        QCOMPARE(widget.count(), 3);
+        QVERIFY(widget.engineTab(1));
+        widget.setTabPinned(0, true);
+        widget.setTabTitleOverride(0, QLatin1String("Pinned One"));
+        blob = widget.saveState();
+#ifdef ARKTOS_RUSTCORE
+        manifest = widget.sessionStateJson();
+        const QJsonArray tabs =
+            manifest.value(QLatin1String("tabs")).toArray();
+        QCOMPARE(tabs.count(), 3);
+        QCOMPARE(tabs.at(1).toObject()
+                     .value(QLatin1String("engine")).toString(),
+                 QStringLiteral("fake"));
+        QCOMPARE(tabs.at(0).toObject()
+                     .value(QLatin1String("pinned")).toBool(), true);
+        QCOMPARE(tabs.at(0).toObject()
+                     .value(QLatin1String("title")).toString(),
+                 QStringLiteral("Pinned One"));
+#endif
+        while (widget.count())
+            widget.closeTab(0);
+    }
+
+    // Same-backend restore: the fake tab comes back as an EngineTab
+    // on its slot — order and pin/title preserved around it.
+    {
+        SubTabWidget widget;
+        QVERIFY(widget.restoreState(blob));
+        QCOMPARE(widget.count(), 3);
+        QVERIFY(widget.webView(0));
+        QVERIFY(widget.engineTab(1));
+        QCOMPARE(widget.engineTab(1)->url(), uf);
+        QVERIFY(widget.webView(2));
+        QCOMPARE(widget.tabEngineId(1), QStringLiteral("fake"));
+        QVERIFY(widget.isTabPinned(0));
+        QCOMPARE(widget.tabTitleOverride(0), QStringLiteral("Pinned One"));
+        while (widget.count())
+            widget.closeTab(0);
+    }
+
+#ifdef ARKTOS_RUSTCORE
+    // The manifest path restores the fake tab natively too.
+    {
+        SubTabWidget widget;
+        QVERIFY(widget.restoreSessionState(manifest));
+        QCOMPARE(widget.count(), 3);
+        QVERIFY(widget.engineTab(1));
+        QCOMPARE(widget.engineTab(1)->url(), uf);
+        QVERIFY(widget.isTabPinned(0));
+        QCOMPARE(widget.tabTitleOverride(0), QStringLiteral("Pinned One"));
+        while (widget.count())
+            widget.closeTab(0);
+    }
+#endif
+
+    EngineRegistry::unregisterBackend(&fake);
+
+    // Absent backend — the "plain build" cell: the same blob and a
+    // manifest naming engines this build lacks all degrade to
+    // WebEngine tabs at the flat url.
+    {
+        SubTabWidget widget;
+        QVERIFY(widget.restoreState(blob));
+        QCOMPARE(widget.count(), 3);
+        QVERIFY(widget.webView(1));
+        QVERIFY(!widget.engineTab(1));
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), uf, 15000);
+        QVERIFY(widget.isTabPinned(0));
+        while (widget.count())
+            widget.closeTab(0);
+    }
+
+#ifdef ARKTOS_RUSTCORE
+    // Crafted manifest: engine tags no build offers (servo on a
+    // webkit=0 build, webkit, garbage) — every one restores as a
+    // WebView at the flat url; the foreign state blob is ignored.
+    {
+        QJsonObject state;
+        state.insert(QLatin1String("current"), 0);
+        QJsonArray tabs;
+        const QStringList engines = { QStringLiteral("webkit"),
+                                      QStringLiteral("blink-shim"),
+                                      QStringLiteral("no-such-engine") };
+        for (int i = 0; i < engines.count(); ++i) {
+            QJsonObject tab;
+            tab.insert(QLatin1String("url"),
+                       QStringLiteral("data:text/plain,f%1").arg(i));
+            tab.insert(QLatin1String("engine"), engines.at(i));
+            tab.insert(QLatin1String("state"),
+                       QLatin1String("AAAA"));   // unreadable blob
+            tabs.append(tab);
+        }
+        state.insert(QLatin1String("tabs"), tabs);
+        SubTabWidget widget;
+        QVERIFY(widget.restoreSessionState(state));
+        QCOMPARE(widget.count(), 3);
+        for (int i = 0; i < 3; ++i) {
+            QVERIFY(widget.webView(i));
+            QVERIFY(!widget.engineTab(i));
+            QTRY_COMPARE_WITH_TIMEOUT(
+                widget.webView(i)->url(),
+                QUrl(QStringLiteral("data:text/plain,f%1").arg(i)),
+                15000);
+        }
+        while (widget.count())
+            widget.closeTab(0);
+    }
+#endif
+}
+
+// SESS01 — lazy restore inside container levels + the restore ×
+// filter race: a deferred tab's binding lives on its view, so a
+// pending record restored into a filtered-out level still lands on
+// the right profile when its level is raised and activated — and it
+// stays deferred instead of loading eagerly at startup.
+void tst_TabWidget::lazyRestoreUnderContainerFilter()
+{
+    ProfileSettings settings;
+    const QVariant savedDisplay =
+        settings.value(QLatin1String("tabs/containerDisplay"));
+    settings.setValue(QLatin1String("tabs/containerDisplay"), 1);
+    settings.setValue(QLatin1String("performance/lazyRestoreTabs"), true);
+    settings.setValue(QLatin1String("performance/alwaysLoadPinnedTabs"),
+                      false);
+
+    ContainerManager *manager = ContainerManager::instance();
+    const QString cid = manager->createContainer(
+        QStringLiteral("LazyCtx"), QColor(Qt::magenta)).id;
+    QVERIFY(!cid.isEmpty());
+
+    const QUrl base1("data:text/plain,lazy-base-1");
+    const QUrl base2("data:text/plain,lazy-base-2");
+    const QUrl ctx1("data:text/plain,lazy-ctx-1");
+    const QUrl ctx2("data:text/plain,lazy-ctx-2");
+
+    // Saved strip: two default-level tabs + two work-level tabs, the
+    // window left sitting on the work header — the snapshot records
+    // the active level so restore lands there.
+    QByteArray state;
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        widget.loadUrl(base1, TabWidget::CurrentTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), base1, 15000);
+        widget.loadUrl(base2, TabWidget::NewTab);
+        WebView *w1 = widget.makeNewTabInContainer(cid, true);
+        QVERIFY(w1);
+        w1->loadUrl(ctx1);
+        WebView *w2 = widget.makeNewTabInContainer(cid, false);
+        QVERIFY(w2);
+        w2->loadUrl(ctx2);
+        QTRY_COMPARE_WITH_TIMEOUT(w2->url(), ctx2, 15000);
+        widget.setActiveContainerHeader(cid);
+        widget.setCurrentIndex(widget.webViewIndex(w1));
+        state = widget.saveState();
+        widget.closeTabsInContainer(cid);
+        while (widget.count())
+            widget.closeTab(0);
+    }
+
+    // Restore: the saved level wins — work tabs show (saved current
+    // flushed, the other still deferred), default tabs wait in their
+    // hidden store also deferred.
+    {
+        SubTabWidget widget;
+        QVERIFY(widget.restoreState(state));
+        QCOMPARE(widget.activeContainerHeader(), cid);
+        QCOMPARE(widget.containerTabCount(cid), 2);
+        QCOMPARE(widget.containerTabCount(QString()), 2);
+        QCOMPARE(widget.totalTabCount(), 4);
+        QCOMPARE(widget.count(), 2);
+
+        QVERIFY(widget.currentWebView());
+        QTRY_COMPARE_WITH_TIMEOUT(widget.currentWebView()->url(), ctx1,
+                                  15000);
+        const int lazyCtx = widget.currentIndex() == 0 ? 1 : 0;
+        QVERIFY(widget.isTabPendingRestore(lazyCtx));
+        QCOMPARE(widget.pendingRestoreUrl(lazyCtx), ctx2);
+        QCOMPARE(widget.containerIdForTab(lazyCtx), cid);
+        QVERIFY(widget.webView(lazyCtx)->url().isEmpty());
+
+        // Activation performs the deferred load on the same profile.
+        widget.setCurrentIndex(lazyCtx);
+        QVERIFY(!widget.isTabPendingRestore(lazyCtx));
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(lazyCtx)->url(), ctx2,
+                                  15000);
+        QCOMPARE(widget.containerIdForTab(lazyCtx), cid);
+
+        // The filtered-out default level holds deferred tabs too —
+        // raising it reinserts them pending, and activation lands the
+        // load.  (The switch itself may flush the tab the filter
+        // lands on, so assert at least one survives.)
+        widget.setActiveContainerHeader(QString());
+        QCOMPARE(widget.count(), 2);
+        int pendingDefault = -1;
+        for (int i = 0; i < widget.count(); ++i) {
+            if (widget.isTabPendingRestore(i))
+                pendingDefault = i;
+        }
+        QVERIFY(pendingDefault >= 0);
+        const QUrl pendingUrl = widget.pendingRestoreUrl(pendingDefault);
+        QVERIFY(pendingUrl == base1 || pendingUrl == base2);
+        widget.setCurrentIndex(pendingDefault);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(pendingDefault)->url(),
+                                  pendingUrl, 15000);
+        widget.closeTabsInContainer(cid);
+        while (widget.count())
+            widget.closeTab(0);
+    }
+
+    // The filter race: a manifest saved on the default header
+    // restores while the strip already shows the work level — the
+    // saved header wins, every restored tab still sorts into the
+    // right store, and nothing loads eagerly along the way.
+    QByteArray defaultHeaderState;
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        widget.loadUrl(base1, TabWidget::CurrentTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), base1, 15000);
+        WebView *w = widget.makeNewTabInContainer(cid, false);
+        QVERIFY(w);
+        w->loadUrl(ctx1);
+        QTRY_COMPARE_WITH_TIMEOUT(w->url(), ctx1, 15000);
+        widget.setActiveContainerHeader(QString());
+        defaultHeaderState = widget.saveState();
+        widget.closeTabsInContainer(cid);
+        while (widget.count())
+            widget.closeTab(0);
+    }
+    {
+        SubTabWidget widget;
+        WebView *pre = widget.makeNewTabInContainer(cid, true);
+        QVERIFY(pre);
+        // The pre-existing tab must be non-blank or restoreState()
+        // would take it for the fresh-window placeholder and close
+        // it — the scenario is "restore lands while the work level
+        // is already showing", not a virgin window.
+        pre->loadUrl(QUrl(QLatin1String("data:text/plain,pre")));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            pre->url(), QUrl(QLatin1String("data:text/plain,pre")),
+            15000);
+        QCOMPARE(widget.activeContainerHeader(), cid);
+        QVERIFY(widget.restoreState(defaultHeaderState));
+        // The saved "" header takes over: the default tab shows
+        // (it flushed as saved-current), the pre-existing and
+        // restored work tabs both wait in the hidden store.
+        QCOMPARE(widget.activeContainerHeader(), QString());
+        QCOMPARE(widget.count(), 1);
+        QCOMPARE(widget.containerTabCount(cid), 2);
+        QCOMPARE(widget.totalTabCount(), 3);
+
+        widget.setActiveContainerHeader(cid);
+        int pendingCtx = -1;
+        for (int i = 0; i < widget.count(); ++i) {
+            if (widget.isTabPendingRestore(i))
+                pendingCtx = i;
+        }
+        QVERIFY(pendingCtx >= 0);
+        QCOMPARE(widget.pendingRestoreUrl(pendingCtx), ctx1);
+        widget.setCurrentIndex(pendingCtx);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(pendingCtx)->url(),
+                                  ctx1, 15000);
+        widget.closeTabsInContainer(cid);
+        while (widget.count())
+            widget.closeTab(0);
+    }
+
+    // One-shot: deleteContainer is destructive, so it cannot sit in a
+    // QTRY expression — the macro evaluates it again after success and
+    // the second call would report "already gone".  The call drains
+    // the deferred-delete queue itself before taking the profile.
+    QVERIFY(manager->deleteContainer(cid));
+
+    if (savedDisplay.isValid())
+        settings.setValue(QLatin1String("tabs/containerDisplay"),
+                          savedDisplay);
+    else
+        settings.remove(QLatin1String("tabs/containerDisplay"));
+    settings.remove(QLatin1String("performance/lazyRestoreTabs"));
+    settings.remove(QLatin1String("performance/alwaysLoadPinnedTabs"));
+}
+
+// SESS01 — lazy restore inside a collapsed group: the hidden members
+// keep their stashed urls through the group store, and expanding +
+// activating lands the deferred load.
+void tst_TabWidget::lazyRestoreInsideCollapsedGroup()
+{
+    ProfileSettings settings;
+    settings.setValue(QLatin1String("performance/lazyRestoreTabs"), true);
+    settings.setValue(QLatin1String("performance/alwaysLoadPinnedTabs"),
+                      false);
+
+    const QUrl u1("data:text/plain,grouped-1");
+    const QUrl u2("data:text/plain,grouped-2");
+    const QUrl u3("data:text/plain,grouped-3");
+
+    QByteArray state;
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        widget.loadUrl(u1, TabWidget::CurrentTab);
+        widget.loadUrl(u2, TabWidget::NewTab);
+        widget.loadUrl(u3, TabWidget::NewTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(2)->url(), u3, 15000);
+        const QString gid = widget.createTabGroup(0);
+        QVERIFY(!gid.isEmpty());
+        widget.addTabToGroup(1, gid);
+        widget.addTabToGroup(2, gid);
+        widget.setTabGroupCollapsed(gid, true);
+        QCOMPARE(widget.count(), 1);
+        state = widget.saveState();
+        while (widget.count())
+            widget.closeTab(0);
+    }
+
+    {
+        SubTabWidget widget;
+        QVERIFY(widget.restoreState(state));
+        QCOMPARE(widget.tabGroupIds().count(), 1);
+        const QString gid = widget.tabGroupIds().first();
+        QVERIFY(widget.tabGroupIsCollapsed(gid));
+        QCOMPARE(widget.count(), 1);             // chip only
+        QCOMPARE(widget.totalTabCount(), 3);
+        // The chip was the saved-current member — it flushed; the
+        // hidden members still defer inside the group store.
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), u1, 15000);
+
+        widget.setTabGroupCollapsed(gid, false);
+        QCOMPARE(widget.count(), 3);
+        QList<int> pending;
+        for (int i = 0; i < widget.count(); ++i) {
+            if (widget.isTabPendingRestore(i))
+                pending.append(i);
+        }
+        QCOMPARE(pending.count(), 2);
+        for (int i : pending) {
+            const QUrl url = widget.pendingRestoreUrl(i);
+            QVERIFY(url == u2 || url == u3);
+            widget.setCurrentIndex(i);
+            QTRY_COMPARE_WITH_TIMEOUT(widget.webView(i)->url(), url,
+                                      15000);
+        }
+        while (widget.count())
+            widget.closeTab(0);
+    }
+
+    settings.remove(QLatin1String("performance/lazyRestoreTabs"));
+    settings.remove(QLatin1String("performance/alwaysLoadPinnedTabs"));
+}
+
+// SESS01/SEC07 — lazily restored OTR tabs never create a pending
+// record: restoring while the process is private yields eager
+// off-the-record pages, and a re-save excludes them outright so the
+// stash path can never smuggle a private url into the session blob.
+void tst_TabWidget::otrPendingRestoreExcluded()
+{
+    ProfileSettings settings;
+    settings.setValue(QLatin1String("performance/lazyRestoreTabs"), true);
+    const QUrl u1("data:text/plain,otr-1");
+    const QUrl u2("data:text/plain,otr-2");
+    QByteArray state;
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        widget.loadUrl(u1, TabWidget::CurrentTab);
+        widget.loadUrl(u2, TabWidget::NewTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), u2, 15000);
+        state = widget.saveState();
+        while (widget.count())
+            widget.closeTab(0);
+    }
+
+    BrowserApplication::setPrivate(true);
+    {
+        SubTabWidget widget;
+        QVERIFY(widget.restoreState(state));
+        QCOMPARE(widget.count(), 2);
+        QVERIFY(widget.isTabPrivate(0));
+        QVERIFY(widget.isTabPrivate(1));
+        for (int i = 0; i < widget.count(); ++i)
+            QVERIFY(!widget.isTabPendingRestore(i));
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(0)->url(), u1, 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), u2, 15000);
+
+        const QByteArray resaved = widget.saveState();
+        SubTabWidget fresh;
+        QVERIFY(fresh.restoreState(resaved));
+        QCOMPARE(fresh.count(), 0);
+        while (widget.count())
+            widget.closeTab(0);
+    }
+    BrowserApplication::setPrivate(false);
+
+    settings.remove(QLatin1String("performance/lazyRestoreTabs"));
 }
 
 // TABS12: rename — a per-tab custom title that replaces the page

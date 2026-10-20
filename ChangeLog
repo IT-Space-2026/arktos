@@ -4501,3 +4501,17 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   callback quietly no-ops instead of touching freed objects. The
   engine-audit gate now also rejects new context-free timer lambdas
   and context-less signal connections.
+- Session restore now covers engine-tagged and container-level tabs
+  (SESS01): tabs running on an alternate engine backend used to be
+  silently dropped when the session was saved — they now serialize
+  with their engine tag and restore natively, and a session written
+  by a build with a backend this one lacks degrades to a normal web
+  tab at the same address instead of losing the slot. Tabs deferred
+  by Lazy Load Restored Tabs keep their container level, group
+  membership, pin, and custom title while waiting — including tabs
+  parked in a filtered-out container level, which previously loaded
+  eagerly or showed blank "Untitled" rows. Restoring while a
+  container level is active also no longer wakes deferred tabs as
+  the strip rebuilds (a path that could crash), and private tabs
+  never hold a deferred record, so nothing off-the-record can reach
+  the session file.

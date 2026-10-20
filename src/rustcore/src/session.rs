@@ -6,7 +6,7 @@
 //!
 //! ```text
 //!   magic   "ARSS" (4 bytes)
-//!   version u32 = 2        (v1 blobs — no profile tail — still decode)
+//!   version u32 = 3        (v1/v2 blobs — no v3 tails — still decode)
 //!   windows u32 count, then per window:
 //!     shell   u32 len + bytes   — opaque window-chrome blob (the
 //!                               Qt shell's own serialization; the
@@ -22,6 +22,9 @@
 //!                                   today; a Servo backend supplies
 //!                                   its own — the format survives
 //!                                   the engine swap untouched)
+//!       pinned    u8 (0/1)        — v3: TABS04 pin flag
+//!       title     u32 len + utf8  — v3: TABS12 rename override
+//!                                   ("" = live page title)
 //!     groups  u32 count, then per group:
 //!       id     u32 len + utf8
 //!       name   u32 len + utf8
@@ -29,6 +32,9 @@
 //!       collapsed u8 (0/1)
 //!     profile u32 len + utf8    — v2 tail: the window's persona id
 //!                                 ("" = "default"; MPROF03)
+//!     activeContainer u32 len + utf8 — v3 tail: the window's level-1
+//!                                 container selection ("" = default;
+//!                                 CONT06/SESS01)
 //! ```
 //!
 //! The C ABI carries the same structure as a JSON manifest — opaque
@@ -38,10 +44,12 @@
 //! ```json
 //! {"version":1,"windows":[{"shell":"<b64>","current":0,
 //!   "tabs":[{"url":"","container":"","group":"",
-//!            "engine":"webengine","state":"<b64>"}],
+//!            "engine":"webengine","state":"<b64>",
+//!            "pinned":true,"title":"rename"}],
 //!   "groups":[{"id":"","name":"","color":"#aarrggbb",
 //!              "collapsed":false}],
-//!   "profile":"<persona-id>"}]}
+//!   "profile":"<persona-id>",
+//!   "activeContainer":"<container-id>"}]}
 //! ```
 //!
 //! Corrupt-blob resilience is a core property: every count is bounds-
@@ -68,8 +76,11 @@ pub const MAGIC: &[u8; 4] = b"ARSS";
 pub const VERSION: u32 = 1;
 /// Binary blob version — the on-disk side.  v2 appends the per-window
 /// profile id string to each window record; v1 blobs (written before
-/// MPROF03 window binding) still decode with profile "".
-const BIN_VERSION: u32 = 2;
+/// MPROF03 window binding) still decode with profile "".  v3 appends
+/// per-tab pinned flag + rename override and a per-window active
+/// container header (SESS01); older blobs decode with pinned 0,
+/// title "" and no recorded header (the manifest omits the key).
+const BIN_VERSION: u32 = 3;
 const BIN_VERSION_V1: u32 = 1;
 pub const FILE_NAME: &str = "session.dat";
 
@@ -174,6 +185,8 @@ struct TabRec {
     group: String,
     engine: String,
     state: Vec<u8>, // base64 text on the JSON side; stored verbatim
+    pinned: bool,
+    title: String,
 }
 
 #[derive(Default)]
@@ -193,6 +206,11 @@ struct WindowRec {
     // MPROF03: the persona the window is bound to — "" reads as the
     // "default" profile on the C++ side.
     profile: String,
+    // CONT06/SESS01: the window's active level-1 container selection.
+    // Some("") is the recorded DEFAULT header — it must round-trip so
+    // restore can tell "saved on the default level" apart from a
+    // pre-v3 record that carried no selection at all (None).
+    header: Option<String>,
 }
 
 fn jstr(obj: &Map<String, Value>, key: &str) -> RcResult<String> {
@@ -248,6 +266,13 @@ fn manifest_to_model(json: &[u8]) -> RcResult<Vec<WindowRec>> {
             tabs: Vec::new(),
             groups: Vec::new(),
             profile: jstr(w, "profile")?,
+            // Key presence is the signal — "activeContainer":""
+            // records the default header; an absent key means the
+            // manifest never recorded a selection.
+            header: match w.get("activeContainer") {
+                None | Some(Value::Null) => None,
+                Some(_) => Some(jstr(w, "activeContainer")?),
+            },
         };
         if let Some(c) = w.get("current") {
             match c.as_i64() {
@@ -287,6 +312,11 @@ fn manifest_to_model(json: &[u8]) -> RcResult<Vec<WindowRec>> {
                     group: jstr(t, "group")?,
                     engine,
                     state,
+                    pinned: t
+                        .get("pinned")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    title: jstr(t, "title")?,
                 });
             }
         }
@@ -336,6 +366,9 @@ fn model_to_binary(windows: &[WindowRec]) -> Vec<u8> {
             p.str(&t.group);
             p.str(&t.engine);
             p.bytes(&t.state);
+            // v3 fields: pin flag + rename override.
+            p.u8(t.pinned as u8);
+            p.str(&t.title);
         }
         p.u32(w.groups.len() as u32);
         for g in &w.groups {
@@ -346,6 +379,10 @@ fn model_to_binary(windows: &[WindowRec]) -> Vec<u8> {
         }
         // v2 tail: the window's persona id.
         p.str(&w.profile);
+        // v3 tail: the window's active container header — an absent
+        // selection encodes as "" and reads back as the default level
+        // (the distinction only matters across the manifest edge).
+        p.str(w.header.as_deref().unwrap_or(""));
     }
     p.0
 }
@@ -357,7 +394,7 @@ fn binary_to_model(blob: &[u8]) -> RcResult<Vec<WindowRec>> {
     }
     r.pos = 4;
     let bin_version = r.u32()?;
-    if bin_version != BIN_VERSION && bin_version != BIN_VERSION_V1 {
+    if !(BIN_VERSION_V1..=BIN_VERSION).contains(&bin_version) {
         return corrupt("session: unsupported version");
     }
     let window_count = r.u32()? as usize;
@@ -380,6 +417,14 @@ fn binary_to_model(blob: &[u8]) -> RcResult<Vec<WindowRec>> {
                 group: r.str()?.to_owned(),
                 engine: r.str()?.to_owned(),
                 state: r.bytes(MAX_BLOB)?.to_vec(),
+                // v1/v2 records end at state — they predate pinning
+                // and renames, so the tabs read unpinned/untitled.
+                pinned: bin_version >= 3 && r.u8()? != 0,
+                title: if bin_version >= 3 {
+                    r.str()?.to_owned()
+                } else {
+                    String::new()
+                },
             });
         }
         let group_count = r.u32()? as usize;
@@ -402,12 +447,21 @@ fn binary_to_model(blob: &[u8]) -> RcResult<Vec<WindowRec>> {
         } else {
             String::new()
         };
+        // v3 tail: the window's level-1 container selection — earlier
+        // blobs carried none, so they emit no key (the C++ side then
+        // falls back to the current tab's container).
+        let header = if bin_version >= 3 {
+            Some(r.str()?.to_owned())
+        } else {
+            None
+        };
         windows.push(WindowRec {
             shell,
             current,
             tabs,
             groups,
             profile,
+            header,
         });
     }
     if r.remaining() != 0 {
@@ -424,13 +478,22 @@ fn model_to_manifest(windows: &[WindowRec]) -> Vec<u8> {
                 .tabs
                 .iter()
                 .map(|t| {
-                    json!({
+                    let mut tab = json!({
                         "url": t.url,
                         "container": t.container,
                         "group": t.group,
                         "engine": t.engine,
                         "state": String::from_utf8_lossy(&t.state),
-                    })
+                    });
+                    // Emit the v3 keys only when set — an unpinned,
+                    // untitled tab keeps the pre-v3 shape.
+                    if t.pinned {
+                        tab["pinned"] = json!(true);
+                    }
+                    if !t.title.is_empty() {
+                        tab["title"] = json!(t.title);
+                    }
+                    tab
                 })
                 .collect();
             let groups: Vec<Value> = w
@@ -455,6 +518,12 @@ fn model_to_manifest(windows: &[WindowRec]) -> Vec<u8> {
             // manifest stays identical to the pre-MPROF03 shape.
             if !w.profile.is_empty() {
                 win["profile"] = json!(w.profile);
+            }
+            // Same for the level-1 selection, except Some("") still
+            // emits: a recorded default header is not the same as a
+            // window that never had the field.
+            if let Some(header) = &w.header {
+                win["activeContainer"] = json!(header);
             }
             win
         })
@@ -533,18 +602,20 @@ mod tests {
                     "tabs": [
                         {"url": "https://a.example/", "container": "",
                          "group": "", "engine": "webengine",
-                         "state": "aGlzdG9yeQ=="},
+                         "state": "aGlzdG9yeQ==",
+                         "pinned": true, "title": "Pinned Tab"},
                         {"url": "https://b.example/", "container": "work",
                          "group": "g1", "engine": "webengine",
                          "state": ""},
                         {"url": "https://c.example/", "container": "",
-                         "group": "g1", "engine": "webengine",
+                         "group": "g1", "engine": "servo",
                          "state": ""}
                     ],
                     "groups": [
                         {"id": "g1", "name": "research",
                          "color": "#ff336699", "collapsed": false}
-                    ]
+                    ],
+                    "activeContainer": "work"
                 },
                 {
                     "shell": "",
@@ -582,6 +653,75 @@ mod tests {
         assert_eq!(groups[0]["collapsed"], false);
         assert_eq!(wins[1]["tabs"].as_array().unwrap().len(), 0);
         assert_eq!(wins[1]["profile"], "work");
+    }
+
+    #[test]
+    fn v3_fields_roundtrip_and_omit_when_default() {
+        let v = roundtrip(&manifest());
+        let win = &v["windows"][0];
+        let tabs = win["tabs"].as_array().unwrap();
+        // SESS01: pin flag, rename override, engine tag and the level-1
+        // header all survive the rust round-trip; unset fields keep
+        // their pre-v3 absence.
+        assert_eq!(tabs[0]["pinned"], true);
+        assert_eq!(tabs[0]["title"], "Pinned Tab");
+        assert!(tabs[1].get("pinned").is_none());
+        assert!(tabs[1].get("title").is_none());
+        assert_eq!(tabs[2]["engine"], "servo");
+        assert_eq!(win["activeContainer"], "work");
+        // The v3 binary tail always carries a header — a window whose
+        // manifest omitted the key canonicalizes to the recorded
+        // default level; only pre-v3 blobs decode key-free.
+        assert_eq!(v["windows"][1]["activeContainer"], "");
+    }
+
+    #[test]
+    fn recorded_default_header_survives() {
+        // SESS01: "activeContainer":"" is the recorded DEFAULT level —
+        // it must not collapse into an absent key, or a restore
+        // racing an active container filter would land on the wrong
+        // header.
+        let v = roundtrip(
+            br#"{"windows":[{"shell":"","current":0,
+                "activeContainer":"",
+                "tabs":[{"url":"https://x/","container":"work",
+                    "engine":"webengine","state":""}]}]}"#,
+        );
+        assert_eq!(v["windows"][0]["activeContainer"], "");
+    }
+
+    #[test]
+    fn decodes_v2_blobs_without_v3_fields() {
+        // A pre-SESS01 session.dat (bin v2: persona tail, no v3
+        // fields) still restores — tabs read unpinned/untitled and
+        // the window reads the default header.
+        let mut blob = Vec::new();
+        blob.extend_from_slice(MAGIC);
+        blob.extend_from_slice(&2u32.to_le_bytes()); // bin v2
+        blob.extend_from_slice(&1u32.to_le_bytes()); // 1 window
+        blob.extend_from_slice(&4u32.to_le_bytes()); // shell len
+        blob.extend_from_slice(b"shll");
+        blob.extend_from_slice(&(-1i32).to_le_bytes()); // current
+        blob.extend_from_slice(&1u32.to_le_bytes()); // 1 tab
+        blob.extend_from_slice(&3u32.to_le_bytes()); // url len
+        blob.extend_from_slice(b"u:l");
+        blob.extend_from_slice(&0u32.to_le_bytes()); // container ""
+        blob.extend_from_slice(&0u32.to_le_bytes()); // group ""
+        blob.extend_from_slice(&9u32.to_le_bytes()); // engine "webengine"
+        blob.extend_from_slice(b"webengine");
+        blob.extend_from_slice(&0u32.to_le_bytes()); // state len 0
+        blob.extend_from_slice(&0u32.to_le_bytes()); // 0 groups
+        blob.extend_from_slice(&4u32.to_le_bytes()); // profile "work"
+        blob.extend_from_slice(b"work");
+        let out = decode(&blob).expect("v2 blob decodes");
+        let v: Value = serde_json::from_slice(&out).unwrap();
+        let win = &v["windows"][0];
+        assert_eq!(win["profile"], "work");
+        assert!(win.get("activeContainer").is_none());
+        let tabs = win["tabs"].as_array().unwrap();
+        assert_eq!(tabs[0]["url"], "u:l");
+        assert!(tabs[0].get("pinned").is_none());
+        assert!(tabs[0].get("title").is_none());
     }
 
     #[test]

@@ -155,6 +155,16 @@ static QWidget *tabPageWidget(WebView *view)
     return nullptr;
 }
 
+// The reverse of tabPageWidget(): the hosted WebView inside a page
+// widget, or nullptr for EngineTab/widget pages — session bookkeeping
+// iterates page widgets so foreign tabs stay visible to it.
+static WebView *webViewForPage(QWidget *page)
+{
+    if (WebViewWithSearch *withSearch = qobject_cast<WebViewWithSearch *>(page))
+        return withSearch->m_webView;
+    return nullptr;
+}
+
 TabWidget::TabWidget(QWidget *parent)
     : QTabWidget(parent)
     , m_recentlyClosedTabsAction(nullptr)
@@ -432,8 +442,12 @@ void TabWidget::currentChanged(int index)
     // reloads the page).
     markTabActivity(webView);
     // PREFUI04: activating a lazily restored tab performs its
-    // deferred load.
-    restorePendingTab(index);
+    // deferred load.  SESS01: a tab that only becomes current as a
+    // side effect of a container-filter rebuild is not activated —
+    // its deferral survives until the user actually selects it (the
+    // filter flushes whichever tab it finally lands on itself).
+    if (!m_containerFilterAdjust)
+        restorePendingTab(index);
     if (isTabSleeping(index))
         wakeTab(index);
     // TABS12: the override wins over the live page title here too.
@@ -1977,12 +1991,16 @@ void TabWidget::expandTabGroup(const QString &groupId)
         m_locationBars->insertWidget(idx, entry.bar);
 #if !defined(Q_OS_MACOS)
         // Rebuild the favicon label — the icon is URL-derived so it is
-        // re-resolved rather than snapshotted.
+        // re-resolved rather than snapshotted.  A lazily restored
+        // tab's url sits in the record, not the view — fall back to
+        // it for the lookup.
         if (WebViewWithSearch *withSearch =
                 qobject_cast<WebViewWithSearch*>(entry.tab)) {
             QLabel *label = animationLabel(idx, false);
-            label->setPixmap(BrowserApplication::icon(
-                withSearch->m_webView->url()).pixmap(16, 16));
+            const QUrl iconUrl = withSearch->m_webView->url().isEmpty()
+                ? entry.data.toUrl() : withSearch->m_webView->url();
+            label->setPixmap(BrowserApplication::icon(iconUrl)
+                                 .pixmap(16, 16));
         }
 #endif
         // TABS12: a rename that landed while the tab was detached only
@@ -2205,6 +2223,56 @@ QList<WebView*> TabWidget::orderedWebViews() const
     return ordered;
 }
 
+QList<QWidget*> TabWidget::orderedSessionPages() const
+{
+    // Same walk as orderedWebViews() but yielding the strip's page
+    // widgets: a web tab contributes its WebViewWithSearch, a foreign
+    // EngineTab contributes itself, other widget tabs keep their
+    // existing exclusion (they never serialized).
+    QList<QWidget*> ordered;
+    for (int i = 0; i < count(); ++i) {
+        QWidget *page = const_cast<TabWidget*>(this)->widget(i);
+        WebView *view = const_cast<TabWidget*>(this)->webView(i);
+        if (view || qobject_cast<EngineTab*>(page))
+            ordered.append(page);
+        if (!view)
+            continue;
+        const QString gid = m_tabGroups.value(view);
+        if (gid.isEmpty())
+            continue;
+        const TabGroup group = m_tabGroupInfo.value(gid);
+        if (!group.collapsed)
+            continue;
+        const QList<int> members = tabGroupMembers(gid);
+        if (members.isEmpty() || members.first() != i)
+            continue;
+        for (const HiddenGroupTab &hidden : group.hidden) {
+            if (qobject_cast<WebViewWithSearch*>(hidden.tab))
+                ordered.append(hidden.tab);
+        }
+    }
+    for (const QString &containerId : containerHeaders()) {
+        for (const HiddenGroupTab &hidden : m_containerHidden.value(containerId)) {
+            WebViewWithSearch *withSearch =
+                qobject_cast<WebViewWithSearch*>(hidden.tab);
+            if (!withSearch && !qobject_cast<EngineTab*>(hidden.tab))
+                continue;
+            ordered.append(hidden.tab);
+            if (!withSearch)
+                continue;
+            const QString gid = m_tabGroups.value(withSearch->m_webView);
+            const TabGroup group = m_tabGroupInfo.value(gid);
+            if (gid.isEmpty() || !group.collapsed)
+                continue;
+            for (const HiddenGroupTab &member : group.hidden) {
+                if (qobject_cast<WebViewWithSearch*>(member.tab))
+                    ordered.append(member.tab);
+            }
+        }
+    }
+    return ordered;
+}
+
 // Defined further down — closeHiddenTab() records the closed page's
 // history for "reopen closed tab" the same way closeTab() does.
 static QByteArray serializePageHistory(Engine::Page *page);
@@ -2314,6 +2382,11 @@ void TabWidget::applyContainerFilter()
     m_containerFilterAdjust = false;
     if (currentIndex() < 0 && count() > 0)
         setCurrentIndex(0);
+    // SESS01: currentChanged() defers to here while the rebuild runs —
+    // the tab the filter finally lands on is the selected one, so its
+    // deferred load runs now.  Tabs that passed through the current
+    // slot mid-rebuild keep their pending records.
+    restorePendingTab(currentIndex());
     m_tabBar->updateGeometry();
     updateGeometry();
     m_tabBar->updateAccessibleStrip();
@@ -2366,8 +2439,12 @@ void TabWidget::restoreHiddenContainerTabs(const QString &containerId)
         if (WebViewWithSearch *withSearch =
                 qobject_cast<WebViewWithSearch*>(entry.tab)) {
             QLabel *label = animationLabel(idx, false);
-            label->setPixmap(BrowserApplication::icon(
-                withSearch->m_webView->url()).pixmap(16, 16));
+            // A lazily restored tab's url sits in the record, not the
+            // view — fall back to it for the icon lookup.
+            const QUrl iconUrl = withSearch->m_webView->url().isEmpty()
+                ? entry.data.toUrl() : withSearch->m_webView->url();
+            label->setPixmap(BrowserApplication::icon(iconUrl)
+                                 .pixmap(16, 16));
         } else if (qobject_cast<EngineTab*>(entry.tab)) {
             // ENG15: foreign tabs have no url-keyed favicon — restore
             // the same default glyph addEngineTab installs.
@@ -4898,10 +4975,42 @@ void TabWidget::restorePendingTab(int index)
         return;
     const QUrl url = it->url;
     m_pendingRestores.erase(it);
+    // SESS01: a hidden-store reinsert fires currentChanged() inside
+    // insertTab() — the record's location bar is not back on the
+    // stack yet, so the bar is null here (it arrives with
+    // m_locationBars->insertWidget() right after, already carrying
+    // the url text the record was dressed with).
     if (index >= 0)
-        locationBar(index)->setText(QString::fromUtf8(url.toEncoded()));
+        if (QLineEdit *bar = locationBar(index))
+            bar->setText(QString::fromUtf8(url.toEncoded()));
     webView->loadUrl(url);
     markTabActivity(webView);
+}
+
+void TabWidget::dressHiddenPendingTab(WebView *view, const QUrl &url,
+                                     const QString &tabTitle)
+{
+    // The pending stash is keyed on the view so it already survived the
+    // detach — what the hidden-store record captured at creation was
+    // the blank "Untitled" dressing.  Rewrite it so the level's row
+    // (and the strip once it is raised) reads restored like a visible
+    // deferred tab does.
+    QWidget *page = tabPageWidget(view);
+    if (!page)
+        return;
+    for (auto level = m_containerHidden.begin();
+         level != m_containerHidden.end(); ++level) {
+        for (HiddenGroupTab &hidden : *level) {
+            if (hidden.tab != page)
+                continue;
+            hidden.text = SafeText::menu(tabTitle);
+            hidden.toolTip = SafeText::escaped(tabTitle);
+            hidden.data = url;
+            if (QLineEdit *bar = qobject_cast<QLineEdit*>(hidden.bar))
+                bar->setText(QString::fromUtf8(url.toEncoded()));
+            return;
+        }
+    }
 }
 
 // The title the session blob does not store: a restored tab's last
@@ -4928,39 +5037,60 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
     // Private tabs live on the off-the-record profile — their urls and
     // history are never written into the saved session (SEC07).  The
     // current index is remapped onto the filtered list.
-    // orderedWebViews() splices a collapsed group's hidden members in
-    // after its chip so no tab drops out of the serialized session.
-    const QList<WebView*> ordered = orderedWebViews();
-    for (WebView *tab : ordered) {
-        if (!tab)
+    // orderedSessionPages() splices a collapsed group's hidden members
+    // in after its chip and appends the filtered container levels'
+    // rows, so no tab drops out of the serialized session — foreign
+    // EngineTabs included (SESS01).
+    QWidget *currentPage = widget(currentIndex());
+    const QList<QWidget*> ordered = orderedSessionPages();
+    for (QWidget *page : ordered) {
+        if (!page)
             continue;
-        if (tab->enginePage() && tab->enginePage()->isOffTheRecord())
+        WebView *tab = webViewForPage(page);
+        EngineTab *foreign = tab ? nullptr
+                                 : qobject_cast<EngineTab*>(page);
+        if (!tab && !foreign)
             continue;
-        if (tab == currentWebView())
+        if (tab && tab->enginePage() && tab->enginePage()->isOffTheRecord())
+            continue;
+        if (page == currentPage)
             snap.currentIndex = snap.urls.count();
-        // PREFUI04: a lazily restored tab never loaded its page — its
-        // stashed url + history blob stand in for the live state so a
-        // re-saved session loses nothing.
-        const auto pending = m_pendingRestores.constFind(tab);
-        if (pending != m_pendingRestores.constEnd()) {
-            snap.urls.append(QString::fromUtf8(pending->url.toEncoded()));
-            snap.histories.append(pending->historyState);
+        if (foreign) {
+            // SESS01: a foreign-engine tab records its backend tag and
+            // flat url — the engine-state blob stays empty until the
+            // backend's adapter supplies one.  Foreign tabs live on
+            // the default level and cannot hold group membership.
+            snap.urls.append(QString::fromUtf8(foreign->url().toEncoded()));
+            snap.histories.append(QByteArray());
+            snap.containers.append(ContainerManager::defaultContainerId());
+            snap.groupIds.append(QString());
+            snap.engines.append(foreign->backend()
+                ? foreign->backend()->id() : QStringLiteral("webengine"));
         } else {
-            snap.urls.append(QString::fromUtf8(tab->url().toEncoded()));
-            if (tab->enginePage()->historyCount() != 0)
-                snap.histories.append(serializePageHistory(tab->enginePage()));
-            else
-                snap.histories.append(QByteArray());
+            // PREFUI04: a lazily restored tab never loaded its page —
+            // its stashed url + history blob stand in for the live
+            // state so a re-saved session loses nothing.
+            const auto pending = m_pendingRestores.constFind(tab);
+            if (pending != m_pendingRestores.constEnd()) {
+                snap.urls.append(QString::fromUtf8(pending->url.toEncoded()));
+                snap.histories.append(pending->historyState);
+            } else {
+                snap.urls.append(QString::fromUtf8(tab->url().toEncoded()));
+                if (tab->enginePage()->historyCount() != 0)
+                    snap.histories.append(serializePageHistory(tab->enginePage()));
+                else
+                    snap.histories.append(QByteArray());
+            }
+            snap.containers.append(tab->containerId());
+            snap.groupIds.append(m_tabGroups.value(tab));
+            snap.engines.append(QStringLiteral("webengine"));
         }
-        snap.containers.append(tab->containerId());
-        snap.groupIds.append(m_tabGroups.value(tab));
         // TABS04: the pin flag keys on the page widget — the view's
-        // WebViewWithSearch parent, which is also what the strip and
-        // the hidden stores hold.
-        snap.pinned.append(m_pinnedTabs.contains(tabPageWidget(tab))
-                           ? 1 : 0);
+        // WebViewWithSearch parent (or the EngineTab itself), which is
+        // also what the strip and the hidden stores hold.
+        snap.pinned.append(m_pinnedTabs.contains(page) ? 1 : 0);
         // TABS12: the rename override keys on the same page widget.
-        snap.titles.append(m_customTitles.value(tabPageWidget(tab)));
+        snap.titles.append(m_customTitles.value(page));
     }
 
     // TABGRP01: the group table — one record per group that still has a
@@ -4986,12 +5116,13 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
     // CONT06: the window's active level-1 selection —
     // restoreSessionSnapshot() re-applies it once the strip is rebuilt.
     snap.activeContainerHeader = m_activeContainerHeader;
+    snap.hasActiveContainerHeader = true;
     return snap;
 }
 
 QByteArray TabWidget::saveState() const
 {
-    int version = 6; // TABS12: v6 tails with each tab's rename override
+    int version = 7; // SESS01: v7 tails with each tab's engine tag
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
 
@@ -5019,6 +5150,9 @@ QByteArray TabWidget::saveState() const
     // TABS12: the per-tab rename overrides — read back under v>=6.
     stream << snap.titles;
 
+    // SESS01: the per-tab engine tags — read back under v>=7.
+    stream << snap.engines;
+
     return data;
 }
 
@@ -5033,7 +5167,7 @@ bool TabWidget::restoreState(const QByteArray &state)
     qint32 v;
     stream >> marker;
     stream >> v;
-    if (marker != TabWidgetMagic || v < 1 || v > 6)
+    if (marker != TabWidgetMagic || v < 1 || v > 7)
         return false;
 
     TabSessionSnapshot snap;
@@ -5063,8 +5197,10 @@ bool TabWidget::restoreState(const QByteArray &state)
     }
     // CONT06: v4 tails with the window's active container header — a
     // truncated tail restores on the default header.
-    if (v >= 4)
+    if (v >= 4) {
         stream >> snap.activeContainerHeader;
+        snap.hasActiveContainerHeader = (stream.status() == QDataStream::Ok);
+    }
     // TABS04: v5 tails with each tab's pinned flag — a missing or
     // truncated tail restores everything unpinned, the same
     // defensive floor the earlier tails established.
@@ -5075,6 +5211,10 @@ bool TabWidget::restoreState(const QByteArray &state)
     // same defensive floor the earlier tails established.
     if (v >= 6)
         StreamingUtils::readBoundedList(stream, snap.titles);
+    // SESS01: v7 tails with each tab's engine tag — a missing or
+    // truncated tail restores everything on WebEngine.
+    if (v >= 7)
+        StreamingUtils::readBoundedList(stream, snap.engines);
     if (stream.status() != QDataStream::Ok)
         return false;
 
@@ -5091,14 +5231,19 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
     const QList<TabGroup> &savedGroups = snap.groups;
     const QList<qint32> &savedPinned = snap.pinned;
     const QStringList &savedTitles = snap.titles;
+    const QStringList &savedEngines = snap.engines;
 
     // The empty placeholder tab a fresh window comes with is only a
-    // fit for the first saved tab when its container matches — reusing
-    // it for a container tab would put the restored page on the wrong
-    // profile, so it is closed after the loop instead.
+    // fit for the first saved tab when it is a web tab whose container
+    // matches — reusing it for a container or foreign tab would put
+    // the restored page on the wrong profile, so it is closed after
+    // the loop instead.
     bool leftoverPlaceholder = false;
     WebView *placeholderView = nullptr;
-    QList<WebView*> createdViews;
+    // One page widget per saved tab — a WebViewWithSearch for web
+    // tabs, an EngineTab for native foreign restores — so selection,
+    // pinning and grouping stay aligned when the two kinds interleave.
+    QList<QPointer<QWidget>> createdPages;
     // TABS04: saved order already has the pinned prefix — appending
     // (rather than the interactive insert-after-pinned rule) keeps the
     // unpinned tabs in their serialized sequence.
@@ -5122,55 +5267,99 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
         if (!containerId.isEmpty()
             && !ContainerManager::instanceFor(profileId())->isContainerId(containerId))
             containerId = ContainerManager::defaultContainerId();
-        const bool reusePlaceholder = i == 0
-            && currentWebView() && currentWebView()->url() == QUrl()
+        const QString engine =
+            savedEngines.value(i, QLatin1String("webengine"));
+        const bool placeholderBlank = i == 0
+            && currentWebView() && currentWebView()->url() == QUrl();
+        const bool reusePlaceholder = placeholderBlank
+            && engine == QLatin1String("webengine")
             && containerIdForTab(currentIndex()) == containerId;
-        if (i == 0 && !reusePlaceholder
-            && currentWebView() && currentWebView()->url() == QUrl()) {
+        if (i == 0 && placeholderBlank && !reusePlaceholder) {
             leftoverPlaceholder = true;
             placeholderView = currentWebView();
+        }
+        // SESS01: a foreign-engine record restores on its own backend
+        // when the registry still offers it — private/tor contexts
+        // refuse outright (a foreign page can't go off-the-record; tor
+        // is locked to Chromium).  An absent backend — a servo or
+        // webkit tab on a plain build — degrades to a WebEngine tab at
+        // the flat url rather than stranding the slot; the foreign
+        // state blob was never understood here anyway.
+        if (engine != QLatin1String("webengine")) {
+            EngineTab *foreign = nullptr;
+            if (!BrowserApplication::isPrivate()
+                    && !BrowserApplication::isTorMode()) {
+                if (Engine::Backend *backend =
+                        EngineRegistry::backendForId(engine))
+                    foreign = addEngineTab(backend, false);
+            }
+            if (foreign) {
+                createdPages.append(foreign);
+                if (url.isValid())
+                    foreign->load(url);
+                if (savedPinned.value(i))
+                    setPinFlag(foreign, true);
+                // TABS12: the rename override lands last; a tab that
+                // detached into a filtered level at creation only gets
+                // the map write — the level's reinsert path reapplies.
+                setCustomTitleForPage(foreign, savedTitles.value(i));
+                continue;
+            }
         }
         WebView *webView = reusePlaceholder
             ? currentWebView()
             : makeNewTabInContainer(containerId, false);
-        createdViews.append(webView);
+        createdPages.append(webView ? tabPageWidget(webView) : nullptr);
         if (webView) {
             // TABS04: flag the restored pin before the next saved tab
             // is created — the pinned-prefix insert then keeps the
-            // strip order identical to the one that was saved.
-            if (savedPinned.value(i)) {
-                const int index = webViewIndex(webView);
-                if (index >= 0)
-                    setPinFlag(widget(index), true);
-            }
+            // strip order identical to the one that was saved.  The
+            // flag keys on the page widget, so a tab that detached
+            // into a filtered level at creation keeps its pin too.
+            if (savedPinned.value(i))
+                setPinFlag(tabPageWidget(webView), true);
             // PREFUI04: under lazy restore a background tab stashes
             // its url + history blob instead of loading — the page
             // only loads when the tab is first activated (or saved
             // out again, which re-serializes the stash).  The
             // "Always Load Pinned Tabs" opt-out exempts pinned tabs;
             // the tab that ends up selected is flushed at the end of
-            // restoreState() either way.
-            const bool deferred = m_lazyRestoreTabs
+            // restoreState() either way.  An off-the-record page is
+            // never deferred (SEC07/SESS01): nothing private ever
+            // holds a pending session record.  A tab that detached
+            // into a filtered container level stashes too — the
+            // binding lives on the view, so a later activation lands
+            // on the right profile untouched.
+            const bool offTheRecord = webView->enginePage()
+                && webView->enginePage()->isOffTheRecord();
+            const bool deferred = !offTheRecord && m_lazyRestoreTabs
                 && !(savedPinned.value(i) && m_lazyRestorePinnedTabs);
             const int index = webViewIndex(webView);
-            if (deferred && index >= 0) {
+            if (deferred) {
                 m_pendingRestores.insert(webView, {url, historyState});
                 // The strip reads restored before the first load:
                 // saved title (history store lookup, url fallback)
                 // and the persisted favicon.
-                locationBar(index)->setText(
-                    QString::fromUtf8(url.toEncoded()));
-                m_tabBar->setTabData(index, url);
                 const QString title = restoredTabTitle(url);
                 const QString tabTitle = title.isEmpty()
                     ? QString::fromUtf8(url.toEncoded()) : title;
-                setTabText(index, SafeText::menu(tabTitle));
-                setTabToolTip(index, SafeText::escaped(tabTitle));
-                const QIcon icon = BrowserApplication::icon(url);
-                if (QLabel *label = animationLabel(index, false)) {
-                    label->setPixmap(isTabPrivate(index)
-                        ? privateBadgedPixmap(icon)
-                        : icon.pixmap(16, 16));
+                if (index >= 0) {
+                    locationBar(index)->setText(
+                        QString::fromUtf8(url.toEncoded()));
+                    m_tabBar->setTabData(index, url);
+                    setTabText(index, SafeText::menu(tabTitle));
+                    setTabToolTip(index, SafeText::escaped(tabTitle));
+                    const QIcon icon = BrowserApplication::icon(url);
+                    if (QLabel *label = animationLabel(index, false)) {
+                        label->setPixmap(isTabPrivate(index)
+                            ? privateBadgedPixmap(icon)
+                            : icon.pixmap(16, 16));
+                    }
+                } else {
+                    // SESS01: the tab detached into a filtered
+                    // container level at creation — no strip slot
+                    // exists, so dress the hidden record instead.
+                    dressHiddenPendingTab(webView, url, tabTitle);
                 }
             } else {
                 webView->loadUrl(url);
@@ -5212,10 +5401,13 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
         if (saved.collapsed)
             collapsedGroups.append(group.id);
     }
-    for (int i = 0; i < createdViews.count(); ++i) {
+    for (int i = 0; i < createdPages.count(); ++i) {
         const QString gid = groupIdRemap.value(savedGroupIds.value(i));
-        if (!gid.isEmpty() && createdViews.at(i))
-            m_tabGroups.insert(createdViews.at(i), gid);
+        // Foreign-engine tabs can't hold group membership — the
+        // membership map keys on WebView — so only web pages join.
+        if (!gid.isEmpty())
+            if (WebView *view = webViewForPage(createdPages.at(i)))
+                m_tabGroups.insert(view, gid);
     }
     for (const QString &gid : std::as_const(collapsedGroups))
         setTabGroupCollapsed(gid, true);
@@ -5230,14 +5422,17 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
     // setting it before creating them is a no-op against the single
     // placeholder tab.  A saved-current tab that ended up hidden inside
     // a collapsed group selects the group's chip instead.
-    WebView *savedCurrent = (currentTab >= 0 && currentTab < createdViews.count())
-        ? createdViews.at(currentTab) : nullptr;
-    int selectIndex = savedCurrent ? webViewIndex(savedCurrent) : -1;
+    QWidget *savedCurrent = (currentTab >= 0
+            && currentTab < createdPages.count())
+        ? createdPages.at(currentTab).data() : nullptr;
+    int selectIndex = savedCurrent ? indexOf(savedCurrent) : -1;
     if (selectIndex < 0 && savedCurrent) {
-        const QList<int> members =
-            tabGroupMembers(m_tabGroups.value(savedCurrent));
-        if (!members.isEmpty())
-            selectIndex = members.first();
+        if (WebView *view = webViewForPage(savedCurrent)) {
+            const QList<int> members =
+                tabGroupMembers(m_tabGroups.value(view));
+            if (!members.isEmpty())
+                selectIndex = members.first();
+        }
     }
     if (selectIndex < 0 && currentTab >= 0 && currentTab < count())
         selectIndex = currentTab;
@@ -5254,7 +5449,13 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
     // (a window restored on "Work" lands there, not on "Tabs").
     if (m_twoLevelStrip) {
         QString header = snap.activeContainerHeader;
-        if (header.isEmpty() || containerTabCount(header) == 0) {
+        // SESS01: an explicit "" is the default level — it wins over
+        // whatever header the strip happened to show before restore.
+        // Only a blob/manifest that never recorded the field, or a
+        // saved level that no longer owns tabs, falls back to the
+        // saved current tab's container.
+        if (!snap.hasActiveContainerHeader
+            || containerTabCount(header) == 0) {
             if (WebView *current = currentWebView())
                 header = current->containerId();
         }
@@ -5266,8 +5467,8 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
             m_activeContainerHeader = header;
             applyContainerFilter();
         }
-        if (WebView *preferred = savedCurrent) {
-            const int index = webViewIndex(preferred);
+        if (savedCurrent) {
+            const int index = indexOf(savedCurrent);
             if (index >= 0)
                 setCurrentIndex(index);
         }
@@ -5293,9 +5494,20 @@ QJsonObject TabWidget::sessionStateJson() const
         tab.insert(QLatin1String("url"), snap.urls.at(i));
         tab.insert(QLatin1String("container"), snap.containers.value(i));
         tab.insert(QLatin1String("group"), snap.groupIds.value(i));
-        tab.insert(QLatin1String("engine"), QLatin1String("webengine"));
+        // SESS01: the real tag — a foreign tab records its backend id
+        // so a build that still offers it restores natively and every
+        // other build degrades to WebEngine at the flat url.
+        tab.insert(QLatin1String("engine"),
+                   snap.engines.value(i, QLatin1String("webengine")));
         tab.insert(QLatin1String("state"),
                    QString::fromLatin1(snap.histories.value(i).toBase64()));
+        // SESS01: pin flag + rename override ride the rustcore schema
+        // v3 keys; absent reads restore unpinned/untitled.
+        if (snap.pinned.value(i))
+            tab.insert(QLatin1String("pinned"), true);
+        const QString title = snap.titles.value(i);
+        if (!title.isEmpty())
+            tab.insert(QLatin1String("title"), title);
         tabs.append(tab);
     }
     QJsonArray groups;
@@ -5319,6 +5531,8 @@ bool TabWidget::restoreSessionState(const QJsonObject &state)
 {
     TabSessionSnapshot snap;
     snap.currentIndex = state.value(QLatin1String("current")).toInt(-1);
+    snap.hasActiveContainerHeader =
+        state.contains(QLatin1String("activeContainer"));
     snap.activeContainerHeader =
         state.value(QLatin1String("activeContainer")).toString();
     const QJsonArray tabs = state.value(QLatin1String("tabs")).toArray();
@@ -5328,16 +5542,23 @@ bool TabWidget::restoreSessionState(const QJsonObject &state)
         snap.containers.append(
             tab.value(QLatin1String("container")).toString());
         snap.groupIds.append(tab.value(QLatin1String("group")).toString());
+        // SESS01: the tag rides through so restore can pick the right
+        // backend — an absent tag reads "webengine" and an absent
+        // backend degrades to a WebEngine tab at the flat url.
+        const QString engine = tab.value(QLatin1String("engine"))
+            .toString(QLatin1String("webengine"));
+        snap.engines.append(engine);
         // The opaque engine-state blob routes by engine tag — only
         // WebEngine's serializePageHistory format is understood here;
         // a foreign engine's tab still restores its flat url.
         QByteArray engineState;
-        if (tab.value(QLatin1String("engine"))
-                .toString(QLatin1String("webengine"))
-            == QLatin1String("webengine"))
+        if (engine == QLatin1String("webengine"))
             engineState = QByteArray::fromBase64(
                 tab.value(QLatin1String("state")).toString().toLatin1());
         snap.histories.append(engineState);
+        snap.pinned.append(
+            tab.value(QLatin1String("pinned")).toBool() ? 1 : 0);
+        snap.titles.append(tab.value(QLatin1String("title")).toString());
     }
     const QJsonArray groups = state.value(QLatin1String("groups")).toArray();
     for (const QJsonValue &v : groups) {

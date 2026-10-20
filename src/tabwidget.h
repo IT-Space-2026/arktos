@@ -666,11 +666,32 @@ private:
         QStringList groupIds;          // parallel: "" = ungrouped
         QList<qint32> pinned;          // parallel: TABS04 pin flag, 0/1
         QStringList titles;            // parallel: TABS12 rename override
+        // SESS01: parallel — "webengine" or the foreign backend id
+        // (EngineTab's backend()->id()); a missing/short list reads
+        // "webengine" on restore.
+        QStringList engines;
         QList<TabGroup> groups;        // group table, first-appearance order
         QString activeContainerHeader; // CONT06: window's level-1 selection
+        // SESS01: whether the blob/manifest carried the header at all
+        // — an explicit "" is the default level and restores there,
+        // while a pre-v4 blob / pre-v3 manifest with no field falls
+        // back to the saved current tab's container.
+        bool hasActiveContainerHeader = false;
     };
     TabSessionSnapshot collectSessionSnapshot() const;
     bool restoreSessionSnapshot(const TabSessionSnapshot &snapshot);
+    // Session-order pass over the PAGE WIDGETS — same ordering as
+    // orderedWebViews() (strip, collapsed members spliced after the
+    // chip, then each filtered level's detached rows) but yielding
+    // WebViewWithSearch AND EngineTab pages so foreign-engine tabs
+    // serialize instead of dropping out of the session.
+    QList<QWidget*> orderedSessionPages() const;
+    // A lazily restored tab that detached into a filtered container
+    // level has no strip slot to dress — patch its hidden-store
+    // record (text/tooltip/url/bar) so raising the level still reads
+    // restored and the pending stash rides along on the view.
+    void dressHiddenPendingTab(WebView *view, const QUrl &url,
+                             const QString &tabTitle);
     QHash<QString, TabGroup> m_tabGroupInfo;
     // view -> group id for every member, hidden or visible.
     QHash<WebView*, QString> m_tabGroups;
