@@ -4375,3 +4375,10 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   leaks allocated in Arktos code; four new self-test legs keep the
   coverage permanent, and the full report lives at
   .devin/MRG08-scan.md.
+- Post-merge dead-code and duplicate sweep (MRG09): extension
+  popup/probe surfaces that still used a plain QWebEnginePage now
+  use the navigation-locked ExtensionChromePage (own-origin only,
+  JavaScript exemption scoped to the extension), the last tracked
+  runtime task-loop log/lock pair was untracked (.devin/*.log|*.lock
+  already ignored), and the superseded pre-move WebKit task queue
+  was closed out so its rows can't be mistaken for pending work.

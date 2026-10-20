@@ -12955,8 +12955,12 @@ int main(int argc, char **argv)
               && manifest.permissions.size() == 3
               && manifest.hostPermissions.size() == 1,
               "manifest parsed");
-        check(manifest.unsupported.contains(QLatin1String("tabs"))
-              && manifest.unsupported.contains(QLatin1String("nativeMessaging"))
+        // ER19: permissions the hosted runtime serves leave
+        // 'unsupported' for 'unverified' ("partially supported") —
+        // nativeMessaging stays unserved and keeps the raw verdict.
+        check(manifest.unsupported.contains(QLatin1String("nativeMessaging"))
+              && !manifest.unsupported.contains(QLatin1String("tabs"))
+              && manifest.unverified.contains(QLatin1String("tabs"))
               && !manifest.unsupported.contains(QLatin1String("storage")),
               "unsupported chrome.* APIs flagged");
         const ExtensionManager::Manifest mv2 =
@@ -13697,7 +13701,7 @@ int main(int argc, char **argv)
                     // EXT17 sibling-page leg — load the extension's
                     // declared action popup in a fresh view.  EXT19:
                     // NO explicit attachExtensionPage here — the live
-                    // action-bar path (a plain view + page on the
+                    // action-bar path (ExtensionChromePage on the
                     // profile) is what the user hits, and the
                     // runtime's view watch must wire the channel
                     // itself once the document commits.
@@ -13724,8 +13728,14 @@ int main(int argc, char **argv)
                         return;
                     }
                     popupView = new QWebEngineView;
-                    popupPage = new QWebEnginePage(
-                        liveHost->page()->profile(), popupView);
+                    popupPage = new ExtensionChromePage(
+                        liveHost->page()->profile(), extensionId,
+                        popupView);
+                    // Same ER20 lift the live action-bar path applies
+                    // — extension chrome is exempt from the profile's
+                    // web-content JavascriptEnabled preference.
+                    popupPage->settings()->setAttribute(
+                        QWebEngineSettings::JavascriptEnabled, true);
                     popupView->setPage(popupPage);
                     // show() is what makes the parentless view visible
                     // to the runtime's view watch — the live popup
@@ -14895,8 +14905,13 @@ int main(int argc, char **argv)
             // Phase 1: the action popup must resolve over
             // chrome-extension://.
             bwPopupView = new QWebEngineView;
+            // ExtensionChromePage matches the live EXT08 popup path —
+            // nav-locked to the extension's own origin, with the ER20
+            // JavascriptEnabled lift extension chrome carries.
             QWebEnginePage *popupPage =
-                new QWebEnginePage(profile, bwPopupView);
+                new ExtensionChromePage(profile, bwExtId, bwPopupView);
+            popupPage->settings()->setAttribute(
+                QWebEngineSettings::JavascriptEnabled, true);
             bwPopupView->setPage(popupPage);
             QObject::connect(popupPage, &QWebEnginePage::loadFinished,
                              &application, [&, check](bool ok) {
@@ -15527,12 +15542,20 @@ int main(int argc, char **argv)
 })();
 )JS"));
 
-        // EXT08's production popup host deliberately uses a plain
-        // QWebEnginePage (no arktos channel/page policy leaks into
-        // extension chrome) — the probe uses the same shape, plus the
-        // console-message forwarder the diagnostic needs.
-        struct Mv3ProbePage : public QWebEnginePage {
-            using QWebEnginePage::QWebEnginePage;
+        // Extension-chrome probe page — the live EXT08 path's class
+        // (ExtensionChromePage: SEC26 nav-lock to the extension's own
+        // origin, no arktos channel/page policy leaks into extension
+        // chrome) plus the ER20 JavascriptEnabled lift, so the popup
+        // legs mirror what the action bar actually constructs — and
+        // the console-message forwarder the diagnostic needs.
+        struct Mv3ProbePage : public ExtensionChromePage {
+            Mv3ProbePage(QWebEngineProfile *profile,
+                         const QString &extensionId, QObject *parent)
+                : ExtensionChromePage(profile, extensionId, parent)
+            {
+                settings()->setAttribute(
+                    QWebEngineSettings::JavascriptEnabled, true);
+            }
             void javaScriptConsoleMessage(
                 JavaScriptConsoleMessageLevel level,
                 const QString &message, int line,
@@ -15612,8 +15635,8 @@ int main(int argc, char **argv)
         };
 
         // Phase 4: probe Bitwarden's real popup context — the EXT08
-        // host path verbatim (plain QWebEnginePage on the browsing
-        // profile), console captured, then a guarded eval of the two
+        // host path (ExtensionChromePage on the browsing profile),
+        // console captured, then a guarded eval of the two
         // calls its Angular bootstrap dies on plus its rendered size.
         const auto probeBitwarden =
             [&application, &bwRow, check, note, finish, mv3, profile,
@@ -15638,7 +15661,7 @@ int main(int argc, char **argv)
                      .arg(bwRow.error));
             QWebEngineView *bwView = new QWebEngineView;
             Mv3ProbePage *bwPage =
-                new Mv3ProbePage(profile, bwView);
+                new Mv3ProbePage(profile, bwRow.id, bwView);
             bwPage->setObjectName(QStringLiteral("bitwarden-console"));
             bwView->setPage(bwPage);
             // Stage 0 probes the as-found popup, then enables the
@@ -15784,8 +15807,8 @@ int main(int argc, char **argv)
         // Phase 3: the fixture's action popup runs the call battery —
         // each result lands in window.__mv3Report.
         const auto openFixturePopup =
-            [&application, &mv3PopupUrl, check, note, profile,
-             popupReport, popupDone, probeBitwarden]() {
+            [&application, &mv3PopupUrl, &mv3ExtId, check, note,
+             profile, popupReport, popupDone, probeBitwarden]() {
             const auto proceed = [popupDone, probeBitwarden]() {
                 if (*popupDone)
                     return;
@@ -15799,7 +15822,7 @@ int main(int argc, char **argv)
                       .arg(mv3PopupUrl.toString()));
             QWebEngineView *popupView = new QWebEngineView;
             Mv3ProbePage *popupPage =
-                new Mv3ProbePage(profile, popupView);
+                new Mv3ProbePage(profile, mv3ExtId, popupView);
             popupPage->setObjectName(
                 QStringLiteral("fixture-popup-console"));
             popupView->setPage(popupPage);

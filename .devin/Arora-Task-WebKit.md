@@ -1,4 +1,11 @@
-# Devin autonomous task list — Arktos WebKit engine lane
+# Devin autonomous task list — Arktos WebKit engine lane (SUPERSEDED)
+
+**Superseded — do not work this file.** The WebKit spine moved to
+`.devin/Arora-Task-Rust.md` ("## WebKit spine" section) before WK01
+landed; WK00–WK21 were all executed and recorded there (WK00: WPE
+libs live at ~/wpe, see ~/wpe/ACQUIRED.md). The `pending` states
+below were the pre-move snapshot — every row is `done` in the queue
+of record. Kept for the spec text under `## Task details`.
 
 This file is the task queue for the WebKit lane's Devin CLI task loop
 (`.devin/taskloop-webkit.sh`). Each run of the loop picks the FIRST row
@@ -17,10 +24,10 @@ Rules for the agent working this file:
 Context: repo is Arktos (ex-Arora), a Qt 6.12.0 / QtWebEngine browser
 with a pluggable engine layer: `Engine::Backend/Profile/Page`
 (src/engine/engineinterface.h), hosted in tabs by EngineTab, listed by
-EngineRegistry. Two backends exist today — WebEngineBackend (Chromium,
-always present) and ServoBackend (dlopened servo-embed cdylib). This
-lane adds the THIRD engine: modern WebKit via WPE WebKit's WPEPlatform
-API (the toolkit-free embedder port — NOT QtWebKit, NOT WebKitGTK).
+EngineRegistry. Three backends exist today — WebEngineBackend
+(Chromium, always present), ServoBackend (dlopened servo-embed
+cdylib), and WebkitBackend (this lane's delivered WPE WebKit backend —
+the toolkit-free embedder port, NOT QtWebKit, NOT WebKitGTK).
 Design study + per-API mapping: `.devin/WEBKIT-STUDY.md` — READ IT
 FIRST. The target end state is three selectable engines; nothing
 existing may be removed or broken. All work happens on branch
@@ -33,28 +40,28 @@ xvfb-run — never touch the user's live display.
 
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
-| WK00 | WPE availability probe + user-local acquisition — get wpe-webkit-2.0 libs into ~/wpe without sudo — details below | pending | 0 | needs:linux |
-| WK01 | webkit-env.sh + link/run probe — sourceable env file + a compiled webkit_get_*_version() smoke — details below | pending | 0 | needs:task:WK00 |
-| WK02 | Spike: harness skeleton + event-loop verdict — which GMainContext pump model works inside Qt — details below | pending | 0 | needs:task:WK01 |
-| WK03 | Spike: render path — WPEBuffer → import_to_pixels → QImage → QWidget paint + screenshot proof — details below | pending | 0 | needs:task:WK02 |
-| WK04 | Spike: input + eval smoke — synthetic click navigates, JS eval returns a typed value — details below | pending | 0 | needs:task:WK03 |
-| WK05 | Spike verdict doc — .devin/WEBKIT-SPIKE.md per-member table (the SERVO-SPIKE.md shape) — details below | pending | 0 | needs:task:WK04 |
-| WK06 | Build gate — engine.pri `webkit=1` CONFIG, pkg-config detection, ARKTOS_WEBKIT, no-libs honesty, opt-outs — details below | pending | 0 | needs:task:WK01 |
-| WK07 | WebkitBackend class + registry probe + "WebKit x.y.z" displayName + conservative capabilities — details below | pending | 0 | needs:task:WK06 needs:task:WK05 |
-| WK08 | WebkitView/Page minimal — headless WPEView + raster paint in a QWidget + EngineTab hosts it unchanged — details below | pending | 0 | needs:task:WK07 |
-| WK09 | Load signals — load-changed/progress/title/uri/favicon → Page signal contract; stop/reload — details below | pending | 0 | needs:task:WK08 |
-| WK10 | History — WebKitBackForwardList → historyItems/backItems/goToHistoryEntry — details below | pending | 0 | needs:task:WK09 |
-| WK11 | Profile storage — per-id WebsiteDataManager under profiles/<id>/WebKit + OTR ephemeral session — details below | pending | 0 | needs:task:WK09 |
-| WK12 | clear(StorageAreas) + cookie accept-policy mapping — details below | pending | 0 | needs:task:WK11 |
-| WK13 | Input — pointer/scroll/key events → wpe event API + resize — details below | pending | 0 | needs:task:WK08 |
-| WK14 | Zoom + find + lifecycle — set_zoom_level, WebKitFindController, suspend/resume (symbol-gated) — details below | pending | 0 | needs:task:WK09 |
-| WK15 | JS eval typed results — evaluate_javascript + JSCValue→QVariant marshaling — details below | pending | 0 | needs:task:WK09 |
-| WK16 | Script injection + worlds + host channel — UserContentManager, world-name mapping, script-message reply — details below | pending | 0 | needs:task:WK11 needs:task:WK15 |
-| WK17 | Navigation veto + custom schemes — decide-policy → RequestPolicy; register_uri_scheme → arktos-file:/abp: — details below | pending | 0 | needs:task:WK11 |
-| WK18 | Content-blocker adblock — rule→JSON subset converter + capability honesty — details below | pending | 0 | needs:task:WK17 |
-| WK19 | Capabilities + surfaces — cert errors, context menu, permissions, downloads, settings/About/"WebKit x.y.z" consistency — details below | pending | 0 | needs:task:WK16 needs:task:WK18 |
-| WK20 | Perf — dmabuf/EGLImage → GL texture path (raster stays fallback) — details below | pending | 0 | needs:task:WK08 |
-| WK21 | Stretch audit — SOCKS5/Tor leak check, WebExtensions probe, WebKitWebInspector embed — details below | pending | 0 | needs:task:WK19 |
+| WK00 | WPE availability probe + user-local acquisition — get wpe-webkit-2.0 libs into ~/wpe without sudo — details below | done | 0 | superseded — done in Arora-Task-Rust.md (~/wpe on disk, ACQUIRED.md) |
+| WK01 | webkit-env.sh + link/run probe — sourceable env file + a compiled webkit_get_*_version() smoke — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK02 | Spike: harness skeleton + event-loop verdict — which GMainContext pump model works inside Qt — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK03 | Spike: render path — WPEBuffer → import_to_pixels → QImage → QWidget paint + screenshot proof — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK04 | Spike: input + eval smoke — synthetic click navigates, JS eval returns a typed value — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK05 | Spike verdict doc — .devin/WEBKIT-SPIKE.md per-member table (the SERVO-SPIKE.md shape) — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK06 | Build gate — engine.pri `webkit=1` CONFIG, pkg-config detection, ARKTOS_WEBKIT, no-libs honesty, opt-outs — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK07 | WebkitBackend class + registry probe + "WebKit x.y.z" displayName + conservative capabilities — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK08 | WebkitView/Page minimal — headless WPEView + raster paint in a QWidget + EngineTab hosts it unchanged — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK09 | Load signals — load-changed/progress/title/uri/favicon → Page signal contract; stop/reload — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK10 | History — WebKitBackForwardList → historyItems/backItems/goToHistoryEntry — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK11 | Profile storage — per-id WebsiteDataManager under profiles/<id>/WebKit + OTR ephemeral session — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK12 | clear(StorageAreas) + cookie accept-policy mapping — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK13 | Input — pointer/scroll/key events → wpe event API + resize — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK14 | Zoom + find + lifecycle — set_zoom_level, WebKitFindController, suspend/resume (symbol-gated) — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK15 | JS eval typed results — evaluate_javascript + JSCValue→QVariant marshaling — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK16 | Script injection + worlds + host channel — UserContentManager, world-name mapping, script-message reply — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK17 | Navigation veto + custom schemes — decide-policy → RequestPolicy; register_uri_scheme → arktos-file:/abp: — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK18 | Content-blocker adblock — rule→JSON subset converter + capability honesty — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK19 | Capabilities + surfaces — cert errors, context menu, permissions, downloads, settings/About/"WebKit x.y.z" consistency — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK20 | Perf — dmabuf/EGLImage → GL texture path (raster stays fallback) — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
+| WK21 | Stretch audit — SOCKS5/Tor leak check, WebExtensions probe, WebKitWebInspector embed — details below | done | 0 | superseded — done in Arora-Task-Rust.md |
 
 ## Task details
 

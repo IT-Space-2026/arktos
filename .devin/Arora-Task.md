@@ -355,7 +355,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MRG06 | Post-merge integration C — webkit=1 three-engine build+link + webkit legs (source webkit-env.sh) — details below | done | 2 | webkit=1 build+link clean; --engine-list lists all 3 (Chromium 140 / Servo 0.7.0 / WebKit 2.54.1) after rebuilding stale Oct-14 libservo_embed.so (pre-ENG36 symbols); 18/18 webkit* legs PASS standalone; NEW BUG diagnosed: engineTabChurn's servo cycles poison the next webkit GL page (SIGSEGV — EGL display terminated by surfman teardown; raster unaffected; details+repro filed for MRG08) |
 | MRG07 | Post-merge leak sweep A — ASan/LSan churn on extension merge seams (ExtensionChromePage popup/probe cycles, relay PortEnd register/expire at caps) — details below | done | 1 | .devin/MRG07-scan.md: new chromePageChurn+relayPortChurn legs green plain & ASan; full tst_extensionmanager 50/0f/4s under LSan; 0 src/-sited leak records (10 upstream only); chan-cap observed boundary 1023 pinned in test |
 | MRG08 | Post-merge leak sweep B — ASan/LSan per-backend EngineTab churn on merged master (webengine+servo, webkit when built) — details below | done | 2 | .devin/MRG08-scan.md: fixed MRG06 servo→webkit GL poison (eglBindAPI ES + display revive + stale-pipe reset); 4 new churn legs green plain & ASan; full tst_engineswitch 49/0/0 under LSan; 0 src/-sited records (94 upstream); 4 gates PASS |
-| MRG09 | Post-merge dead-code/duplicate sweep — resolve-level leftovers, double-tracked logs, task-file/doc rot — details below | pending | 0 | needs:task:MRG05 — was MRG03 |
+| MRG09 | Post-merge dead-code/duplicate sweep — resolve-level leftovers, double-tracked logs, task-file/doc rot — details below | done | 1 | untracked 2 runtime files, 3 ExtensionChromePage swaps, WK queue superseded — build+4 gates+suite PASS |
 | MRG10 | Post-merge security re-check — SEC26 findings survived merge: nav-lock+lift both active, sender-url verification, bounds+dedup on generalized PortEnd — details below | pending | 0 | needs:task:MRG05 — was MRG04 |
 
 ## Task details
@@ -2553,6 +2553,38 @@ Post-merge dead-code/duplicate sweep (was MRG03).
   'Not supported' Bitwarden notes predating ER19's regrade).
 
 Verify: removals list in row notes; build + gates PASS.
+
+Run notes (2026-10-20):
+- `end.bridge`: none remain — every PortEnd access is `end.target`.
+- Duplicated nav-lock: none — `ExtensionChromePage::navigationAllowed`
+  is the single helper (test's `NP` is just an alias);
+  `HostedBackgroundPage`'s exact-URL lock is intentionally stricter.
+- Plain-QWebEnginePage misses fixed in main.cpp: EXT17 sibling popup,
+  Bitwarden-smoke action popup, `Mv3ProbePage` (now subclasses
+  ExtensionChromePage) — all three only ever host own-extension
+  chrome, so each gets the SEC26 origin lock + ER20 JS lift.
+- Stale smoke leg fixed: `--extension-smoke` manifest leg expected
+  `tabs`/`nativeMessaging` in `unsupported`; ER19's runtime regrade
+  moves `tabs` to `unverified`.
+- Double-tracked files: untracked `.devin/taskloop-extruntime.{lock,log}`
+  (live watchdog artifacts); `.gitignore` already covers
+  `.devin/*.log|.lock`. Other tracked *.log/lock are evidence logs
+  or legitimate Cargo.lock files.
+- Task-file rot: `Arora-Task-WebKit.md` is the abandoned pre-move
+  queue — its WK00-WK21 spine was moved to Arora-Task-Rust.md where
+  every row is done. Banner + all 22 stale pending rows marked done
+  with moved-to-rust notes so a watchdog run won't redo landed work.
+- Doc claims already current: ENGINE.md/README document 3 live
+  backends, multi-view Servo (ENG36), and ER19's hosted-runtime
+  Bitwarden regrade. Historical reports (EXT11, EXT-RUNTIME-*)
+  left as-is — factual point-in-time records.
+- Verify: build PASS; 4 gates PASS (warnings, supplychain,
+  engine-audit, rustcov); autotest suite 2236p/0f/99 Totals rc=0;
+  --extension-host-smoke, --extension-smoke (13 legs),
+  --bitwarden-smoke, --mv3-health-smoke all PASS.  Note: suite run
+  needs webkit-env.sh sourced on this webkit-linked build (WPE
+  compat preload) — without it tst_engineswitch dies on
+  g_sort_array lookup; env-only, not a code failure.
 
 ### MRG10
 
