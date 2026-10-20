@@ -357,6 +357,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MRG08 | Post-merge leak sweep B — ASan/LSan per-backend EngineTab churn on merged master (webengine+servo, webkit when built) — details below | done | 2 | .devin/MRG08-scan.md: fixed MRG06 servo→webkit GL poison (eglBindAPI ES + display revive + stale-pipe reset); 4 new churn legs green plain & ASan; full tst_engineswitch 49/0/0 under LSan; 0 src/-sited records (94 upstream); 4 gates PASS |
 | MRG09 | Post-merge dead-code/duplicate sweep — resolve-level leftovers, double-tracked logs, task-file/doc rot — details below | done | 1 | untracked 2 runtime files, 3 ExtensionChromePage swaps, WK queue superseded — build+4 gates+suite PASS |
 | MRG10 | Post-merge security re-check — SEC26 findings survived merge: nav-lock+lift both active, sender-url verification, bounds+dedup on generalized PortEnd — details below | done | 1 | SEC26-1/2 hold; SEC26-3 gap fixed — pageSend/pagePortConnect/pagePortAccept/pageDeliver merged in without bridge-side dup-mid+bounds; now parity + tst legs covering both PortEnd kinds; 4 gates PASS, suite green (extensionCommands = known offscreen SIGTRAP, PASS --disable-gpu) |
+| PRIV07 | Private-mode teardown: destroy the shared OTR profile when the last private page closes (Chrome-incognito lifecycle) — details below | pending | 0 | user request — audit found s_privateProfile is qApp-owned and lives to process exit; closing all private tabs leaves in-memory cookies/logins/storage reachable by the NEXT private tab in the same run |
 
 ## Task details
 
@@ -2604,3 +2605,53 @@ Post-merge security re-check (was MRG04).
 Verify: the four assertions hold (add legs if absent);
 .devin/SEC26-audit.md gets a merge-verification addendum;
 gates PASS.
+
+
+### PRIV07
+
+Private-mode teardown: destroy the shared off-the-record profile when
+the last private page closes.
+
+Audit finding: `BrowserProfile::privateProfile()` lazily creates an
+unnamed (OTR) QWebEngineProfile parented to qApp — it lives for the
+process lifetime.  Closing every private tab leaves its in-memory
+cookies, logins, localStorage, service workers and cache alive, so a
+fresh private tab opened later in the same run silently inherits the
+previous "private session".  Chrome destroys the incognito profile
+when the last incognito window closes; we should match that.
+
+Scope:
+
+- Track live OTR pages — count QWebEnginePage/WebPage instances bound
+  to `BrowserProfile::privateProfileIfCreated()` across ALL windows
+  (the profile is shared across windows; teardown must fire only when
+  the count hits zero, not on last tab of one window).
+- On last-OTR-page teardown: disconnect, `deleteLater()` the profile,
+  `s_privateProfile = nullptr`.  `privateProfile()` already lazily
+  recreates — verify a subsequent private tab gets a genuinely fresh
+  world.
+- `s_preparedProfiles` holds raw pointers — remove the destroyed
+  profile from it so the recreated profile gets prepareProfile's
+  services (cookie jar, scheme handlers, interceptor, downloads)
+  re-installed, not skipped.
+- ClearPrivateData's "otr" scope uses `privateProfileIfCreated()` —
+  already nullptr-safe; confirm no caller conjures the profile just
+  to clear it.
+- Full-private-window mode (`s_isPrivate` process-global): profile
+  lives until process exit there by construction — teardown must not
+  fire while ANY OTR page survives; at app exit the qApp parentage
+  still covers cleanup.
+- Tor profile is out of scope (tor = whole process, dies with it).
+- Edge: an in-flight private DOWNLOAD must hold the teardown — check
+  DownloadManager's off-the-record items before destroying, or defer
+  until they finish/cancel.
+
+Verify:
+
+- New leg: open private tab -> set OTR state (cookie or
+  localStorage via page JS) -> close ALL private tabs -> open new
+  private tab -> assert the state is GONE (fresh profile); normal
+  profile untouched.
+- ASan/LSan leg over open/close-all/reopen churn — no UAF on the
+  destroyed profile, no leaked QWebEngineProfile.
+- `make check` gates + tst_browserapp/tst_tabwidget green.
