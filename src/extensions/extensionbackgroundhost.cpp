@@ -2492,7 +2492,11 @@ QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
         {QStringLiteral("url"), senderUrl},
         {QStringLiteral("origin"),
          QStringLiteral("chrome-extension://") + m_extensionId}};
-    runtime->pageDeliver(page, m_extensionId, mid, msg, sender, this);
+    if (!runtime->pageDeliver(page, m_extensionId, mid, msg,
+                              sender, this))
+        // SEC26-3: a duplicate in-flight mid or a full delivery map
+        // — answered typed like every other refused relay op.
+        return err(QStringLiteral("delivery-refused"));
     return ok(QJsonObject{{QStringLiteral("delivered"), true}});
 }
 
@@ -3977,6 +3981,16 @@ QJsonObject ExtensionBackgroundRuntime::pageSend(
     if (!page || mid.isEmpty() || msg.isUndefined()
             || !ownsRelayKey(extensionId, mid))
         return pageErr(QStringLiteral("invalid-argument"));
+    // SEC26-3 parity with relaySend — the two send paths share
+    // m_relayPending, so a page-supplied mid must obey the same
+    // rules: an in-flight mid is never re-sent (a duplicate would
+    // overwrite the pending entry and orphan its timer — including
+    // one a bridge context is still waiting on) and the shared map
+    // stays bounded under a looping caller.
+    if (m_relayPending.contains(mid))
+        return pageErr(QStringLiteral("duplicate-mid"));
+    if (m_relayPending.size() >= kMaxRelayPending)
+        return pageErr(QStringLiteral("too-many-pending"));
 
     // Wrap the raw user message in the relay envelope the shim's
     // envelopeOf() unwraps — {__arktosMsg:{mid,msg,extId,senderUrl}}
@@ -4056,7 +4070,24 @@ QJsonObject ExtensionBackgroundRuntime::pagePortConnect(
     if (!page || chan.isEmpty() || portId.isEmpty()
             || !ownsRelayKey(extensionId, chan))
         return pageErr(QStringLiteral("invalid-argument"));
-    m_portEnds[chan].append(PortEnd{page, portId});
+    // SEC26-3 parity with relayPortConnect — the merged PortEnd
+    // target is generalized to QObject, so page ends obey the same
+    // rules as bridge ends: a re-fired connect for an already-
+    // registered (page, portId) pair is a no-op (no re-fan-out, no
+    // duplicate end), and the shared per-chan/chan-count bounds
+    // apply.
+    QList<PortEnd> &ends = m_portEnds[chan];
+    for (const PortEnd &end : std::as_const(ends)) {
+        if (end.target == page && end.localPortId == portId)
+            return pageOk(QJsonObject{{QStringLiteral("peers"), 0}});
+    }
+    if (ends.size() >= kMaxPortEndsPerChan
+            || (ends.isEmpty() && m_portEnds.size() >= kMaxPortChans)) {
+        if (ends.isEmpty())
+            m_portEnds.remove(chan);
+        return pageErr(QStringLiteral("too-many-ends"));
+    }
+    ends.append(PortEnd{page, portId});
     int peers = 0;
     const QJsonObject payload{
         {QStringLiteral("chan"), chan},
@@ -4080,11 +4111,20 @@ QJsonObject ExtensionBackgroundRuntime::pagePortAccept(
 {
     if (!page || chan.isEmpty() || portId.isEmpty())
         return pageErr(QStringLiteral("invalid-argument"));
-    for (const PortEnd &end : m_portEnds.value(chan)) {
+    // SEC26-3 parity with relayPortAccept — dedup AND the shared
+    // bounds, same as pagePortConnect above.
+    QList<PortEnd> &ends = m_portEnds[chan];
+    for (const PortEnd &end : std::as_const(ends)) {
         if (end.target == page && end.localPortId == portId)
             return pageOk();   // already registered
     }
-    m_portEnds[chan].append(PortEnd{page, portId});
+    if (ends.size() >= kMaxPortEndsPerChan
+            || (ends.isEmpty() && m_portEnds.size() >= kMaxPortChans)) {
+        if (ends.isEmpty())
+            m_portEnds.remove(chan);
+        return pageErr(QStringLiteral("too-many-ends"));
+    }
+    ends.append(PortEnd{page, portId});
     return pageOk();
 }
 
@@ -4199,13 +4239,20 @@ void ExtensionBackgroundRuntime::unregisterPageContext(
     }
 }
 
-void ExtensionBackgroundRuntime::pageDeliver(
+bool ExtensionBackgroundRuntime::pageDeliver(
         ExtensionPageBridge *page, const QString &extensionId,
         const QString &mid, const QJsonValue &msg,
         const QJsonObject &sender, QObject *waiter)
 {
     if (!page || mid.isEmpty())
-        return;
+        return false;
+    // SEC26-3 parity: this map has the same in-flight-mid shape the
+    // relay audit bounded — a repeated mid must never overwrite a
+    // live delivery (the first entry's expiry would erase the newer
+    // one early) and the map stays bounded under a looping caller.
+    if (m_pageDeliveries.contains(mid)
+            || m_pageDeliveries.size() >= kMaxRelayPending)
+        return false;
     PendingPageDelivery delivery;
     delivery.waiter = waiter;
     delivery.target = page;
@@ -4246,6 +4293,7 @@ void ExtensionBackgroundRuntime::pageDeliver(
                     {QStringLiteral("ext"), extensionId},
                     {QStringLiteral("msg"), msg},
                     {QStringLiteral("sender"), sender}});
+    return true;
 }
 
 // -------------------------------------------------------------------

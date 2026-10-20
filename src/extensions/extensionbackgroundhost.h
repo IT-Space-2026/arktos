@@ -580,8 +580,9 @@ public:
     void unregisterPageContext(ExtensionPageBridge *page);
     // ER02 seam — push a host->page message ('__arktos.deliver');
     // the agent's 'respond' op resolves it back to 'waiter' as
-    // '__arktos.deliverResponse'.
-    void pageDeliver(ExtensionPageBridge *page,
+    // '__arktos.deliverResponse'.  False when the mid collides with a
+    // live delivery or the bounded delivery map is full (SEC26-3).
+    bool pageDeliver(ExtensionPageBridge *page,
                      const QString &extensionId,
                      const QString &mid,
                      const QJsonValue &msg,

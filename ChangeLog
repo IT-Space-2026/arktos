@@ -4382,3 +4382,14 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   runtime task-loop log/lock pair was untracked (.devin/*.log|*.lock
   already ignored), and the superseded pre-move WebKit task queue
   was closed out so its rows can't be mistaken for pending work.
+- Post-merge security re-check (MRG10): the SEC26 hardening was
+  re-verified on the merged tree and one merge gap closed — the
+  page-agent relay ops now enforce the same bounds and duplicate
+  rejection as the bridge ops they share bookkeeping with: a page
+  can no longer re-fire an in-flight message id, grow the pending/
+  port-end/delivery maps without limit, or register duplicate port
+  endpoints to multiply fan-out. Extension popup and health-probe
+  pages still run navigation-locked with the JavaScript exemption
+  confined to the extension's own origin, and message senders are
+  stamped from host-verified page state on both relay directions.
+  The full re-audit lives at .devin/SEC26-audit.md.

@@ -1808,6 +1808,12 @@ void tst_ExtensionManager::chromePageChurn()
         QVERIFY2(page,
                  "action popup must carry the nav-locked "
                  "ExtensionChromePage, not a plain QWebEnginePage");
+        // MRG10/SEC26-1: BOTH halves of the fix must be live on the
+        // real chrome page — the navigation lock refuses a foreign
+        // url AND the ER20 JavascriptEnabled lift is on.
+        QVERIFY(!ExtensionChromePage::navigationAllowed(
+                    QUrl(QStringLiteral("https://forged.example/x")),
+                    id, true));
         QVERIFY(page->settings()->testAttribute(
                     QWebEngineSettings::JavascriptEnabled));
         QSignalSpy loadSpy(page, &QWebEnginePage::loadFinished);
@@ -1836,6 +1842,14 @@ void tst_ExtensionManager::chromePageChurn()
             (probe = qobject_cast<ExtensionChromePage *>(
                  manager->healthProbePage())) != nullptr,
             15000);
+        // MRG10/SEC26-1: same both-halves check on the probe page —
+        // nav-locked to the extension origin AND carrying the ER20
+        // JavascriptEnabled lift.
+        QVERIFY(!ExtensionChromePage::navigationAllowed(
+                    QUrl(QStringLiteral("https://forged.example/x")),
+                    id, true));
+        QVERIFY(probe->settings()->testAttribute(
+                    QWebEngineSettings::JavascriptEnabled));
         const QPointer<QWebEnginePage> probeGuard(probe);
         QTRY_VERIFY_WITH_TIMEOUT(
             !manager->healthProbeDetail(id).isEmpty(), 60000);
@@ -1972,6 +1986,38 @@ void tst_ExtensionManager::relayPortChurn()
     QSignalSpy agentSpy(agent, &ExtensionPageBridge::extEvent);
     QSignalSpy bgSpy(&bg, &ChromeBridge::hostEvent);
 
+    // MRG10/SEC26-3 merge parity: page-agent ends share the channel-
+    // count bound with bridge ends — the same 1023-populated
+    // boundary the bridge leg above observed, enforced while
+    // PortEnd::target carries an ExtensionPageBridge.
+    int pageChans = 0;
+    for (int i = 0; i < 1100; ++i) {
+        if (runtime->pagePortConnect(
+                agent, extId,
+                extId + QStringLiteral("#pc%1").arg(i),
+                QStringLiteral("x"), QString(), QJsonObject())
+                .value(QLatin1String("ok")).toBool())
+            ++pageChans;
+        else
+            break;
+    }
+    QCOMPARE(pageChans, 1023);
+    QCOMPARE(runtime->pagePortConnect(
+                 agent, extId, extId + QStringLiteral("#pcx"),
+                 QStringLiteral("x"), QString(), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("too-many-ends"));
+    // The bound is kind-agnostic — a bridge connect on a fresh chan
+    // is refused while the map is full of page ends.
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, extId + QStringLiteral("#pgfull"),
+                 QStringLiteral("x"), QString(), QString()), 0);
+    // Drain the fill so the live-chan assertions below start clean.
+    for (int i = 0; i < pageChans; ++i)
+        runtime->pagePortDisconnect(
+            agent, extId + QStringLiteral("#pc%1").arg(i),
+            QStringLiteral("x"));
+
     // Page + bridge ends share one chan — deliveries cross kinds.
     const QString pageChan = extId + QStringLiteral("#pg");
     QVERIFY(runtime->pagePortConnect(
@@ -1995,6 +2041,60 @@ void tst_ExtensionManager::relayPortChurn()
     QTRY_VERIFY_WITH_TIMEOUT(agentSpy.size() >= 1, 10000);
     QCOMPARE(agentSpy.last().at(0).toString(),
              QStringLiteral("__arktos.portMessage"));
+
+    // MRG10/SEC26-3: page-end dedup — re-firing a connect for an
+    // already-registered (page, portId) pair is a no-op like the
+    // bridge-side leg above: no second end, no re-fan-out.
+    const int bgEventsBefore = bgSpy.size();
+    QVERIFY(runtime->pagePortConnect(
+                agent, extId, pageChan, QStringLiteral("pg0"),
+                QStringLiteral("n"), QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(bgSpy.size(), bgEventsBefore);
+    // One end means one delivery — a duplicated registration would
+    // double-count on the same (target, portId) pair.
+    QCOMPARE(runtime->relayPortMessage(
+                 &bg, pageChan, QStringLiteral("bg0"),
+                 QJsonValue(QStringLiteral("dupchk"))), 1);
+    // pagePortAccept dedups the same way.
+    QVERIFY(runtime->pagePortAccept(
+                agent, pageChan, QStringLiteral("pg0"))
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(runtime->relayPortMessage(
+                 &bg, pageChan, QStringLiteral("bg0"),
+                 QJsonValue(QStringLiteral("dupchk2"))), 1);
+
+    // MRG10/SEC26-3: the per-chan bound counts BOTH PortEnd kinds —
+    // bridge ends and page ends fill the same 64-end list.
+    const QString mixChan = extId + QStringLiteral("#mixcap");
+    for (int i = 0; i < 63; ++i)
+        QCOMPARE(runtime->relayPortConnect(
+                     &bg, mixChan, QStringLiteral("b%1").arg(i),
+                     QString(), QString()), 1);
+    // The 64th end is a page end — accepted; the 65th of EITHER
+    // kind is refused, and pagePortAccept obeys the bound too.
+    QVERIFY(runtime->pagePortConnect(
+                agent, extId, mixChan, QStringLiteral("p63"),
+                QString(), QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(runtime->pagePortConnect(
+                 agent, extId, mixChan, QStringLiteral("p64"),
+                 QString(), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("too-many-ends"));
+    QCOMPARE(runtime->pagePortAccept(
+                 agent, mixChan, QStringLiteral("pa"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("too-many-ends"));
+    QCOMPARE(runtime->relayPortConnect(
+                 &bg, mixChan, QStringLiteral("b63"),
+                 QString(), QString()), 0);
+    // Drain the chan so it leaves no live ends behind.
+    for (int i = 0; i < 63; ++i)
+        runtime->relayPortDisconnect(
+            &bg, mixChan, QStringLiteral("b%1").arg(i));
+    runtime->pagePortDisconnect(agent, mixChan,
+                                QStringLiteral("p63"));
 
     // Register/disconnect cycles on the page end.
     for (int cycle = 0; cycle < 8; ++cycle) {
@@ -2027,6 +2127,36 @@ void tst_ExtensionManager::relayPortChurn()
             return false;
         }()), 10000);
 
+    // MRG10/SEC26-3: page-originated sends obey the same dup-mid
+    // rule as relaySend — a live mid is refused outright instead of
+    // overwriting the pending entry, and the FIRST send still
+    // resolves normally.
+    const QString dupMid = extId + QStringLiteral("#dup0");
+    QVERIFY(runtime->pageSend(
+                agent, extId, dupMid, QJsonValue(1), QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(runtime->pageSend(
+                 agent, extId, dupMid, QJsonValue(2), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("duplicate-mid"));
+    QVERIFY(runtime->relayRespond(
+                &peer, dupMid, QJsonValue(QStringLiteral("first"))));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ([&]() {
+            for (const QList<QVariant> &args : agentSpy) {
+                if (args.value(0).toString()
+                        == QLatin1String("__arktos.extResponse")
+                    && args.value(1).toJsonObject()
+                           .value(QLatin1String("mid")).toString()
+                       == dupMid
+                    && args.value(1).toJsonObject()
+                           .value(QLatin1String("response")).toString()
+                       == QLatin1String("first"))
+                    return true;
+            }
+            return false;
+        }()), 10000);
+
     // Host->page delivery + respond round trip: bg waits, the agent
     // answers, the reply resolves as '__arktos.deliverResponse'.
     const QString dmid = extId + QStringLiteral("#pd0");
@@ -2048,14 +2178,26 @@ void tst_ExtensionManager::relayPortChurn()
             return false;
         }()), 10000);
 
+    // MRG10/SEC26-3: the host->page delivery map has the same
+    // in-flight-mid rule — a repeated mid refuses instead of
+    // overwriting the live delivery.
+    const QString dmid2 = extId + QStringLiteral("#pd1");
+    QVERIFY(runtime->pageDeliver(agent, extId, dmid2, QJsonValue(4),
+                                 QJsonObject(), &bg));
+    QVERIFY(!runtime->pageDeliver(agent, extId, dmid2, QJsonValue(9),
+                                  QJsonObject(), &bg));
+    QVERIFY(runtime->pageRespond(agent, dmid2,
+                                 QJsonValue(QStringLiteral("a")), true)
+                .value(QLatin1String("ok")).toBool());
+
     // The real expire path: one pending mid and one page delivery
     // left unanswered until their 30 s timeout lambdas run — the same
     // teardown unregister takes, through the timer instead.
     const QString xmid = extId + QStringLiteral("#xpire");
     QCOMPARE(runtime->relaySend(&bg, xmid, QJsonObject()), 1);
     const QString dexpire = extId + QStringLiteral("#dxpire");
-    runtime->pageDeliver(agent, extId, dexpire, QJsonValue(3),
-                         QJsonObject(), &bg);
+    QVERIFY(runtime->pageDeliver(agent, extId, dexpire, QJsonValue(3),
+                                 QJsonObject(), &bg));
     QTest::qWait(32000);
     // Both entries are gone — late answers find no slot, and the
     // delivery timeout resolved its waiter with the honest
@@ -2095,6 +2237,29 @@ void tst_ExtensionManager::relayPortChurn()
                 agent, extId, extId + QStringLiteral("#pend"),
                 QJsonValue(1), QJsonObject())
                 .value(QLatin1String("ok")).toBool());
+    // MRG10/SEC26-3: the pending bound is shared — mids minted by the
+    // page count against kMaxRelayPending, and once the map is full
+    // BOTH send paths refuse ("#pend" above is the one live entry).
+    int sent = 0;
+    for (int i = 0; i < 600; ++i) {
+        if (runtime->pageSend(
+                agent, extId,
+                extId + QStringLiteral("#fill%1").arg(i),
+                QJsonValue(i), QJsonObject())
+                .value(QLatin1String("ok")).toBool())
+            ++sent;
+        else
+            break;
+    }
+    QCOMPARE(sent, 511);
+    QCOMPARE(runtime->pageSend(
+                 agent, extId, extId + QStringLiteral("#overflow"),
+                 QJsonValue(1), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("too-many-pending"));
+    QCOMPARE(runtime->relaySend(
+                 &bg, extId + QStringLiteral("#bfull"),
+                 QJsonObject()), 0);
     const QPointer<ExtensionPageBridge> agentGuard(agent);
     const QPointer<QWebEnginePage> pageObjGuard(page);
     view->deleteLater();
@@ -2111,6 +2276,12 @@ void tst_ExtensionManager::relayPortChurn()
     QCOMPARE(runtime->relayPortMessage(
                  &bg, deadChan, QStringLiteral("bgd"),
                  QJsonValue(1)), 0);
+    // The death-path sweep drained every page-origin pending mid
+    // (the 512-entry fill above) — the shared map is open to bridge
+    // sends again.
+    QCOMPARE(runtime->relaySend(
+                 &bg, extId + QStringLiteral("#drain"),
+                 QJsonObject()), 1);
 
     runtime->unregisterRelayContext(&bg);
     runtime->unregisterRelayContext(&peer);

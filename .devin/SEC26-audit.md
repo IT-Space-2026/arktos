@@ -132,3 +132,56 @@ and host-verified `sender.url`.
 - `tst_extensionmanager`: 29/29 PASS offscreen, incl. new
   `extensionChromeNavLock` matrix and the three new relay legs.
 - Full build: `qmake && make -j2` clean on Qt 6.12.
+
+## Merge-verification addendum (MRG10, 2026-10-20)
+
+Re-audit after the rust-work/master merge brought ER01's page-agent
+ops (`pageSend`, `pagePortConnect`, `pagePortAccept`, `pageDeliver`)
+into the same `m_relayPending` / `m_portEnds` / `m_pageDeliveries`
+bookkeeping the bridge-side ops were bounded under. Verdicts on the
+merged file:
+
+- **SEC26-1 — holds.** `chromePageChurn` now asserts both halves on
+  BOTH chrome surfaces: the action popup (`ExtensionActionBar`) and
+  the health probe (`ExtensionManager::startNextHealthProbe`) run an
+  `ExtensionChromePage` whose `navigationAllowed()` refuses a foreign
+  https main-frame URL while `JavascriptEnabled` is on. Grep-audit:
+  every `ExtensionChromePage` instantiation is an extension-chrome
+  path — popup, probe, or the smoke-harness mirrors in `main.cpp`;
+  no ordinary browsing path constructs one.
+- **SEC26-2 — holds.** `relayPortConnect` still stamps `sender.url`
+  from `from->contextPage()->url()`; the caller-supplied `senderUrl`
+  only fills in for page-less test bridges. Page-agent parity:
+  `ExtensionPageBridge::invoke` derives `senderUrl` from
+  `m_page->url()` before `senderFor()` shapes it — never from the
+  caller's JSON.
+- **SEC26-3 — gap found and fixed.** SEC26 ran before the merge, so
+  the page-agent ops merged in without the bounds/dedup the bridge
+  ops carry, while sharing the same maps. A page could re-fire a live
+  `mid` (overwriting a pending entry — including a bridge context's —
+  and orphaning its timer), grow `m_relayPending`/`m_portEnds`/
+  `m_pageDeliveries` unboundedly, and duplicate `(page, portId)`
+  ends to multiply fan-out. Fixed by mirroring the bridge rules:
+  `pageSend` rejects `duplicate-mid`/`too-many-pending`;
+  `pagePortConnect`/`pagePortAccept` dedup `(target, localPortId)`
+  and enforce `kMaxPortEndsPerChan`/`kMaxPortChans` with the same
+  insert-then-check boundary (max 1023 populated chans, matching
+  `relayPortConnect`); `pageDeliver` returns bool and refuses
+  duplicate/full delivery mids, and `invokeTabMessage` answers a
+  refusal `delivery-refused`.
+
+Verification (Qt 6.12.0, offscreen): `tst_extensionmanager` focused
+legs PASS — `extensionChromeNavLock`, `chromePageChurn` (popup+probe
+lock/lift), `extensionMessageRelay`, `relayPortChurn` (new legs:
+page-agent chan-cap at 1023 + `too-many-ends`, bridge refused on a
+page-filled map, page-end dedup via connect AND accept, mixed
+bridge+page 64-end cap, page `duplicate-mid`, delivery dup refusal,
+shared pending-cap, page-death drain then live relay). Gates
+re-run: check-warnings PASS (resumed xtKOCE tree + synced sources,
+0 diagnostics), check-supplychain PASS, check-engine-audit PASS
+(185 files), check-rustcoverage PASS (94.11/91.83/89.25 ≥ 85).
+Full binary: every leg green — `extensionCommands` hits its known
+offscreen SIGTRAP flake (WORKLOG ER15/16/18/19; PASS under
+`QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu`, and on a stash of this
+change the trap reproduces identically — pre-existing, not a
+regression).
