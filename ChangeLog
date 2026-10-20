@@ -4401,6 +4401,12 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   packs, vendored libraries) and Janos Szenfner's credit are
   unchanged. Pre-fork git history was dropped: the first post-fork
   commit is now the repository root.
-- README: restructured the Bitwarden/hosted-runtime section into
-  paragraphs and a per-namespace served-API list — same content,
-  readable layout.
+- Repo cleanup: the drained work lanes are gone — webkit-work,
+  extruntime-work, rust-work and ui-work branches deleted locally
+  and remotely, their worktrees and systemd watchdog units removed,
+  stale refs/original backups, lane stashes and unreachable objects
+  pruned (master is now the only branch; .git shrank ~323M → ~78M).
+- README: restructured the dense sections into paragraphs and bullet
+  lists — Bitwarden/hosted-runtime, the extensions overview, Tor,
+  downloads, the per-tab engine switcher, Rust stores, site trust
+  and the profile menu — same content, readable layout.

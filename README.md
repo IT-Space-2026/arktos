@@ -63,22 +63,25 @@ browsing profile:
   per-signal toggles for the lookalike-domain warning and the
   threat-list check; disabling the master hides the badge and the
   popover's Trust section and skips the lookups entirely, and each
-  signal can be skipped individually, all without a restart. The
-  lock/shield popover carries a Trust section with one line per real
-  signal from the verdict — known/little-known site (Tranco rank),
-  "resembles <domain>" lookalike hits, threat-list hits and first
-  visits — refreshed per navigation. A small padlock inside the left
-  end of the address bar renders the verdict at a glance (green /
-  amber / red, locked on https and unlocked on http), while the
-  per-site privacy shield sits on the toolbar just left of the bar
-  and always reflects the active tab. On Tor windows the
-  second-opinion TLS probe cannot run (a direct handshake would
-  bypass Tor), so the engine's own end-to-end chain validation stands
-  in for it; anywhere, a page committed via "proceed anyway" on a
-  certificate error shows red for the rest of the session. The group also has an "Update
-  Now" button that refreshes both remote trust lists (Tranco ranks,
-  threat blocklist) on demand, with a last-updated status line; it
-  stays disabled until remote list downloads are consented to.
+  signal can be skipped individually, all without a restart.
+  - The lock/shield popover carries a Trust section with one line
+    per real signal from the verdict — known/little-known site
+    (Tranco rank), "resembles <domain>" lookalike hits, threat-list
+    hits and first visits — refreshed per navigation.
+  - A small padlock inside the left end of the address bar renders
+    the verdict at a glance (green / amber / red, locked on https
+    and unlocked on http), while the per-site privacy shield sits on
+    the toolbar just left of the bar and always reflects the active
+    tab.
+  - On Tor windows the second-opinion TLS probe cannot run (a
+    direct handshake would bypass Tor), so the engine's own
+    end-to-end chain validation stands in for it; anywhere, a page
+    committed via "proceed anyway" on a certificate error shows red
+    for the rest of the session.
+  - The group also has an "Update Now" button that refreshes both
+    remote trust lists (Tranco ranks, threat blocklist) on demand,
+    with a last-updated status line; it stays disabled until remote
+    list downloads are consented to.
 - **Per-site JavaScript control** — allow/block rules by host with a
   shield-panel toggle, a blocked-scripts bar with "Allow once"/"Always
   allow", and three Mullvad-style security tiers (Standard / Safer /
@@ -143,43 +146,46 @@ browsing profile:
   extension update manifests and suggestion replies are parsed in
   memory-safe Rust behind the FFI before Qt sees them.
 - **Rust bookmark + history stores** — in default (rust-enabled)
-  builds the crate is also the canonical bookmark + history store:
-  bookmarks.xbel stays the on-disk format but is parsed and emitted
-  in Rust (queried lazily, one node handle per call — no bulk tree
-  marshal), and history lives in a SQLite history.db (visits plus
-  per-host favicons that persist across restarts) that imports the
-  legacy QDataStream file on first run. The crate also owns session
-  save/restore serialization: a versioned session.dat written
-  atomically and bounds-checked on decode, so a corrupt file is
-  rejected whole instead of looping the crash-restore prompt — and a
-  restore that still yields zero windows (empty, corrupt or declined)
-  falls back to a normal window so the app never runs windowless;
-  per-tab records carry url, container binding, tab group and an
-  engine tag beside an opaque engine-state blob, keeping the format
-  engine-neutral (a pre-Rust QSettings session still restores once
-  through the legacy reader). The crate also owns
-  the omnibox: the location bar's url-or-search routing decision
-  (rc_classify_input — a ported QUrl::fromUserInput heuristic plus
-  keyword/search-fallback handling, verdict diffed against the old
-  C++ routing in autotests/omnibox) and the frecency-ranked history
-  suggestions the completion dropdown shows (rc_history_suggest
-  queries history.db directly so only the visible rows cross the
-  FFI). The autofill form store follows the credentials into the
-  same encrypted custody: saved field name/value records
-  (including typed passwords and card numbers) live in a dedicated
-  sealed autofill-store.dat under the shared unlock/passphrase
-  lifecycle, with a one-shot import of the old autofill.dat —
-  sealed or plaintext — on first run. The crate also carries the
-  second-opinion TLS verifier: on https page commits a worker
-  performs a real handshake to the host and re-evaluates the
-  certificate chain with rustls+webpki against the platform
-  roots — the site panel shows a "TLS verified by Arktos" chip,
-  or a warning line naming the failure class when the
-  independent verdict disagrees. The check only informs the
-  panel (it never blocks a page), skips Tor windows, proxied
-  sessions and private/loopback hosts entirely, and does no
-  OCSP/CRL fetch — an unreachable host reports "not verified",
-  never a false alarm.
+  builds the crate is the canonical bookmark + history store:
+  - **Bookmarks** — bookmarks.xbel stays the on-disk format but is
+    parsed and emitted in Rust (queried lazily, one node handle per
+    call — no bulk tree marshal).
+  - **History** — lives in a SQLite history.db (visits plus per-host
+    favicons that persist across restarts) that imports the legacy
+    QDataStream file on first run.
+  - **Session save/restore serialization** — a versioned session.dat written
+    atomically and bounds-checked on decode, so a corrupt file is
+    rejected whole instead of looping the crash-restore prompt — and
+    a restore that still yields zero windows (empty, corrupt or
+    declined) falls back to a normal window so the app never runs
+    windowless; per-tab records carry url, container binding, tab
+    group and an engine tag beside an opaque engine-state blob,
+    keeping the format engine-neutral (a pre-Rust QSettings session
+    still restores once through the legacy reader).
+  - **Omnibox** — the location bar's url-or-search routing decision
+    (rc_classify_input — a ported QUrl::fromUserInput heuristic plus
+    keyword/search-fallback handling, verdict diffed against the old
+    C++ routing in autotests/omnibox) and the frecency-ranked history
+    suggestions the completion dropdown shows (rc_history_suggest
+    queries history.db directly so only the visible rows cross the
+    FFI).
+  - **Autofill form store** — follows the credentials into the same
+    encrypted custody: saved field name/value records (including
+    typed passwords and card numbers) live in a dedicated sealed
+    autofill-store.dat under the shared unlock/passphrase lifecycle,
+    with a one-shot import of the old autofill.dat — sealed or
+    plaintext — on first run.
+  - **Second-opinion TLS verifier** — on https page commits a worker
+    performs a real handshake to the host and re-evaluates the
+    certificate chain with rustls+webpki against the platform
+    roots — the site panel shows a "TLS verified by Arktos" chip,
+    or a warning line naming the failure class when the
+    independent verdict disagrees. The check only informs the
+    panel (it never blocks a page), skips Tor windows, proxied
+    sessions and private/loopback hosts entirely, and does no
+    OCSP/CRL fetch — an unreachable host reports "not verified",
+    never a false alarm.
+
 - **Hardened parsers** — OpenSearch descriptions are size-capped and
   DTD-free, download file names are fully sanitized, and page-controlled
   strings cannot inject markup into chrome.
@@ -250,59 +256,69 @@ browsing profile:
   the measured freed figure on the status bar.
 - **Per-tab engine switcher** — an engine button in the navigation
   toolbar, immediately right of the URL bar, names the active tab's
-  engine and offers "Reload in …" on the other backends; Servo
-  (`qmake servo=1` + the servo-embed artifact) is an experimental
-  degraded co-engine — Tor windows stay Chromium-locked and private
-  tabs refuse the swap, and its selector entries carry a note that
-  page loads are slower than Chromium (running a debug servo-embed
-  artifact marks the name "(debug build)" and warns about extreme
-  slowness instead of passing off as engine speed). Servo tabs can
-  coexist — any number of web views run on the one shared engine
-  instance (ENG36). A crash inside the
-  engine degrades that tab to a crash notice instead of taking the
-  browser down, and the notice offers "Try Servo Again" — the
-  crashed web view is torn down and a fresh one is created on the
-  still-running engine (switching the tab to Chromium and back
-  recovers the same way). Branded start pages follow the tab's
-  engine: a new tab with Servo as the default engine lands on the
-  Servo-branded start page, and a start page carried through an
-  engine swap (or reached via the Home button) re-resolves to the
-  destination engine's own variant. Servo tabs enforce the same
-  per-profile AdBlock policy as Chromium ones — network-level
-  blocking plus $redirect stub serving, no cosmetic CSS hiding —
-  while devtools honestly report themselves unavailable (Servo's
-  devtools server speaks the Firefox remote protocol, not the
-  panel's CDP transport). Servo renders in-process, so its
-  status-bar memory readout shows the shared whole-app figure
-  marked "(shared)" rather than a per-tab number. An experimental
-  WPE WebKit backend (`qmake webkit=1`, WPE stack via
-  .devin/webkit-env.sh) registers alongside it and reports its real
-  version ("WebKit x.y.z") in the selector surfaces; it hosts tabs
-  through the same engine-neutral page/view pair — pages render
-  headlessly over WPE and blit into an ordinary widget, session
-  history maps the real WebKitBackForwardList, named profiles get
-  isolated on-disk stores under profiles/<id>/WebKit, widget input
-  is translated into wpe-platform events, zoom and find-in-page are
-  live, and tab suspend/discard maps onto the honest primitives
-  (process terminate + reload — this WPE build exports no
-  suspend/resume). Custom schemes serve on WPE the same way they do
-  on Chromium — arktos-file: directory listings, abp: subscription
-  prompts, the adblock stub resources and the nonce-backed
-  interstitials — and profile RequestPolicy vetoes navigation and
-  new-window actions through the same policy object, while
-  subresources and cosmetic hiding run declaratively: the profile's
-  filter-list rules compile through WebKitUserContentFilterStore
-  into a per-page content filter ($redirect degrades to a plain
-  block, and constructs Safari cannot express surface in a counted
-  drop channel rather than vanishing). The everyday surfaces are
-  wired too — TLS failures raise the same nonce-bound certificate
-  interstitial as Chromium (proceeding installs a session-scoped
-  exception, never persisted), right-click presents WebKit's own
-  context-menu item model, page permission asks route through the
-  shared permission broker, and downloads hand off to the download
-  manager (or the Rust accelerated engine) through the generic
-  DownloadRequest channel; extensions and devtools are still ahead —
-  keeping it experimental.
+  engine and offers "Reload in …" on the other backends. Tor windows
+  stay Chromium-locked and private tabs refuse the swap.
+  - **Servo** (`qmake servo=1` + the servo-embed artifact) is an
+    experimental degraded co-engine; its selector entries carry a
+    note that page loads are slower than Chromium (running a debug
+    servo-embed artifact marks the name "(debug build)" and warns
+    about extreme slowness instead of passing off as engine speed).
+    - Servo tabs can coexist — any number of web views run on the
+      one shared engine instance (ENG36).
+    - A crash inside the engine degrades that tab to a crash notice
+      instead of taking the browser down, and the notice offers
+      "Try Servo Again" — the crashed web view is torn down and a
+      fresh one is created on the still-running engine (switching
+      the tab to Chromium and back recovers the same way).
+    - Branded start pages follow the tab's engine: a new tab with
+      Servo as the default engine lands on the Servo-branded start
+      page, and a start page carried through an engine swap (or
+      reached via the Home button) re-resolves to the destination
+      engine's own variant.
+    - Servo tabs enforce the same per-profile AdBlock policy as
+      Chromium ones — network-level blocking plus $redirect stub
+      serving, no cosmetic CSS hiding.
+    - Devtools honestly report themselves unavailable (Servo's
+      devtools server speaks the Firefox remote protocol, not the
+      panel's CDP transport).
+    - Servo renders in-process, so its status-bar memory readout
+      shows the shared whole-app figure marked "(shared)" rather
+      than a per-tab number.
+  - **WPE WebKit** — an experimental backend (`qmake webkit=1`, WPE
+    stack via .devin/webkit-env.sh) registers alongside it and
+    reports its real version ("WebKit x.y.z") in the selector
+    surfaces.
+    - It hosts tabs through the same engine-neutral page/view pair:
+      pages render headlessly over WPE and blit into an ordinary
+      widget, session history maps the real WebKitBackForwardList,
+      named profiles get isolated on-disk stores under
+      profiles/<id>/WebKit, widget input is translated into
+      wpe-platform events, zoom and find-in-page are live, and tab
+      suspend/discard maps onto the honest primitives (process
+      terminate + reload — this WPE build exports no
+      suspend/resume).
+    - Custom schemes serve on WPE the same way they do on Chromium —
+      arktos-file: directory listings, abp: subscription prompts,
+      the adblock stub resources and the nonce-backed
+      interstitials — and profile RequestPolicy vetoes navigation
+      and new-window actions through the same policy object.
+    - Subresources and cosmetic hiding run declaratively: the
+      profile's filter-list rules compile through
+      WebKitUserContentFilterStore into a per-page content filter
+      ($redirect degrades to a plain block, and constructs Safari
+      cannot express surface in a counted drop channel rather than
+      vanishing).
+    - The everyday surfaces are wired too — TLS failures raise the
+      same nonce-bound certificate interstitial as Chromium
+      (proceeding installs a session-scoped exception, never
+      persisted), right-click presents WebKit's own context-menu
+      item model, page permission asks route through the shared
+      permission broker, and downloads hand off to the download
+      manager (or the Rust accelerated engine) through the generic
+      DownloadRequest channel.
+    - Extensions and devtools are still ahead — keeping it
+      experimental.
+
 - **Reader mode** (Ctrl+Alt+R) and **Picture-in-Picture** on videos.
 - **Command palette** — Ctrl+Shift+P fuzzy search over browser
   commands.
@@ -314,21 +330,23 @@ browsing profile:
   reachable from Tools > Profiles... and Preferences > General —
   which creates, renames, deletes (type-to-confirm; the default
   profile cannot be deleted) and opens windows on profiles kept
-  under their own data folders. Each window stays bound to its
-  profile: its tabs browse on that profile's engine profile, its
-  history/bookmarks/settings write under `profiles/<id>/`, and a
-  restored session reopens every window on the profile it was saved
-  under (a deleted profile falls back to default). "Change
-  Picture..." opens a crop-and-zoom avatar editor and "Remove
-  Picture" returns to the neutral silhouette. The menu also carries
-  the hygiene actions — Clear History, Clear Cookies, Clear Cache
-  (each wipes only its own category) and Clear Private Data — plus a
-  red **Delete Profile** that itemizes what is destroyed, requires
-  typing the profile name, and wipes the data and settings roots at
-  restart so a live profile is never deleted out from under a
-  running window. A neutral silhouette is the default face until a
-  custom picture is chosen; it is a normal navigation-bar item, so
-  Edit Navigation Bar can reorder it.
+  under their own data folders.
+  - Each window stays bound to its profile: its tabs browse on that
+    profile's engine profile, its history/bookmarks/settings write
+    under `profiles/<id>/`, and a restored session reopens every
+    window on the profile it was saved under (a deleted profile
+    falls back to default).
+  - "Change Picture..." opens a crop-and-zoom avatar editor and
+    "Remove Picture" returns to the neutral silhouette (the default
+    face until a custom picture is chosen).
+  - The menu also carries the hygiene actions — Clear History,
+    Clear Cookies, Clear Cache (each wipes only its own category)
+    and Clear Private Data — plus a red **Delete Profile** that
+    itemizes what is destroyed, requires typing the profile name,
+    and wipes the data and settings roots at restart so a live
+    profile is never deleted out from under a running window.
+  - It is a normal navigation-bar item, so Edit Navigation Bar can
+    reorder it.
 - **Profile vaults (in progress)** — password-sealed profile storage:
   a profile's whole data folder is packed into a single tamper-evident
   encrypted archive when locked — including the engine's own stores
@@ -411,32 +429,36 @@ and the isolation boundary is audited end to end.
 
 ### Tor
 
-File → "New Tor Window" (or `arktos --tor`) opens a Tor-browsing window
-backed by a managed tor daemon (bundled or system): SOCKS5 egress
-only, a dedicated off-the-record profile, .onion reachability, and
-Tor-aware rules (no direct-connection fallbacks, no extension loads,
-no suggestions, no dedicated search box — the omnibox covers it, no
-local DNS resolver: names resolve remotely through SOCKS5 and a
-configured DNS-over-HTTPS mode is ignored).
-The status bar shows the live circuit's hop chain
-(guard -> middle -> exit, each hop tagged with its country code,
-fingerprints on hover), and a small onion button next to the
-reader-mode icon opens a dropdown of the same circuit — one row per
-hop with country flag and name, fingerprints and OR addresses on
-hover. Its "New Tor circuit for this site" action sends SIGNAL
-NEWNYM and reloads the site's tab, so the page's traffic lands on a
-fresh circuit and the displayed chain rotates; requests inside tor's
-rate limit report the wait instead of pretending to rotate, and the
-button explains itself when the daemon cannot take one. New tabs
-land on a Tor-branded start page: the usual Arktos
-header and search box on a purple background with the official Tor
-onion centered — bundled in the binary, so the page never touches the
-network; a configured custom homepage still takes precedence.
-Navigations typed while the daemon is still starting are held rather
-than dropped: the window waits for the SOCKS listener and the first
-stream-ridable circuit (with a status-bar note explaining the wait),
-and a page that still races a cold circuit retries itself inside a
-bounded warm-up window before showing an honest error.
+File → "New Tor Window" (or `arktos --tor`) opens a Tor-browsing
+window backed by a managed tor daemon (bundled or system):
+
+- SOCKS5 egress only, a dedicated off-the-record profile, and
+  .onion reachability.
+- Tor-aware rules: no direct-connection fallbacks, no extension
+  loads, no suggestions, no dedicated search box (the omnibox covers
+  it), no local DNS resolver — names resolve remotely through
+  SOCKS5 and a configured DNS-over-HTTPS mode is ignored.
+- The status bar shows the live circuit's hop chain
+  (guard -> middle -> exit, each hop tagged with its country code,
+  fingerprints on hover), and a small onion button next to the
+  reader-mode icon opens a dropdown of the same circuit — one row
+  per hop with country flag and name, fingerprints and OR addresses
+  on hover.
+- "New Tor circuit for this site" sends SIGNAL NEWNYM and reloads
+  the site's tab, so the page's traffic lands on a fresh circuit and
+  the displayed chain rotates; requests inside tor's rate limit
+  report the wait instead of pretending to rotate, and the button
+  explains itself when the daemon cannot take one.
+- New tabs land on a Tor-branded start page: the usual Arktos
+  header and search box on a purple background with the official Tor
+  onion centered — bundled in the binary, so the page never touches
+  the network; a configured custom homepage still takes precedence.
+- Navigations typed while the daemon is still starting are held
+  rather than dropped: the window waits for the SOCKS listener and
+  the first stream-ridable circuit (with a status-bar note
+  explaining the wait), and a page that still races a cold circuit
+  retries itself inside a bounded warm-up window before showing an
+  honest error.
 
 ### Downloads
 
@@ -444,57 +466,63 @@ The download manager drives QWebEngineDownloadRequest: progress, speed
 and ETA per item, Try Again (re-issues through the page or a hidden
 page), reveal-in-file-manager (with the file selected where the DE
 supports it) and open-with actions, server-suggested names sanitized
-and de-duplicated, and an external download-program handoff. Downloads
-surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
+and de-duplicated, and an external download-program handoff.
+
+Downloads surface in the sidebar's Downloads panel (Ctrl+Y or Tools →
 Downloads) — filterable, sortable, each selected row expands into a
 detail card in the panel's bottom pane, and a compact action row
 offers pause/resume, retry, remove and show-in-folder for the
 selected download; a header button clears all finished entries
 (in-progress downloads and files on disk are kept).
-Preferences → Downloads hosts
-a download-engine selector — Built-in (Chromium) or Accelerated (Rust,
-compiled in by default and the default engine — a saved Built-in
-pick is honored) — a connections-per-download
-field, a cleanup policy for the finished-downloads list, and a
-"Parallel segments" toggle (default on) that has the built-in
-Chromium engine fetch range-capable downloads over multiple
-concurrent byte-range requests; it takes effect at restart. A
-Rust reqwest-based engine (rustdl, compiled in by default) accelerates
-HTTP(S) downloads as parallel ranged GETs and holds the same privacy
-guarantees as the built-in engine: every request and each redirect hop
-is vetted by the same interceptor pipeline (HTTPS-first upgrade,
-HTTPS-Only veto, tracking-parameter strip, domain blocklist, adblock
-rules, public-to-private redirect refusal), cookies and Authorization
-never ride a cross-domain hop, the profile's User-Agent and Referer
-policy apply, the application proxy is honored, and inside a tor
-window a download exits only via the managed SOCKS listener —
-otherwise it falls back to the built-in engine rather than ever
-opening a direct connection.  Authenticated downloads are fed by a
-scoped cookie export: only rows matching the target URL are written
-to a private 0600 file under the temp root (itself 0700), fsynced
-before the engine starts and deleted when the download ends;
-in-flight part/staging files stay 0600, stale dl-*/cookies-* debris
-is swept when the engine arms, and debug output redacts URL queries,
-fragments and userinfo.
+
+Preferences → Downloads hosts a download-engine selector — Built-in
+(Chromium) or Accelerated (Rust, compiled in by default and the
+default engine — a saved Built-in pick is honored) — plus a
+connections-per-download field, a cleanup policy for the
+finished-downloads list, and a "Parallel segments" toggle (default
+on) that has the built-in Chromium engine fetch range-capable
+downloads over multiple concurrent byte-range requests; it takes
+effect at restart.
+
+The Rust reqwest-based engine (rustdl) accelerates HTTP(S) downloads
+as parallel ranged GETs while holding the same privacy guarantees as
+the built-in engine:
+
+- Every request and each redirect hop is vetted by the same
+  interceptor pipeline (HTTPS-first upgrade, HTTPS-Only veto,
+  tracking-parameter strip, domain blocklist, adblock rules,
+  public-to-private redirect refusal); cookies and Authorization
+  never ride a cross-domain hop; the profile's User-Agent and
+  Referer policy apply; the application proxy is honored.
+- Inside a tor window a download exits only via the managed SOCKS
+  listener — otherwise it falls back to the built-in engine rather
+  than ever opening a direct connection.
+- Authenticated downloads are fed by a scoped cookie export: only
+  rows matching the target URL are written to a private 0600 file
+  under the temp root (itself 0700), fsynced before the engine
+  starts and deleted when the download ends; in-flight part/staging
+  files stay 0600, stale dl-*/cookies-* debris is swept when the
+  engine arms, and debug output redacts URL queries, fragments and
+  userinfo.
 
 On Linux the accelerated engine runs inside `arktos
 --download-worker`, a confined subprocess under a restrictive
 bubblewrap wrap: the mount namespace exposes only the download's
 work dir and the destination directory — `$HOME` and the profile
 are never mounted — so a compromised downloader cannot touch
-credentials, keys or cookies.  The browser keeps answering the
+credentials, keys or cookies. The browser keeps answering the
 policy gate over a stdin/stdout protocol, making the sandboxed path
 policy-identical to in-process; a failed wrap falls back to
-in-process.  Disable via `ARKTOS_DL_NO_SANDBOX=1` or
+in-process. Disable via `ARKTOS_DL_NO_SANDBOX=1` or
 `downloadmanager/sandboxedWorker=false`.
 
 Rust supply chain: `make check-supplychain` (also a `make check`
 prerequisite) runs cargo deny + cargo audit over every crate's
 committed Cargo.lock — RustSec advisories, yanked releases, the
 license allow-list and the crates.io-only source policy in each
-crate's deny.toml all fail the build.  Bumping a dependency is
+crate's deny.toml all fail the build. Bumping a dependency is
 `cargo update` in the crate directory, re-run the gate, commit
-Cargo.toml and Cargo.lock together.  Machines without
+Cargo.toml and Cargo.lock together. Machines without
 cargo-deny/cargo-audit skip the gate cleanly.
 
 ### Extensions
@@ -508,43 +536,49 @@ the `chrome.*` surfaces the engine's embedder never registered
 `commands`, `notifications`, `offscreen` documents, observe-only
 `webRequest`, `idle`, dynamic content-script registration, and
 `management`/`extension` introspection — each documented below).
-Install always stops at a permission-review screen with an extra
-per-permission consent gate on the high-risk set (native messaging,
-debugger, blocking webRequest, cookies, browsing data, all-URLs host
-access), and extensions are verified not to run in private or Tor
-windows. `update_url` checks are supported — fetches are HTTPS-only,
-downloaded packages are hash/structure-verified before they touch
-disk, and applying an update is opt-in: nothing replaces installed
-extension code without a fresh review. CRX3 signature blocks are
-structure-checked only; there is no Chrome Web Store signature
-verification. Each install records an integrity pin — a SHA-256 over
-the extension's on-disk files — re-verified at every startup: files
-changed outside the engine mark the row **Tampered** rather than
-loading silently. Update reviews call out permissions and host
-patterns the installed version never declared, and whole-scheme host
-grants (`<all_urls>`, `*://*/*`, `http://*/*` …) get a warning row of
-their own. Each enabled extension is also health-checked once per
-session: a hidden extension-origin page pings its background service
-worker and counts live background contexts (for extensions the
-hosted runtime below hosts, a Ready hosted background counts as the
-live worker), and the result is folded
-together with the manifest's declared-but-missing `chrome.*` APIs
-into the Settings → Extensions status — **Hosted runtime** when
-Arktos' own runtime serves the extension (carrying a *(limited)*
-or *(degraded)* qualifier when the health grade or the shim's
-typed-gap ledger says so), **Limited** when the worker runs but
-some declared APIs cannot be served, **Not supported** when the
-manifest requires an API nothing serves or the background worker
-never became ready — with the reason shown in
-the details pane instead of a naked "Enabled". Clicking a
-Not-supported extension's toolbar action opens a short explanation
-rather than a popup that spins on a dead worker. The page lists each
-extension's manifest description and, for installed ones, the
-on-disk folder — installed extensions live under the browsing
-profile's `QtWebEngine/arktos/Extensions/` directory (inside the
-Arktos data location, e.g. `~/.local/share/Arktos/Arktos/` on Linux)
-and can be removed with the page's Remove button or by deleting
-their folder while Arktos is closed.
+
+- **Consent-gated install** — every install stops at a
+  permission-review screen with an extra per-permission consent gate
+  on the high-risk set (native messaging, debugger, blocking
+  webRequest, cookies, browsing data, all-URLs host access), and
+  extensions are verified not to run in private or Tor windows.
+- **Update discipline** — `update_url` checks are supported: fetches
+  are HTTPS-only, downloaded packages are hash/structure-verified
+  before they touch disk, and applying an update is opt-in — nothing
+  replaces installed extension code without a fresh review. CRX3
+  signature blocks are structure-checked only; there is no Chrome
+  Web Store signature verification.
+- **Integrity pin** — each install records a SHA-256 over the
+  extension's on-disk files, re-verified at every startup: files
+  changed outside the engine mark the row **Tampered** rather than
+  loading silently.
+- **Update review** — permission and host-pattern grants the
+  installed version never declared are called out, and whole-scheme
+  host grants (`<all_urls>`, `*://*/*`, `http://*/*` …) get a
+  warning row of their own.
+- **Per-session health check** — a hidden extension-origin page
+  pings each enabled extension's background service worker and
+  counts live background contexts (for extensions the hosted runtime
+  below hosts, a Ready hosted background counts as the live worker).
+  The result folds together with the manifest's
+  declared-but-missing `chrome.*` APIs into the Settings →
+  Extensions status: **Hosted runtime** when Arktos' own runtime
+  serves the extension (carrying a *(limited)* or *(degraded)*
+  qualifier when the health grade or the shim's typed-gap ledger
+  says so), **Limited** when the worker runs but some declared APIs
+  cannot be served, **Not supported** when the manifest requires an
+  API nothing serves or the background worker never became ready —
+  with the reason shown in the details pane instead of a naked
+  "Enabled". Clicking a Not-supported extension's toolbar action
+  opens a short explanation rather than a popup that spins on a
+  dead worker.
+- **Removal** — the page lists each extension's manifest description
+  and, for installed ones, the on-disk folder — installed extensions
+  live under the browsing profile's `QtWebEngine/arktos/Extensions/`
+  directory (inside the Arktos data location, e.g.
+  `~/.local/share/Arktos/Arktos/` on Linux) and can be removed with
+  the page's Remove button or by deleting their folder while Arktos
+  is closed.
 
 Arktos bundles the **Bitwarden password-manager extension** (official
 Chrome build, `src/data/extensions/` — provenance and checksums in
