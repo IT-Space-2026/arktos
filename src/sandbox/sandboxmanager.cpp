@@ -107,6 +107,10 @@ QString SandboxManager::backendName()
     return bwrapPath().isEmpty() ? QStringLiteral("none")
                                   : QStringLiteral("bwrap");
 #elif defined(Q_OS_MACOS)
+    // The seatbelt apply path is opt-in (see maybeReexec) — report the
+    // backend the process would actually use, not the one on PATH.
+    if (qgetenv("ARKTOS_SANDBOX_SEATBELT") != "1")
+        return QStringLiteral("none");
     return QStandardPaths::findExecutable(QStringLiteral("sandbox-exec"))
             .isEmpty()
         ? QStringLiteral("none") : QStringLiteral("seatbelt");
@@ -199,8 +203,20 @@ void SandboxManager::maybeReexec(int argc, char **argv)
                  "unsandboxed", strerror(errno));
     return;
 #elif defined(Q_OS_MACOS)
-    // UNTESTED-ON-TARGET: generated profile is unit-tested on Linux;
-    // this apply path compiles only on macOS.
+    // UNTESTED-ON-TARGET: the generated profile is unit-tested on
+    // Linux, but this apply path has never run on real macOS — and
+    // until this fix it self-killed every launch: the exec argv lacked
+    // argv[0], so sandbox-exec parsed the profile text as an option,
+    // printed usage and exited (the v1.0 dmg "loads then dies" bug).
+    // A wrong-but-applied seatbelt profile is worse than none, so the
+    // re-exec is opt-in until proven on target — same standard as the
+    // Windows backend stub below.  ARKTOS_SANDBOX_SEATBELT=1 enables it.
+    if (qgetenv("ARKTOS_SANDBOX_SEATBELT") != "1") {
+        qWarning("Arktos: seatbelt sandbox apply path is untested on "
+                 "macOS — running unsandboxed "
+                 "(ARKTOS_SANDBOX_SEATBELT=1 opts in)");
+        return;
+    }
     const QString sandboxExec = QStandardPaths::findExecutable(
         QStringLiteral("sandbox-exec"));
     if (sandboxExec.isEmpty()) {
@@ -213,7 +229,8 @@ void SandboxManager::maybeReexec(int argc, char **argv)
     for (int i = 1; i < argc; ++i)
         programArgs << QString::fromLocal8Bit(argv[i]);
     const QString program = QString::fromLocal8Bit(argv[0]);
-    QStringList command{QStringLiteral("-p"), profile, program};
+    QStringList command{sandboxExec, QStringLiteral("-p"), profile,
+                        program};
     command << programArgs;
     QVector<QByteArray> storage;
     for (const QString &piece : command)
