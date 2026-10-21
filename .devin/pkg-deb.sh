@@ -280,9 +280,13 @@ cmd_verify() {
     [ -f "$root/usr/share/doc/$PKG/copyright" ] \
         || fail "no copyright installed"
     if [ -x "$root/$LIBDIR/lib/tor/tor" ]; then
-        "$root/$LIBDIR/lib/tor/tor" --version | grep -q "^Tor version" \
-            || fail "bundled tor does not execute"
-        note "bundled tor: $("$root/$LIBDIR/lib/tor/tor" --version | head -1)"
+        # Spawn env mirrors TorManager: the expert bundle's own libs
+        # (libevent/libssl/libcrypto) live beside the binary.
+        LD_LIBRARY_PATH="$root/$LIBDIR/lib/tor" \
+            "$root/$LIBDIR/lib/tor/tor" --version \
+            | grep -q "^Tor version" || fail "bundled tor does not execute"
+        note "bundled tor: $(LD_LIBRARY_PATH="$root/$LIBDIR/lib/tor" \
+            "$root/$LIBDIR/lib/tor/tor" --version | head -1)"
     fi
     note "dpkg install: $(dpkg --admindir="$db" -s "$PKG" | grep '^Status:')"
 

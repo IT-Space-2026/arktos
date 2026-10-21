@@ -337,7 +337,8 @@ jobs:
           # QtWebEngineProcess — silent quit on the user's Mac.
           # Missing frameworks must kill CI, not the dock icon.
           QT_QPA_PLATFORM=offscreen QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu \
-            gtimeout 120 Arktos.app/Contents/MacOS/Arktos --quit-after-load
+            perl -e 'alarm 120; exec @ARGV' \
+            Arktos.app/Contents/MacOS/Arktos --quit-after-load
           # macdeployqt's own -dmg output is a bare volume — no
           # /Applications link, no install affordance. Build the
           # classic drag-to-Applications layout ourselves: a staging

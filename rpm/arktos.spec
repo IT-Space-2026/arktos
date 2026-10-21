@@ -196,6 +196,7 @@ rm -rf "%{buildroot}"
 /usr/lib/arktos/
 /usr/share/arktos/
 /usr/share/applications/arktos.desktop
+/usr/share/applications/com.arktos_browser.Arktos.desktop
 /usr/share/icons/hicolor/16x16/apps/arktos.png
 /usr/share/icons/hicolor/32x32/apps/arktos.png
 /usr/share/icons/hicolor/128x128/apps/arktos.png

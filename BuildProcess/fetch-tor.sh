@@ -59,4 +59,6 @@ cp -R "$work/docs" "$DEST/../docs" 2>/dev/null || true
 chmod 700 "$DEST" "$DEST/.." 2>/dev/null || true
 
 echo "installed tor to $DEST/tor"
-"$DEST/tor" --version | head -1
+# The expert bundle's libs (libevent/libssl/libcrypto) sit beside the
+# binary — resolve them like TorManager's LD_LIBRARY_PATH spawn does.
+LD_LIBRARY_PATH="$DEST" "$DEST/tor" --version | head -1
