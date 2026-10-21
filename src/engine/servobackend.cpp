@@ -1601,24 +1601,39 @@ QString ServoBackend::artifactPath()
     QStringList candidates;
     if (!env.isEmpty())
         candidates << QString::fromLocal8Bit(env);
+    // The cdylib's name follows the host platform.
+#if defined(Q_OS_MACOS)
+    const QString libName = QStringLiteral("libservo_embed.dylib");
+#elif defined(Q_OS_WIN)
+    const QString libName = QStringLiteral("servo_embed.dll");
+#else
+    const QString libName = QStringLiteral("libservo_embed.so");
+#endif
     const QString appDir = QCoreApplication::applicationDirPath();
-    candidates << appDir + QStringLiteral("/libservo_embed.so")
-               << appDir + QStringLiteral("/../lib/libservo_embed.so")
+    candidates << appDir + QLatin1Char('/') + libName
+               << appDir + QStringLiteral("/../lib/") + libName
+#if defined(Q_OS_MACOS)
+               // .app bundle layouts: the binary is Contents/MacOS/,
+               // the artifact ships beside it or in Frameworks/ or
+               // the Contents/lib payload dir next to bundled tor.
+               << appDir + QStringLiteral("/../Frameworks/") + libName
+               << appDir + QStringLiteral("/../lib/") + libName
+#endif
                // Dev-tree layouts: the binary lands in the repo root
                // (or src/ in shadow-less builds); the artifact sits in
                // spikes/servo/servo-embed/target/*.
                << appDir + QStringLiteral(
-                    "/spikes/servo/servo-embed/target/release/libservo_embed.so")
+                    "/spikes/servo/servo-embed/target/release/") + libName
                << appDir + QStringLiteral(
-                    "/spikes/servo/servo-embed/target/debug/libservo_embed.so")
+                    "/spikes/servo/servo-embed/target/debug/") + libName
                << appDir + QStringLiteral(
-                    "/../spikes/servo/servo-embed/target/release/libservo_embed.so")
+                    "/../spikes/servo/servo-embed/target/release/") + libName
                << appDir + QStringLiteral(
-                    "/../spikes/servo/servo-embed/target/debug/libservo_embed.so")
+                    "/../spikes/servo/servo-embed/target/debug/") + libName
                << appDir + QStringLiteral(
-                    "/../../spikes/servo/servo-embed/target/release/libservo_embed.so")
+                    "/../../spikes/servo/servo-embed/target/release/") + libName
                << appDir + QStringLiteral(
-                    "/../../spikes/servo/servo-embed/target/debug/libservo_embed.so");
+                    "/../../spikes/servo/servo-embed/target/debug/") + libName;
     for (const QString &candidate : candidates) {
         const QString clean = QDir(candidate).absolutePath();
         if (QFileInfo::exists(clean))

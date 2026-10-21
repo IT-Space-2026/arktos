@@ -82,6 +82,26 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
         if: matrix.os == 'ubuntu-24.04'
 
+      - name: Cache servo-embed cargo target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: spikes/servo/servo-embed
+          key: servo-${{ matrix.tag }}
+
+      - name: Build servo-embed cdylib
+        # Building it BEFORE qmake matters: .qmake.conf auto-enables
+        # CONFIG+=servo only while the artifact exists on disk — the
+        # backend must be compiled in for the package to carry Servo.
+        # clang+libclang feed mozjs-sys's bindgen.
+        run: |
+          sudo apt-get install -y clang libclang-dev
+          # The crate's .cargo/config.toml pins a machine-local lld
+          # wrapper — override it for the runner's real path (the
+          # debug link still wants a memory-lean linker).
+          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$PWD/spikes/servo/servo-embed/cc-lld.sh"
+          cargo build --release --manifest-path spikes/servo/servo-embed/Cargo.toml
+          test -f spikes/servo/servo-embed/target/release/libservo_embed.so
+
       - name: Build .deb
         run: ./.devin/pkg-deb.sh
 
@@ -121,6 +141,19 @@ jobs:
 
       - name: Install rpmbuild
         run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Cache servo-embed cargo target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: spikes/servo/servo-embed
+          key: servo-rpm
+
+      - name: Build servo-embed cdylib
+        run: |
+          sudo apt-get install -y clang libclang-dev
+          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$PWD/spikes/servo/servo-embed/cc-lld.sh"
+          cargo build --release --manifest-path spikes/servo/servo-embed/Cargo.toml
+          test -f spikes/servo/servo-embed/target/release/libservo_embed.so
 
       - name: Build .rpm
         run: ./.devin/pkg-rpm.sh
@@ -171,6 +204,21 @@ jobs:
       - name: Install NASM (aws-lc-sys asm)
         shell: pwsh
         run: choco install nasm -y --no-progress
+
+      - name: Cache servo-embed cargo target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: spikes/servo/servo-embed
+          key: servo-windows
+
+      - name: Build servo-embed cdylib
+        # servo-embed's .cargo/config.toml only pins a linker for the
+        # linux triple — windows-msvc links plain.  Built BEFORE qmake
+        # so .qmake.conf auto-enables CONFIG+=servo off servo_embed.dll.
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path spikes/servo/servo-embed/Cargo.toml
+          if (-not (Test-Path spikes\servo\servo-embed\target\release\servo_embed.dll)) { throw "servo_embed.dll missing" }
 
       # install-qt-action is bypassed here: Qt 6.11+ ships Windows metadata as
       # per-arch repos (qt6_6120/qt6_6120_msvc2022_64/) with no shared catalog,
@@ -232,6 +280,11 @@ jobs:
           New-Item -ItemType Directory -Path deploy | Out-Null
           Copy-Item arktos.exe deploy\
           & "$env:QTDIR\bin\windeployqt.exe" --release --no-translations deploy\arktos.exe
+          # servo-embed DLL beside the exe — ServoBackend::artifactPath()
+          # resolves <bindir>/servo_embed.dll.
+          if (Test-Path spikes\servo\servo-embed\target\release\servo_embed.dll) {
+            Copy-Item spikes\servo\servo-embed\target\release\servo_embed.dll deploy\
+          }
           # Arktos data payload — installedDataDirectory() resolves to
           # the exe dir on Windows, so stage beside it.
           Copy-Item -Recurse src\.qm\locale deploy\locale
@@ -305,6 +358,21 @@ jobs:
           QTDIR="$(dirname "$(dirname "$(readlink -f "$QMAKE")")")"
           echo "QTDIR=$QTDIR" >> "$GITHUB_ENV"
 
+      - name: Cache servo-embed cargo target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: spikes/servo/servo-embed
+          key: servo-macos
+
+      - name: Build servo-embed cdylib
+        # The linux-only linker wrapper in .cargo/config.toml is a
+        # target-triple match — aarch64-apple-darwin ignores it, no
+        # override needed here.  Built BEFORE qmake so .qmake.conf
+        # auto-enables CONFIG+=servo off the .dylib's existence.
+        run: |
+          cargo build --release --manifest-path spikes/servo/servo-embed/Cargo.toml
+          test -f spikes/servo/servo-embed/target/release/libservo_embed.dylib
+
       - name: Build
         run: |
           "$QTDIR/bin/qmake" -o Makefile arktos.pro
@@ -328,6 +396,15 @@ jobs:
           mkdir -p Arktos.app/Contents/lib
           cp -a torpayload/tor Arktos.app/Contents/lib/tor
           cp -a torpayload/data Arktos.app/Contents/lib/data
+          # servo-embed dylib — ServoBackend::artifactPath() resolves
+          # <bindir>/../lib/ (= Contents/lib, beside bundled tor).
+          # dlopen'd, so macdeployqt never learns about it; adhoc-sign
+          # it like the rest of the unsigned bundle.
+          if [ -f spikes/servo/servo-embed/target/release/libservo_embed.dylib ]; then
+            cp -a spikes/servo/servo-embed/target/release/libservo_embed.dylib \
+                  Arktos.app/Contents/lib/
+            codesign -s - --force Arktos.app/Contents/lib/libservo_embed.dylib
+          fi
 
       - name: Package .dmg
         run: |

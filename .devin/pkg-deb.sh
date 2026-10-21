@@ -91,6 +91,18 @@ cmd_stage() {
     cp -a "$B/share/arktos/." "$D/usr/share/arktos/"
     ln -s ../../../share/arktos "$D/$LIBDIR/share/arktos"
 
+    # servo-embed cdylib (when the CI leg built it) -> $LIBDIR/lib/,
+    # where ServoBackend::artifactPath() resolves <bindir>/../lib/.
+    # Release wins over a debug leftover; dlopen keeps it optional.
+    for so in "$SRCROOT"/spikes/servo/servo-embed/target/release/libservo_embed.so \
+              "$SRCROOT"/spikes/servo/servo-embed/target/debug/libservo_embed.so; do
+        if [ -f "$so" ]; then
+            install -D -m0755 "$so" "$D/$LIBDIR/lib/$(basename "$so")"
+            note "staged servo-embed: $so"
+            break
+        fi
+    done
+
     # Bundled tor expert bundle -> $LIBDIR/lib/tor (+ lib/data geoip),
     # matching TorManager's <bindir>/../lib/tor and binaryDir/../data
     # searches.  ARKTOS_SKIP_TOR_BUNDLE=1 opts out (offline builds).

@@ -34,8 +34,10 @@ isEmpty(ARKTOS_SERVO_ARTIFACTS) {
     # .qmake.conf normally computes this first; repeat it so the .pri
     # still resolves correctly when parsed without the project root.
     for(dir, $$files($$SERVO_EMBED_DIR/target/*)) {
-        exists($$dir/libservo_embed.so): \
-            ARKTOS_SERVO_ARTIFACTS += $$dir/libservo_embed.so
+        for(libname, libservo_embed.so libservo_embed.dylib servo_embed.dll) {
+            exists($$dir/$$libname): \
+                ARKTOS_SERVO_ARTIFACTS += $$dir/$$libname
+        }
     }
 }
 ARKTOS_SERVO_ENABLED = false
@@ -147,8 +149,8 @@ equals(_PRO_FILE_, $$clean_path($$PWD/../src.pro)) {
     message(Arktos engine backends: $$join(ARKTOS_BACKENDS, " + "))
     equals(ARKTOS_SERVO_ENABLED, true) {
         isEmpty(ARKTOS_SERVO_ARTIFACTS): \
-            warning(ARKTOS_SERVO is compiled in but no libservo_embed.so \
-                    exists under spikes/servo/servo-embed/target/*/ — \
+            warning(ARKTOS_SERVO is compiled in but no servo-embed \
+                    cdylib exists under spikes/servo/servo-embed/target/*/ — \
                     the backend stays unregistered until the cdylib is \
                     built (cargo build in spikes/servo/servo-embed))
         # ENG29: a debug-only artifact set means the app will dlopen an
