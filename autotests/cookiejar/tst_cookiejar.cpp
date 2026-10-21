@@ -27,9 +27,10 @@
 #include <QNetworkCookie>
 #include <cookiejar.h>
 
+#include "profilesettings.h"
+
 #if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
-#include "profilesettings.h"
 #endif
 
 class tst_CookieJar : public QObject

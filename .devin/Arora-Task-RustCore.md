@@ -29,7 +29,7 @@ Rules for the agent working this file:
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
 | RC01 | Rust-core architecture audit + target design doc | done | 1 | audit landed .devin/RUSTCORE-ARCH.md — full store map w/ keep-move decisions + format choices (settings+profiles are the real gaps; RC04-06 stores already landed in retired lane); facade sketch + per-profile handle scoping spec; verified cargo test 270/270 green |
-| RC02 | rustcore `settings` module — typed per-profile key-value store + FFI | pending | 0 | needs:task:RC01 needs:tool:cargo |
+| RC02 | rustcore `settings` module — typed per-profile key-value store + FFI | done | 1 | settings store + ini import + rc_settings_* FFI + RustCoreSettings landed; verified cargo 282/282, real-QSettings ini via FFI 18/18, rust+no-rust make -j2 link clean; fixed pre-existing no-rust tst_cookiejar include bug |
 | RC03 | rustcore `profiles` module — persona registry + roots under home dir + FFI | pending | 0 | needs:task:RC01 needs:tool:cargo |
 | RC04 | rustcore `history` module — visit/query/clear, compat with existing store | pending | 0 | needs:task:RC02 needs:tool:cargo |
 | RC05 | rustcore `bookmarks` module — tree ops + XBEL import/export compat | pending | 0 | needs:task:RC02 needs:tool:cargo |
@@ -113,6 +113,37 @@ RustCoreBridge: thin Qt wrapper mirroring the API.
 Verify: `cargo test` green incl. ini-import fixture (write a real
 ProfileSettings ini from the C++ side, open via FFI, values match);
 default build (`qmake` without rust) still links.
+
+
+Outcome (2026-10-21): `settings.rs` — typed Value set
+(Str/Bool/Int/Dbl/Bytes/List; List is one wider than the brief —
+QSettings round-trips QStringList and dropping it would strand real
+keys) + `inifmt.rs` — a read-only QSettings IniFormat parser whose
+grammar was verified byte-for-byte against Qt 6.12's writer (first-'/'
+section split, %XX latin1 key escapes, '\' literal-slash, \xNNNN value
+escapes, top-level comma lists, @ByteArray/@@/@Invalid() type escapes,
+[General]/[%General%] root mapping). FFI: `rc_settings_open(root,
+profile_id)` binds scope at open — <root>/profiles/<id>/settings.json
+or <root>/settings.json (global) — plus typed get/set, contains,
+remove, list-prefix, sync, import_ini, close; RcStatus + thread-local
+errors + catch_unwind + "settings" change topic, all per the existing
+conventions.  Writes persist atomically via store::atomic_write
+(temp+fsync+rename).  Import: profiles/<id>/settings.ini merges
+wholesale on first profile open (copy-not-move, existing keys win, ini
+never written back); the global ini goes through rc_settings_import_ini
+filtered by the MPROF04 isProfileKey table ported verbatim into
+inifmt::is_profile_key.  Qt side: RustCoreSettings in rustcorebridge
+maps the store's typed JSON <-> QVariant.  Verified: cargo test 282/282
+(12 new incl. a real-QSettings fixture import + ffi_surface ABI test);
+independent C probe on a freshly QSettings-written ini — 18/18 typed
+reads match over the C ABI and the ini is byte-identical afterwards;
+`qmake && make -j2` (rust on — rustcorebridge.cpp compiles, arktos
+links libarktos_rustcore.a) and `qmake CONFIG+=no-rust && make -j2` in
+a copied tree (qmake anchors OBJECTS_DIR to the source dir, so a
+shadow build would collide) both complete 0-error.  Drive-by fix:
+tst_cookiejar.cpp used ProfileSettings unconditionally but included
+profilesettings.h only under ARKTOS_RUSTCORE — broke every no-rust
+autotests build (pre-existing on the branch, present in main lane too).
 
 ### RC03
 

@@ -22,6 +22,8 @@
 
 #include <qobject.h>
 #include <qstring.h>
+#include <qstringlist.h>
+#include <qvariant.h>
 
 // Qt side of the rustcore change-callback -> Qt-signal bridge
 // (RCORE01).  The crate invokes one C callback with a topic string;
@@ -63,5 +65,53 @@ void rustCoreEnsureDataDir();
 // load.  An empty or non-slug id resolves to the default profile,
 // matching BrowserPaths::profileDataDir.
 void rustCoreEnsureDataDirFor(const QString &profileId);
+
+struct RcSettings;
+
+// RC02: thin Qt wrapper over the rc_settings_* typed per-profile
+// store — the QSettings-shaped surface RC08 swaps in for
+// ProfileSettings' persistence.  The scope binds at construction:
+// a profile slug opens <data root>/profiles/<id>/settings.json and
+// auto-imports the legacy settings.ini on first open; an empty id
+// opens the global scope (<data root>/settings.json).
+//
+// Mirrors the C ABI 1:1: value() reconstructs a QVariant from the
+// store's typed JSON (string/bool/int/double/bytes/string-list),
+// setValue() maps the QVariant back, and QVariant-style conversion
+// covers the ini-imported string scalars.
+class RustCoreSettings
+{
+public:
+    // Empty profileId selects the global scope.
+    explicit RustCoreSettings(const QString &profileId = QString());
+    ~RustCoreSettings();
+
+    RustCoreSettings(const RustCoreSettings &) = delete;
+    RustCoreSettings &operator=(const RustCoreSettings &) = delete;
+
+    bool isValid() const;
+
+    QVariant value(const QString &key,
+                   const QVariant &defaultValue = QVariant()) const;
+    void setValue(const QString &key, const QVariant &value);
+    void remove(const QString &key);
+    bool contains(const QString &key) const;
+    // Keys under prefix (boundary match: prefix and prefix/…; an
+    // empty prefix lists everything).
+    QStringList allKeys(const QString &prefix = QString()) const;
+    void sync();
+
+    // One-shot merge of a legacy QSettings ini at an explicit path —
+    // the lane for the global QSettings file, which lives outside
+    // the data root.  Profile scope keeps isProfileKey()-classified
+    // keys only; global scope keeps the complement.
+    bool importLegacyIni(const QString &iniPath);
+
+    QString profileId() const;
+
+private:
+    RcSettings *m_h;
+    QString m_profileId;
+};
 
 #endif // RUSTCOREBRIDGE_H

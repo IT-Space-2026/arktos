@@ -114,6 +114,7 @@ mod cred;
 mod error;
 mod extverify;
 mod history;
+mod inifmt;
 mod lookalike;
 mod notify;
 mod omnibox;
@@ -127,6 +128,7 @@ mod profilevault;
 mod qrcode;
 mod readability;
 mod session;
+mod settings;
 mod sitedecisions;
 mod sitetrust;
 mod store;
@@ -3175,6 +3177,488 @@ pub unsafe extern "C" fn rc_sitedec_reload() -> RcStatus {
 #[no_mangle]
 pub unsafe extern "C" fn rc_sitedec_reset() -> RcStatus {
     status_of(sitedecisions::reset)
+}
+
+// ---- RC02: typed per-profile settings store ----
+//
+// The profile-bound key-value store replacing ProfileSettings'
+// persistence — scope (global, or profiles/<id>/ under the data
+// root) is bound at rc_settings_open(), so no rc_set_data_dir
+// re-anchoring is needed and alternating personas is cheap.
+// settings.json is canonical; the legacy QSettings ini pair is a
+// one-shot read source (profile ini auto-imported on first open,
+// the global ini through rc_settings_import_ini with the MPROF04
+// classification filter).  Mutations persist atomically and emit
+// the "settings" topic.
+
+fn settings_ref<'a>(
+    h: *const settings::RcSettings,
+) -> error::RcResult<&'a settings::RcSettings> {
+    unsafe { h.as_ref() }.ok_or_else(|| error::Fail {
+        status: RcStatus::InvalidArgument,
+        msg: "bad settings handle".into(),
+    })
+}
+
+/// Opens the store for `profile_id` (NULL/empty selects the global
+/// scope) under `data_root` — a real path, not the process-global
+/// data dir.  Returns an opaque handle or NULL (error stashed).
+///
+/// # Safety
+/// String pointers must be NUL-terminated UTF-8; the returned
+/// handle is released with rc_settings_close().
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_open(
+    data_root: *const c_char,
+    profile_id: *const c_char,
+) -> *mut settings::RcSettings {
+    catch_unwind(AssertUnwindSafe(|| {
+        let root = match unsafe { util::cstr(data_root) } {
+            Some(r) => r,
+            None => {
+                error::set_error("bad data root pointer");
+                return ptr::null_mut();
+            }
+        };
+        // NULL means global scope; a non-NULL pointer that is not
+        // valid UTF-8 is an error, never a silent scope switch.
+        let pid = if profile_id.is_null() {
+            None
+        } else {
+            match unsafe { util::cstr(profile_id) } {
+                Some(p) => Some(p),
+                None => {
+                    error::set_error("bad profile id pointer");
+                    return ptr::null_mut();
+                }
+            }
+        };
+        match settings::RcSettings::open(root, pid) {
+            Ok(h) => Box::into_raw(Box::new(h)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Releases a handle from rc_settings_open().  NULL-tolerant.
+///
+/// # Safety
+/// `h` must come from rc_settings_open and not be used afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_close(h: *mut settings::RcSettings) {
+    if !h.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            drop(unsafe { Box::from_raw(h) });
+        }));
+    }
+}
+
+/// One-shot legacy import: merges a QSettings ini file at `path`.
+/// Profile-scope handles keep only isProfileKey()-classified keys;
+/// global-scope handles keep the complement.  Never overwrites an
+/// existing key; a second call is a no-op.
+///
+/// # Safety
+/// `path` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_import_ini(
+    h: *mut settings::RcSettings,
+    path: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let path = unsafe { util::cstr(path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad ini path pointer".into(),
+        })?;
+        h.import_ini(path)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// 1 when `key` exists in this store.
+///
+/// # Safety
+/// `key` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_contains(
+    h: *const settings::RcSettings,
+    key: *const c_char,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(_) => return 0,
+        };
+        match unsafe { util::cstr(key) } {
+            Some(k) => i32::from(h.contains(k).unwrap_or(false)),
+            None => 0,
+        }
+    }))
+    .unwrap_or(0)
+}
+
+/// The stored value as `{"t":"s|b|i|d|x|l","v":...}` JSON —
+/// RC_NOT_FOUND when absent.  The typed accessor the Qt bridge
+/// rebuilds a QVariant from.
+///
+/// # Safety
+/// `key` must be NUL-terminated UTF-8; `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_get(
+    h: *const settings::RcSettings,
+    key: *const c_char,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        let v = h.get(key)?;
+        let json = settings::value_to_json(&v).to_string();
+        buffer_out(out, json.into_bytes());
+        Ok(())
+    })
+}
+
+macro_rules! settings_getter {
+    ($name:ident, $out:ty, $call:ident, $fill:expr) => {
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(
+            h: *const settings::RcSettings,
+            key: *const c_char,
+            out: *mut $out,
+        ) -> RcStatus {
+            status_of(|| {
+                let h = settings_ref(h)?;
+                let key =
+                    unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+                        status: RcStatus::InvalidArgument,
+                        msg: "bad key pointer".into(),
+                    })?;
+                let value = h.$call(key)?;
+                match unsafe { out.as_mut() } {
+                    Some(slot) => {
+                        $fill(slot, value);
+                        Ok(())
+                    }
+                    None => Err(error::Fail {
+                        status: RcStatus::InvalidArgument,
+                        msg: "bad out pointer".into(),
+                    }),
+                }
+            })
+        }
+    };
+}
+
+settings_getter!(rc_settings_get_bool, i32, get_bool, |slot: &mut i32, v: bool| {
+    *slot = i32::from(v)
+});
+settings_getter!(rc_settings_get_int, i64, get_int, |slot: &mut i64, v: i64| {
+    *slot = v
+});
+settings_getter!(
+    rc_settings_get_double,
+    f64,
+    get_double,
+    |slot: &mut f64, v: f64| *slot = v
+);
+
+/// Reads `key` as UTF-8 text into `out` (QVariant toString()
+/// semantics — any stored type converts).  RC_NOT_FOUND when absent.
+///
+/// # Safety
+/// `key` must be NUL-terminated UTF-8; `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_get_string(
+    h: *const settings::RcSettings,
+    key: *const c_char,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        buffer_out(out, h.get_string(key)?.into_bytes());
+        Ok(())
+    })
+}
+
+/// Reads `key` as raw bytes into `out`.  RC_NOT_FOUND when absent.
+///
+/// # Safety
+/// `key` must be NUL-terminated UTF-8; `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_get_bytes(
+    h: *const settings::RcSettings,
+    key: *const c_char,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        buffer_out(out, h.get_bytes(key)?);
+        Ok(())
+    })
+}
+
+/// Reads `key` as a JSON array of strings into `out`
+/// (QStringList semantics — a scalar becomes a one-element list).
+/// RC_NOT_FOUND when absent.
+///
+/// # Safety
+/// `key` must be NUL-terminated UTF-8; `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_get_list(
+    h: *const settings::RcSettings,
+    key: *const c_char,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        let json = serde_json::to_string(&h.get_list(key)?).map_err(|e| {
+            error::Fail {
+                status: RcStatus::Corrupt,
+                msg: format!("encode settings list: {e}"),
+            }
+        })?;
+        buffer_out(out, json.into_bytes());
+        Ok(())
+    })
+}
+
+/// Stores a UTF-8 string; persists atomically and emits "settings".
+///
+/// # Safety
+/// All pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_set_string(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+    value: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        let value = unsafe { util::cstr(value) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad value pointer".into(),
+        })?;
+        h.set(key, settings::Value::Str(value.to_string()))
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Stores a bool (0/1).  # Safety: `key` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_set_bool(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+    value: i32,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        h.set(key, settings::Value::Bool(value != 0))
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Stores a 64-bit integer.  # Safety: `key` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_set_int(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+    value: i64,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        h.set(key, settings::Value::Int(value))
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Stores a finite double.  # Safety: `key` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_set_double(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+    value: f64,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        h.set(key, settings::Value::Dbl(value))
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Stores raw bytes.  # Safety: `value` must point to `len` readable
+/// bytes; `key` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_set_bytes(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+    value: *const u8,
+    len: usize,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        let v = unsafe { util::bytes(value, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad value pointer".into(),
+        })?;
+        h.set(key, settings::Value::Bytes(v.to_vec()))
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Stores a string list, marshaled as a JSON array of strings.
+/// # Safety: `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_set_list(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        let raw = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad json pointer".into(),
+        })?;
+        let list: Vec<String> =
+            serde_json::from_slice(raw).map_err(|e| error::Fail {
+                status: RcStatus::InvalidArgument,
+                msg: format!("settings list payload: {e}"),
+            })?;
+        h.set(key, settings::Value::List(list))
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Drops `key` (idempotent), persists, emits "settings".
+/// # Safety: `key` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_remove(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        h.remove(key)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Keys under `prefix` (boundary match — `prefix` and `prefix/…`;
+/// NULL/empty lists all) as a JSON array.  rc_string_free result.
+///
+/// # Safety
+/// `prefix` must be NULL or NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_list(
+    h: *const settings::RcSettings,
+    prefix: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let prefix = unsafe { util::cstr(prefix) };
+        match h.list(prefix) {
+            Ok(keys) => util::to_c_string(
+                serde_json::to_string(&keys).unwrap_or_else(|_| "[]".into()),
+            ),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Flushes the store — mutations already write through, so this is
+/// the QSettings sync() call shape, kept for API completeness.
+///
+/// # Safety
+/// `h` must come from rc_settings_open.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_sync(
+    h: *mut settings::RcSettings,
+) -> RcStatus {
+    status_of(|| settings_ref(h)?.sync())
 }
 
 // ---- OSE01: OpenSearch engine registry ----

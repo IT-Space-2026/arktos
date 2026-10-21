@@ -72,7 +72,8 @@ typedef struct RcBuffer {
 #define RC_AUTOFILL_FILE "autofill-store.dat"
 
 /* Change topics emitted so far: "credentials" (rc_cred_* map),
- * "autofill" (rc_autofill_* record set). */
+ * "autofill" (rc_autofill_* record set), "settings" (rc_settings_*
+ * mutations). */
 typedef void (*RcChangeCallback)(const char *topicUtf8, void *userdata);
 
 /* --- housekeeping ------------------------------------------------- */
@@ -825,6 +826,86 @@ RcStatus rc_sitedec_reload(void);
 
 /* Empty every kind (store file removed). */
 RcStatus rc_sitedec_reset(void);
+
+/* ------------------------------------------------------------------ */
+/* RC02: typed per-profile settings store                              */
+/*                                                                     */
+/* Replaces ProfileSettings' persistence — a key-value map of          */
+/* string/bool/int/double/bytes/string-list values under one versioned */
+/* settings.json per scope, written atomically (temp+fsync+rename).    */
+/* The scope binds at open:                                            */
+/*   profile  <data root>/profiles/<id>/settings.json                  */
+/*   global   <data root>/settings.json                                */
+/*                                                                     */
+/* Legacy QSettings ini files are one-shot READ sources: a profile     */
+/* open auto-imports profiles/<id>/settings.ini; the global ini (a     */
+/* path only Qt knows) merges through rc_settings_import_ini with the  */
+/* MPROF04 classification filter — profile scopes take classified      */
+/* keys, the global scope takes the rest, existing keys always win.    */
+/* The ini files are never modified or deleted.  Mutations persist     */
+/* synchronously and emit the "settings" change topic.                 */
+/*                                                                     */
+/* Typed getters convert like QVariant does — an ini-imported "42"     */
+/* serves get_int fine.  Absent keys report RC_NOT_FOUND.              */
+
+typedef struct RcSettings RcSettings;
+
+/* Open the store for profile_id (NULL/empty = global scope) under
+ * data_root.  Returns NULL on error (rc_last_error_message has it). */
+RcSettings *rc_settings_open(const char *data_root,
+                             const char *profile_id_or_null);
+void rc_settings_close(RcSettings *h);
+
+/* One-shot merge of a QSettings ini file, scope-filtered as above.
+ * Idempotent — a second call is a no-op. */
+RcStatus rc_settings_import_ini(RcSettings *h, const char *ini_path);
+
+int rc_settings_contains(RcSettings *h, const char *key);
+
+/* Raw typed fetch: *out receives {"t":"s|b|i|d|x|l","v":...} JSON —
+ * the QVariant-faithful accessor. */
+RcStatus rc_settings_get(RcSettings *h, const char *key, RcBuffer *out);
+
+/* Typed reads — QVariant-style conversion; RC_NOT_FOUND when absent. */
+RcStatus rc_settings_get_string(RcSettings *h, const char *key,
+                                RcBuffer *out);
+RcStatus rc_settings_get_bool(RcSettings *h, const char *key,
+                              int *out);
+RcStatus rc_settings_get_int(RcSettings *h, const char *key,
+                             int64_t *out);
+RcStatus rc_settings_get_double(RcSettings *h, const char *key,
+                                double *out);
+RcStatus rc_settings_get_bytes(RcSettings *h, const char *key,
+                               RcBuffer *out);
+/* String list as a JSON array of strings in *out. */
+RcStatus rc_settings_get_list(RcSettings *h, const char *key,
+                              RcBuffer *out);
+
+/* Typed writes — persist atomically, emit "settings". */
+RcStatus rc_settings_set_string(RcSettings *h, const char *key,
+                                const char *value);
+RcStatus rc_settings_set_bool(RcSettings *h, const char *key,
+                              int value);
+RcStatus rc_settings_set_int(RcSettings *h, const char *key,
+                             int64_t value);
+RcStatus rc_settings_set_double(RcSettings *h, const char *key,
+                                double value);
+RcStatus rc_settings_set_bytes(RcSettings *h, const char *key,
+                               const uint8_t *value, size_t len);
+/* String list as a JSON array of strings. */
+RcStatus rc_settings_set_list(RcSettings *h, const char *key,
+                              const uint8_t *json, size_t len);
+
+/* Drop key (idempotent). */
+RcStatus rc_settings_remove(RcSettings *h, const char *key);
+
+/* Keys under prefix (boundary match: prefix and prefix/…; NULL/empty
+ * lists all) as a JSON array — rc_string_free the result. */
+char *rc_settings_list(RcSettings *h, const char *prefix_or_null);
+
+/* Flush — mutations already write through; kept for the
+ * QSettings::sync() call shape. */
+RcStatus rc_settings_sync(RcSettings *h);
 
 /* ------------------------------------------------------------------ */
 /* OSE01: OpenSearch engine registry                                   */

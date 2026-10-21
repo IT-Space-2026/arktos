@@ -1568,3 +1568,208 @@ fn profilevault_surface() {
         b"payload-two"
     );
 }
+
+// RC02: the typed per-profile settings store — handle lifecycle,
+// every typed get/set, ini import, and the bad-argument paths.
+#[test]
+fn settings_surface() {
+    let _g = guard();
+    let root = tmpdir("settings");
+    let croot = cs(&root);
+
+    // Bad-argument forms first.
+    assert!(unsafe { crate::rc_settings_open(ptr::null(), ptr::null()) }.is_null());
+    assert!(take_str(unsafe { crate::rc_last_error_message() })
+        .unwrap()
+        .contains("data root"));
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), ptr::null()) };
+    assert!(!h.is_null());
+    let key = cs("privacy/securityLevel");
+    assert_eq!(
+        unsafe { crate::rc_settings_get_bool(ptr::null_mut(), key.as_ptr(), ptr::null_mut()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_settings_get_bool(h, ptr::null(), ptr::null_mut()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_settings_get_bool(h, key.as_ptr(), ptr::null_mut()) },
+        RcStatus::NotFound
+    );
+    assert_eq!(
+        unsafe { crate::rc_settings_set_string(h, key.as_ptr(), ptr::null()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_settings_import_ini(h, ptr::null()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(unsafe { crate::rc_settings_contains(ptr::null_mut(), key.as_ptr()) }, 0);
+
+    // Typed writes + typed reads over the C ABI.
+    let bval = cs("bools/t");
+    assert_eq!(
+        unsafe { crate::rc_settings_set_bool(h, bval.as_ptr(), 1) },
+        RcStatus::Ok
+    );
+    let mut b = 0i32;
+    assert_eq!(
+        unsafe { crate::rc_settings_get_bool(h, bval.as_ptr(), &mut b) },
+        RcStatus::Ok
+    );
+    assert_eq!(b, 1);
+
+    assert_eq!(
+        unsafe { crate::rc_settings_set_int(h, key.as_ptr(), 2) },
+        RcStatus::Ok
+    );
+    let mut i = 0i64;
+    assert_eq!(
+        unsafe { crate::rc_settings_get_int(h, key.as_ptr(), &mut i) },
+        RcStatus::Ok
+    );
+    assert_eq!(i, 2);
+    assert_eq!(unsafe { crate::rc_settings_contains(h, key.as_ptr()) }, 1);
+
+    let dkey = cs("num/zoom");
+    assert_eq!(
+        unsafe { crate::rc_settings_set_double(h, dkey.as_ptr(), 1.5) },
+        RcStatus::Ok
+    );
+    let mut d = 0.0f64;
+    assert_eq!(
+        unsafe { crate::rc_settings_get_double(h, dkey.as_ptr(), &mut d) },
+        RcStatus::Ok
+    );
+    assert_eq!(d, 1.5);
+
+    let skey = cs("MainWindow/home");
+    let sval = cs("https://example.test/");
+    assert_eq!(
+        unsafe { crate::rc_settings_set_string(h, skey.as_ptr(), sval.as_ptr()) },
+        RcStatus::Ok
+    );
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_settings_get_string(h, skey.as_ptr(), &mut out) },
+        RcStatus::Ok
+    );
+    assert_eq!(take_buf(&mut out), b"https://example.test/");
+    // The typed JSON accessor.
+    assert_eq!(
+        unsafe { crate::rc_settings_get(h, skey.as_ptr(), &mut out) },
+        RcStatus::Ok
+    );
+    assert!(String::from_utf8(take_buf(&mut out))
+        .unwrap()
+        .contains("\"t\":\"s\""));
+
+    let blob = [0xde, 0xad, 0xbe, 0xef];
+    let bkey = cs("MainWindow/geometry");
+    assert_eq!(
+        unsafe {
+            crate::rc_settings_set_bytes(h, bkey.as_ptr(), blob.as_ptr(), blob.len())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_settings_get_bytes(h, bkey.as_ptr(), &mut out) },
+        RcStatus::Ok
+    );
+    assert_eq!(take_buf(&mut out), blob);
+
+    let lkey = cs("searchShortcuts/engines");
+    let list = br#"["ddg","g"]"#;
+    assert_eq!(
+        unsafe {
+            crate::rc_settings_set_list(h, lkey.as_ptr(), list.as_ptr(), list.len())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_settings_get_list(h, lkey.as_ptr(), &mut out) },
+        RcStatus::Ok
+    );
+    assert!(String::from_utf8(take_buf(&mut out))
+        .unwrap()
+        .contains("ddg"));
+    // A malformed list payload is rejected without touching the store.
+    assert_eq!(
+        unsafe {
+            crate::rc_settings_set_list(h, lkey.as_ptr(), b"nope".as_ptr(), 4)
+        },
+        RcStatus::InvalidArgument
+    );
+
+    // list-prefix + remove + sync + ini import + close.
+    let listed = take_str(unsafe {
+        crate::rc_settings_list(h, cs("privacy").as_ptr())
+    })
+    .unwrap();
+    assert_eq!(listed, r#"["privacy/securityLevel"]"#);
+    let all = take_str(unsafe { crate::rc_settings_list(h, ptr::null()) }).unwrap();
+    assert!(all.contains("MainWindow/home"));
+    assert_eq!(
+        unsafe { crate::rc_settings_remove(h, key.as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_settings_contains(h, key.as_ptr()) }, 0);
+    assert_eq!(unsafe { crate::rc_settings_sync(h) }, RcStatus::Ok);
+
+    // The real-QSettings fixture: profile ini under profiles/<id>/
+    // imports on first open through the C ABI itself.
+    let inid = format!("{root}/profiles/fixture");
+    std::fs::create_dir_all(&inid).unwrap();
+    std::fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/profile-settings.ini"),
+        format!("{inid}/settings.ini"),
+    )
+    .unwrap();
+    let pid = cs("fixture");
+    let ph = unsafe { crate::rc_settings_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!ph.is_null());
+    let fk = cs("history/historyLimit");
+    assert_eq!(
+        unsafe { crate::rc_settings_get_int(ph, fk.as_ptr(), &mut i) },
+        RcStatus::Ok
+    );
+    assert_eq!(i, 30);
+    let bk = cs("MainWindow/geometry");
+    assert_eq!(
+        unsafe { crate::rc_settings_get_bytes(ph, bk.as_ptr(), &mut out) },
+        RcStatus::Ok
+    );
+    assert_eq!(take_buf(&mut out)[..2], [0x01, 0xd9]);
+
+    // Explicit import of a "global" ini filters by scope and fills
+    // absent keys only — the fixture's securityLevel=2 wins.
+    let gini = format!("{root}/global.conf");
+    std::fs::write(&gini, "[privacy]\nsecurityLevel=9\nextraKey=9\n\n[MainWindow]\ndefaultEngine=servo\n").unwrap();
+    let gpath = cs(&gini);
+    assert_eq!(
+        unsafe { crate::rc_settings_import_ini(ph, gpath.as_ptr()) },
+        RcStatus::Ok
+    );
+    let ek = cs("MainWindow/defaultEngine");
+    assert_eq!(unsafe { crate::rc_settings_contains(ph, ek.as_ptr()) }, 0);
+    let pk = cs("privacy/securityLevel");
+    assert_eq!(
+        unsafe { crate::rc_settings_get_int(ph, pk.as_ptr(), &mut i) },
+        RcStatus::Ok
+    );
+    assert_eq!(i, 2);
+    let xk = cs("privacy/extraKey");
+    assert_eq!(
+        unsafe { crate::rc_settings_get_int(ph, xk.as_ptr(), &mut i) },
+        RcStatus::Ok
+    );
+    assert_eq!(i, 9);
+
+    unsafe {
+        crate::rc_settings_close(ph);
+        crate::rc_settings_close(h);
+        crate::rc_settings_close(ptr::null_mut());
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
