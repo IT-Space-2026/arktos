@@ -998,6 +998,27 @@ bool BrowserMainWindow::restoreState(const QByteArray &state)
     statusBar()->setVisible(showStatusbar);
 
     m_navigationSplitter->restoreState(splitterState);
+    // A persisted state can carry a collapsed url cell (e.g. written
+    // by a run whose layout seeded at ~0 width).  If the bar is wide
+    // but the url cell sits at its minimum, re-split 80/20 instead of
+    // keeping the degenerate ratio forever.
+    {
+        const QList<int> cells = m_navigationSplitter->sizes();
+        const int barWidth = m_navigationSplitter->width();
+        if (!cells.isEmpty() && barWidth > 0
+                && cells.first() <= m_tabWidget->locationBarStack()
+                                    ->minimumWidth()
+                && barWidth > m_tabWidget->locationBarStack()
+                              ->minimumWidth() * 3) {
+            QList<int> sizes;
+            sizes << (int)((double)barWidth * .80)
+                  << m_engineIndicatorHost->sizeHint().width();
+            if (m_extensionActionBar)
+                sizes << m_extensionActionBar->sizeHint().width();
+            sizes << (int)((double)barWidth * .20);
+            m_navigationSplitter->setSizes(sizes);
+        }
+    }
 
     tabWidget()->restoreState(tabState);
 
@@ -2291,6 +2312,12 @@ void BrowserMainWindow::setupToolBar()
     m_navigationSplitter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
     m_tabWidget->locationBarStack()->setMinimumWidth(120);
     m_navigationSplitter->setCollapsible(0, false);
+    // MAC01: the url cell owns every spare pixel.  Without a stretch
+    // factor the seed setSizes() below can stick — on the macOS
+    // unified-toolbar path the splitter has no real width at setup
+    // time, so the seeded 80% was a fraction of ~nothing and the
+    // location bar clamped to its 120px minimum and stayed there.
+    m_navigationSplitter->setStretchFactor(0, 1);
     QAction *splitterAction =
         m_navigationBar->addWidget(m_navigationSplitter);
     splitterAction->setProperty(kNavBarItemIdProperty,
@@ -2366,14 +2393,21 @@ void BrowserMainWindow::setupToolBar()
     m_profileButtonAction->setProperty(
         kNavBarItemIdProperty, QLatin1String("profileButton"));
 
-    int splitterWidth = m_navigationSplitter->width();
-    QList<int> sizes;
-    sizes << (int)((double)splitterWidth * .80)
-          << m_engineIndicatorHost->sizeHint().width();
-    if (m_extensionActionBar)
-        sizes << m_extensionActionBar->sizeHint().width();
-    sizes << (int)((double)splitterWidth * .20);
-    m_navigationSplitter->setSizes(sizes);
+    // Seed the 80/20 url/search split only when the bar already has a
+    // real width; on macOS unified chrome it can still be ~0 here and
+    // a zero-seeded setSizes() clamps the url cell to its minimum.
+    // With the stretch factor above, skipping the seed still yields a
+    // sane first layout — the url cell simply takes the spare room.
+    const int splitterWidth = m_navigationSplitter->width();
+    if (splitterWidth > 0) {
+        QList<int> sizes;
+        sizes << (int)((double)splitterWidth * .80)
+              << m_engineIndicatorHost->sizeHint().width();
+        if (m_extensionActionBar)
+            sizes << m_extensionActionBar->sizeHint().width();
+        sizes << (int)((double)splitterWidth * .20);
+        m_navigationSplitter->setSizes(sizes);
+    }
 
     // NAVB03: right-click on the bar offers New Tab / New Private Tab
     // and the edit-mode toggle ahead of the stock QMainWindow toolbar
