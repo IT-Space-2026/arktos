@@ -127,8 +127,19 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    env:
+      # rustdl's reqwest -> rustls -> aws-lc-sys chain compiles C+asm
+      # via the cc crate; NASM is not on windows-latest by default and
+      # aws-lc's Windows x64 path requires it.  Install it below — this
+      # env stays as the C-fallback escape hatch (constant-time, just
+      # no asm speedups) if the install ever regresses.
+      AWS_LC_SYS_NO_ASM: '0'
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install NASM (aws-lc-sys asm)
+        shell: pwsh
+        run: choco install nasm -y --no-progress
 
       # install-qt-action is bypassed here: Qt 6.11+ ships Windows metadata as
       # per-arch repos (qt6_6120/qt6_6120_msvc2022_64/) with no shared catalog,
@@ -243,6 +254,11 @@ jobs:
 
   macos:
     runs-on: macos-latest
+    env:
+      # rustdl pulls aws-lc-sys through reqwest/rustls; the C fallback
+      # (no hand asm) builds anywhere clang exists — constant-time is
+      # preserved, the download engine does not need the asm speed.
+      AWS_LC_SYS_NO_ASM: '1'
     steps:
       - uses: actions/checkout@v7
 
