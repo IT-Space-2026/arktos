@@ -40,7 +40,18 @@ concurrency:
 
 jobs:
   deb:
-    runs-on: ubuntu-26.04
+    # dpkg-shlibdeps bakes the BUILD host's library versions into
+    # Depends: floors — a 26.04 build demands libc6>=2.43 that no
+    # stable distro can install, a 24.04 build installs on noble,
+    # Zorin 18 (noble-based) and every newer Ubuntu.  Build both so
+    # each distro generation gets exact-fit floors.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, tag: ubuntu24.04 }
+          - { os: ubuntu-26.04, tag: ubuntu26.04 }
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
 
@@ -64,13 +75,23 @@ jobs:
       - name: Build .deb
         run: ./.devin/pkg-deb.sh
 
+      - name: Tag artifact name with build base
+        run: |
+          set -e
+          for f in dist/*.deb; do
+            mv "$f" "${f%.deb}-${{ matrix.tag }}.deb"
+          done
+
       - uses: actions/upload-artifact@v7
         with:
-          name: arktos-deb
+          name: arktos-deb-${{ matrix.tag }}
           path: dist/*.deb
 
   rpm:
-    runs-on: ubuntu-26.04
+    # Same oldest-base rule as the deb: the spec's SONAME Requires
+    # carry no floors, but ELF symbol versions from a 2.43 build still
+    # hard-require new glibc at runtime on any older target.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
