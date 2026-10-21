@@ -109,6 +109,11 @@ cmd_stage() {
     install -d "$D/usr/share/applications" "$D/usr/share/pixmaps" \
                "$D/usr/share/man/man1" "$D/usr/share/doc/$PKG"
     cp -a "$B/share/applications/." "$D/usr/share/applications/"
+    # setDesktopFileName() reports com.arktos_browser.Arktos at runtime;
+    # GNOME/Wayland maps app_id -> same-named .desktop for the window
+    # icon.  Ship the alias like flatpak's rename-desktop-file does.
+    ln -sf arktos.desktop \
+        "$D/usr/share/applications/com.arktos_browser.Arktos.desktop"
     cp -a "$B/share/pixmaps/." "$D/usr/share/pixmaps/"
     cp -a "$B/share/icons" "$D/usr/share/"
     cp -a "$B/share/man/." "$D/usr/share/man/"
@@ -264,6 +269,8 @@ cmd_verify() {
     [ -f "$root/$LIBDIR/bin/qt.conf" ] || fail "no qt.conf installed"
     [ -f "$root/usr/share/applications/arktos.desktop" ] \
         || fail "no desktop file installed"
+    [ -e "$root/usr/share/applications/com.arktos_browser.Arktos.desktop" ] \
+        || fail "no app-id desktop alias installed"
     [ -f "$root/usr/share/icons/hicolor/128x128/apps/arktos.png" ] \
         || fail "no hicolor icon installed"
     [ -f "$root/usr/share/icons/hicolor/scalable/apps/arktos.svg" ] \
