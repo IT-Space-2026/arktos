@@ -6004,6 +6004,15 @@ int main(int argc, char **argv)
                                QSettings::UserScope, configDir);
             QSettings::setPath(QSettings::IniFormat,
                                QSettings::UserScope, configDir);
+#if defined(Q_OS_MACOS)
+            // NativeFormat on macOS is the CFPreferences plist and
+            // ignores setPath entirely — a smoke run would resolve
+            // ~/Library/Preferences/<domain>.plist and the isolation
+            // guard below would (correctly) refuse to continue.
+            // Force IniFormat for smoke runs so setPath applies and
+            // writes really are confined to the store.
+            QSettings::setDefaultFormat(QSettings::IniFormat);
+#endif
         }
         // GUARD: the resolved settings file must live inside the
         // active store root — a run that would write to the real
