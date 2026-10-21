@@ -23,6 +23,7 @@
 
 #include <qcoreapplication.h>
 #include <qdatetime.h>
+#include <qdebug.h>
 #include <qfileinfo.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
@@ -30,7 +31,7 @@
 #include <qjsonvalue.h>
 #include <qsettings.h>
 
-#include <rustcore.h>
+#include <arktos_core.h>
 
 RustCoreBridge *RustCoreBridge::instance()
 {
@@ -42,6 +43,35 @@ RustCoreBridge::RustCoreBridge(QObject *parent)
     : QObject(parent)
 {
     rc_set_change_callback(&RustCoreBridge::trampoline, this);
+
+    // RC07: the app-lifetime facade root.  Bound once to the app
+    // data root — the accessors re-assert profile bindings per call,
+    // so the handle stays correct across profile switches without
+    // the rustCoreEnsureDataDirFor dance.
+    const QByteArray root = BrowserPaths::dataRoot().toUtf8();
+    // Same default-name seeding as RustCoreProfiles: the PROF01-era
+    // QSettings key first, the localized fallback after.
+    QByteArray seed = QSettings()
+        .value(QLatin1String("profile/name")).toString().toUtf8();
+    if (seed.isEmpty())
+        seed = QCoreApplication::translate("ProfileRegistry", "Profile")
+            .toUtf8();
+    AcConfig cfg;
+    cfg.struct_size = sizeof(cfg);
+    cfg.api_version = AC_API_VERSION;
+    cfg.data_root = root.constData();
+    cfg.app_name = "arktos";
+    cfg.default_profile_name = seed.constData();
+    m_core = ac_init(&cfg);
+    if (m_core != nullptr) {
+        ac_set_change_callback(m_core, &RustCoreBridge::coreTrampoline,
+                               this);
+    } else {
+        char *err = ac_last_error();
+        qWarning() << "RustCoreBridge: ac_init failed:"
+                   << QString::fromUtf8(err ? err : "unknown");
+        ac_string_free(err);
+    }
 }
 
 void RustCoreBridge::trampoline(const char *topic, void *userdata)
@@ -52,6 +82,64 @@ void RustCoreBridge::trampoline(const char *topic, void *userdata)
     QMetaObject::invokeMethod(self, [self, t]() {
         emit self->storeChanged(t);
     }, Qt::QueuedConnection);
+}
+
+void RustCoreBridge::coreTrampoline(const char *module,
+                                    const char *profileId,
+                                    void *userdata)
+{
+    RustCoreBridge *self = static_cast<RustCoreBridge *>(userdata);
+    const QString t = QString::fromUtf8(module ? module : "");
+    const QString p = QString::fromUtf8(profileId ? profileId : "");
+    // Same any-thread hop as trampoline; only the scoped signal
+    // fires — storeChanged stays the legacy callback's alone so
+    // listeners don't see double traffic.
+    QMetaObject::invokeMethod(self, [self, t, p]() {
+        emit self->storeChangedFor(t, p);
+    }, Qt::QueuedConnection);
+}
+
+RcSettings *RustCoreBridge::settings(const QString &profileId)
+{
+    if (m_core == nullptr)
+        return nullptr;
+    const QByteArray id = profileId.toUtf8();
+    return ac_settings(m_core,
+                       id.isEmpty() ? nullptr : id.constData());
+}
+
+RcProfiles *RustCoreBridge::profiles()
+{
+    if (m_core == nullptr)
+        return nullptr;
+    return ac_profiles(m_core);
+}
+
+AcHistory *RustCoreBridge::history(const QString &profileId)
+{
+    if (m_core == nullptr)
+        return nullptr;
+    const QByteArray id = profileId.toUtf8();
+    return ac_history(m_core,
+                      id.isEmpty() ? nullptr : id.constData());
+}
+
+AcBookmarks *RustCoreBridge::bookmarks(const QString &profileId)
+{
+    if (m_core == nullptr)
+        return nullptr;
+    const QByteArray id = profileId.toUtf8();
+    return ac_bookmarks(m_core,
+                        id.isEmpty() ? nullptr : id.constData());
+}
+
+AcPolicy *RustCoreBridge::policy(const QString &profileId)
+{
+    if (m_core == nullptr)
+        return nullptr;
+    const QByteArray id = profileId.toUtf8();
+    return ac_policy(m_core,
+                     id.isEmpty() ? nullptr : id.constData());
 }
 
 void rustCoreEnsureDataDir()

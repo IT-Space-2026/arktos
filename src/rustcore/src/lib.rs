@@ -102,6 +102,12 @@
 //!     Threefish-1024-XEX + Skein-MAC opt-in), honest distinct
 //!     WrongPassword / Tampered errors, and a two-pass unseal that
 //!     cannot leave partial output.
+//!   * facade (RC07): the stable arktos_core.h ABI — AcCore owning
+//!     per-profile-bound module handles over the RC02–06 stores
+//!     (ac_settings/ac_profiles/ac_history/ac_bookmarks/ac_policy),
+//!     ac_* thin forwards to the rc_* entry points, and the
+//!     (module, profile_id) change-callback lane.  The rc_* surface
+//!     stays live for legacy callers until RC08 migrates them.
 //!
 mod autofill;
 mod bidi;
@@ -113,6 +119,7 @@ mod confusables_table;
 mod cred;
 mod error;
 mod extverify;
+mod facade;
 mod history;
 mod inifmt;
 mod lookalike;

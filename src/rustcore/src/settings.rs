@@ -287,6 +287,17 @@ impl RcSettings {
         persist(&self.lock())
     }
 
+    /// The profile id this handle is bound to — `None` for the
+    /// global scope.  The facade (RC07) stamps it on "settings"
+    /// change topics so scoped subscribers can tell which persona's
+    /// store moved.
+    pub fn profile_id(&self) -> Option<String> {
+        match &self.lock().scope {
+            Scope::Global => None,
+            Scope::Profile(id) => Some(id.clone()),
+        }
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }

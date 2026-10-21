@@ -27,6 +27,13 @@
 #include <qstringlist.h>
 #include <qvariant.h>
 
+struct AcCore;
+struct AcHistory;
+struct AcBookmarks;
+struct AcPolicy;
+struct RcSettings;
+struct RcProfiles;
+
 // Qt side of the rustcore change-callback -> Qt-signal bridge
 // (RCORE01).  The crate invokes one C callback with a topic string;
 // RustCoreBridge re-emits it as a queued storeChanged() signal so a
@@ -36,6 +43,15 @@
 // "bookmarks" and "history" (the RCORE02 stores), "autofill" (the
 // RCORE05 record set), "settings" (RC02), "profiles" (RC03).
 // Compiled only under CONFIG+=rustcore (ARKTOS_RUSTCORE).
+//
+// RC07: the same object is also the app's AcCore — the facade root
+// the arktos_core.h module handles derive from.  core() is the raw
+// handle for engine-side consumers; the settings()/profiles()/
+// history()/bookmarks()/policy() accessors mint profile-bound
+// handles directly.  The facade's (module, profile_id) callback
+// lane lands here as storeChangedFor() — emitted ALONGSIDE
+// storeChanged(), never instead of it, so legacy listeners see the
+// same traffic they always did.
 class RustCoreBridge : public QObject
 {
     Q_OBJECT
@@ -45,12 +61,33 @@ public:
     // a QCoreApplication exists.
     static RustCoreBridge *instance();
 
+    // RC07: the facade root — NULL only if ac_init itself failed (a
+    // warning with ac_last_error() is logged at construction).
+    AcCore *core() const { return m_core; }
+
+    // Profile-bound module handles over the shared core.  An empty
+    // profileId binds the default profile (global scope for
+    // settings).  Caller releases with the matching ac_*_close (or
+    // rc_settings_close/rc_profiles_close — same handle types); the
+    // core outlives them all.
+    RcSettings *settings(const QString &profileId = QString());
+    RcProfiles *profiles();
+    AcHistory *history(const QString &profileId = QString());
+    AcBookmarks *bookmarks(const QString &profileId = QString());
+    AcPolicy *policy(const QString &profileId = QString());
+
 signals:
     void storeChanged(const QString &topic);
+    // RC07: the scoped spelling — the bound profile that changed, or
+    // empty for global-scope and unscoped (legacy-path) mutations.
+    void storeChangedFor(const QString &topic, const QString &profileId);
 
 private:
     explicit RustCoreBridge(QObject *parent = nullptr);
     static void trampoline(const char *topic, void *userdata);
+    static void coreTrampoline(const char *module, const char *profileId,
+                               void *userdata);
+    AcCore *m_core = nullptr;
 };
 
 // Points the crate at the application data dir — the same
@@ -67,8 +104,6 @@ void rustCoreEnsureDataDir();
 // load.  An empty or non-slug id resolves to the default profile,
 // matching BrowserPaths::profileDataDir.
 void rustCoreEnsureDataDirFor(const QString &profileId);
-
-struct RcSettings;
 
 // RC02: thin Qt wrapper over the rc_settings_* typed per-profile
 // store — the QSettings-shaped surface RC08 swaps in for

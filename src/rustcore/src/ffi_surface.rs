@@ -2022,3 +2022,505 @@ fn profiles_surface() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ---- RC07: the arktos_core.h facade -------------------------------------
+//
+// The facade forwards every op to the same rc_* entry points, so the
+// parity assertions are cheap: the interesting seam is the
+// profile-bound re-anchoring (two personas interleaved over the
+// process-global stores must never cross) and the
+// (module, profile_id) callback stamping.
+
+fn ac_cfg<'a>(root: &'a CString) -> crate::facade::AcConfig {
+    crate::facade::AcConfig {
+        struct_size: std::mem::size_of::<crate::facade::AcConfig>() as u32,
+        api_version: crate::facade::AC_API_VERSION,
+        data_root: root.as_ptr(),
+        app_name: ptr::null(),
+        default_profile_name: ptr::null(),
+    }
+}
+
+#[test]
+fn facade_init_and_accessors() {
+    let _g = guard();
+    let root = tmpdir("ac-init");
+    let croot = cs(&root);
+
+    // housekeeping
+    assert_eq!(crate::facade::ac_api_version(), 1);
+    assert_ne!(crate::facade::ac_capabilities(), 0);
+
+    // rejected configs fail clean with a stashed error
+    assert!(unsafe { crate::facade::ac_init(ptr::null()) }.is_null());
+    assert!(!unsafe { crate::facade::ac_last_error() }.is_null());
+    let mut bad = ac_cfg(&croot);
+    bad.struct_size = 4;
+    assert!(unsafe { crate::facade::ac_init(&bad) }.is_null());
+    let mut bad = ac_cfg(&croot);
+    bad.api_version = 999;
+    assert!(unsafe { crate::facade::ac_init(&bad) }.is_null());
+    let mut bad = ac_cfg(&croot);
+    bad.data_root = ptr::null();
+    assert!(unsafe { crate::facade::ac_init(&bad) }.is_null());
+
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+
+    // every accessor mints a usable handle
+    let gs = unsafe { crate::facade::ac_settings(core, ptr::null()) };
+    let ps = unsafe { crate::facade::ac_settings(core, cs("work").as_ptr()) };
+    let pr = unsafe { crate::facade::ac_profiles(core) };
+    let h = unsafe { crate::facade::ac_history(core, cs("work").as_ptr()) };
+    let b = unsafe { crate::facade::ac_bookmarks(core, cs("work").as_ptr()) };
+    let p = unsafe { crate::facade::ac_policy(core, cs("work").as_ptr()) };
+    assert!(!gs.is_null() && !ps.is_null() && !pr.is_null());
+    assert!(!h.is_null() && !b.is_null() && !p.is_null());
+    assert_eq!(
+        unsafe { crate::facade::ac_history_exists(core, cs("work").as_ptr()) },
+        1
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_history_exists(core, cs("nobody").as_ptr()) },
+        0
+    );
+
+    // AcSettings IS RcSettings — a legacy call on the facade-minted
+    // handle stays legal, and the ac_* spelling reads it back.
+    assert_eq!(
+        unsafe {
+            crate::rc_settings_set_string(
+                ps,
+                cs("k").as_ptr(),
+                cs("v").as_ptr(),
+            )
+        },
+        RcStatus::Ok
+    );
+    let mut got = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_settings_get_string(ps, cs("k").as_ptr(), &mut got)
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(String::from_utf8_lossy(&take_buf(&mut got)), "v");
+    assert_eq!(
+        unsafe { crate::facade::ac_settings_sync(ps) },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/settings.json")
+        .exists());
+
+    // profiles through the facade spelling
+    let list = take_str(unsafe { crate::facade::ac_profiles_list(pr) }).unwrap();
+    assert!(list.contains("\"id\":\"default\""));
+    assert!(
+        take_str(unsafe { crate::facade::ac_profiles_slugify(cs("Me Work").as_ptr()) })
+            .unwrap()
+            == "me-work"
+    );
+
+    // history via the bound handle — the ac write is visible to the
+    // legacy rc_* reader (same open store).
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                h,
+                cs("https://a.example/").as_ptr(),
+                cs("A").as_ptr(),
+                1_000,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_hist_count(h) }, 1);
+    assert_eq!(unsafe { crate::rc_hist_count() }, 1);
+    let sugg =
+        take_str(unsafe { crate::facade::ac_hist_suggest(h, cs("a.example").as_ptr(), 5) })
+            .unwrap();
+    assert!(sugg.contains("https://a.example/"));
+
+    // bookmarks via the bound handle — rc_* ops land in the same tree.
+    let r = unsafe { crate::facade::ac_bm_root(b) };
+    assert_ne!(r, 0);
+    let node = unsafe {
+        crate::facade::ac_bm_create(
+            b,
+            r,
+            -1,
+            cs(r#"{"title":"X","url":"https://x.example/"}"#).as_ptr(),
+        )
+    };
+    assert_ne!(node, 0);
+    assert_eq!(
+        unsafe { crate::rc_bm_find(cs("https://x.example/").as_ptr()) },
+        node
+    );
+    assert_eq!(unsafe { crate::facade::ac_bm_child_count(b, r) }, 1);
+    assert_eq!(
+        unsafe { crate::facade::ac_bm_save(b, ptr::null()) },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/bookmarks.xbel")
+        .exists());
+    assert_eq!(
+        unsafe { crate::facade::ac_bm_reload(b) },
+        RcStatus::Ok
+    );
+
+    // policy via the bound handle — the sitedec write lands in the
+    // profile's own directory.
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_sitedec_set(
+                p,
+                cs("cookie").as_ptr(),
+                cs("x.example").as_ptr(),
+                cs("block").as_ptr(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/sitedecisions.json")
+        .exists());
+    assert_eq!(
+        unsafe { crate::facade::ac_blocklist_reload(p) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_blocklist_check(p, cs("not-blocked.example").as_ptr())
+        },
+        0
+    );
+    let snap = take_str(unsafe { crate::facade::ac_sitedec_snapshot(p) }).unwrap();
+    assert!(snap.contains("x.example"));
+    assert!(crate::facade::ac_policy_eval_generation() > 0);
+
+    // explicit closes, then shutdown reclaims the rest — both
+    // NULL-tolerant.
+    unsafe {
+        crate::facade::ac_hist_close(h);
+        crate::facade::ac_bm_close(b);
+        crate::facade::ac_policy_close(p);
+        crate::facade::ac_settings_close(gs);
+        crate::facade::ac_settings_close(ps);
+        crate::facade::ac_profiles_close(pr);
+        crate::facade::ac_shutdown(core);
+        crate::facade::ac_shutdown(ptr::null_mut());
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn facade_profile_isolation() {
+    let _g = guard();
+    let root = tmpdir("ac-iso");
+    let croot = cs(&root);
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+
+    // Two bound handles over the process-global history store — each
+    // call re-anchors to its own profile.
+    let ha = unsafe { crate::facade::ac_history(core, cs("alice").as_ptr()) };
+    let hb = unsafe { crate::facade::ac_history(core, cs("bob").as_ptr()) };
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                ha,
+                cs("https://alice.example/").as_ptr(),
+                cs("A").as_ptr(),
+                10,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_hist_count(hb) }, 0);
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                hb,
+                cs("https://bob.example/").as_ptr(),
+                cs("B").as_ptr(),
+                20,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_hist_count(ha) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_hist_count(hb) }, 1);
+    unsafe {
+        crate::facade::ac_hist_close(ha);
+        crate::facade::ac_hist_close(hb);
+    }
+
+    // Same for bookmarks — interleaved ops stay per-profile.
+    let ba = unsafe { crate::facade::ac_bookmarks(core, cs("alice").as_ptr()) };
+    let bb = unsafe { crate::facade::ac_bookmarks(core, cs("bob").as_ptr()) };
+    let ra = unsafe { crate::facade::ac_bm_root(ba) };
+    let created = unsafe {
+        crate::facade::ac_bm_create(
+            ba,
+            ra,
+            -1,
+            cs(r#"{"title":"a","url":"https://a1.example/"}"#).as_ptr(),
+        )
+    };
+    if created == 0 {
+        panic!(
+            "ac_bm_create failed: ra={ra} err={:?}",
+            take_str(unsafe { crate::facade::ac_last_error() })
+        );
+    }
+    assert_eq!(
+        unsafe { crate::facade::ac_bm_find(bb, cs("https://a1.example/").as_ptr()) },
+        0
+    );
+    let rb = unsafe { crate::facade::ac_bm_root(bb) };
+    assert_ne!(
+        unsafe {
+            crate::facade::ac_bm_create(
+                bb,
+                rb,
+                -1,
+                cs(r#"{"title":"b","url":"https://b1.example/"}"#).as_ptr(),
+            )
+        },
+        0
+    );
+    assert_ne!(
+        unsafe { crate::facade::ac_bm_find(ba, cs("https://a1.example/").as_ptr()) },
+        0
+    );
+    assert_ne!(
+        unsafe { crate::facade::ac_bm_find(bb, cs("https://b1.example/").as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_bm_save(ba, ptr::null()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_bm_save(bb, ptr::null()) },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/alice/bookmarks.xbel")
+        .exists());
+    assert!(std::path::Path::new(&root)
+        .join("profiles/bob/bookmarks.xbel")
+        .exists());
+    unsafe {
+        crate::facade::ac_bm_close(ba);
+        crate::facade::ac_bm_close(bb);
+    }
+
+    // Policy isolation: each persona's sitedecisions.json.
+    let pa = unsafe { crate::facade::ac_policy(core, cs("alice").as_ptr()) };
+    let pb = unsafe { crate::facade::ac_policy(core, cs("bob").as_ptr()) };
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_sitedec_set(
+                pa,
+                cs("cookie").as_ptr(),
+                cs("alice.example").as_ptr(),
+                cs("block").as_ptr(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/alice/sitedecisions.json")
+        .exists());
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_sitedec_get(
+                pb,
+                cs("cookie").as_ptr(),
+                cs("alice.example").as_ptr(),
+                &mut out,
+            )
+        },
+        RcStatus::NotFound
+    );
+    unsafe {
+        crate::facade::ac_policy_close(pa);
+        crate::facade::ac_policy_close(pb);
+        crate::facade::ac_shutdown(core);
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn facade_callbacks_carry_profile() {
+    let _g = guard();
+    let root = tmpdir("ac-cb");
+    let croot = cs(&root);
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+
+    static AC_HITS: AtomicUsize = AtomicUsize::new(0);
+    thread_local! {
+        static LAST: std::cell::RefCell<(String, String)> =
+            const { std::cell::RefCell::new((String::new(), String::new())) };
+    }
+    unsafe extern "C" fn cb(
+        topic: *const std::os::raw::c_char,
+        profile: *const std::os::raw::c_char,
+        _ud: *mut c_void,
+    ) {
+        let t = unsafe { CStr::from_ptr(topic) }
+            .to_string_lossy()
+            .into_owned();
+        let p = if profile.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(profile) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        LAST.with(|l| *l.borrow_mut() = (t, p));
+        AC_HITS.fetch_add(1, Ordering::SeqCst);
+    }
+    unsafe {
+        crate::facade::ac_set_change_callback(core, Some(cb), ptr::null_mut())
+    };
+
+    // A facade-bound mutation stamps the profile.
+    let h = unsafe { crate::facade::ac_history(core, cs("work").as_ptr()) };
+    let base = AC_HITS.load(Ordering::SeqCst);
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                h,
+                cs("https://n.example/").as_ptr(),
+                cs("N").as_ptr(),
+                1,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert!(AC_HITS.load(Ordering::SeqCst) > base);
+    LAST.with(|l| {
+        let (t, p) = l.borrow().clone();
+        assert_eq!(t, "history");
+        assert_eq!(p, "work");
+    });
+    unsafe { crate::facade::ac_hist_close(h) };
+
+    // A legacy rc_* mutation reaches the subscriber with a NULL
+    // profile (no binding to report).
+    let db = cs(&format!("{root}/profiles/work/history.db"));
+    assert_eq!(
+        unsafe { crate::rc_hist_open(db.as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_hist_add(
+                cs("https://legacy.example/").as_ptr(),
+                cs("L").as_ptr(),
+                2,
+            )
+        },
+        RcStatus::Ok
+    );
+    LAST.with(|l| {
+        let (t, p) = l.borrow().clone();
+        assert_eq!(t, "history");
+        assert!(p.is_empty());
+    });
+
+    // Settings writes stamp their scope's profile; the global scope
+    // stamps NULL.
+    let s = unsafe { crate::facade::ac_settings(core, cs("work").as_ptr()) };
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_settings_set_string(
+                s,
+                cs("k").as_ptr(),
+                cs("v").as_ptr(),
+            )
+        },
+        RcStatus::Ok
+    );
+    LAST.with(|l| {
+        let (t, p) = l.borrow().clone();
+        assert_eq!(t, "settings");
+        assert_eq!(p, "work");
+    });
+    unsafe { crate::facade::ac_settings_close(s) };
+
+    // Clearing the callback silences it; shutdown after clear is safe.
+    unsafe { crate::facade::ac_set_change_callback(core, None, ptr::null_mut()) };
+    let before = AC_HITS.load(Ordering::SeqCst);
+    let h2 = unsafe { crate::facade::ac_history(core, cs("work").as_ptr()) };
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                h2,
+                cs("https://silent.example/").as_ptr(),
+                cs("S").as_ptr(),
+                3,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(AC_HITS.load(Ordering::SeqCst), before);
+    unsafe {
+        crate::facade::ac_hist_close(h2);
+        crate::facade::ac_shutdown(core);
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn facade_bad_handles_fail_clean() {
+    let _g = guard();
+    let root = tmpdir("ac-bad");
+    let croot = cs(&root);
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+
+    // NULL handles return the failure spelling, never crash.
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                ptr::null(),
+                cs("u").as_ptr(),
+                cs("t").as_ptr(),
+                1,
+            )
+        },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(unsafe { crate::facade::ac_hist_count(ptr::null()) }, -1);
+    assert_eq!(unsafe { crate::facade::ac_bm_root(ptr::null()) }, 0);
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_sitedec_set(
+                ptr::null(),
+                cs("cookie").as_ptr(),
+                cs("k").as_ptr(),
+                cs("v").as_ptr(),
+            )
+        },
+        RcStatus::InvalidArgument
+    );
+    let err = take_str(unsafe { crate::facade::ac_last_error() }).unwrap();
+    assert!(err.contains("bad"));
+    // Accessors on a NULL core fail, not crash.
+    assert!(unsafe { crate::facade::ac_settings(ptr::null_mut(), ptr::null()) }
+        .is_null());
+    unsafe { crate::facade::ac_shutdown(core) };
+    let _ = std::fs::remove_dir_all(&root);
+}

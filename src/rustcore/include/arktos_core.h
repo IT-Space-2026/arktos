@@ -1,0 +1,304 @@
+/*
+ * arktos_core.h — the stable Arktos browser-core facade (RC07).
+ *
+ * THE single C ABI every engine backend programs against.  It is a
+ * thin ownership layer over the RC02–RC06 modules: an AcCore owns
+ * profile-bound module handles, and every ac_* operation forwards
+ * to the same underlying store the legacy rc_* surface (rustcore.h)
+ * reaches — the two spellings can never diverge on disk.
+ *
+ * Contract (full text in .devin/RUSTCORE-ABI.md):
+ *
+ *   - Append-only.  New symbols may be added; existing signatures,
+ *     struct layouts and enum values are frozen.  Never repurpose an
+ *     enum value or renumber AcStatus.
+ *   - Versioning.  ac_api_version() reports the library's ABI
+ *     version; AcConfig carries struct_size = sizeof(AcConfig) and
+ *     the api_version the caller was built against.  ac_init refuses
+ *     a config smaller than the v1 struct or an api_version newer
+ *     than the library.
+ *   - Errors.  Every fallible call returns AcStatus (or NULL/0/-1
+ *     where noted); ac_last_error() reads the thread-local message,
+ *     freed with ac_string_free.
+ *   - Ownership.  Strings/buffers returned are caller-owned (free
+ *     with ac_string_free / ac_buffer_free).  Module handles are
+ *     minted by ac_* accessors on an AcCore, released individually
+ *     with the matching ac_*_close, and all die with ac_shutdown —
+ *     a handle may only be used while its AcCore lives.
+ *   - Profile binding.  ac_settings binds a scope at open
+ *     (NULL/empty profile_id = the global scope); ac_history,
+ *     ac_bookmarks and ac_policy bind a profile at open (NULL or a
+ *     non-slug id resolves to "default") and re-assert that binding
+ *     on every call — no caller-side data-dir switching is needed.
+ *   - Panic safety.  No Rust panic crosses the FFI boundary; a panic
+ *     degrades to NULL/AC_ERR_INTERNAL with a stashed message.
+ *   - Threading.  Thread-safe behind internal mutexes; a bound
+ *     handle serializes on its store's lock, so reads/writes from
+ *     different threads are safe but not lock-free.  Change
+ *     callbacks fire synchronously on the mutating thread and never
+ *     while a store lock is held.
+ */
+
+#ifndef ARKTOS_CORE_H
+#define ARKTOS_CORE_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include "rustcore.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* The facade ABI version this header was written for. */
+#define AC_API_VERSION 1u
+
+/* ac_capabilities() bits — one per module. */
+#define AC_CAP_SETTINGS  0x01ull
+#define AC_CAP_PROFILES  0x02ull
+#define AC_CAP_HISTORY   0x04ull
+#define AC_CAP_BOOKMARKS 0x08ull
+#define AC_CAP_POLICY    0x10ull
+
+/* AcStatus and AcBuffer are the RC02–RC06 types verbatim — the
+ * facade shares their spelling so mixed ac_/rc_ code compiles
+ * without casts. */
+typedef RcStatus AcStatus;
+typedef RcBuffer AcBuffer;
+
+/* The legacy status values remain reachable under the AcStatus
+ * typedef; these aliases give facade-only callers the ac_* names. */
+#define AC_OK             RC_OK
+#define AC_ERR_GENERIC    RC_ERR_GENERIC
+#define AC_ERR_NOT_FOUND  RC_ERR_NOT_FOUND
+#define AC_ERR_INVALID    RC_ERR_INVALID
+#define AC_ERR_IO         RC_ERR_IO
+#define AC_ERR_WRONG_PASSWORD RC_ERR_WRONG_PASSWORD
+#define AC_ERR_TAMPERED   RC_ERR_TAMPERED
+#define AC_ERR_INTERNAL   RC_ERR_INTERNAL
+
+/* Opaque core + module handles.  AcSettings and AcProfiles are the
+ * RC02/RC03 handle types — legacy rc_settings_* / rc_profiles_*
+ * calls on facade-minted handles stay legal until callers migrate. */
+typedef struct AcCore   AcCore;
+typedef struct AcHistory    AcHistory;
+typedef struct AcBookmarks  AcBookmarks;
+typedef struct AcPolicy     AcPolicy;
+typedef RcSettings AcSettings;
+typedef RcProfiles AcProfiles;
+
+/* Change notification, one per AcCore.  `module` is a stable topic
+ * ("settings", "profiles", "history", "bookmarks", "sitedec",
+ * "policy", "uaspoof"); `profile_id` is the bound profile that
+ * changed or NULL for global/unscoped mutations.  Both pointers are
+ * borrowed — valid only for the duration of the call.  Fires
+ * synchronously on the mutating thread outside every store lock;
+ * consumers that need another thread must hop themselves. */
+typedef void (*AcChangeCallback)(const char *module,
+                                 const char *profile_id,
+                                 void *userdata);
+
+/* v1 configuration — append-only; always pass
+ * struct_size = sizeof(AcConfig). */
+typedef struct AcConfig {
+    uint32_t struct_size;      /* sizeof(AcConfig) — required */
+    uint32_t api_version;      /* AC_API_VERSION the caller expects; 0 = any */
+    const char *data_root;     /* app data root (required) */
+    const char *app_name;      /* informational; may be NULL */
+    const char *default_profile_name; /* display-name seed for the
+                                         synthesized "default" row;
+                                         may be NULL */
+} AcConfig;
+
+/* ---- housekeeping -------------------------------------------------- */
+
+uint32_t     ac_api_version(void);
+uint64_t     ac_capabilities(void);
+AcCore      *ac_init(const AcConfig *cfg);
+void         ac_shutdown(AcCore *core);
+char        *ac_last_error(void);
+void         ac_string_free(char *s);
+void         ac_buffer_free(AcBuffer buf);
+void         ac_set_change_callback(AcCore *core,
+                                  AcChangeCallback cb,
+                                  void *userdata);
+
+/* ---- module accessors -------------------------------------------------
+ *
+ * Each mints a profile-bound handle owned by `core`; release with
+ * the matching close (or let ac_shutdown reclaim it).  NULL return
+ * = failure with a stashed ac_last_error().
+ */
+
+AcSettings  *ac_settings(AcCore *core, const char *profile_id);
+AcProfiles  *ac_profiles(AcCore *core);
+AcHistory   *ac_history(AcCore *core, const char *profile_id);
+int          ac_history_exists(AcCore *core, const char *profile_id);
+AcBookmarks *ac_bookmarks(AcCore *core, const char *profile_id);
+AcPolicy    *ac_policy(AcCore *core, const char *profile_id);
+
+void ac_settings_close(AcSettings *h);
+void ac_profiles_close(AcProfiles *h);
+void ac_hist_close(AcHistory *h);
+void ac_bm_close(AcBookmarks *h);
+void ac_policy_close(AcPolicy *h);
+
+/* ---- settings (RC02) --------------------------------------------------- */
+
+AcStatus ac_settings_import_ini(AcSettings *h, const char *path);
+int      ac_settings_contains(AcSettings *h, const char *key);
+AcStatus ac_settings_get(AcSettings *h, const char *key, AcBuffer *out);
+AcStatus ac_settings_get_string(AcSettings *h, const char *key, AcBuffer *out);
+AcStatus ac_settings_get_bool(AcSettings *h, const char *key, int *out);
+AcStatus ac_settings_get_int(AcSettings *h, const char *key, int64_t *out);
+AcStatus ac_settings_get_double(AcSettings *h, const char *key, double *out);
+AcStatus ac_settings_get_bytes(AcSettings *h, const char *key, AcBuffer *out);
+AcStatus ac_settings_get_list(AcSettings *h, const char *key, AcBuffer *out);
+AcStatus ac_settings_set_string(AcSettings *h, const char *key, const char *value);
+AcStatus ac_settings_set_bool(AcSettings *h, const char *key, int value);
+AcStatus ac_settings_set_int(AcSettings *h, const char *key, int64_t value);
+AcStatus ac_settings_set_double(AcSettings *h, const char *key, double value);
+AcStatus ac_settings_set_bytes(AcSettings *h, const char *key,
+                               const uint8_t *value, size_t len);
+AcStatus ac_settings_set_list(AcSettings *h, const char *key,
+                              const uint8_t *json, size_t len);
+AcStatus ac_settings_remove(AcSettings *h, const char *key);
+char    *ac_settings_list(AcSettings *h, const char *prefix);
+AcStatus ac_settings_sync(AcSettings *h);
+
+/* ---- profiles (RC03) ---------------------------------------------------- */
+
+AcStatus ac_profiles_reload(AcProfiles *h);
+char    *ac_profiles_list(AcProfiles *h);
+char    *ac_profiles_get(AcProfiles *h, const char *id);
+char    *ac_profiles_create(AcProfiles *h, const char *display_name);
+AcStatus ac_profiles_rename(AcProfiles *h, const char *id, const char *name);
+AcStatus ac_profiles_set_avatar(AcProfiles *h, const char *id,
+                                const char *name_or_null);
+AcStatus ac_profiles_delete(AcProfiles *h, const char *id);
+char    *ac_profiles_active(AcProfiles *h);
+AcStatus ac_profiles_set_active(AcProfiles *h, const char *id);
+char    *ac_profiles_dir(AcProfiles *h, const char *id);
+char    *ac_profiles_cache_dir(AcProfiles *h, const char *id);
+char    *ac_profiles_engine_storage_dir(AcProfiles *h, const char *id);
+char    *ac_profiles_engine_cache_dir(AcProfiles *h, const char *id);
+char    *ac_profiles_settings_dir(AcProfiles *h, const char *id);
+char    *ac_profiles_avatar_path(AcProfiles *h, const char *id);
+char    *ac_profiles_file(AcProfiles *h);
+char    *ac_profiles_slugify(const char *display_name);
+
+/* ---- history (RC04) ------------------------------------------------------ */
+
+int64_t  ac_hist_count(const AcHistory *h);
+char    *ac_hist_entry_at(const AcHistory *h, int64_t row);
+AcStatus ac_hist_add(const AcHistory *h, const char *url,
+                     const char *title, int64_t ts_ms);
+AcStatus ac_hist_update_title(const AcHistory *h, const char *url,
+                              const char *title);
+AcStatus ac_hist_remove(const AcHistory *h, const char *url,
+                        const char *title, int64_t ts_ms);
+AcStatus ac_hist_clear(const AcHistory *h);
+AcStatus ac_hist_clear_since(const AcHistory *h, int64_t since_ms);
+AcStatus ac_hist_expire_older_than(const AcHistory *h, int64_t cutoff_ms,
+                                   int64_t *out_removed);
+char    *ac_hist_query(const AcHistory *h, const char *spec_json);
+AcStatus ac_hist_icon_set(const AcHistory *h, const char *host,
+                          const uint8_t *png, size_t len);
+AcStatus ac_hist_icon_get(const AcHistory *h, const char *host,
+                          AcBuffer *out);
+AcStatus ac_hist_icon_clear(const AcHistory *h);
+char    *ac_hist_suggest(const AcHistory *h, const char *term, int64_t limit);
+
+/* ---- bookmarks (RC05) ------------------------------------------------------ */
+
+uint64_t ac_bm_root(const AcBookmarks *h);
+AcStatus ac_bm_reload(const AcBookmarks *h);
+AcStatus ac_bm_load_mem(const AcBookmarks *h, const uint8_t *xbel,
+                        size_t len);
+AcStatus ac_bm_save(const AcBookmarks *h, const char *path_or_null);
+int64_t  ac_bm_child_count(const AcBookmarks *h, uint64_t node);
+uint64_t ac_bm_child_at(const AcBookmarks *h, uint64_t node, int64_t row);
+uint64_t ac_bm_parent(const AcBookmarks *h, uint64_t node);
+char    *ac_bm_get(const AcBookmarks *h, uint64_t node);
+uint64_t ac_bm_create(const AcBookmarks *h, uint64_t parent, int64_t row,
+                      const char *json);
+AcStatus ac_bm_attach(const AcBookmarks *h, uint64_t parent, int64_t row,
+                      uint64_t node);
+AcStatus ac_bm_detach(const AcBookmarks *h, uint64_t node);
+AcStatus ac_bm_destroy(const AcBookmarks *h, uint64_t node);
+AcStatus ac_bm_set_title(const AcBookmarks *h, uint64_t node,
+                         const char *value);
+AcStatus ac_bm_set_url(const AcBookmarks *h, uint64_t node,
+                       const char *value);
+AcStatus ac_bm_set_desc(const AcBookmarks *h, uint64_t node,
+                        const char *value);
+AcStatus ac_bm_set_expanded(const AcBookmarks *h, uint64_t node,
+                            int expanded);
+AcStatus ac_bm_set_tags(const AcBookmarks *h, uint64_t node,
+                        const char *json);
+uint64_t ac_bm_find(const AcBookmarks *h, const char *url);
+char    *ac_bm_import_html(const AcBookmarks *h, uint64_t parent,
+                           const uint8_t *html, size_t len, int flags);
+AcStatus ac_bm_export_html(const AcBookmarks *h, const char *path);
+
+/* ---- policy: site decisions + verdicts (RC06) ------------------------------ */
+
+AcStatus ac_sitedec_get(const AcPolicy *h, const char *kind,
+                        const char *key, AcBuffer *out);
+AcStatus ac_sitedec_set(const AcPolicy *h, const char *kind,
+                        const char *key, const char *value);
+AcStatus ac_sitedec_remove(const AcPolicy *h, const char *kind,
+                           const char *key);
+AcStatus ac_sitedec_clear(const AcPolicy *h, const char *kind);
+AcStatus ac_sitedec_replace(const AcPolicy *h, const char *kind,
+                            const uint8_t *json, size_t len);
+char    *ac_sitedec_list(const AcPolicy *h, const char *kind);
+char    *ac_sitedec_snapshot(const AcPolicy *h);
+char    *ac_sitedec_lookup(const AcPolicy *h, const char *kind,
+                           const char *host);
+int      ac_sitedec_store_present(const AcPolicy *h);
+AcStatus ac_sitedec_reload(const AcPolicy *h);
+AcStatus ac_sitedec_reset(const AcPolicy *h);
+
+AcStatus ac_policy_load_snapshot(const AcPolicy *h,
+                                 const uint8_t *json, size_t len);
+char    *ac_policy_evaluate(const AcPolicy *h,
+                            const uint8_t *json, size_t len);
+int      ac_policy_cookie_filter(const AcPolicy *h,
+                                 const uint8_t *json, size_t len);
+char    *ac_policy_call(const AcPolicy *h,
+                        const uint8_t *json, size_t len);
+uint64_t ac_policy_eval_generation(void);
+
+int      ac_blocklist_check(const AcPolicy *h, const char *host);
+AcStatus ac_blocklist_load(const AcPolicy *h, const uint8_t *text,
+                           size_t len);
+AcStatus ac_blocklist_reload(const AcPolicy *h);
+size_t   ac_blocklist_count(const AcPolicy *h);
+
+uint32_t ac_tranco_rank(const AcPolicy *h, const char *host);
+AcStatus ac_tranco_load(const AcPolicy *h, const uint8_t *text,
+                        size_t len);
+AcStatus ac_tranco_reload(const AcPolicy *h);
+size_t   ac_tranco_count(const AcPolicy *h);
+size_t   ac_tranco_file_entries(const AcPolicy *h, const char *name);
+
+char    *ac_sitetrust_lookup(const AcPolicy *h, const char *host,
+                             int is_https);
+char    *ac_sitetrust_lookup_opts(const AcPolicy *h, const char *host,
+                                  int is_https, uint32_t probes);
+AcStatus ac_sitetrust_reload(const AcPolicy *h);
+char    *ac_lookalike_check(const AcPolicy *h, const char *host);
+
+char    *ac_ua_spoof(const AcPolicy *h, const char *host);
+AcStatus ac_ua_spoof_set(const AcPolicy *h, const char *host,
+                         const char *ua);
+AcStatus ac_ua_spoof_remove(const AcPolicy *h, const char *host);
+char    *ac_ua_spoof_list(const AcPolicy *h);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* ARKTOS_CORE_H */

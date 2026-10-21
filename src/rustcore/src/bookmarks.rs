@@ -22,7 +22,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
@@ -95,6 +95,21 @@ pub struct Bookmarks {
     /// attach() or destroy() so undo can resurrect them intact.
     detached: HashSet<u64>,
     root: u64,
+    /// The file the tree was last loaded from — None for a fresh or
+    /// memory-loaded tree.  The facade's bound handle (RC07) reads it
+    /// with `epoch` to re-assert its file binding without reparsing
+    /// on every call.
+    loaded_path: Option<PathBuf>,
+    /// Monotonic counter bumped by every successful (re)load — it
+    /// distinguishes "same file, newer tree" so a bound handle can
+    /// adopt another writer's reload of its own file instead of
+    /// reloading again.
+    epoch: u64,
+    /// Set by every tree mutation, cleared by load/save — lets
+    /// ensure_path flush a displaced tree's pending edits to the
+    /// file it was bound to (the store-level twin of the Qt layer's
+    /// saveIfNeccessary before re-binding) instead of dropping them.
+    dirty: bool,
 }
 
 static BM: Mutex<Option<Bookmarks>> = Mutex::new(None);
@@ -115,6 +130,9 @@ impl Bookmarks {
             next: 2,
             detached: HashSet::new(),
             root: 1,
+            loaded_path: None,
+            epoch: 0,
+            dirty: false,
         }
     }
 
@@ -315,6 +333,7 @@ impl Bookmarks {
         p.children.insert(at, h);
         self.detached.remove(&h);
         self.node_mut(h)?.parent = Some(parent);
+        self.dirty = true;
         Ok(())
     }
 
@@ -331,6 +350,7 @@ impl Bookmarks {
         }
         self.node_mut(h)?.parent = None;
         self.detached.insert(h);
+        self.dirty = true;
         Ok(())
     }
 
@@ -351,6 +371,7 @@ impl Bookmarks {
             stack.extend(children);
             self.detached.remove(&x);
         }
+        self.dirty = true;
         Ok(())
     }
 
@@ -369,16 +390,19 @@ impl Bookmarks {
             "desc" => n.desc = value.into(),
             _ => return Self::invalid("unknown string field"),
         }
+        self.dirty = true;
         Ok(())
     }
 
     pub fn set_expanded(&mut self, h: u64, expanded: bool) -> RcResult<()> {
         self.node_mut(h)?.expanded = expanded;
+        self.dirty = true;
         Ok(())
     }
 
     pub fn set_tags(&mut self, h: u64, tags: Vec<String>) -> RcResult<()> {
         self.node_mut(h)?.tags = tags;
+        self.dirty = true;
         Ok(())
     }
 
@@ -425,7 +449,9 @@ impl Bookmarks {
         if !rooted {
             return corrupt("the file is not an XBEL version 1.0 file");
         }
+        let epoch = self.epoch;
         *self = fresh;
+        self.epoch = epoch + 1;
         Ok(())
     }
 
@@ -433,9 +459,16 @@ impl Bookmarks {
     /// error (first run), matching XbelReader::read(fileName).
     pub fn load_path(&mut self, path: &Path) -> RcResult<()> {
         match fs::read(path) {
-            Ok(data) => self.load_bytes(&data),
+            Ok(data) => {
+                self.load_bytes(&data)?;
+                self.loaded_path = Some(path.to_path_buf());
+                Ok(())
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let epoch = self.epoch;
                 *self = Bookmarks::new();
+                self.epoch = epoch + 1;
+                self.loaded_path = Some(path.to_path_buf());
                 Ok(())
             }
             Err(e) => Err(Fail {
@@ -445,6 +478,42 @@ impl Bookmarks {
         }
     }
 
+    /// The file this tree was loaded from — None for a fresh or
+    /// memory-loaded tree (the facade's bound-handle stamp, RC07).
+    pub fn loaded_path(&self) -> Option<&Path> {
+        self.loaded_path.as_deref()
+    }
+
+    /// The reload counter — bumped by every successful
+    /// load_path/load_bytes/fresh-reset.
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// Facade bind (RC07): no-op when this tree already belongs to
+    /// `path`; otherwise loads it.  Reports whether a load ran so the
+    /// caller can mirror rc_bm_load's "bookmarks" emit.  A displaced
+    /// tree with pending edits is flushed to the file it was bound
+    /// to first — the in-memory tree may move between profiles, its
+    /// edits must not.
+    pub fn ensure_path(&mut self, path: &Path) -> RcResult<bool> {
+        if self.loaded_path.as_deref() == Some(path) {
+            return Ok(false);
+        }
+        if self.dirty {
+            if let Some(old) = self.loaded_path.clone() {
+                // Flush only while the edits still have a home — a
+                // deleted profile directory leaves nowhere to save
+                // to, and blocking the re-anchor strands every
+                // other profile's bookmarks.
+                if old.parent().map(|p| p.exists()).unwrap_or(false) {
+                    self.save_path(&old)?;
+                }
+            }
+        }
+        self.load_path(path).map(|_| true)
+    }
+
     /// Serializes the root's children and atomically installs the
     /// result: temp file + fsync + rename, so a crash mid-save never
     /// truncates the user's bookmarks, and a concurrent save from a
@@ -452,11 +521,24 @@ impl Bookmarks {
     /// the old fixed `xbel.rc-tmp` name let two writers interleave a
     /// torn temp file).  Cross-writer resolution stays documented
     /// last-writer-wins.
-    pub fn save_path(&self, path: &Path) -> RcResult<()> {
+    pub fn save_path(&mut self, path: &Path) -> RcResult<()> {
         let xml = self.to_xbel();
         // Best-effort retire of the pre-CONC01 fixed-name staging file.
         let _ = fs::remove_file(path.with_extension("xbel.rc-tmp"));
-        crate::store::atomic_write(path, xml.as_bytes())
+        crate::store::atomic_write(path, xml.as_bytes())?;
+        // Binding bookkeeping: writing the bound file clears the
+        // pending-edits flag; an anonymous (load_mem'd) tree adopts
+        // the file it was written to; a third path is export-as and
+        // leaves both alone.
+        match self.loaded_path.as_deref() {
+            Some(p) if p == path => self.dirty = false,
+            None => {
+                self.loaded_path = Some(path.to_path_buf());
+                self.dirty = false;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     fn to_xbel(&self) -> String {
@@ -925,13 +1007,13 @@ mod tests {
         };
         let pa = path.clone();
         let ta = std::thread::spawn(move || {
-            let s = build("a");
+            let mut s = build("a");
             for _ in 0..60 {
                 s.save_path(&pa).unwrap();
             }
         });
         {
-            let s = build("b");
+            let mut s = build("b");
             for _ in 0..60 {
                 s.save_path(&path).unwrap();
             }

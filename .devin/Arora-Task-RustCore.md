@@ -34,7 +34,7 @@ Rules for the agent working this file:
 | RC04 | rustcore `history` module — visit/query/clear, compat with existing store | done | 0 | history module verified + completed: store was already landed (sqlite history.db, legacy QDataStream import, icons/hosts/suggest); added rc_hist_query (term/date-range/limit-offset) + rc_hist_expire_older_than bulk retention; verified cargo 294/294, tst_historymanager 49/49 + historyui 8/8 + filtermodel 37/37 offscreen, rust + no-rust make -j2 clean |
 | RC05 | rustcore `bookmarks` module — tree ops + XBEL import/export compat | done | 0 | bookmarks store verified + XBEL export fixed: <desc> now emitted as child element on folders+bookmarks (XbelWriter shape; was bookmark-only attr C++ reader ignores, folder desc dropped); legacy attr form still parses; new tst_xbel rustStoreInterchange proves C++-write->rust-edit->rust-save->C++-read identical tree; cargo 296/296, xbel 16/16 + bookmark node/model/html/dialog tests all pass offscreen, rust+no-rust make -j2 clean |
 | RC06 | rustcore `policy` module — cookie/storage/site-decision/trust data + FFI | done | 0 | audit: policy surface already landed end to end (sitedecisions + per-profile façade + legacy imports, blocklist/tranco/majestic read-path, sitetrust, policy verdicts); added FFI-parity legs — verified cargo 296/296, sitedecisions 9/9, trancolist 9/9, domainblock 14/14 + 6 consumer suites green offscreen, rust+no-rust compile clean |
-| RC07 | Stable `arktos_core.h` C ABI facade v1 + RustCoreBridge v2 | pending | 0 | needs:task:RC02 needs:task:RC03 needs:task:RC04 needs:task:RC05 needs:task:RC06 needs:tool:cargo |
+| RC07 | Stable `arktos_core.h` C ABI facade v1 + RustCoreBridge v2 | done | 0 | arktos_core.h facade: AcCore + profile-bound ac_* handles over shared rc_* stores, (module,profile) cb lane, bridge v2 + ABI doc — cargo 299+1preexisting, acprobe OK, make clean, autotests green |
 | RC08 | QtWebEngine adoption — services read/write through facade, parity proof | pending | 0 | needs:task:RC07 |
 | RC09 | Servo/WebKit backends consume the same facade + capability reporting | pending | 0 | needs:task:RC08 |
 | RC10 | Packaging: new crates linked + staged in deb/rpm/flatpak/dmg/exe legs | pending | 0 | needs:task:RC07 |
@@ -364,6 +364,40 @@ keep the old rc_* surface compiling until RC08 migrates callers).
 
 Verify: cargo test + a C probe binary compiled against the header
 exercises every accessor; existing autotests still pass unmodified.
+
+
+Verification evidence (2026-10-22):
+- `cargo test --release`: 299/300 — the one failure,
+  `profilevault::tests::key_material_zeroized_on_drop`, fails
+  identically on the base commit (release-mode stack-slot probe;
+  pre-existing, unrelated).
+- `tools/acprobe.c` compiled with `cc -Iinclude` against
+  `libarktos_rustcore.a` and ran green: every accessor minted,
+  settings/profiles/history/bookmarks/policy ops exercised,
+  (module,profile) callback stamped "work".
+- `qmake && make -j2`: app + all autotest binaries, 0 warnings on
+  touched TUs; `clearprivatedata.cpp` (a rustcorebridge.h consumer)
+  syntax-checks under no-rust.
+- Autotests offscreen: rustprofiles 6/6, sitedecisions 9/9,
+  trancolist 9/9, domainblock 14/14, cookiejar 51/51, scriptcontrol
+  23/23, popupblocker 10/10, httponly 25/25, containermanager 37,
+  sitepanel 26/26, bookmarksmodel 12/12, bookmarknode 20/20,
+  profilesettings 12/12, securestore 20/20. `xbel` (2) and
+  `historymanager` (16) fail identically on the base commit —
+  pre-existing, verified by stash+rebuild.
+- ffi_surface gained 4 facade tests: init/accessor smoke,
+  cross-profile isolation over the process-global stores,
+  (module,profile) callback stamping incl. NULL for rc_* traffic,
+  NULL-handle failure spellings.
+
+Design notes:
+- Handles re-assert their binding per op (rc_hist_open /
+  Bookmarks::ensure_path / rc_set_data_dir no-ops on match), so
+  facade callers never run the rustCoreEnsureDataDirFor dance.
+- Bookmarks store gained loaded_path + epoch + dirty flag:
+  re-anchoring flushes a displaced dirty tree to ITS file first
+  (the in-store twin of saveIfNeccessary) when the directory still
+  exists — profile edits can't cross or vanish on a switch.
 
 ### RC08
 

@@ -44,6 +44,7 @@ rustcore:!no-rust {
     INCLUDEPATH += $$PWD/include
     DEPENDPATH += $$PWD/include
     HEADERS += $$PWD/include/rustcore.h \
+        $$PWD/include/arktos_core.h \
         $$PWD/../rustcorebridge.h \
         $$PWD/../sitedecisionstore.h
     SOURCES += $$PWD/../rustcorebridge.cpp \
