@@ -168,10 +168,14 @@ browsing profile:
   builds the crate is the canonical bookmark + history store:
   - **Bookmarks** — bookmarks.xbel stays the on-disk format but is
     parsed and emitted in Rust (queried lazily, one node handle per
-    call — no bulk tree marshal).
+    call — no bulk tree marshal); saves install atomically via a
+    private temp file + rename, so concurrent windows or standalone
+    instances can never leave a torn document.
   - **History** — lives in a SQLite history.db (visits plus per-host
     favicons that persist across restarts) that imports the legacy
-    QDataStream file on first run.
+    QDataStream file on first run; WAL mode plus a busy timeout lets
+    two processes sharing the profile write without surfacing lock
+    errors.
   - **Session save/restore serialization** — a versioned session.dat written
     atomically and bounds-checked on decode, so a corrupt file is
     rejected whole instead of looping the crash-restore prompt — and

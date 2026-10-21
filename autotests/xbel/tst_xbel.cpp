@@ -49,6 +49,7 @@ private slots:
     void write_data();
     void write();
     void writeDescription();
+    void writeInstallsAtomically();
 
     void hostileInput();
     void errorPaths();
@@ -269,6 +270,42 @@ void tst_Xbel::writeDescription()
     QCOMPARE(reader.error(), QXmlStreamReader::NoError);
     QVERIFY(*writtenRoot == root);
     delete writtenRoot;
+}
+
+// CONC01: write(fileName) installs via a private temp file + rename —
+// the target is replaced whole (a reader racing the write can never
+// meet a torn document) and no staging residue survives.
+void tst_Xbel::writeInstallsAtomically()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QLatin1String("bookmarks.xbel"));
+
+    // Pre-existing content is replaced outright, not merged.
+    {
+        QFile seed(path);
+        QVERIFY(seed.open(QIODevice::WriteOnly));
+        seed.write("stale garbage");
+    }
+
+    BookmarkNode root(BookmarkNode::Root);
+    BookmarkNode *bookmark = new BookmarkNode(BookmarkNode::Bookmark, &root);
+    bookmark->url = QLatin1String("http://a.example/");
+    bookmark->title = QLatin1String("A");
+
+    SubXbelWriter writer;
+    QVERIFY(writer.write(path, &root));
+
+    SubXbelReader reader;
+    BookmarkNode *back = reader.read(path);
+    QVERIFY(back);
+    QCOMPARE(reader.error(), QXmlStreamReader::NoError);
+    QVERIFY(*back == root);
+    delete back;
+
+    // Nothing but the installed file remains in the directory.
+    QCOMPARE(QDir(dir.path()).entryList(QDir::Files),
+             QStringList() << QLatin1String("bookmarks.xbel"));
 }
 
 // Hostile input: element nesting drives recursion in readFolder() and

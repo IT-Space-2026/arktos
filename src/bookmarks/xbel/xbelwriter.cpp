@@ -62,7 +62,7 @@
 
 #include "xbelwriter.h"
 
-#include <qfile.h>
+#include <qsavefile.h>
 
 #include "bookmarknode.h"
 
@@ -73,10 +73,16 @@ XbelWriter::XbelWriter()
 
 bool XbelWriter::write(const QString &fileName, const BookmarkNode *root)
 {
-    QFile file(fileName);
-    if (!root || !file.open(QFile::WriteOnly))
+    // CONC01: QSaveFile stages to a private temp name and installs by
+    // rename — a reader in a second window can never meet a
+    // half-written document, and concurrent writers degenerate to
+    // last-writer-wins instead of a torn file.
+    QSaveFile file(fileName);
+    if (!root || !file.open(QIODevice::WriteOnly))
         return false;
-    return write(&file, root);
+    if (!write(&file, root))
+        return false;
+    return file.commit();
 }
 
 bool XbelWriter::write(QIODevice *device, const BookmarkNode *root)

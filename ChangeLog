@@ -4562,3 +4562,14 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   on the no-Rust path a declined unlock no longer downgrades the
   sealed autofill file to plaintext. The full audit report lives at
   .devin/security/SEC28-report.md.
+- Concurrent-store-writer audit (CONC01): running two instances on the
+  same profile (e.g. standalone/--profile launches) can no longer
+  produce damaged store files. Bookmark saves now install atomically
+  on every backend — a private temp file renamed over the old file,
+  where the Rust path previously staged into a shared temp name two
+  writers could interleave into a torn mix, and the Qt-only path
+  truncated the file in place. The history database now waits out a
+  peer's commit instead of failing with a lock error, and session,
+  settings, container and profile stores were verified to install
+  atomically already. Concurrent saves resolve last-writer-wins, as
+  before — just never to a half-written file.

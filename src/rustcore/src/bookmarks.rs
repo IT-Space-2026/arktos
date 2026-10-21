@@ -22,7 +22,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -448,25 +447,16 @@ impl Bookmarks {
 
     /// Serializes the root's children and atomically installs the
     /// result: temp file + fsync + rename, so a crash mid-save never
-    /// truncates the user's bookmarks.
+    /// truncates the user's bookmarks, and a concurrent save from a
+    /// second process renames only its own complete bytes (CONC01 —
+    /// the old fixed `xbel.rc-tmp` name let two writers interleave a
+    /// torn temp file).  Cross-writer resolution stays documented
+    /// last-writer-wins.
     pub fn save_path(&self, path: &Path) -> RcResult<()> {
         let xml = self.to_xbel();
-        let tmp = path.with_extension("xbel.rc-tmp");
-        {
-            let mut f = fs::File::create(&tmp).map_err(|e| Fail {
-                status: RcStatus::Io,
-                msg: format!("cannot create {}: {e}", tmp.display()),
-            })?;
-            f.write_all(xml.as_bytes()).and_then(|_| f.sync_all())
-                .map_err(|e| Fail {
-                    status: RcStatus::Io,
-                    msg: format!("cannot write {}: {e}", tmp.display()),
-                })?;
-        }
-        fs::rename(&tmp, path).map_err(|e| Fail {
-            status: RcStatus::Io,
-            msg: format!("cannot install {}: {e}", path.display()),
-        })
+        // Best-effort retire of the pre-CONC01 fixed-name staging file.
+        let _ = fs::remove_file(path.with_extension("xbel.rc-tmp"));
+        crate::store::atomic_write(path, xml.as_bytes())
     }
 
     fn to_xbel(&self) -> String {
@@ -837,6 +827,68 @@ mod tests {
         let f2 = s2.child_at(s2.root(), 0).unwrap();
         assert_eq!(s2.nodes[&f2].title, "F");
         assert_eq!(s2.child_count(f2), Some(1));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn concurrent_saves_leave_a_parseable_file() {
+        // CONC01: two writers on one bookmarks.xbel (standalone
+        // instances share the profile dir) must never produce a torn
+        // document — each install is a private temp file + rename and
+        // the resolution rule is last-writer-wins.
+        let dir = std::env::temp_dir().join(format!(
+            "arktos-bm-conc-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bookmarks.xbel");
+        let build = |tag: &str| {
+            let mut s = store();
+            let f = s
+                .create(
+                    s.root(),
+                    -1,
+                    &json!({"type":1,"title":format!("F-{tag}")}),
+                )
+                .unwrap();
+            s.create(
+                f,
+                -1,
+                &json!({"type":2,"title":"b","url":format!("http://{tag}/")}),
+            )
+            .unwrap();
+            s
+        };
+        let pa = path.clone();
+        let ta = std::thread::spawn(move || {
+            let s = build("a");
+            for _ in 0..60 {
+                s.save_path(&pa).unwrap();
+            }
+        });
+        {
+            let s = build("b");
+            for _ in 0..60 {
+                s.save_path(&path).unwrap();
+            }
+        }
+        ta.join().unwrap();
+        // Whatever the last writer was, the file must be one complete
+        // document — never an interleave of the two.
+        let mut s2 = store();
+        s2.load_path(&path).unwrap();
+        let f2 = s2.child_at(s2.root(), 0).unwrap();
+        let title = s2.nodes[&f2].title.clone();
+        assert!(title == "F-a" || title == "F-b", "torn save: {title}");
+        let b = s2.child_at(f2, 0).unwrap();
+        assert_eq!(
+            s2.nodes[&b].url,
+            format!("http://{}/", &title[2..]),
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

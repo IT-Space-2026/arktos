@@ -102,6 +102,13 @@ impl HistoryStore {
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
+             -- CONC01: standalone runs bypass single-instance, so two
+             -- processes can write the same history.db.  WAL makes
+             -- readers never block, but a writer colliding with a
+             -- peer's commit used to get SQLITE_BUSY instantly —
+             -- busy_timeout makes it wait out the (sub-millisecond
+             -- scale) lock window instead of surfacing an error.
+             PRAGMA busy_timeout = 5000;
              CREATE TABLE IF NOT EXISTS visits(
                  seq INTEGER PRIMARY KEY AUTOINCREMENT,
                  url TEXT NOT NULL,
@@ -720,6 +727,34 @@ mod tests {
         assert_eq!(r[0]["score"], 540);
         // limit truncates the marshal.
         assert_eq!(rows(&s.suggest("", 1, now).unwrap()).len(), 1);
+        std::fs::remove_dir_all(Path::new(&p).parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn busy_timeout_waits_out_a_peer_writer() {
+        // CONC01: standalone runs bypass single-instance arbitration,
+        // so two processes can hold connections to one history.db.
+        // A second rusqlite Connection stands in for the peer — the
+        // file locks contended over are per-file, not per-process.
+        let p = temp_db("busy");
+        let mut s = store_at(&p);
+        let ms: i64 = s
+            .conn()
+            .unwrap()
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ms, 5000);
+        // While a peer holds the write lock the store must wait it
+        // out (the commit lands ~50ms in), not fail with SQLITE_BUSY.
+        let peer = Connection::open(&p).unwrap();
+        peer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            peer.execute_batch("COMMIT").unwrap();
+        });
+        s.add("http://peer/", "P", 1).unwrap();
+        t.join().unwrap();
+        assert_eq!(s.count().unwrap(), 1);
         std::fs::remove_dir_all(Path::new(&p).parent().unwrap()).ok();
     }
 

@@ -374,7 +374,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | SEC27 | Reader-mode sanitizer audit: readersanitizer.cpp — article HTML into a chrome-adjacent context; allowlist gaps = XSS — details below | done | 0 | 4 real fixes: meta-CSP on both render paths (probed: setHtml doc gets SOURCE origin — scripts/handlers/js-navs now dead, app runJavaScript unaffected), href-class scheme allowlist (file/blob/qrc/chrome/about dropped — blob:href was stored-HTML-in-source-origin on click), resource allowlist (file/blob dead), SMIL anim elements transparent, xml:base+cite covered, overlay file: routing gated to local articles — verified: CSP probe + readerSanitizer + readerModeContent 5/5 + reader-smoke all PASS; report .devin/security/SEC27-report.md |
 | SEC29 | PDF sanitize-pipeline audit: pdfsanitize.rs + pdfworker.cpp — verify the "sanitized before view" claim, fail-closed on unsanitizable files — details below | done | 0 | 4 real fixes: fail-open raw reload on sanitize/transfer failure closed (refuse()→error page, no bypass), GoToR/GoToE/GoToDp/Thread/RichMediaExecute/GoTo3DView actions stripped, /EF FileSpec payloads + FileAttachment/RichMedia/Screen/Sound/Movie/3D annots dropped, trailer-rooted reachability sweep drops orphan/incremental bodies — verified: cargo pdfsanitize 5/5, --pdf-smoke + --pdfview-smoke PASS offscreen; report .devin/security/SEC29-report.md |
 | SEC28 | Vault crypto coverage check: confirm VSEC01 audited KDF params + seal/unseal of the credential/autofill stores, not just the FFI seam — fill any gap — details below | done | 0 | VSEC01 audited the Rust crypto core only — 6 real gaps fixed in the no-rust backend + legacy retire: unbounded .kdf params (OOB heap writes via lanes overflow in vendored argon2), enablePassphraseProtection zeroed-but-registered derived key (seals ran under public all-zero key), plaintext autofill.dat kept as .migrated, sealString fail-open → plaintext proxy password, locked-store plaintext downgrade of autofill.dat, autofill decoded cache now zeroized on drop — verified: tst_securestore 20/20 + tst_autofill 10/10 under BOTH rustcore and CONFIG+=no-rust, no-rust check-warnings PASS, --autofill-smoke PASS, settingsdialog/NAM green, cargo 267/268 (1 pre-existing); report .devin/security/SEC28-report.md |
-| CONC01 | Concurrent store writers: two windows writing bookmarks.xbel + history.db — xbel write atomicity across windows, SQLite writer contention — details below | pending | 0 | |
+| CONC01 | Concurrent store writers: two windows writing bookmarks.xbel + history.db — xbel write atomicity across windows, SQLite writer contention — details below | done | 0 | 3 real fixes: rustcore save_path shared .rc-tmp name → atomic_write (pid+seq staging — torn-rename hole closed), XbelWriter QFile truncate → QSaveFile (no-rust + export path), history.db PRAGMA busy_timeout=5000 (peer-commit SQLITE_BUSY no longer surfaces); session.dat/QSettings/sitedecisions/profiles/vault audited already-atomic, last-writer-wins documented in details — verified: cargo 269/270 (1 pre-existing), tst_xbel 15/15, 12 concurrent standalone smoke runs on one profile all PASS |
 | INFRA01 | taskloop task-file race: runner read-modify-write clobbers concurrent edits (lost-update hit twice today) — flock around the row update — details below | pending | 0 | |
 | SEC30 | Omnibox paste self-XSS: pasting javascript:... + Enter executes via loadUrl's javascript branch — typed bookmarklets stay allowed, but strip the scheme from pasted text like Chrome — details below | pending | 0 | |
 
@@ -3620,6 +3620,60 @@ profile; both can write the stores:
 
 Fix: add file-level locking or single-writer arbitration where a
 torn write is possible; leave benign last-writer-wins documented.
+
+#### CONC01 audit result
+
+Context first: `SingleApplication` funnels normal launches into one
+process, but `--profile <id>` / standalone runs bypass it, so two
+processes CAN share one profile dir — the audit target is
+cross-process writers (and in-process callers that skip the store
+mutexes).
+
+- **bookmarks.xbel** — two real gaps fixed.
+  - rustcore `Bookmarks::save_path` staged to a FIXED
+    `bookmarks.xbel.rc-tmp`: two processes could interleave writes
+    into one temp inode and rename a torn mix.  Now routes through
+    `store::atomic_write` (per-writer staging name, fsync, rename;
+    0600 as a side benefit — bookmarks are browsing data, same
+    custody rationale as session.dat).
+  - no-rust `XbelWriter::write(fileName)` opened a plain QFile —
+    truncate-in-place, torn on crash and mid-write readable.  Now
+    QSaveFile (unique temp + atomic commit); also covers the
+    Export-to-.xbel path that shares the overload.
+- **history.db** — one rusqlite Connection per process behind a
+  Mutex (single-writer in-process by construction); WAL +
+  synchronous=NORMAL already set, but busy_timeout was unset, so a
+  peer process's commit window surfaced SQLITE_BUSY to the user.
+  Added `PRAGMA busy_timeout = 5000`.
+- **session.dat** — `store::atomic_write` already: pid-tagged temp +
+  fsync + rename; atomic verified.  Hardened the staging name with a
+  process-local sequence too, since callers like `session::save`
+  only lock the dir lookup — same-path in-process calls could have
+  shared one temp name.
+- **QSettings (settings.ini + containers registry)** — Qt6 conf-file
+  backend writes temp+rename (atomic); whole-file last-writer-wins
+  is the documented resolution.
+- **container/persona stores** — sitedecisions.json via
+  `store::atomic_write`; profiles registry/avatars via QSaveFile;
+  vault .arv seal/unseal via pid-tagged staging + rename.  All
+  already atomic.
+- **legacy history file / credentials / autofill / kdf / key** —
+  legacy "history" writer is dead under rustcore (QTemporaryFile+
+  rename under no-rust); creds/autofill via atomic_write (Rust) or
+  QSaveFile (C++ no-rust).  Already atomic.
+
+Deliberately NOT done: flock-style single-writer arbitration —
+last-writer-wins is the accepted semantic everywhere, so atomic
+install is the whole fix; no torn-write path remains.
+
+Verify: cargo test 269/270 (1 pre-existing profilevault failure),
+incl. new `busy_timeout_waits_out_a_peer_writer` (a second
+Connection holding BEGIN IMMEDIATE ~50ms — the store's write now
+waits it out instead of erroring) and `concurrent_saves_leave_a_
+parseable_file` (two threads x 60 saves on one path); tst_xbel 15/15
+incl. new writeInstallsAtomically; 3 rounds of 4 concurrent
+`--bookmarks-smoke`/`--history-smoke` standalone runs on one profile
+— all PASS, history.db integrity ok, no temp residue.
 
 ### INFRA01
 

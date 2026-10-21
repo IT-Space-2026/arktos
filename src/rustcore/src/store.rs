@@ -505,9 +505,22 @@ pub fn open_with_key(key: &[u8; KEY_SIZE], blob: &[u8]) -> RcResult<Vec<u8>> {
 }
 
 /// Write-temp-then-rename with 0600 perms — the QSaveFile contract.
+///
+/// CONC01: the staging name carries pid + a process-local sequence.
+/// The pid keeps concurrent same-path writers in different processes
+/// (standalone instances share a profile dir) from interleaving one
+/// temp file into a torn rename; the sequence does the same for
+/// in-process callers that reach atomic_write without holding a
+/// shared lock (session::save locks only the dir lookup).
 pub fn atomic_write(path: &Path, data: &[u8]) -> RcResult<()> {
+    static TMP_SEQ: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
     let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".{}.tmp", std::process::id()));
+    name.push(format!(
+        ".{}-{}.tmp",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     let tmp = path.with_file_name(name);
     {
         let mut opts = fs::OpenOptions::new();
