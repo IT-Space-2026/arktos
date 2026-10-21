@@ -25,6 +25,7 @@ on:
   workflow_dispatch:
   push:
     branches: [master]
+    tags: ['v*']
     # lane bookkeeping (task tables, worklog, loop logs) must not
     # trigger — or cancel — packaging runs.  .devin/pkg-*.sh stays a
     # real trigger since it IS the packaging logic.
@@ -300,3 +301,32 @@ jobs:
         with:
           name: arktos-macos
           path: '*.dmg'
+
+  release:
+    needs: [deb, rpm, windows, macos]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: arktos-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          shopt -s nullglob
+          assets=(release-assets/*.deb release-assets/*.rpm \
+                  release-assets/*.dmg release-assets/*Installer*.exe)
+          [ ${#assets[@]} -gt 0 ] || { echo "no release assets collected" >&2; exit 1; }
+          ls -la release-assets/
+          gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
+            --title "Arktos ${GITHUB_REF_NAME#v}" \
+            --notes-file BuildProcess/release-notes.md

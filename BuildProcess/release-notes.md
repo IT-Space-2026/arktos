@@ -1,0 +1,64 @@
+Arktos 1.0 — first release. An experimental cross-platform web browser
+built on Qt 6 and QtWebEngine (Chromium), continuing the 2009 Arora
+browser as a maintained fork — rebuilt around privacy hardening,
+containers, Tor support and a modernized UI.
+
+## Highlights
+
+- **Three rendering engines** — Chromium (Qt WebEngine) default, plus
+  experimental Servo and WPE WebKit backends with a per-tab engine
+  switcher and honest capability reporting per engine.
+- **Tor browsing windows** — managed bundled tor daemon, SOCKS5-only
+  egress, dedicated off-the-record profile, .onion reachability, live
+  circuit display and "new circuit for this site", fail-closed startup
+  proxying.
+- **Private tabs** — true off-the-record browsing (Chromium OTR
+  profile), private state torn down when the last private page closes,
+  excluded from history/session/recently-closed/download records.
+- **Profiles, personas and containers** — isolated per-window browsing
+  profiles under `profiles/<id>/`, site-bound container tabs with
+  "always open this site in…" rules.
+- **Privacy controls** — HTTPS-first upgrade + HTTPS-Only mode,
+  Global Privacy Control (`Sec-GPC`), tracking-parameter stripping,
+  domain blocklist, per-site JavaScript control with security tiers,
+  site-trust panel (Tranco/Majestic rank, lookalike domains, threat
+  list), second-opinion Rust TLS verification.
+- **Ad blocking** — network-level blocking, `$redirect` stub serving
+  and declarative cosmetic filtering, per-profile policy.
+- **Extensions** — Chrome MV3 support: consent-gated install,
+  integrity pinning, opt-in verified updates, per-session health
+  check, and a hosted `chrome.*` runtime for APIs Qt WebEngine lacks.
+  Bitwarden bundled — limited support, documented honestly.
+- **Tabs** — groups with collapse, pinning, drag between windows,
+  clone, recently-closed restore, idle suspend/discard and
+  memory-pressure purge, command palette.
+- **Downloads** — parallel-segment accelerated engine (Rust) running
+  in a bubblewrap-sandboxed worker on Linux, sidebar panel with
+  detail cards, external program handoff.
+- **Rust core** — bookmark/history/session/omnibox stores, credential
+  vault and sealed autofill store, parsers for untrusted input,
+  cargo-deny/audit supply-chain gates.
+- **Reader mode, Picture-in-Picture, PDF viewer** — PDFs sanitized
+  before view; in-browser PDF tooling.
+- **Security hardening** — extension navigation locks, verified
+  message-relay senders, nonce-bound interstitials, sandbox policy
+  (bwrap / Seatbelt / AppContainer / unveil+pledge), scheme-handler
+  initiator gates, untrusted-input URL filtering.
+
+## Packages
+
+- **arktos_1.0_amd64.deb** — Debian/Ubuntu (`apt install ./arktos_1.0_amd64.deb`)
+- **arktos-1.0-1.x86_64.rpm** — Fedora/openSUSE (`dnf install`/`zypper install`)
+- **Arktos.dmg** — macOS, drag to Applications
+- **Arktos 1.0 Installer.exe** — Windows 11 x64 installer
+
+## Caveats
+
+- Experimental software — expect rough edges; not yet a daily-driver
+  replacement.
+- Binaries are unsigned: macOS Gatekeeper and Windows SmartScreen will
+  warn; verify via the source tag.
+- Bundled Bitwarden is limited to tested flows (unlock, autofill) —
+  see the README for the honest capability matrix.
+
+Source: https://github.com/IT-Space-2026/arktos — website: https://arktos-browser.com
