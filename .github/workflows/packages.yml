@@ -92,9 +92,12 @@ jobs:
         # Building it BEFORE qmake matters: .qmake.conf auto-enables
         # CONFIG+=servo only while the artifact exists on disk — the
         # backend must be compiled in for the package to carry Servo.
-        # clang+libclang feed mozjs-sys's bindgen.
+        # clang+libclang feed mozjs-sys's bindgen; fontconfig/freetype/
+        # expat are yeslogic-*-sys pkg-config lookups.
         run: |
-          sudo apt-get install -y clang libclang-dev
+          sudo apt-get install -y clang libclang-dev \
+              libfontconfig-dev libfreetype6-dev libexpat1-dev \
+              libglib2.0-dev libunwind-dev
           # The crate's .cargo/config.toml pins a machine-local lld
           # wrapper — override it for the runner's real path (the
           # debug link still wants a memory-lean linker).
@@ -150,7 +153,9 @@ jobs:
 
       - name: Build servo-embed cdylib
         run: |
-          sudo apt-get install -y clang libclang-dev
+          sudo apt-get install -y clang libclang-dev \
+              libfontconfig-dev libfreetype6-dev libexpat1-dev \
+              libglib2.0-dev libunwind-dev
           export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$PWD/spikes/servo/servo-embed/cc-lld.sh"
           cargo build --release --manifest-path spikes/servo/servo-embed/Cargo.toml
           test -f spikes/servo/servo-embed/target/release/libservo_embed.so
@@ -215,8 +220,12 @@ jobs:
         # servo-embed's .cargo/config.toml only pins a linker for the
         # linux triple — windows-msvc links plain.  Built BEFORE qmake
         # so .qmake.conf auto-enables CONFIG+=servo off servo_embed.dll.
+        # longpaths + CLI fetch: the servo checkout contains WPT test
+        # paths that blow past MAX_PATH=260 under libgit2.
         shell: pwsh
         run: |
+          git config --global core.longpaths true
+          $env:CARGO_NET_GIT_FETCH_WITH_CLI = 'true'
           cargo build --release --manifest-path spikes/servo/servo-embed/Cargo.toml
           if (-not (Test-Path spikes\servo\servo-embed\target\release\servo_embed.dll)) { throw "servo_embed.dll missing" }
 
