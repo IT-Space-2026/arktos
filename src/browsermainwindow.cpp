@@ -1012,10 +1012,8 @@ bool BrowserMainWindow::restoreState(const QByteArray &state)
                               ->minimumWidth() * 3) {
             QList<int> sizes;
             sizes << (int)((double)barWidth * .80)
-                  << m_engineIndicatorHost->sizeHint().width();
-            if (m_extensionActionBar)
-                sizes << m_extensionActionBar->sizeHint().width();
-            sizes << (int)((double)barWidth * .20);
+                  << m_engineIndicatorHost->sizeHint().width()
+                  << (int)((double)barWidth * .20);
             m_navigationSplitter->setSizes(sizes);
         }
     }
@@ -2284,16 +2282,16 @@ void BrowserMainWindow::setupToolBar()
     updateEngineIndicator();
 
     // EXT08: extension action cluster — one button per enabled
-    // extension that declares an action popup, in the splitter cell
-    // right after the engine indicator.  Private and tor windows get
-    // no strip at all: their profiles may never load extensions, so
-    // there is nothing for it to show.
+    // extension that declares an action popup.  It is NOT a splitter
+    // cell: nested mid-row it sat between the url field and the
+    // search field, reading as "stuck in the middle" of the bar.
+    // It is inserted as a plain toolbar item at the right edge
+    // (before the sidebar toggle) once the sidebar action lands.
+    // Private and tor windows get no strip at all: their profiles
+    // may never load extensions, so there is nothing for it to show.
     if (!BrowserApplication::isPrivate()) {
         m_extensionActionBar = new ExtensionActionBar(m_navigationBar);
         m_extensionActionBar->setIconSize(m_navigationBar->iconSize());
-        m_navigationSplitter->addWidget(m_extensionActionBar);
-        m_navigationSplitter->setCollapsible(2, false);
-        m_navigationSplitter->setStretchFactor(2, 0);
     }
 
     m_toolbarSearch = new ToolbarSearch(m_navigationBar);
@@ -2376,6 +2374,18 @@ void BrowserMainWindow::setupToolBar()
     m_viewSidebarAction->setProperty(kNavBarItemIdProperty,
                                      QLatin1String("sidebar"));
 
+    // EXT08 placement: the extension cluster hugs the bar's right
+    // edge — ahead of the sidebar toggle, after the whole
+    // url|search splitter — the Firefox/Chrome convention instead
+    // of a cell stranded between the two fields.
+    if (m_extensionActionBar) {
+        QAction *extensionAction =
+            m_navigationBar->insertWidget(m_viewSidebarAction,
+                                          m_extensionActionBar);
+        extensionAction->setProperty(kNavBarItemIdProperty,
+                                     QLatin1String("extensions"));
+    }
+
     // PROF01: the profile button closes the bar — the LAST widget on
     // the right edge, face-matched to the app-menu logo on the left
     // (the shared ~1.84x accent face, same NavBarAccentButton base).
@@ -2402,10 +2412,8 @@ void BrowserMainWindow::setupToolBar()
     if (splitterWidth > 0) {
         QList<int> sizes;
         sizes << (int)((double)splitterWidth * .80)
-              << m_engineIndicatorHost->sizeHint().width();
-        if (m_extensionActionBar)
-            sizes << m_extensionActionBar->sizeHint().width();
-        sizes << (int)((double)splitterWidth * .20);
+              << m_engineIndicatorHost->sizeHint().width()
+              << (int)((double)splitterWidth * .20);
         m_navigationSplitter->setSizes(sizes);
     }
 

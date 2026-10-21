@@ -21,7 +21,11 @@ include($$PWD/../analyzer.pri)
 INCLUDEPATH += $$PWD $$PWD/utils
 DEPENDPATH += $$PWD $$PWD/utils
 
-QT += core gui widgets network printsupport webenginewidgets quickwidgets webchannel uitools core5compat
+# svg: every bundled icon and the profile silhouette/aurora strip are
+# SVG resources decoded through imageformats/libqsvg — linking QtSvg is
+# what makes macdeployqt/windeployqt ship that plugin; without it the
+# macOS/Windows bundles decode no SVG outside the icon-engine path.
+QT += core gui widgets network printsupport webenginewidgets quickwidgets webchannel uitools core5compat svg
 # DOWN03: org.freedesktop.FileManager1 ShowItems (reveal-in-FM with the
 # file selected).  The downloadmanager.cpp call site stays behind
 # QT_DBUS_LIB so builds without the module keep the folder fallback.

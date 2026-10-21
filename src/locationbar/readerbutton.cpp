@@ -27,6 +27,7 @@
 #include <qevent.h>
 #include <qiconengine.h>
 #include <qpainter.h>
+#include <qpainterpath.h>
 
 namespace {
 
@@ -95,25 +96,35 @@ public:
                         : m_palette.color(m_suggested
                                               ? QPalette::Accent
                                               : QPalette::ButtonText));
-        const QRectF page(2.5, 1.5, 11, 13);
+        // Dog-eared document: outline with a folded top-right corner
+        // and three round-cap text lines — reads as "article" at
+        // 16px where a plain rounded rect just looks like a square.
+        QPainterPath page;
+        page.moveTo(3.0, 1.5);
+        page.lineTo(10.0, 1.5);
+        page.lineTo(13.5, 5.0);
+        page.lineTo(13.5, 14.5);
+        page.lineTo(3.0, 14.5);
+        page.closeSubpath();
+        QPainterPath fold;
+        fold.moveTo(10.0, 1.5);
+        fold.lineTo(10.0, 5.0);
+        fold.lineTo(13.5, 5.0);
         if (m_active) {
             painter.setPen(Qt::NoPen);
             painter.setBrush(ArktosStyle::accentFillColor(m_palette));
-            painter.drawRoundedRect(page, 1.5, 1.5);
+            painter.drawPath(page);
         }
-        painter.setPen(QPen(fg, m_suggested ? 1.4 : 1.1));
+        QPen pen(fg, m_suggested ? 1.4 : 1.15);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(pen);
         painter.setBrush(Qt::NoBrush);
-        painter.drawRoundedRect(page, 1.5, 1.5);
-        painter.drawLine(QPointF(4.5, 5), QPointF(11.5, 5));
-        painter.drawLine(QPointF(4.5, 8), QPointF(11.5, 8));
-        painter.drawLine(QPointF(4.5, 11), QPointF(11.5, 11));
-        if (m_suggested) {
-            const QPalette::ColorGroup group = mode == QIcon::Disabled
-                ? QPalette::Disabled : QPalette::Normal;
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(m_palette.color(group, QPalette::Accent));
-            painter.drawEllipse(QPointF(12.6, 3.0), 1.8, 1.8);
-        }
+        painter.drawPath(page);
+        painter.drawPath(fold);
+        painter.drawLine(QPointF(5.2, 8.0), QPointF(11.3, 8.0));
+        painter.drawLine(QPointF(5.2, 10.6), QPointF(11.3, 10.6));
+        painter.drawLine(QPointF(5.2, 13.2), QPointF(9.6, 13.2));
         painter.end();
         return pixmap;
     }

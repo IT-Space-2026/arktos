@@ -27,6 +27,7 @@
 #include <qfile.h>
 #include <qguiapplication.h>
 #include <qhash.h>
+#include <qicon.h>
 #include <qimage.h>
 #include <qimagereader.h>
 #include <qpainter.h>
@@ -185,10 +186,17 @@ QImage ProfileIdentity::avatarSource() const
             m_source = reader.read();
         }
         // PROF02: an unreadable/corrupt avatar file falls back to the
-        // silhouette rather than painting nothing.
+        // silhouette rather than painting nothing.  The QIcon path
+        // rasterizes through iconengines/qsvgicon — shipped even in
+        // bundles whose imageformats/qsvg decoder is missing (older
+        // macOS dmgs), where QImageReader returns a null image and
+        // the button falls back to painting its "Profile" text.
         if (m_source.isNull())
             m_source = QImageReader(
                 QLatin1String(kSilhouetteResource)).read();
+        if (m_source.isNull())
+            m_source = QIcon(QLatin1String(kSilhouetteResource))
+                .pixmap(QSize(AvatarSize, AvatarSize)).toImage();
     }
     return m_source;
 }

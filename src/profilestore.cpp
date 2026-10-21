@@ -32,6 +32,7 @@
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qguiapplication.h>
+#include <qicon.h>
 #include <qimagereader.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
@@ -467,9 +468,15 @@ QPixmap ProfileStore::avatarPixmap(const ProfileContext &context,
         }
     }
     // An unreadable/corrupt avatar falls back to the silhouette rather
-    // than painting nothing.
+    // than painting nothing.  Same QIcon rasterizer fallback as
+    // ProfileIdentity: iconengines/qsvgicon ships in bundles that lack
+    // the imageformats/qsvg decoder QImageReader needs.
     if (source.isNull())
         source = QImageReader(QLatin1String(kSilhouetteResource)).read();
+    if (source.isNull())
+        source = QIcon(QLatin1String(kSilhouetteResource))
+            .pixmap(QSize(ProfileIdentity::AvatarSize,
+                          ProfileIdentity::AvatarSize)).toImage();
     if (source.isNull() || extent <= 0)
         return QPixmap();
 
