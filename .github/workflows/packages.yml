@@ -69,8 +69,11 @@ jobs:
           QTDIR="$(dirname "$(dirname "$(readlink -f "$QMAKE")")")"
           echo "QTDIR=$QTDIR" >> "$GITHUB_ENV"
 
-      - name: Install tor runtime deps (bundled tor's ldd targets)
-        run: sudo apt-get update -qq && sudo apt-get install -y libevent-2.1-7
+      - name: Install tor runtime deps + verify tools
+        # libevent-2.1-7: bundled tor's ldd target.  bubblewrap: the
+        # pack verify leg's bwrap launcher — present on the 26.04
+        # image, absent on 24.04 (exit 127 right after dpkg install).
+        run: sudo apt-get update -qq && sudo apt-get install -y libevent-2.1-7 bubblewrap
 
       - name: Build .deb
         run: ./.devin/pkg-deb.sh
