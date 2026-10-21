@@ -254,6 +254,32 @@ impl HistoryStore {
         Ok(())
     }
 
+    /// Deletes every visit at or before `cutoff_ms` — the bulk
+    /// retention expiry behind HistoryManager's daysToExpire rule
+    /// (the caller computes the local-time boundary).  Icons stay;
+    /// the hosts rollup is wiped and lazily rebuilt.  Returns the
+    /// deleted row count.
+    pub fn expire_older_than(&mut self, cutoff_ms: i64) -> RcResult<i64> {
+        let removed = {
+            let conn = self.conn()?;
+            let removed = conn
+                .execute(
+                    "DELETE FROM visits WHERE visited_at <= ?1",
+                    params![cutoff_ms],
+                )
+                .map_err(|e| sql_fail("history expire", e))?;
+            if removed > 0 {
+                conn.execute("DELETE FROM hosts", [])
+                    .map_err(|e| sql_fail("hosts reset", e))?;
+            }
+            removed
+        };
+        if removed > 0 {
+            self.entries = None;
+        }
+        Ok(removed as i64)
+    }
+
     // ---- first-seen rollup (TRUST01) --------------------------------
 
     /// The one-shot backfill: pre-TRUST01 databases have visits but
@@ -372,47 +398,64 @@ impl HistoryStore {
         self.path = None;
     }
 
+    /// Rows of a visited_at-bounded listing, newest-first with the
+    /// same consecutive-duplicate collapse the legacy parser applied:
+    /// rows identical in (url, ts) merge, preferring a non-empty
+    /// title in the run.  `from_ms`/`until_ms` are inclusive bounds
+    /// (None = open).
+    fn ranged_entries(
+        &mut self,
+        from_ms: Option<i64>,
+        until_ms: Option<i64>,
+    ) -> RcResult<Vec<Entry>> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT url, title, visited_at FROM visits
+                 WHERE visited_at >= ?1 AND visited_at <= ?2
+                 ORDER BY visited_at DESC, seq DESC",
+            )
+            .map_err(|e| sql_fail("history list", e))?;
+        let rows = stmt
+            .query_map(
+                params![
+                    from_ms.unwrap_or(i64::MIN),
+                    until_ms.unwrap_or(i64::MAX)
+                ],
+                |r| {
+                    Ok(Entry {
+                        url: r.get(0)?,
+                        title: r.get(1)?,
+                        visited_at: r.get(2)?,
+                    })
+                },
+            )
+            .map_err(|e| sql_fail("history list", e))?;
+        let mut out: Vec<Entry> = Vec::new();
+        for row in rows {
+            let e = row.map_err(|e| sql_fail("history list", e))?;
+            if let Some(last) = out.last_mut() {
+                if last.url == e.url && last.visited_at == e.visited_at {
+                    // Consecutive duplicate: collapse, preferring
+                    // a non-empty title (the parser's merge).
+                    if last.title.is_empty() {
+                        last.title = e.title;
+                    }
+                    continue;
+                }
+            }
+            out.push(e);
+        }
+        Ok(out)
+    }
+
     /// The deduped, newest-first listing: consecutive rows identical
     /// in (url, title, ts) collapse into one, keeping the newest
     /// non-empty title in the run — the old HistoryParser rule, so a
     /// save/load round trip dedupes exactly like the legacy file.
     fn entries(&mut self) -> RcResult<&Vec<Entry>> {
         if self.entries.is_none() {
-            let out = {
-                let conn = self.conn()?;
-                let mut stmt = conn
-                    .prepare(
-                        "SELECT url, title, visited_at FROM visits
-                         ORDER BY visited_at DESC, seq DESC",
-                    )
-                    .map_err(|e| sql_fail("history list", e))?;
-                let rows = stmt
-                    .query_map([], |r| {
-                        Ok(Entry {
-                            url: r.get(0)?,
-                            title: r.get(1)?,
-                            visited_at: r.get(2)?,
-                        })
-                    })
-                    .map_err(|e| sql_fail("history list", e))?;
-                let mut out: Vec<Entry> = Vec::new();
-                for row in rows {
-                    let e = row.map_err(|e| sql_fail("history list", e))?;
-                    if let Some(last) = out.last_mut() {
-                        if last.url == e.url && last.visited_at == e.visited_at {
-                            // Consecutive duplicate: collapse, preferring
-                            // a non-empty title (the parser's merge).
-                            if last.title.is_empty() {
-                                last.title = e.title;
-                            }
-                            continue;
-                        }
-                    }
-                    out.push(e);
-                }
-                out
-            };
-            self.entries = Some(out);
+            self.entries = Some(self.ranged_entries(None, None)?);
         }
         Ok(self.entries.as_ref().unwrap())
     }
@@ -432,6 +475,55 @@ impl HistoryStore {
             serde_json::json!({"url": e.url, "title": e.title, "ts": e.visited_at})
                 .to_string(),
         ))
+    }
+
+    /// The filtered listing (RC04): one JSON spec object in —
+    ///   {"term": str, "from_ms": i64, "until_ms": i64,
+    ///    "limit": i64, "offset": i64}
+    /// — a JSON array of {"url","title","ts"} rows out in the same
+    /// deduped newest-first order entries() iterates.  "term" is a
+    /// case-insensitive substring on url OR title (the history
+    /// dialog's all-columns fixed-string match); the range bounds
+    /// are inclusive; offset+limit paginate after filtering; an
+    /// absent or negative limit is unbounded.
+    pub fn query(&mut self, spec_json: &str) -> RcResult<String> {
+        let spec: serde_json::Value =
+            serde_json::from_str(spec_json).map_err(|e| Fail {
+                status: RcStatus::InvalidArgument,
+                msg: format!("bad history query: {e}"),
+            })?;
+        if !spec.is_object() {
+            return Err(Fail {
+                status: RcStatus::InvalidArgument,
+                msg: "history query must be a JSON object".into(),
+            });
+        }
+        let num = |k: &str| spec.get(k).and_then(|v| v.as_i64());
+        let term = spec
+            .get("term")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let mut entries = self.ranged_entries(num("from_ms"), num("until_ms"))?;
+        if !term.is_empty() {
+            entries.retain(|e| {
+                e.url.to_lowercase().contains(&term)
+                    || e.title.to_lowercase().contains(&term)
+            });
+        }
+        let offset = num("offset").unwrap_or(0).max(0) as usize;
+        let rows: Vec<serde_json::Value> = entries
+            .iter()
+            .skip(offset)
+            .take(match num("limit") {
+                Some(l) if l >= 0 => l as usize,
+                _ => usize::MAX,
+            })
+            .map(|e| {
+                serde_json::json!({"url": e.url, "title": e.title, "ts": e.visited_at})
+            })
+            .collect();
+        Ok(serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into()))
     }
 
     // ---- icons ---------------------------------------------------------
@@ -665,6 +757,87 @@ mod tests {
         assert_eq!(s.count().unwrap(), 1);
         s.clear_since(0).unwrap();
         assert_eq!(s.count().unwrap(), 0);
+        std::fs::remove_dir_all(Path::new(&p).parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn query_filters_ranges_and_paginates() {
+        let p = temp_db("query");
+        let mut s = store_at(&p);
+        s.add("http://a.example/one", "Alpha", 100).unwrap();
+        s.add("http://a.example/two", "Beta", 200).unwrap();
+        // A raw duplicate row collapses before filtering/paging.
+        s.add("http://a.example/two", "Beta", 200).unwrap();
+        s.add("http://b.example/", "Gamma page", 300).unwrap();
+        s.add("http://c.example/", "Delta", 400).unwrap();
+        let rows = |json: &str| -> Vec<serde_json::Value> {
+            serde_json::from_str(json).unwrap()
+        };
+
+        // Empty spec = the full deduped listing, newest first.
+        let r = rows(&s.query("{}").unwrap());
+        assert_eq!(r.len(), 4);
+        assert_eq!(r[0]["ts"], 400);
+        assert_eq!(r[3]["url"], "http://a.example/one");
+
+        // term on the url substring, case-insensitive.
+        let r = rows(&s.query(r#"{"term":"a.example"}"#).unwrap());
+        assert_eq!(r.len(), 2);
+        let r = rows(&s.query(r#"{"term":"B.EXAMPLE"}"#).unwrap());
+        assert_eq!(r.len(), 1);
+        // term on a title-only match.
+        let r = rows(&s.query(r#"{"term":"gamma"}"#).unwrap());
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0]["url"], "http://b.example/");
+
+        // Range bounds are inclusive on both ends.
+        let r =
+            rows(&s.query(r#"{"from_ms":200,"until_ms":300}"#).unwrap());
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0]["ts"], 300);
+        assert_eq!(r[1]["ts"], 200);
+
+        // offset/limit paginate after filtering.
+        let r = rows(&s.query(r#"{"offset":1,"limit":2}"#).unwrap());
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0]["ts"], 300);
+        let r = rows(&s.query(r#"{"offset":3,"limit":5}"#).unwrap());
+        assert_eq!(r.len(), 1);
+        // A negative limit is unbounded.
+        let r = rows(&s.query(r#"{"limit":-1}"#).unwrap());
+        assert_eq!(r.len(), 4);
+
+        // A non-object spec is an argument error, not "match all".
+        assert!(s.query("[1]").is_err());
+        assert!(s.query("not json").is_err());
+        std::fs::remove_dir_all(Path::new(&p).parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn expire_older_than_deletes_through_the_boundary() {
+        let p = temp_db("expire");
+        let mut s = store_at(&p);
+        s.icon_set("b.example", &[9], 1).unwrap();
+        s.add("http://a.example/", "A", 100).unwrap();
+        s.add("http://b.example/", "B", 200).unwrap();
+        // A duplicate raw row of the expired visit must not linger —
+        // the per-entry remove the Qt side used left it behind.
+        s.add("http://b.example/", "B", 200).unwrap();
+        s.add("http://c.example/", "C", 300).unwrap();
+
+        // The cutoff is inclusive.
+        assert_eq!(s.expire_older_than(200).unwrap(), 3);
+        assert_eq!(s.count().unwrap(), 1);
+        assert!(s
+            .entry_at(0)
+            .unwrap()
+            .unwrap()
+            .contains("http://c.example/"));
+        // Icons are not retention data — they survive expiry.
+        assert_eq!(s.icon_get("b.example").unwrap(), vec![9]);
+        // A cutoff below every row is a no-op.
+        assert_eq!(s.expire_older_than(0).unwrap(), 0);
+        assert_eq!(s.count().unwrap(), 1);
         std::fs::remove_dir_all(Path::new(&p).parent().unwrap()).ok();
     }
 

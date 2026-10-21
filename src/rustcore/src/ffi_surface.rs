@@ -983,6 +983,58 @@ fn history_ffi_roundtrip() {
         RcStatus::NotFound
     );
 
+    // RC04: the filtered-listing query surface.
+    let q_all = take_str(unsafe { crate::rc_hist_query(cs("{}").as_ptr()) })
+        .unwrap();
+    let all: serde_json::Value = serde_json::from_str(&q_all).unwrap();
+    assert_eq!(all.as_array().unwrap().len(), 2);
+    let term = take_str(unsafe {
+        crate::rc_hist_query(cs(r#"{"term":"two"}"#).as_ptr())
+    })
+    .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&term).unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let ranged = take_str(unsafe {
+        crate::rc_hist_query(
+            cs(r#"{"from_ms":1500,"until_ms":2500}"#).as_ptr(),
+        )
+    })
+    .unwrap();
+    let ranged: serde_json::Value = serde_json::from_str(&ranged).unwrap();
+    assert_eq!(ranged.as_array().unwrap().len(), 1);
+    assert_eq!(ranged[0]["url"], "http://two/");
+    let page = take_str(unsafe {
+        crate::rc_hist_query(cs(r#"{"offset":1,"limit":1}"#).as_ptr())
+    })
+    .unwrap();
+    let page: serde_json::Value = serde_json::from_str(&page).unwrap();
+    assert_eq!(page.as_array().unwrap().len(), 1);
+    assert_eq!(page[0]["url"], "http://one/");
+    // Malformed specs are errors, never "match all".
+    assert!(unsafe { crate::rc_hist_query(cs("[1]").as_ptr()) }.is_null());
+    assert!(unsafe { crate::rc_hist_query(ptr::null()) }.is_null());
+
+    // RC04: bulk retention expiry returns the deleted count and
+    // respects the inclusive boundary.
+    let mut removed: i64 = -1;
+    assert_eq!(
+        unsafe { crate::rc_hist_expire_older_than(999, &mut removed) },
+        RcStatus::Ok
+    );
+    assert_eq!(removed, 0);
+    assert_eq!(
+        unsafe {
+            crate::rc_hist_expire_older_than(1000, ptr::null_mut())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_hist_count() }, 1);
+
     // Ranged + full clears and remove.
     assert_eq!(
         unsafe { crate::rc_hist_remove(u2.as_ptr(), t2.as_ptr(), 2000) },

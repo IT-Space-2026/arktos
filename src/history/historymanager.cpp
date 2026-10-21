@@ -387,6 +387,19 @@ void HistoryManager::checkForExpired()
 #endif
     QDateTime now = QDateTime::currentDateTime();
     int nextTimeout = 0;
+#ifdef ARKTOS_RUSTCORE
+    // The bulk-expiry boundary matching the per-item check below: an
+    // entry is expired when (its date + daysToExpire at its own
+    // time-of-day) is less than a full second ahead of now —
+    // secsTo truncates — i.e. visited_at <= this ms boundary (the
+    // two forms can differ by an hour only inside a DST transition).
+    // A ranged delete also clears duplicate raw rows a per-entry
+    // remove would leave behind.
+    const qint64 expireCutoffMs =
+        QDateTime(now.date().addDays(-m_daysToExpire), now.time())
+            .toMSecsSinceEpoch() + 999;
+    bool storeExpired = false;
+#endif
 
     while (!m_history.isEmpty()) {
         QDateTime checkForExpired = m_history.last().dateTime;
@@ -403,12 +416,14 @@ void HistoryManager::checkForExpired()
         // remove from saved file also
         m_lastSavedUrl.clear();
 #ifdef ARKTOS_RUSTCORE
-        rc_hist_remove(item.url.toUtf8().constData(),
-                       item.title.toUtf8().constData(),
-                       item.dateTime.toMSecsSinceEpoch());
+        storeExpired = true;
 #endif
         emit entryRemoved(item);
     }
+#ifdef ARKTOS_RUSTCORE
+    if (storeExpired)
+        rc_hist_expire_older_than(expireCutoffMs, nullptr);
+#endif
 
     if (nextTimeout > 0)
         m_expiredTimer.start(nextTimeout * 1000);

@@ -2478,6 +2478,70 @@ pub unsafe extern "C" fn rc_hist_clear_since(since_ms: i64) -> RcStatus {
     st
 }
 
+/// Deletes every visit at or before `cutoff_ms` (ms-epoch) — the bulk
+/// retention expiry behind HistoryManager's daysToExpire rule; the
+/// caller computes the local-time boundary.  Icons are kept.
+/// `out_removed` may be null; when given it receives the deleted
+/// row count.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_expire_older_than(
+    cutoff_ms: i64,
+    out_removed: *mut i64,
+) -> RcStatus {
+    let st = status_of(|| {
+        let removed = history::with(|s| s.expire_older_than(cutoff_ms))?;
+        if !out_removed.is_null() {
+            unsafe { *out_removed = removed };
+        }
+        Ok(())
+    });
+    if st == RcStatus::Ok {
+        notify::emit("history");
+    }
+    st
+}
+
+/// Runs a filtered listing query — the store-side query surface
+/// (RC04).  `spec_json` is an object, all fields optional:
+///   "term"     case-insensitive substring on url OR title (the
+///              history dialog's all-columns fixed-string match)
+///   "from_ms"  inclusive visited_at lower bound (ms-epoch)
+///   "until_ms" inclusive visited_at upper bound
+///   "limit"    max rows returned — absent or <0 is unbounded
+///   "offset"   rows skipped after filtering
+/// Returns a JSON array [{"url","title","ts"}, ...] in the same
+/// deduped newest-first order rc_hist_entry_at iterates.  NULL on a
+/// malformed spec or an unopened store; free with rc_string_free().
+///
+/// # Safety
+/// `spec_json` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_query(spec_json: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(spec) = (unsafe { util::cstr(spec_json) }) else {
+            error::set_error("bad query pointer");
+            return ptr::null_mut();
+        };
+        history::with(|h| match h.query(spec) {
+            Ok(j) => util::to_c_string(j),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        })
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 // ---- session store (RCORE03) -------------------------------------------
 
 /// Validates the JSON session manifest and atomically installs it as

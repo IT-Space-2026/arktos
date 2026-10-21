@@ -594,6 +594,26 @@ RcStatus rc_hist_clear(void);
  * clear-private-data plan (CLR01).  Icons are kept. */
 RcStatus rc_hist_clear_since(int64_t sinceMs);
 
+/* Deletes every visit at or before cutoffMs — the bulk retention
+ * expiry behind HistoryManager's daysToExpire rule (the caller
+ * computes the local-time boundary).  Icons are kept.  outRemoved
+ * may be NULL; when given it receives the deleted row count. */
+RcStatus rc_hist_expire_older_than(int64_t cutoffMs,
+                                   int64_t *outRemoved);
+
+/* Filtered listing — the store-side query surface (RC04).  specJson
+ * is an object, all fields optional:
+ *   "term"     case-insensitive substring on url OR title (the
+ *              history dialog's all-columns fixed-string match)
+ *   "from_ms"  inclusive visited_at lower bound (ms-epoch)
+ *   "until_ms" inclusive visited_at upper bound
+ *   "limit"    max rows returned — absent or <0 is unbounded
+ *   "offset"   rows skipped after filtering
+ * Returns a JSON array [{"url","title","ts"}, ...] in the same
+ * deduped newest-first order rc_hist_entry_at iterates.  NULL on a
+ * malformed spec or an unopened store; rc_string_free. */
+char *rc_hist_query(const char *specJsonUtf8);
+
 /* Per-host favicons (the HIST01 persistence folded into the core):
  * PNG blobs keyed by host. */
 RcStatus rc_hist_icon_set(const char *hostUtf8,

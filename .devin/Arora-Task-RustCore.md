@@ -31,7 +31,7 @@ Rules for the agent working this file:
 | RC01 | Rust-core architecture audit + target design doc | done | 1 | audit landed .devin/RUSTCORE-ARCH.md — full store map w/ keep-move decisions + format choices (settings+profiles are the real gaps; RC04-06 stores already landed in retired lane); facade sketch + per-profile handle scoping spec; verified cargo test 270/270 green |
 | RC02 | rustcore `settings` module — typed per-profile key-value store + FFI | done | 1 | settings store + ini import + rc_settings_* FFI + RustCoreSettings landed; verified cargo 282/282, real-QSettings ini via FFI 18/18, rust+no-rust make -j2 link clean; fixed pre-existing no-rust tst_cookiejar include bug |
 | RC03 | rustcore `profiles` module — persona registry + roots under home dir + FFI | done | 0 | profiles.json registry in rustcore behind rc_profiles_* (byte-compatible QJsonDocument::Indented writer), RcProfiles handle + RustCoreProfiles wrapper, BrowserPaths layout mirrored; verified cargo 292/292, tst_rustprofiles 6/6, rust + no-rust make -j2 clean |
-| RC04 | rustcore `history` module — visit/query/clear, compat with existing store | pending | 0 | needs:task:RC02 needs:tool:cargo |
+| RC04 | rustcore `history` module — visit/query/clear, compat with existing store | done | 0 | history module verified + completed: store was already landed (sqlite history.db, legacy QDataStream import, icons/hosts/suggest); added rc_hist_query (term/date-range/limit-offset) + rc_hist_expire_older_than bulk retention; verified cargo 294/294, tst_historymanager 49/49 + historyui 8/8 + filtermodel 37/37 offscreen, rust + no-rust make -j2 clean |
 | RC05 | rustcore `bookmarks` module — tree ops + XBEL import/export compat | pending | 0 | needs:task:RC02 needs:tool:cargo |
 | RC06 | rustcore `policy` module — cookie/storage/site-decision/trust data + FFI | pending | 0 | needs:task:RC01 needs:tool:cargo |
 | RC07 | Stable `arktos_core.h` C ABI facade v1 + RustCoreBridge v2 | pending | 0 | needs:task:RC02 needs:task:RC03 needs:task:RC04 needs:task:RC05 needs:task:RC06 needs:tool:cargo |
@@ -175,6 +175,45 @@ C ABI + bridge same as before.
 
 Verify: cargo test — round-trip + a fixture written by the C++
 HistoryManager reads identically through FFI; no-rust build links.
+
+
+Outcome (2026-10-21): audit confirmed RC01's call — the store was
+already landed (rusqlite <profile>/history.db, WAL + busy_timeout,
+legacy QDataStream file imported once by the existing HistoryParser,
+per-profile rc_hist_open binding, icons + hosts rollup + suggest +
+clear_since all wired into HistoryManager).  The two spec gaps were
+closed rather than rebuilt:
+
+- Query surface: `HistoryStore::query(spec_json)` + `rc_hist_query` —
+  one JSON spec {"term","from_ms","until_ms","limit","offset"} in, a
+  JSON array of {"url","title","ts"} rows out, same deduped
+  newest-first order as the listing; term is a case-insensitive
+  substring on url OR title (the history dialog's all-columns
+  fixed-string proxy match); range bounds inclusive; offset+limit
+  paginate after filtering; malformed specs error, never match-all.
+  The dedup collapse was factored into `ranged_entries` so the
+  listing and queries share it.
+- Retention: `HistoryStore::expire_older_than(cutoff_ms)` +
+  `rc_hist_expire_older_than(cutoff_ms, out_removed)` — bulk delete
+  at-or-before the boundary, icons kept, hosts rollup reset for lazy
+  rebuild, deleted count returned.  HistoryManager::checkForExpired
+  now issues one ranged call instead of a per-entry rc_hist_remove:
+  the cutoff reproduces the existing per-item check exactly
+  (QDateTime(now.date - days, now.time) + 999ms, absorbing secsTo's
+  truncation; DST-transition divergence bounded to an hour and noted
+  in the comment).  Side benefit: duplicate raw rows of an expired
+  visit no longer linger (per-entry remove deleted only the newest
+  match) and the hosts table is wiped once, not per row.
+
+Verified: cargo test 294/294 (+query_filters_ranges_and_paginates,
++expire_older_than_deletes_through_the_boundary, +ffi_surface legs
+for both new symbols incl. NULL/malformed-spec and out_removed);
+qmake && make -j2 (rust on) 0-error, arktos + all autotest binaries
+link; tst_historymanager 49/49 offscreen --disable-gpu — incl.
+daysToExpire (the bulk-expiry path), saveload round-trips,
+legacyImport (a QDataStream file written by the C++ fixture path
+reads identically through FFI); qmake CONFIG+=no-rust && make -j2
+in a slim copied tree (fallback path, no ARKTOS_RUSTCORE) 0-error.
 
 ### RC05
 
