@@ -33,7 +33,7 @@ Rules for the agent working this file:
 | RC03 | rustcore `profiles` module — persona registry + roots under home dir + FFI | done | 0 | profiles.json registry in rustcore behind rc_profiles_* (byte-compatible QJsonDocument::Indented writer), RcProfiles handle + RustCoreProfiles wrapper, BrowserPaths layout mirrored; verified cargo 292/292, tst_rustprofiles 6/6, rust + no-rust make -j2 clean |
 | RC04 | rustcore `history` module — visit/query/clear, compat with existing store | done | 0 | history module verified + completed: store was already landed (sqlite history.db, legacy QDataStream import, icons/hosts/suggest); added rc_hist_query (term/date-range/limit-offset) + rc_hist_expire_older_than bulk retention; verified cargo 294/294, tst_historymanager 49/49 + historyui 8/8 + filtermodel 37/37 offscreen, rust + no-rust make -j2 clean |
 | RC05 | rustcore `bookmarks` module — tree ops + XBEL import/export compat | done | 0 | bookmarks store verified + XBEL export fixed: <desc> now emitted as child element on folders+bookmarks (XbelWriter shape; was bookmark-only attr C++ reader ignores, folder desc dropped); legacy attr form still parses; new tst_xbel rustStoreInterchange proves C++-write->rust-edit->rust-save->C++-read identical tree; cargo 296/296, xbel 16/16 + bookmark node/model/html/dialog tests all pass offscreen, rust+no-rust make -j2 clean |
-| RC06 | rustcore `policy` module — cookie/storage/site-decision/trust data + FFI | pending | 0 | needs:task:RC01 needs:tool:cargo |
+| RC06 | rustcore `policy` module — cookie/storage/site-decision/trust data + FFI | done | 0 | audit: policy surface already landed end to end (sitedecisions + per-profile façade + legacy imports, blocklist/tranco/majestic read-path, sitetrust, policy verdicts); added FFI-parity legs — verified cargo 296/296, sitedecisions 9/9, trancolist 9/9, domainblock 14/14 + 6 consumer suites green offscreen, rust+no-rust compile clean |
 | RC07 | Stable `arktos_core.h` C ABI facade v1 + RustCoreBridge v2 | pending | 0 | needs:task:RC02 needs:task:RC03 needs:task:RC04 needs:task:RC05 needs:task:RC06 needs:tool:cargo |
 | RC08 | QtWebEngine adoption — services read/write through facade, parity proof | pending | 0 | needs:task:RC07 |
 | RC09 | Servo/WebKit backends consume the same facade + capability reporting | pending | 0 | needs:task:RC08 |
@@ -279,6 +279,68 @@ C ABI + bridge same as before.
 Verify: cargo test — decision CRUD + a SiteDecisionStore-written
 fixture reads identically via FFI; blocklist/rank lookups match the
 C++ results for a fixed host set.
+
+
+Outcome (2026-10-22): audit confirmed RC01's call — the whole policy
+surface was already landed and consumed end to end; nothing needed
+rebuilding, so the spec gaps closed were the two missing explicit
+parity legs.
+
+- Site decisions: `sitedecisions.rs` is the consolidated
+  kind->key->value store (webperm/js/container/popup/http-allow/
+  cookie/adblock/uaspoof/urlclean kinds), sitedecisions.json under
+  the profile data dir, atomic write, corrupt-row tolerance,
+  generation counter, "sitedecisions" change topic.  `rc_sitedec_*`
+  (get/set/remove/clear/replace/list/snapshot/lookup/store_present/
+  reload/reset) is the typed CRUD+list surface; SiteDecisionStore is
+  the Qt façade whose profile-scoped overloads re-anchor the store
+  at BrowserPaths::profileDataDir(<id>) so cookie/container kinds
+  stay per-profile while persona-independent kinds pin the default
+  store (MPROF02).  Every consumer keeps a one-shot legacy
+  QSettings import (webpermissions/scriptcontrol/popupExceptions/
+  containers/cookies exceptions/httpsOnlyExceptions/adblock
+  whitelist) — user decisions survive the cutover.
+- Domain allow/block: `blocklist.rs` = vendored seed u
+  <datadir>/blocklist-domains.txt; the Qt DomainBlocklist fetches
+  (consent-gated) and calls rc_blocklist_reload — Rust never
+  downloads.  Consumed via NavigationPolicy::isDomainBlocked /
+  shouldBlockDomain -> the WebPage navigation veto + interstitial.
+- Rank/trust: `tranco.rs` merges the vendored top-100k seed with
+  tranco-list.dat (zip) and majestic-million.csv, best-rank-wins,
+  read-path only; `sitetrust.rs` folds blocklist + rank + lookalike
+  + https + first-seen into the advisory verdict the site panel
+  shows via rc_sitetrust_lookup_opts.  rc_tranco_file_entries is
+  the updater's per-file validation probe.
+- Request/cookie policy: `policy.rs` verdicts (rc_policy_evaluate /
+  rc_policy_cookie_filter / rc_policy_call / load_snapshot /
+  eval_generation) are consumed through navigationpolicy.cpp; the
+  cookie jar ships its rule lists per call.
+
+Added the spec's missing verify legs:
+
+- tst_sitedecisions ffiWrittenDataParity — façade-written rows read
+  identically through raw rc_sitedec_get/lookup/list/snapshot, a
+  raw rc_sitedec_set surfaces through the façade, and the
+  profile-scoped anchoring proves store isolation (raw calls read
+  profiles/<id>/ after the scoped write; the default store is
+  untouched).
+- tst_domainblock ffiParity — for a fixed host set (listed, deep
+  subdomain, listed-parent, subdomain-of-listed, parent-of-listed-
+  subdomain, unlisted, substring lookalikes, empty)
+  PrivacyRequestInterceptor::isDomainBlocked == rc_blocklist_check
+  on every entry.
+- tst_trancolist ffiParity — the rank embedded in the
+  rc_sitetrust_lookup composite (what the panel displays) equals
+  rc_tranco_rank for a fixed host set.
+
+Verified: cargo test 296/296; qmake && make -j2 (rust on) 0-error;
+tst_sitedecisions 9/9, tst_trancolist 9/9, tst_domainblock 14/14,
+tst_cookiejar 51/51, tst_scriptcontrol 23/23, tst_popupblocker
+10/10, tst_httponly 25/25, tst_containermanager 37/37, tst_sitepanel
+26/26 — all offscreen --disable-gpu.  No-rust compile check: the
+three touched test TUs compile with the rust defines stripped
+(fresh moc — ffiWrittenDataParity is rust-only; the ffiParity slots
+compile to empty bodies, matching existing test style).
 
 ### RC07
 
