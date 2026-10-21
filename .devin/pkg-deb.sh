@@ -148,6 +148,12 @@ soname_package() {
 # dpkg-shlibdeps can't analyze (they NEED a lib absent on this host).
 extra_deps() {
     local D="$1"; shift
+    # lib/tor joins the scan path so the expert bundle's libssl/libcrypto
+    # resolve against each other — on hosts with an older system openssl
+    # the bundled libssl's OPENSSL_x.y version tags mismatch the system
+    # libcrypto and ldd prints "version 'X' not found" noise instead of
+    # a resolvable bundled path.
+    local lp="$D/$LIBDIR/lib:$D/$LIBDIR/lib/tor"
     local f lib missing pkgs=""
     for f in "$@"; do
         while read -r lib; do
@@ -155,7 +161,7 @@ extra_deps() {
             case "$lib" in "$D"/*|"$QTDIR"/*) continue;; esac
             pkgs="$pkgs $(dpkg -S "$lib" 2>/dev/null \
                 | cut -d: -f1 | tr -d ' ' | tr ',' '\n')"
-        done < <(LD_LIBRARY_PATH="$D/$LIBDIR/lib" ldd "$f" 2>/dev/null \
+        done < <(LD_LIBRARY_PATH="$lp" ldd "$f" 2>/dev/null \
                  | awk '/=> \//{print $3}')
         while read -r soname; do
             [ -n "$soname" ] || continue
@@ -163,8 +169,10 @@ extra_deps() {
             p="$(soname_package "$soname")" \
                 || fail "no package mapping for missing SONAME $soname ($f)"
             pkgs="$pkgs $p"
-        done < <(LD_LIBRARY_PATH="$D/$LIBDIR/lib" ldd "$f" 2>/dev/null \
-                 | awk '/not found/{print $1}')
+        # "=> not found" only — "version 'X' not found" lines carry the
+        # analyzed file's path as $1 and are not missing sonames.
+        done < <(LD_LIBRARY_PATH="$lp" ldd "$f" 2>/dev/null \
+                 | awk '/=> not found/{print $1}')
     done
     echo "$pkgs" | tr ' ' '\n' | sed '/^$/d' | sort -u | paste -sd, - \
         | sed 's/,/, /g'
@@ -184,8 +192,8 @@ cmd_pack() {
     # ~/Qt — their SONAMEs are satisfied by the bundled copies.
     local ok_elfs=() bad_elfs=() f miss
     while read -r f; do
-        miss=$(LD_LIBRARY_PATH="$SRCROOT/$D/$LIBDIR/lib" ldd "$f" 2>/dev/null \
-               | grep -c 'not found' || true)
+        miss=$(LD_LIBRARY_PATH="$SRCROOT/$D/$LIBDIR/lib:$SRCROOT/$D/$LIBDIR/lib/tor" \
+               ldd "$f" 2>/dev/null | grep -c '=> not found' || true)
         if [ "$miss" -eq 0 ]; then ok_elfs+=("$f"); else bad_elfs+=("$f"); fi
     done < <(find "$D" -type f -exec file {} + | awk -F': ' '/ELF/{print $1}')
     [ "${#ok_elfs[@]}" -gt 0 ] || fail "no resolvable ELF files staged"
