@@ -1308,6 +1308,9 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
     // Chromium" while this tab is current, which is the swap-back
     // path.
     LineEdit *bar = new LineEdit(this);
+    // SEC30: same omnibox, same self-XSS gate — an engine tab's bar
+    // feeds the shared lineEditReturnPressed -> loadString path.
+    bar->setSanitizesUntrustedInput(true);
     wireLocationBar(bar);
     // TRUST25: the field's LeftSide padlock is part of the trust
     // contract on every browsing tab — the foreign engine gets the

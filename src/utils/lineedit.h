@@ -31,6 +31,7 @@
 #define LINEEDIT_H
 
 #include <qlineedit.h>
+#include <qclipboard.h>
 
 class QFocusEvent;
 class QHBoxLayout;
@@ -71,11 +72,34 @@ public:
 
     void paintEvent(QPaintEvent *event) override;
 
+    // SEC30: self-XSS gate for omnibox-style fields.  When on, text
+    // arriving through a clipboard gesture (Ctrl+V, the standard
+    // context menu's Paste item, X11 middle-click PRIMARY) or a text
+    // drop loses a leading "javascript:" scheme token before it is
+    // inserted — matching Chrome's omnibox sanitizer, so a scam's
+    // "paste this into your address bar" lands as inert text instead
+    // of a payload Enter would run in the current page's origin
+    // (WebView::loadUrl's javascript: branch, SEC02).  Typed input is
+    // untouched — typed javascript: keeps working, as do
+    // programmatic writes.  Off by default: plain LineEdits have
+    // legitimate javascript: clipboard flows (the bookmark dialog's
+    // address field accepts bookmarklet urls).
+    void setSanitizesUntrustedInput(bool on);
+    bool sanitizesUntrustedInput() const;
+    // Strip a leading "javascript:" token from untrusted text —
+    // case-insensitive and tolerant of whitespace/control junk inside
+    // the token ("  JAVA\tSCRIPT:..." still strips); text that does
+    // not carry the full scheme returns unchanged.
+    static QString sanitizeUntrustedInputText(const QString &text);
+
 protected:
     void resizeEvent(QResizeEvent *event) override;
     bool event(QEvent *event) override;
     void focusInEvent(QFocusEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
     // SRCH10: true while the user's latest edit shrank the text — a
     // Backspace/Delete burst.  Completion code must not re-extend the
@@ -91,6 +115,7 @@ protected slots:
 private:
     void init();
     void updateSideWidgetLocations();
+    void pasteSanitized(QClipboard::Mode mode);
 
     SideWidget *m_leftWidget;
     SideWidget *m_rightWidget;
@@ -109,6 +134,7 @@ private:
     bool m_pristine;
     bool m_pendingUserEdit;
     bool m_deleteBurst;
+    bool m_sanitizesUntrustedInput;
 };
 
 #endif // LINEEDIT_H

@@ -380,7 +380,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | SEC28 | Vault crypto coverage check: confirm VSEC01 audited KDF params + seal/unseal of the credential/autofill stores, not just the FFI seam — fill any gap — details below | done | 0 | VSEC01 audited the Rust crypto core only — 6 real gaps fixed in the no-rust backend + legacy retire: unbounded .kdf params (OOB heap writes via lanes overflow in vendored argon2), enablePassphraseProtection zeroed-but-registered derived key (seals ran under public all-zero key), plaintext autofill.dat kept as .migrated, sealString fail-open → plaintext proxy password, locked-store plaintext downgrade of autofill.dat, autofill decoded cache now zeroized on drop — verified: tst_securestore 20/20 + tst_autofill 10/10 under BOTH rustcore and CONFIG+=no-rust, no-rust check-warnings PASS, --autofill-smoke PASS, settingsdialog/NAM green, cargo 267/268 (1 pre-existing); report .devin/security/SEC28-report.md |
 | CONC01 | Concurrent store writers: two windows writing bookmarks.xbel + history.db — xbel write atomicity across windows, SQLite writer contention — details below | done | 0 | 3 real fixes: rustcore save_path shared .rc-tmp name → atomic_write (pid+seq staging — torn-rename hole closed), XbelWriter QFile truncate → QSaveFile (no-rust + export path), history.db PRAGMA busy_timeout=5000 (peer-commit SQLITE_BUSY no longer surfaces); session.dat/QSettings/sitedecisions/profiles/vault audited already-atomic, last-writer-wins documented in details — verified: cargo 269/270 (1 pre-existing), tst_xbel 15/15, 12 concurrent standalone smoke runs on one profile all PASS |
 | INFRA01 | taskloop task-file race: runner read-modify-write clobbers concurrent edits (lost-update hit twice today) — flock around the row update — details below | done | 0 | new .devin/taskfile.sh — flock on <file>.lock + temp+rename for every task-file write (set row fields, append-detail, with-lock escape hatch); all 6 taskloop-* lanes route bump_attempts/mark_blocked through it; RUNNER_PROMPT_*+file headers require it so agent edits serialize too. Verified: queued set waited out a held lock (1.7s) — both edits survived; 12-writer storm 0 losses; error paths reject bad id/status/pipe; bash -n clean |
-| SEC30 | Omnibox paste self-XSS: pasting javascript:... + Enter executes via loadUrl's javascript branch — typed bookmarklets stay allowed, but strip the scheme from pasted text like Chrome — details below | pending | 0 | |
+| SEC30 | Omnibox paste self-XSS: pasting javascript:... + Enter executes via loadUrl's javascript branch — typed bookmarklets stay allowed, but strip the scheme from pasted text like Chrome — details below | done | 0 | omnibox javascript: strip on every untrusted paste/drop gesture via opt-in LineEdit sanitizer; typed bookmarklets untouched — verified: tst_locationbar 57/57, tst_tabwidget 45/45 incl e2e offscreen --disable-gpu |
 
 ## Task details
 
@@ -3718,3 +3718,38 @@ isUrlAllowedOnUntrustedInput (SEC02).
 
 Verify: tst leg — paste "javascript:..." into the omnibox, submit,
 assert no script ran; typed javascript: still executes.
+
+Implementation evidence (SEC30):
+- QLineEdit has no insertFromMimeData hook, so every clipboard/drop
+  entry point is intercepted on an opt-in LineEdit flag
+  (setSanitizesUntrustedInput): keyPressEvent for
+  QKeySequence::Paste (Ctrl+V, Shift+Insert), contextMenuEvent which
+  rebuilds the standard menu and swaps the edit-paste action for a
+  sanitized twin (Qt bakes the shortcut into the label text — the
+  action is matched by objectName), mousePressEvent for X11
+  middle-click QClipboard::Selection paste, and dropEvent for
+  plain-text drops.
+- sanitizeUntrustedInputText strips a leading javascript: token —
+  case-insensitive, leading whitespace skipped, whitespace/control
+  junk tolerated inside the token — leaving the payload as inert
+  text (the Chrome omnibox shape).
+- LocationBar opts in at construction and additionally strips a
+  dropped javascript: url before displayUrl (same untrusted-input
+  gate as SEC02).  The engine-tab omnibox (plain LineEdit feeding
+  the same lineEditReturnPressed -> loadString path) opts in too.
+- Plain LineEdits stay unsanitized: the bookmark dialog's address
+  field keeps its legitimate bookmarklet-paste flow.
+- Residuals (Chrome-parity): a composite "type 'javascript' then
+  paste 'script:...'" assembles the token across the fragment
+  boundary and is not caught; programmatic setText/insert and
+  completer suggestions are trusted code paths (history/suggestion
+  sources cannot mint javascript: urls anyway); AT-SPI text
+  insertion is out of scope.
+- Verify: tst_locationbar 57/57 incl. sanitize data rows, keyboard
+  paste (Ctrl+V + Shift+Insert), context-menu retarget, middle-click
+  (Selection-mode QSKIP offscreen), drop legs, plain-LineEdit opt-out;
+  tst_tabwidget 45/45 incl. omniboxPasteSelfXss — clipboard
+  javascript: + Ctrl+V + Enter leaves window.__sec30pasted
+  unmodified while typed javascript: sets document.title; regressions
+  searchlineedit 4/4, toolbarsearch 12/12, webview 29/29 — offscreen,
+  QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu.

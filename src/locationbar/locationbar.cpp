@@ -53,6 +53,11 @@ LocationBar::LocationBar(QWidget *parent)
     setLayoutDirection(Qt::LeftToRight);
     setAccessibleName(tr("Address Bar"));
 
+    // SEC30: the omnibox is the self-XSS surface — clipboard/drop
+    // input loses a leading javascript: scheme before it can reach
+    // the field (typed bookmarklets are untouched).
+    setSanitizesUntrustedInput(true);
+
     // UIP01: modern omnibox height — the Qt4 default single-line
     // height reads cramped next to the padded navigation toolbar.
     setMinimumHeight(fontMetrics().height() + 12);
@@ -430,6 +435,19 @@ void LocationBar::dropEvent(QDropEvent *event)
 
     if (url.isEmpty() || !url.isValid()) {
         LineEdit::dropEvent(event);
+        return;
+    }
+
+    // SEC30: a javascript: drop would leave an executable token in
+    // the bar for the next Enter — strip it to its payload like a
+    // clipboard paste (SEC02 already refuses drops onto the view).
+    if (!WebView::isUrlAllowedOnUntrustedInput(url)) {
+        const QString raw = mimeData->hasText()
+            ? mimeData->text()
+            : url.toString();
+        setText(sanitizeUntrustedInputText(raw));
+        selectAll();
+        event->acceptProposedAction();
         return;
     }
 

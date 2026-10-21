@@ -102,6 +102,23 @@ public:
         mouseDoubleClickEvent(&event);
     }
 
+    void sendMousePress(Qt::MouseButton button)
+    {
+        QMouseEvent event(QEvent::MouseButtonPress, QPointF(1, 1),
+                          QPointF(1, 1), button, button,
+                          Qt::NoModifier);
+        mousePressEvent(&event);
+    }
+
+    // The override exec()s the menu — callers pre-arm a
+    // QTimer::singleShot to drive it from inside the nested loop.
+    void sendContextMenu()
+    {
+        QContextMenuEvent event(QContextMenuEvent::Mouse, QPoint(5, 5),
+                                mapToGlobal(QPoint(5, 5)));
+        contextMenuEvent(&event);
+    }
+
     void sendToolTip()
     {
         QHelpEvent event(QEvent::ToolTip, QPoint(3, 3), QPoint(3, 3));
@@ -150,6 +167,13 @@ private slots:
     void domainEmphasis();
     void punycodeDisplay();
     void domainEmphasisPaint();
+    void sanitizeUntrustedText_data();
+    void sanitizeUntrustedText();
+    void pasteStripsJavascript();
+    void typedJavascriptUnstripped();
+    void contextMenuPasteStripsJavascript();
+    void middleClickPasteStripsJavascript();
+    void dropStripsJavascript();
 };
 
 void tst_LocationBar::initTestCase()
@@ -1098,6 +1122,196 @@ void tst_LocationBar::domainEmphasisPaint()
     QVERIFY(domainDiff <= 60);
     QVERIFY(prefixDiff > domainDiff + 20);
     QVERIFY(suffixDiff > domainDiff + 20);
+}
+
+// SEC30: the shared untrusted-input strip — a leading "javascript:"
+// token comes off (leading whitespace, case folds, and whitespace/
+// control junk inside the token included); everything else is kept
+// byte-for-byte.
+void tst_LocationBar::sanitizeUntrustedText_data()
+{
+    QTest::addColumn<QString>("input");
+    QTest::addColumn<QString>("expected");
+
+    QTest::newRow("plain")
+        << QStringLiteral("javascript:alert(1)")
+        << QStringLiteral("alert(1)");
+    QTest::newRow("mixed-case")
+        << QStringLiteral("JaVaScRiPt:alert(1)")
+        << QStringLiteral("alert(1)");
+    QTest::newRow("leading-space")
+        << QStringLiteral("  javascript:alert(1)")
+        << QStringLiteral("alert(1)");
+    QTest::newRow("tab-inside-token")
+        << QStringLiteral("java\tscript:alert(1)")
+        << QStringLiteral("alert(1)");
+    QTest::newRow("space-before-colon")
+        << QStringLiteral("javascript :alert(1)")
+        << QStringLiteral("alert(1)");
+    QTest::newRow("scheme-only")
+        << QStringLiteral("javascript:")
+        << QStringLiteral("");
+    QTest::newRow("bare-word")
+        << QStringLiteral("javascript rocks")
+        << QStringLiteral("javascript rocks");
+    QTest::newRow("longer-word")
+        << QStringLiteral("javascripts:alert(1)")
+        << QStringLiteral("javascripts:alert(1)");
+    QTest::newRow("no-colon")
+        << QStringLiteral("javascript alert(1)")
+        << QStringLiteral("javascript alert(1)");
+    QTest::newRow("http")
+        << QStringLiteral("http://example.com/")
+        << QStringLiteral("http://example.com/");
+    QTest::newRow("data")
+        << QStringLiteral("data:text/html,<p>x</p>")
+        << QStringLiteral("data:text/html,<p>x</p>");
+    QTest::newRow("empty") << QStringLiteral("") << QStringLiteral("");
+}
+
+void tst_LocationBar::sanitizeUntrustedText()
+{
+    QFETCH(QString, input);
+    QFETCH(QString, expected);
+    QCOMPARE(LineEdit::sanitizeUntrustedInputText(input), expected);
+}
+
+// SEC30: a keyboard paste into the omnibox is sanitized — the classic
+// self-XSS scam dies in the field — while ordinary text pastes
+// verbatim and a plain (non-omnibox) LineEdit keeps its clipboard
+// flow untouched.
+void tst_LocationBar::pasteStripsJavascript()
+{
+    TestLocationBar bar;
+    bar.resize(240, bar.sizeHint().height());
+    bar.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&bar));
+
+    QClipboard *clipboard = QApplication::clipboard();
+    clipboard->setText(QLatin1String("javascript:alert(1)"));
+    QTest::keyClick(&bar, Qt::Key_V, Qt::ControlModifier);
+    QCOMPARE(bar.text(), QLatin1String("alert(1)"));
+
+    // Shift+Insert — the other stock paste binding — strips too.
+    bar.clear();
+    clipboard->setText(QLatin1String("  JAVASCRIPT:second()"));
+    QTest::keyClick(&bar, Qt::Key_Insert, Qt::ShiftModifier);
+    QCOMPARE(bar.text(), QLatin1String("second()"));
+
+    // A non-scheme paste lands verbatim.
+    bar.clear();
+    clipboard->setText(QLatin1String("http://kept.example/"));
+    QTest::keyClick(&bar, Qt::Key_V, Qt::ControlModifier);
+    QCOMPARE(bar.text(), QLatin1String("http://kept.example/"));
+
+    // A plain LineEdit without the opt-in pastes raw — the bookmark
+    // dialog's address field still accepts bookmarklet urls.
+    LineEdit plain;
+    plain.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&plain));
+    QVERIFY(!plain.sanitizesUntrustedInput());
+    clipboard->setText(QLatin1String("javascript:kept()"));
+    QTest::keyClick(&plain, Qt::Key_V, Qt::ControlModifier);
+    QCOMPARE(plain.text(), QLatin1String("javascript:kept()"));
+}
+
+// The field only sanitizes untrusted gestures — typed javascript:
+// text is left whole so typed bookmarklets keep working.
+void tst_LocationBar::typedJavascriptUnstripped()
+{
+    TestLocationBar bar;
+    bar.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&bar));
+    bar.setFocus();
+    QTest::keyClicks(&bar, QLatin1String("javascript:void(0)"));
+    QCOMPARE(bar.text(), QLatin1String("javascript:void(0)"));
+}
+
+// SEC30: the standard context menu's Paste item is swapped for a
+// sanitized twin — menu paste is a clipboard gesture too.
+void tst_LocationBar::contextMenuPasteStripsJavascript()
+{
+    TestLocationBar bar;
+    bar.resize(240, bar.sizeHint().height());
+    bar.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&bar));
+
+    QApplication::clipboard()->setText(
+        QLatin1String("javascript:menuProbe()"));
+
+    // The override exec()s the rebuilt menu — fire the swap's Paste
+    // action from inside the nested loop, then close it.
+    bool popupSeen = false;
+    bool triggered = false;
+    QTimer::singleShot(200, &bar, [&]() {
+        QMenu *menu =
+            qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        popupSeen = menu != nullptr;
+        if (!menu)
+            return;
+        const QKeySequence pasteSequence(QKeySequence::Paste);
+        for (QAction *action : menu->actions()) {
+            if (action->objectName() == QLatin1String("edit-paste")
+                || action->shortcut() == pasteSequence) {
+                action->trigger();
+                triggered = true;
+                break;
+            }
+        }
+        menu->close();
+    });
+    bar.sendContextMenu();
+    QVERIFY(popupSeen);
+    QVERIFY(triggered);
+    QCOMPARE(bar.text(), QLatin1String("menuProbe()"));
+}
+
+// SEC30: X11 middle-click paste carries the PRIMARY selection — same
+// sanitizer, different clipboard mode.
+void tst_LocationBar::middleClickPasteStripsJavascript()
+{
+    TestLocationBar bar;
+    bar.resize(240, bar.sizeHint().height());
+    bar.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&bar));
+
+    QClipboard *clipboard = QApplication::clipboard();
+    const QString payload = QLatin1String("javascript:middleProbe()");
+    clipboard->setText(payload, QClipboard::Selection);
+    if (clipboard->text(QClipboard::Selection) != payload)
+        QSKIP("this platform clipboard has no Selection mode");
+
+    bar.sendMousePress(Qt::MiddleButton);
+    QCOMPARE(bar.text(), QLatin1String("middleProbe()"));
+}
+
+// SEC30: dropping a javascript: url or text onto the bar must not
+// leave an executable token for the next Enter — the drop lands as
+// stripped text, while ordinary url drops still display whole.
+void tst_LocationBar::dropStripsJavascript()
+{
+    TestLocationBar bar;
+
+    QMimeData urlMime;
+    urlMime.setUrls(QList<QUrl>() << QUrl(
+        QLatin1String("javascript:droppedProbe()")));
+    bar.sendDrop(&urlMime);
+    QCOMPARE(bar.text(), QLatin1String("droppedProbe()"));
+
+    // Non-url-shaped text drops insert at the drop point like any
+    // plain-text drop — sanitized on the way in.
+    bar.clear();
+    QMimeData textMime;
+    textMime.setText(QLatin1String("  JAVASCRIPT:moreDropped()"));
+    bar.sendDrop(&textMime);
+    QCOMPARE(bar.text(), QLatin1String("moreDropped()"));
+
+    QMimeData goodMime;
+    goodMime.setUrls(QList<QUrl>() << QUrl(
+        QLatin1String("http://kept.example/")));
+    bar.sendDrop(&goodMime);
+    QCOMPARE(bar.text(), QLatin1String("http://kept.example/"));
+    QCOMPARE(bar.selectedText(), bar.text());
 }
 
 QTEST_MAIN(tst_LocationBar)

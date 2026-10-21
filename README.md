@@ -825,6 +825,8 @@ core landed and UX/completion work still landing.
     on insecure pages
   - Consent gates for external protocols, adblock-list downloads and
     remote trust-list refreshes; command-line URLs treated as untrusted
+  - Address-bar paste/drop strips a leading `javascript:` scheme before
+    it lands (typed bookmarklets still run)
   - In-browser PDFs sanitized before render: a confined `arktos
     --pdf-worker` subprocess runs the pure-Rust `hayro` renderer under
     a bubblewrap allowlist; a Rust policy pass strips JavaScript,

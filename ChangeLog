@@ -4583,3 +4583,14 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   for row/status/notes updates and detail-section appends. Verified:
   a queued row update waited out a held lock and both it and the
   concurrent edit survived; a 12-writer parallel storm lost nothing.
+- Address-bar self-XSS gate (SEC30): pasting or dropping text that
+  starts with javascript: into the omnibox now strips the scheme
+  before it lands — a scam's "paste this into your address bar" can
+  no longer run script in the current page's origin. The strip
+  covers every untrusted gesture — Ctrl+V / Shift+Insert, the
+  right-click Paste item, X11 middle-click paste, and text or url
+  drops onto the bar — matching Chrome's omnibox sanitizer, and
+  whitespace/case disguises like "  JAVA SCRIPT:" still strip.
+  Typed javascript: is untouched, so typed bookmarklets keep
+  working; ordinary fields (the bookmark dialog's address box)
+  are unaffected.

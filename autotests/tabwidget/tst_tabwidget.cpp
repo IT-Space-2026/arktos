@@ -109,6 +109,7 @@ private slots:
     void saveState();
     void restoreStateCorrupt();
     void loadStringFromUntrustedSource();
+    void omniboxPasteSelfXss();
     void tabBarPositionSetting();
     void verticalTabStripWidth();
     void verticalTabDefaultWidth();
@@ -878,6 +879,70 @@ void tst_TabWidget::loadStringFromUntrustedSource()
         QLatin1String("data:text/plain,ok"));
     QTRY_VERIFY_WITH_TIMEOUT(
         view->url() == QUrl(QLatin1String("data:text/plain,ok")), 15000);
+
+    widget.closeTab();
+}
+
+// SEC30: the omnibox self-XSS gate end-to-end — a pasted javascript:
+// token is stripped before it can reach the field, so Enter submits
+// inert text and nothing runs in the page; a typed javascript: still
+// reaches loadUrl's runJavaScript branch unchanged.
+void tst_TabWidget::omniboxPasteSelfXss()
+{
+    SubTabWidget widget;
+    widget.newTab();
+    WebView *view = widget.currentWebView();
+    QVERIFY(view);
+    view->loadUrl(QUrl(QStringLiteral("data:text/html,<p>sec30</p>")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->url().toString().startsWith(QLatin1String("data:")),
+        15000);
+
+    widget.resize(800, 600);
+    widget.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&widget));
+
+    QLineEdit *bar = widget.currentLocationBar();
+    QVERIFY(bar);
+    bar->setFocus();
+    QTest::qWait(50);
+
+    // The scam shape — clipboard payload, clear the field, Ctrl+V,
+    // Enter.
+    QApplication::clipboard()->setText(
+        QLatin1String("javascript:window.__sec30pasted=42;void(0)"));
+    bar->selectAll();
+    QTest::keyClick(bar, Qt::Key_V, Qt::ControlModifier);
+    QCOMPARE(bar->text(),
+             QLatin1String("window.__sec30pasted=42;void(0)"));
+    QTest::keyClick(bar, Qt::Key_Enter);
+    // The stripped text resolves to a (dead) navigation — let it
+    // settle before probing the page the payload never reached.
+    QTest::qWait(500);
+    QTRY_VERIFY_WITH_TIMEOUT(!view->isLoading(), 15000);
+
+    std::shared_ptr<bool> probed(new bool(false));
+    std::shared_ptr<QVariant> marker(new QVariant);
+    view->page()->runJavaScript(QLatin1String("window.__sec30pasted"),
+        [probed, marker](const QVariant &result) {
+            *marker = result;
+            *probed = true;
+        });
+    QTRY_VERIFY_WITH_TIMEOUT(*probed, 60000);
+    QVERIFY(!marker->isValid());
+
+    // The typed path: the token stays whole in the bar and executes
+    // through loadUrl — typed bookmarklets keep working.
+    bar->setFocus();
+    QTest::qWait(50);
+    bar->selectAll();
+    QTest::keyClicks(bar, QLatin1String(
+        "javascript:document.title='SEC30TYPED';void(0)"));
+    QCOMPARE(bar->text(), QLatin1String(
+        "javascript:document.title='SEC30TYPED';void(0)"));
+    QTest::keyClick(bar, Qt::Key_Enter);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->title() == QLatin1String("SEC30TYPED"), 15000);
 
     widget.closeTab();
 }

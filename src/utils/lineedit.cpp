@@ -30,10 +30,17 @@
 #include "lineedit.h"
 #include "lineedit_p.h"
 
+#include <qapplication.h>
+#include <qaction.h>
 #include <qevent.h>
 #include <qlayout.h>
+#include <qmenu.h>
+#include <qmimedata.h>
 #include <qstyleoption.h>
 #include <qpainter.h>
+#include <qkeysequence.h>
+
+#include <memory>
 
 #include <qdebug.h>
 
@@ -56,6 +63,7 @@ LineEdit::LineEdit(QWidget *parent)
     , m_pristine(true)
     , m_pendingUserEdit(false)
     , m_deleteBurst(false)
+    , m_sanitizesUntrustedInput(false)
 {
     init();
 }
@@ -70,6 +78,7 @@ LineEdit::LineEdit(const QString &contents, QWidget *parent)
     , m_pristine(true)
     , m_pendingUserEdit(false)
     , m_deleteBurst(false)
+    , m_sanitizesUntrustedInput(false)
 {
     init();
 }
@@ -246,6 +255,15 @@ void LineEdit::focusInEvent(QFocusEvent *event)
 
 void LineEdit::keyPressEvent(QKeyEvent *event)
 {
+    // SEC30: a keyboard paste (Ctrl+V, Shift+Insert, ...) is routed
+    // through the sanitizer — QLineEdit has no insertFromMimeData
+    // hook, so every gesture that can land clipboard text in the
+    // field is intercepted at its entry point.
+    if (m_sanitizesUntrustedInput
+        && event->matches(QKeySequence::Paste)) {
+        pasteSanitized(QClipboard::Clipboard);
+        return;
+    }
     // SRCH10: one-key clear.  Backspace on baseline text empties the
     // whole field (Chrome/Firefox-style) — without it the key
     // dead-stops, because the location bar homes its cursor to
@@ -265,6 +283,115 @@ void LineEdit::keyPressEvent(QKeyEvent *event)
         return;
     }
     QLineEdit::keyPressEvent(event);
+}
+
+void LineEdit::setSanitizesUntrustedInput(bool on)
+{
+    m_sanitizesUntrustedInput = on;
+}
+
+bool LineEdit::sanitizesUntrustedInput() const
+{
+    return m_sanitizesUntrustedInput;
+}
+
+QString LineEdit::sanitizeUntrustedInputText(const QString &text)
+{
+    // Skip leading whitespace — scam payloads often lead with it.
+    int i = 0;
+    while (i < text.size() && text.at(i).isSpace())
+        ++i;
+    // Match the scheme token character by character, tolerating
+    // whitespace/control junk inside it ("java\tscript:" is an
+    // evasion shape that must still strip).
+    static const char kScheme[] = "javascript:";
+    int matched = 0;
+    int j = i;
+    while (j < text.size() && matched < int(sizeof(kScheme) - 1)) {
+        const QChar c = text.at(j);
+        if (c.toLower() == QLatin1Char(kScheme[matched])) {
+            ++matched;
+        } else if (!c.isSpace()
+                   && c.category() != QChar::Other_Control) {
+            break;
+        }
+        ++j;
+    }
+    return matched == int(sizeof(kScheme) - 1) ? text.mid(j) : text;
+}
+
+void LineEdit::pasteSanitized(QClipboard::Mode mode)
+{
+    // insert() is the same call the stock paste() lands in — it
+    // replaces a live selection, honors readOnly, and emits the
+    // user-edit signals so SRCH10 bookkeeping stays right.
+    const QString pasted = QApplication::clipboard()->text(mode);
+    if (!pasted.isEmpty())
+        insert(sanitizeUntrustedInputText(pasted));
+}
+
+void LineEdit::contextMenuEvent(QContextMenuEvent *event)
+{
+    if (!m_sanitizesUntrustedInput) {
+        QLineEdit::contextMenuEvent(event);
+        return;
+    }
+    // The stock menu's Paste item pastes directly — build the menu
+    // ourselves and swap that item for a sanitized twin.  Qt names
+    // its standard actions (the translated label and baked-in
+    // shortcut text are not matchable); replacing it outright
+    // sidesteps whatever internal receiver Qt wired the original to.
+    std::unique_ptr<QMenu> menu(createStandardContextMenu());
+    const QKeySequence pasteSequence(QKeySequence::Paste);
+    for (QAction *action : menu->actions()) {
+        if (action->objectName() == QLatin1String("edit-paste")
+            || action->shortcut() == pasteSequence) {
+            QAction *sanitized = new QAction(action->icon(),
+                                             action->text(), menu.get());
+            sanitized->setObjectName(action->objectName());
+            sanitized->setShortcut(action->shortcut());
+            sanitized->setShortcutVisibleInContextMenu(
+                action->isShortcutVisibleInContextMenu());
+            sanitized->setEnabled(action->isEnabled());
+            menu->insertAction(action, sanitized);
+            menu->removeAction(action);
+            connect(sanitized, &QAction::triggered, this,
+                    [this]() { pasteSanitized(QClipboard::Clipboard); });
+        }
+    }
+    menu->exec(event->globalPos());
+}
+
+void LineEdit::mousePressEvent(QMouseEvent *event)
+{
+    // X11-style middle-click paste carries the PRIMARY selection —
+    // the same untrusted-text vector with a different gesture.
+    if (m_sanitizesUntrustedInput
+        && event->button() == Qt::MiddleButton
+        && QApplication::clipboard()->supportsSelection()) {
+        setCursorPosition(cursorPositionAt(event->position().toPoint()));
+        pasteSanitized(QClipboard::Selection);
+        return;
+    }
+    QLineEdit::mousePressEvent(event);
+}
+
+void LineEdit::dropEvent(QDropEvent *event)
+{
+    if (!m_sanitizesUntrustedInput || !event->mimeData()->hasText()) {
+        QLineEdit::dropEvent(event);
+        return;
+    }
+    // Reproduce the stock drop (cursor to drop point, insert text)
+    // on the sanitized payload — LocationBar's own dropEvent handles
+    // url-shaped drops before ever reaching this one.
+    if (isReadOnly()) {
+        event->ignore();
+        return;
+    }
+    setCursorPosition(cursorPositionAt(event->position().toPoint()));
+    insert(sanitizeUntrustedInputText(event->mimeData()->text()));
+    event->acceptProposedAction();
 }
 
 QString LineEdit::inactiveText() const
