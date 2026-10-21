@@ -40,6 +40,10 @@
 
 %{!?qtdir:%global qtdir %(echo "${QTDIR:-$HOME/Qt/6.12.0/gcc_64}")}
 
+# The bundled payload is already stripped; a -debuginfo subpackage is
+# dead weight and leaks into release asset globs (dist/*.rpm).
+%global debug_package %{nil}
+
 Name:           arktos
 Version:        1.0
 # openSUSE convention: Release 0, the build service increments it.
