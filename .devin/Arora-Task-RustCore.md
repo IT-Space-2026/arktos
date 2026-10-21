@@ -39,7 +39,6 @@ Rules for the agent working this file:
 | RC09 | Servo/WebKit backends consume the same facade + capability reporting | pending | 0 | needs:task:RC08 |
 | RC10 | Packaging: new crates linked + staged in deb/rpm/flatpak/dmg/exe legs | pending | 0 | needs:task:RC07 |
 | RC11 | CEF spike — bounded adapter design + QWebEngine touchpoint audit + go/no-go | pending | 0 | needs:task:RC08 |
-
 | RC12 | rustcore `reader` module — engine-agnostic article extraction (reader mode) | pending | 0 | needs:task:RC01 needs:tool:cargo |
 | RC13 | rustcore `sessions` module — per-profile tab/window session store | pending | 0 | needs:task:RC07 needs:tool:cargo |
 | RC14 | `torctl` client — Tor control protocol in Rust (NEWNYM, circuits, auth) | pending | 0 | needs:tool:cargo |
