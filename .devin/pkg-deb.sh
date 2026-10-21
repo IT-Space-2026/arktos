@@ -280,11 +280,16 @@ cmd_verify() {
     note "dpkg install: $(dpkg --admindir="$db" -s "$PKG" | grep '^Status:')"
 
     # -- ldd clean with the dev Qt hidden --------------------------------
-    lddout=$(bwrap --dev-bind / / --tmpfs "$QTDIR" -- \
+    # Keep bwrap's stderr visible: a plain $(...) assignment dies
+    # silently under set -e (noble's apparmor userns restriction bites).
+    if ! lddout=$(bwrap --dev-bind / / --tmpfs "$QTDIR" -- \
         env -i PATH=/usr/bin:/bin \
         LD_LIBRARY_PATH="$root/$LIBDIR/lib" \
         ldd "$root/$LIBDIR/bin/arktos" \
-            "$root/$LIBDIR/libexec/QtWebEngineProcess" 2>&1)
+            "$root/$LIBDIR/libexec/QtWebEngineProcess" 2>&1); then
+        printf '%s\n' "$lddout" >&2
+        fail "bwrap ldd scan failed"
+    fi
     missing=$(printf '%s\n' "$lddout" | grep -cE 'not found' || true)
     if [ "$missing" -ne 0 ]; then
         printf '%s\n' "$lddout" | grep -E 'not found' >&2

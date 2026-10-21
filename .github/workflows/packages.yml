@@ -75,6 +75,13 @@ jobs:
         # image, absent on 24.04 (exit 127 right after dpkg install).
         run: sudo apt-get update -qq && sudo apt-get install -y libevent-2.1-7 bubblewrap
 
+      - name: Allow unprivileged userns for bwrap verify (24.04 apparmor)
+        # noble defaults kernel.apparmor_restrict_unprivileged_userns=1,
+        # which makes bwrap fail with "Creating new namespace failed" —
+        # silently, since the capture dies under set -e.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        if: matrix.os == 'ubuntu-24.04'
+
       - name: Build .deb
         run: ./.devin/pkg-deb.sh
 
