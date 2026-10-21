@@ -30,7 +30,7 @@ Rules for the agent working this file:
 |----|------|--------|----------|-------|
 | RC01 | Rust-core architecture audit + target design doc | done | 1 | audit landed .devin/RUSTCORE-ARCH.md — full store map w/ keep-move decisions + format choices (settings+profiles are the real gaps; RC04-06 stores already landed in retired lane); facade sketch + per-profile handle scoping spec; verified cargo test 270/270 green |
 | RC02 | rustcore `settings` module — typed per-profile key-value store + FFI | done | 1 | settings store + ini import + rc_settings_* FFI + RustCoreSettings landed; verified cargo 282/282, real-QSettings ini via FFI 18/18, rust+no-rust make -j2 link clean; fixed pre-existing no-rust tst_cookiejar include bug |
-| RC03 | rustcore `profiles` module — persona registry + roots under home dir + FFI | pending | 0 | needs:task:RC01 needs:tool:cargo |
+| RC03 | rustcore `profiles` module — persona registry + roots under home dir + FFI | done | 0 | profiles.json registry in rustcore behind rc_profiles_* (byte-compatible QJsonDocument::Indented writer), RcProfiles handle + RustCoreProfiles wrapper, BrowserPaths layout mirrored; verified cargo 292/292, tst_rustprofiles 6/6, rust + no-rust make -j2 clean |
 | RC04 | rustcore `history` module — visit/query/clear, compat with existing store | pending | 0 | needs:task:RC02 needs:tool:cargo |
 | RC05 | rustcore `bookmarks` module — tree ops + XBEL import/export compat | pending | 0 | needs:task:RC02 needs:tool:cargo |
 | RC06 | rustcore `policy` module — cookie/storage/site-decision/trust data + FFI | pending | 0 | needs:task:RC01 needs:tool:cargo |

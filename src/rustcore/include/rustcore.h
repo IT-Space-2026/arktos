@@ -73,7 +73,7 @@ typedef struct RcBuffer {
 
 /* Change topics emitted so far: "credentials" (rc_cred_* map),
  * "autofill" (rc_autofill_* record set), "settings" (rc_settings_*
- * mutations). */
+ * mutations), "profiles" (rc_profiles_* registry mutations). */
 typedef void (*RcChangeCallback)(const char *topicUtf8, void *userdata);
 
 /* --- housekeeping ------------------------------------------------- */
@@ -906,6 +906,78 @@ char *rc_settings_list(RcSettings *h, const char *prefix_or_null);
 /* Flush — mutations already write through; kept for the
  * QSettings::sync() call shape. */
 RcStatus rc_settings_sync(RcSettings *h);
+
+/* ------------------------------------------------------------------ */
+/* RC03: profile registry                                              */
+/*                                                                     */
+/* The persona list — <data root>/profiles.json, byte-compatible with */
+/* the MPROF01 writer that ProfileRegistry and ProfileStore share:    */
+/* {"version":1,"profiles":[{id,name,avatar,createdAt}]} emitted in   */
+/* QJsonDocument::Indented layout.  The registry always describes at  */
+/* least "default" — a missing file materializes the synthesized row  */
+/* on open (default_name_or_null seeds its name — the caller's        */
+/* QSettings "profile/name" value or localized fallback), a corrupt   */
+/* file yields the same view without being rewritten.                 */
+/*                                                                     */
+/* ids are filesystem slugs ([a-z0-9_-], <=64); the avatar field is   */
+/* a basename joined under profiles/<id>/ — separators and dot        */
+/* segments are refused.  delete refuses "default" and removes        */
+/* profiles/<id>/ recursively; live-object teardown and the vault     */
+/* wipe stay on the Qt adapter wrapping this primitive.  Mutations    */
+/* persist atomically and emit the "profiles" change topic.           */
+/*                                                                     */
+/* The active id is per-handle process state — the ambient persona    */
+/* BrowserPaths::activeProfileId exposes; never persisted.            */
+
+typedef struct RcProfiles RcProfiles;
+
+/* Open the registry under data_root (a real path — the BrowserPaths
+ * data root).  NULL on error; release with rc_profiles_close. */
+RcProfiles *rc_profiles_open(const char *data_root,
+                             const char *default_name_or_null);
+void rc_profiles_close(RcProfiles *h);
+
+/* Re-read from disk — the seam for callers that changed the file
+ * behind the registry's back. */
+RcStatus rc_profiles_reload(RcProfiles *h);
+
+/* JSON array of {id,name,avatar,createdAt}; rc_string_free. */
+char *rc_profiles_list(RcProfiles *h);
+/* One row as a JSON object; NULL on error (rc_last_error_message). */
+char *rc_profiles_get(RcProfiles *h, const char *id);
+
+/* Create from a display name (slugified unique id + profiles/<id>/);
+ * returns the new id — rc_string_free.  NULL on failure. */
+char *rc_profiles_create(RcProfiles *h, const char *display_name);
+/* Blank names resolve to "Profile" like ProfileStore::renameProfile. */
+RcStatus rc_profiles_rename(RcProfiles *h, const char *id,
+                            const char *name);
+/* Avatar field — basename only; NULL/empty clears.  The PNG itself
+ * is written Qt-side (decode/scale stays there). */
+RcStatus rc_profiles_set_avatar(RcProfiles *h, const char *id,
+                                const char *name_or_null);
+/* Removes the row + profiles/<id>/ recursively; refuses "default"
+ * and non-slug ids. */
+RcStatus rc_profiles_delete(RcProfiles *h, const char *id);
+
+/* Ambient persona — per-handle process state.  set_active resolves
+ * non-slug ids to "default" like BrowserPaths::setActiveProfileId. */
+char *rc_profiles_active(RcProfiles *h);
+RcStatus rc_profiles_set_active(RcProfiles *h, const char *id);
+
+/* Per-profile roots mirroring BrowserPaths exactly — a NULL or
+ * non-slug id resolves to "default".  All rc_string_free results. */
+char *rc_profiles_dir(RcProfiles *h, const char *id);
+char *rc_profiles_cache_dir(RcProfiles *h, const char *id);
+char *rc_profiles_engine_storage_dir(RcProfiles *h, const char *id);
+char *rc_profiles_engine_cache_dir(RcProfiles *h, const char *id);
+char *rc_profiles_settings_dir(RcProfiles *h, const char *id);
+/* profiles/<id>/<avatar field or profile-avatar.png>. */
+char *rc_profiles_avatar_path(RcProfiles *h, const char *id);
+/* <root>/profiles.json — the file this handle owns. */
+char *rc_profiles_file(RcProfiles *h);
+/* Display name -> slug (no handle needed); rc_string_free. */
+char *rc_profiles_slugify(const char *display_name);
 
 /* ------------------------------------------------------------------ */
 /* OSE01: OpenSearch engine registry                                   */

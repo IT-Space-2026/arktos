@@ -1773,3 +1773,200 @@ fn settings_surface() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// RC03: the profile registry — handle lifecycle, CRUD, the ambient
+// id and the BrowserPaths-mirroring path accessors, all over the C
+// ABI.
+#[test]
+fn profiles_surface() {
+    let _g = guard();
+    let root = tmpdir("profiles");
+    let croot = cs(&root);
+    let seed = cs("Seeded");
+
+    // Bad opens return NULL and stash the reason.
+    assert!(unsafe { crate::rc_profiles_open(ptr::null(), ptr::null()) }.is_null());
+    let bad = CString::new([b'n', b'o', 0xff]).unwrap();
+    assert!(
+        unsafe { crate::rc_profiles_open(croot.as_ptr(), bad.as_ptr()) }.is_null()
+    );
+
+    let h = unsafe { crate::rc_profiles_open(croot.as_ptr(), seed.as_ptr()) };
+    assert!(!h.is_null());
+
+    // Fresh open materializes the default row — seeded name.
+    let listed = take_str(unsafe { crate::rc_profiles_list(h) }).unwrap();
+    assert!(listed.contains("\"id\":\"default\""));
+    assert!(listed.contains("\"name\":\"Seeded\""));
+    assert!(std::path::Path::new(&format!("{root}/profiles.json")).exists());
+    let file = take_str(unsafe { crate::rc_profiles_file(h) }).unwrap();
+    assert_eq!(file, format!("{root}/profiles.json"));
+
+    // Bad-handle / bad-pointer reads degrade, never crash.
+    assert!(take_str(unsafe { crate::rc_profiles_list(ptr::null_mut()) }).is_none());
+    assert!(take_str(unsafe { crate::rc_profiles_get(h, ptr::null()) }).is_none());
+    assert!(take_str(unsafe { crate::rc_profiles_get(h, cs("ghost").as_ptr()) }).is_none());
+    assert_eq!(
+        unsafe { crate::rc_profiles_rename(h, ptr::null(), cs("x").as_ptr()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_profiles_rename(
+                h,
+                cs("ghost").as_ptr(),
+                cs("x").as_ptr()
+            )
+        },
+        RcStatus::NotFound
+    );
+
+    // create -> unique slug id; the row reads back over the ABI.
+    let new_id = take_str(unsafe {
+        crate::rc_profiles_create(h, cs("Work Stuff!").as_ptr())
+    })
+    .unwrap();
+    assert_eq!(new_id, "work-stuff");
+    let row = take_str(unsafe {
+        crate::rc_profiles_get(h, cs("work-stuff").as_ptr())
+    })
+    .unwrap();
+    assert!(row.contains("\"name\":\"Work Stuff!\""));
+    assert!(std::path::Path::new(&format!("{root}/profiles/work-stuff"))
+        .is_dir());
+    assert!(take_str(unsafe {
+        crate::rc_profiles_create(h, ptr::null())
+    })
+    .is_none());
+
+    // rename + avatar + path accessors.
+    assert_eq!(
+        unsafe {
+            crate::rc_profiles_rename(h, cs("work-stuff").as_ptr(), cs("Day Job").as_ptr())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_profiles_set_avatar(
+                h,
+                cs("work-stuff").as_ptr(),
+                cs("../evil.png").as_ptr()
+            )
+        },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_profiles_set_avatar(
+                h,
+                cs("work-stuff").as_ptr(),
+                cs("me.png").as_ptr()
+            )
+        },
+        RcStatus::Ok
+    );
+    let dir = take_str(unsafe {
+        crate::rc_profiles_dir(h, cs("work-stuff").as_ptr())
+    })
+    .unwrap();
+    assert_eq!(dir, format!("{root}/profiles/work-stuff"));
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_cache_dir(h, cs("w").as_ptr()) }).unwrap(),
+        format!("{root}/profiles/w/cache")
+    );
+    assert_eq!(
+        take_str(unsafe {
+            crate::rc_profiles_engine_storage_dir(h, cs("w").as_ptr())
+        })
+        .unwrap(),
+        format!("{root}/profiles/w/QtWebEngine")
+    );
+    assert_eq!(
+        take_str(unsafe {
+            crate::rc_profiles_engine_cache_dir(h, cs("w").as_ptr())
+        })
+        .unwrap(),
+        format!("{root}/profiles/w/cache/QtWebEngine")
+    );
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_settings_dir(h, cs("w").as_ptr()) }).unwrap(),
+        format!("{root}/profiles/w")
+    );
+    assert_eq!(
+        take_str(unsafe {
+            crate::rc_profiles_avatar_path(h, cs("work-stuff").as_ptr())
+        })
+        .unwrap(),
+        format!("{root}/profiles/work-stuff/me.png")
+    );
+    // A non-slug id resolves to "default", never escapes the tree.
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_dir(h, cs("../x").as_ptr()) }).unwrap(),
+        format!("{root}/profiles/default")
+    );
+    // NULL id resolves to default too.
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_dir(h, ptr::null()) }).unwrap(),
+        format!("{root}/profiles/default")
+    );
+
+    // Ambient persona — per-handle process state.
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_active(h) }).unwrap(),
+        "default"
+    );
+    assert_eq!(
+        unsafe { crate::rc_profiles_set_active(h, cs("work-stuff").as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_active(h) }).unwrap(),
+        "work-stuff"
+    );
+    assert_eq!(
+        unsafe { crate::rc_profiles_set_active(h, cs("../nope").as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_active(h) }).unwrap(),
+        "default"
+    );
+
+    // slugify over the ABI; NULL tolerated.
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_slugify(cs("My Stuff").as_ptr()) }).unwrap(),
+        "my-stuff"
+    );
+    assert!(take_str(unsafe { crate::rc_profiles_slugify(ptr::null()) }).is_none());
+
+    // delete refuses default/non-slug, removes a real profile's row
+    // and dir.
+    assert_eq!(
+        unsafe { crate::rc_profiles_delete(h, cs("default").as_ptr()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_profiles_delete(h, cs("work-stuff").as_ptr()) },
+        RcStatus::Ok
+    );
+    assert!(!std::path::Path::new(&format!("{root}/profiles/work-stuff")).exists());
+    assert!(take_str(unsafe {
+        crate::rc_profiles_get(h, cs("work-stuff").as_ptr())
+    })
+    .is_none());
+    assert_eq!(
+        unsafe { crate::rc_profiles_delete(h, cs("work-stuff").as_ptr()) },
+        RcStatus::NotFound
+    );
+    assert_eq!(
+        unsafe { crate::rc_profiles_reload(h) },
+        RcStatus::Ok
+    );
+
+    unsafe {
+        crate::rc_profiles_close(h);
+        crate::rc_profiles_close(ptr::null_mut());
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}

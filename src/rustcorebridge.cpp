@@ -21,11 +21,14 @@
 
 #include "browserpaths.h"
 
+#include <qcoreapplication.h>
+#include <qdatetime.h>
 #include <qfileinfo.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 #include <qjsonvalue.h>
+#include <qsettings.h>
 
 #include <rustcore.h>
 
@@ -232,4 +235,209 @@ bool RustCoreSettings::importLegacyIni(const QString &iniPath)
         return false;
     return rc_settings_import_ini(m_h, iniPath.toUtf8().constData())
         == RC_OK;
+}
+
+// ---- RC03: RustCoreProfiles ---------------------------------------
+
+namespace {
+
+QString takeString(char *p)
+{
+    if (p == nullptr)
+        return QString();
+    const QString out = QString::fromUtf8(p);
+    rc_string_free(p);
+    return out;
+}
+
+ProfileContext contextFromJson(const QJsonObject &row)
+{
+    ProfileContext context;
+    context.id = row.value(QLatin1String("id")).toString();
+    context.name = row.value(QLatin1String("name")).toString();
+    context.avatar = row.value(QLatin1String("avatar")).toString();
+    context.createdAt = QDateTime::fromString(
+        row.value(QLatin1String("createdAt")).toString(), Qt::ISODate);
+    return context;
+}
+
+} // namespace
+
+RustCoreProfiles::RustCoreProfiles(const QString &dataRoot)
+    : m_h(nullptr)
+{
+    const QString resolved =
+        dataRoot.isEmpty() ? BrowserPaths::dataRoot() : dataRoot;
+    // The synthesized default row's name seeds exactly like
+    // ProfileRegistry::load: the PROF01-era QSettings key first, the
+    // localized fallback after.
+    QByteArray seed = QSettings()
+        .value(QLatin1String("profile/name")).toString().toUtf8();
+    if (seed.isEmpty())
+        seed = QCoreApplication::translate("ProfileRegistry", "Profile")
+            .toUtf8();
+    const QByteArray root = resolved.toUtf8();
+    m_h = rc_profiles_open(root.constData(), seed.constData());
+}
+
+RustCoreProfiles::~RustCoreProfiles()
+{
+    rc_profiles_close(m_h);
+}
+
+bool RustCoreProfiles::isValid() const
+{
+    return m_h != nullptr;
+}
+
+QString RustCoreProfiles::filePath() const
+{
+    if (m_h == nullptr)
+        return QString();
+    return takeString(rc_profiles_file(m_h));
+}
+
+QList<ProfileContext> RustCoreProfiles::profiles() const
+{
+    QList<ProfileContext> out;
+    if (m_h == nullptr)
+        return out;
+    char *json = rc_profiles_list(m_h);
+    if (json == nullptr)
+        return out;
+    const QByteArray text = QByteArray(json);
+    rc_string_free(json);
+    const QJsonArray rows = QJsonDocument::fromJson(text).array();
+    out.reserve(rows.size());
+    for (const QJsonValue &row : rows)
+        out.append(contextFromJson(row.toObject()));
+    return out;
+}
+
+ProfileContext RustCoreProfiles::profile(const QString &id) const
+{
+    if (m_h == nullptr)
+        return ProfileContext();
+    char *json = rc_profiles_get(m_h, id.toUtf8().constData());
+    if (json == nullptr)
+        return ProfileContext();
+    const QByteArray text = QByteArray(json);
+    rc_string_free(json);
+    return contextFromJson(
+        QJsonDocument::fromJson(text).object());
+}
+
+QString RustCoreProfiles::activeProfileId() const
+{
+    if (m_h == nullptr)
+        return QStringLiteral("default");
+    return takeString(rc_profiles_active(m_h));
+}
+
+void RustCoreProfiles::setActiveProfileId(const QString &id)
+{
+    if (m_h == nullptr)
+        return;
+    rc_profiles_set_active(m_h, id.toUtf8().constData());
+}
+
+ProfileContext RustCoreProfiles::createProfile(const QString &displayName)
+{
+    if (m_h == nullptr)
+        return ProfileContext();
+    const QString id = takeString(
+        rc_profiles_create(m_h, displayName.toUtf8().constData()));
+    if (id.isEmpty())
+        return ProfileContext();
+    return profile(id);
+}
+
+bool RustCoreProfiles::renameProfile(const QString &id,
+                                     const QString &name)
+{
+    if (m_h == nullptr)
+        return false;
+    return rc_profiles_rename(m_h, id.toUtf8().constData(),
+                              name.toUtf8().constData()) == RC_OK;
+}
+
+bool RustCoreProfiles::setAvatarName(const QString &id,
+                                     const QString &fileName)
+{
+    if (m_h == nullptr)
+        return false;
+    const QByteArray name = fileName.toUtf8();
+    return rc_profiles_set_avatar(
+               m_h, id.toUtf8().constData(),
+               name.isEmpty() ? nullptr : name.constData())
+        == RC_OK;
+}
+
+bool RustCoreProfiles::removeAvatar(const QString &id)
+{
+    return setAvatarName(id, QString());
+}
+
+bool RustCoreProfiles::deleteProfile(const QString &id)
+{
+    if (m_h == nullptr)
+        return false;
+    return rc_profiles_delete(m_h, id.toUtf8().constData()) == RC_OK;
+}
+
+bool RustCoreProfiles::reload()
+{
+    if (m_h == nullptr)
+        return false;
+    return rc_profiles_reload(m_h) == RC_OK;
+}
+
+namespace {
+
+using PathFn = char *(*)(RcProfiles *, const char *);
+
+QString pathVia(RcProfiles *h, PathFn fn, const QString &id)
+{
+    if (h == nullptr)
+        return QString();
+    const QByteArray utf8 = id.toUtf8();
+    return takeString(fn(h, utf8.constData()));
+}
+
+} // namespace
+
+QString RustCoreProfiles::profileDir(const QString &id) const
+{
+    return pathVia(m_h, &rc_profiles_dir, id);
+}
+
+QString RustCoreProfiles::profileCacheDir(const QString &id) const
+{
+    return pathVia(m_h, &rc_profiles_cache_dir, id);
+}
+
+QString RustCoreProfiles::engineStorageDir(const QString &id) const
+{
+    return pathVia(m_h, &rc_profiles_engine_storage_dir, id);
+}
+
+QString RustCoreProfiles::engineCacheDir(const QString &id) const
+{
+    return pathVia(m_h, &rc_profiles_engine_cache_dir, id);
+}
+
+QString RustCoreProfiles::settingsDir(const QString &id) const
+{
+    return pathVia(m_h, &rc_profiles_settings_dir, id);
+}
+
+QString RustCoreProfiles::avatarPath(const QString &id) const
+{
+    return pathVia(m_h, &rc_profiles_avatar_path, id);
+}
+
+QString RustCoreProfiles::slugify(const QString &displayName)
+{
+    return takeString(
+        rc_profiles_slugify(displayName.toUtf8().constData()));
 }

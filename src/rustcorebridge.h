@@ -20,6 +20,8 @@
 #ifndef RUSTCOREBRIDGE_H
 #define RUSTCOREBRIDGE_H
 
+#include <profilecontext.h>
+
 #include <qobject.h>
 #include <qstring.h>
 #include <qstringlist.h>
@@ -32,7 +34,7 @@
 //
 // Topics so far: "credentials" (the rc_cred_* map changed),
 // "bookmarks" and "history" (the RCORE02 stores), "autofill" (the
-// RCORE05 record set).
+// RCORE05 record set), "settings" (RC02), "profiles" (RC03).
 // Compiled only under CONFIG+=rustcore (ARKTOS_RUSTCORE).
 class RustCoreBridge : public QObject
 {
@@ -112,6 +114,79 @@ public:
 private:
     RcSettings *m_h;
     QString m_profileId;
+};
+
+struct RcProfiles;
+
+// RC03: thin Qt wrapper over the rc_profiles_* persona registry —
+// the surface that replaces the ProfileRegistry/ProfileStore
+// duplication on the rust path.  The data root binds at
+// construction (empty → BrowserPaths::dataRoot(); tests pass a
+// QTemporaryDir); profiles.json under it stays byte-compatible with
+// the MPROF01 writer both ways.
+//
+// Scope honesty: this is the STORE primitive layer.  The Qt-owned
+// half of ProfileStore::deleteProfile — BrowserProfile::releasePersona
+// (refuses while a window is bound) and ProfileVault::wipeVault — is
+// NOT reproduced here; the RC08 adoption adapter composes those
+// guards around deleteProfile() the way profilestore.cpp does today.
+// Likewise the PNG decode/scale pipeline stays Qt — setAvatarName()
+// only points the registry field at a basename the caller already
+// wrote under profiles/<id>/.
+class RustCoreProfiles
+{
+public:
+    explicit RustCoreProfiles(const QString &dataRoot = QString());
+    ~RustCoreProfiles();
+
+    RustCoreProfiles(const RustCoreProfiles &) = delete;
+    RustCoreProfiles &operator=(const RustCoreProfiles &) = delete;
+
+    bool isValid() const;
+
+    // <data root>/profiles.json — the file this registry owns.
+    QString filePath() const;
+
+    QList<ProfileContext> profiles() const;
+    // Unknown or invalid id -> invalid ProfileContext.
+    ProfileContext profile(const QString &id) const;
+
+    // The ambient persona — per-handle process state mirroring
+    // BrowserPaths::activeProfileId; a non-slug set resolves to
+    // "default".
+    QString activeProfileId() const;
+    void setActiveProfileId(const QString &id);
+
+    // Registry row + profiles/<id>/, slugified unique id from the
+    // display name — invalid context on failure.
+    ProfileContext createProfile(const QString &displayName);
+    bool renameProfile(const QString &id, const QString &name);
+    // Basename field only — the caller wrote the PNG already.
+    bool setAvatarName(const QString &id, const QString &fileName);
+    bool removeAvatar(const QString &id);
+    // Row + profiles/<id>/ removal; refuses "default" and non-slug
+    // ids.  See the class note for the guards that stay on the
+    // adoption adapter.
+    bool deleteProfile(const QString &id);
+
+    bool reload();
+
+    // Per-profile roots — byte-identical to BrowserPaths' layout; a
+    // non-slug id resolves to "default".
+    QString profileDir(const QString &id) const;
+    QString profileCacheDir(const QString &id) const;
+    QString engineStorageDir(const QString &id) const;
+    QString engineCacheDir(const QString &id) const;
+    QString settingsDir(const QString &id) const;
+    // profiles/<id>/<avatar field or profile-avatar.png>.
+    QString avatarPath(const QString &id) const;
+
+    // Display name -> filesystem slug ("profile" when nothing
+    // survives) — ProfileStore::slugify.
+    static QString slugify(const QString &displayName);
+
+private:
+    RcProfiles *m_h;
 };
 
 #endif // RUSTCOREBRIDGE_H

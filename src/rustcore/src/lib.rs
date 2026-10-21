@@ -124,6 +124,7 @@ mod parsers;
 mod pdfdoc;
 mod pdfsanitize;
 mod policy;
+mod profiles;
 mod profilevault;
 mod qrcode;
 mod readability;
@@ -3659,6 +3660,445 @@ pub unsafe extern "C" fn rc_settings_sync(
     h: *mut settings::RcSettings,
 ) -> RcStatus {
     status_of(|| settings_ref(h)?.sync())
+}
+
+// ---- RC03: profile registry ----
+//
+// The persona list — <data root>/profiles.json, byte-compatible with
+// the MPROF01 writer both C++ implementations (ProfileRegistry,
+// ProfileStore) share.  The data root binds at rc_profiles_open();
+// list/create/rename/avatar/delete cover the registry rows and the
+// path accessors mirror BrowserPaths' per-profile layout so callers
+// never invent a second one.  The active id is per-handle process
+// state (the ambient persona), never persisted.  Mutations emit the
+// "profiles" topic.  Vault markers and live-window teardown stay
+// C++-side — the delete here is the store primitive the adapter
+// wraps.
+
+fn profiles_ref<'a>(
+    h: *const profiles::RcProfiles,
+) -> error::RcResult<&'a profiles::RcProfiles> {
+    unsafe { h.as_ref() }.ok_or_else(|| error::Fail {
+        status: RcStatus::InvalidArgument,
+        msg: "bad profiles handle".into(),
+    })
+}
+
+/// Opens the registry under `data_root` — a real path, not the
+/// process-global data dir.  `default_name_or_null` seeds the
+/// display name of the synthesized "default" row (the caller's
+/// QSettings "profile/name" value or its localized fallback).
+/// Returns an opaque handle or NULL (error stashed).
+///
+/// # Safety
+/// String pointers must be NUL-terminated UTF-8; the returned handle
+/// is released with rc_profiles_close().
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_open(
+    data_root: *const c_char,
+    default_name_or_null: *const c_char,
+) -> *mut profiles::RcProfiles {
+    catch_unwind(AssertUnwindSafe(|| {
+        let root = match unsafe { util::cstr(data_root) } {
+            Some(r) => r,
+            None => {
+                error::set_error("bad data root pointer");
+                return ptr::null_mut();
+            }
+        };
+        let seed = if default_name_or_null.is_null() {
+            None
+        } else {
+            match unsafe { util::cstr(default_name_or_null) } {
+                Some(s) => Some(s),
+                None => {
+                    error::set_error("bad default name pointer");
+                    return ptr::null_mut();
+                }
+            }
+        };
+        match profiles::RcProfiles::open(root, seed) {
+            Ok(h) => Box::into_raw(Box::new(h)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Releases a handle from rc_profiles_open().  NULL-tolerant.
+///
+/// # Safety
+/// `h` must come from rc_profiles_open and not be used afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_close(h: *mut profiles::RcProfiles) {
+    if !h.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            drop(unsafe { Box::from_raw(h) });
+        }));
+    }
+}
+
+/// Re-reads profiles.json from disk (the ProfileStore::reload seam).
+///
+/// # Safety
+/// `h` must come from rc_profiles_open.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_reload(
+    h: *mut profiles::RcProfiles,
+) -> RcStatus {
+    status_of(|| profiles_ref(h)?.reload())
+}
+
+/// Every profile as a JSON array of
+/// {id,name,avatar,createdAt} objects — the row order the file holds.
+/// rc_string_free the result; NULL on error.
+///
+/// # Safety
+/// `h` must come from rc_profiles_open.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_list(
+    h: *mut profiles::RcProfiles,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match profiles_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let rows: Vec<serde_json::Value> = h
+            .list()
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "id": p.id,
+                    "name": p.name,
+                    "avatar": p.avatar,
+                    "createdAt": p.created_at,
+                })
+            })
+            .collect();
+        util::to_c_string(
+            serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into()),
+        )
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// One profile as a JSON {id,name,avatar,createdAt} object; NULL on
+/// error (RC_NOT_FOUND stashed for an unknown id).
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_get(
+    h: *mut profiles::RcProfiles,
+    id: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match profiles_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let id = match unsafe { util::cstr(id) } {
+            Some(i) => i,
+            None => {
+                error::set_error("bad id pointer");
+                return ptr::null_mut();
+            }
+        };
+        match h.get(id) {
+            Some(p) => util::to_c_string(
+                serde_json::json!({
+                    "id": p.id,
+                    "name": p.name,
+                    "avatar": p.avatar,
+                    "createdAt": p.created_at,
+                })
+                .to_string(),
+            ),
+            None => {
+                error::set_error("no such profile");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Creates a profile from `display_name`: slugified unique id,
+/// profiles/<id>/ created, registry row appended + persisted.
+/// Returns the new id (rc_string_free); NULL on failure.
+///
+/// # Safety
+/// `display_name` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_create(
+    h: *mut profiles::RcProfiles,
+    display_name: *const c_char,
+) -> *mut c_char {
+    let out = catch_unwind(AssertUnwindSafe(|| {
+        let h = match profiles_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let name = match unsafe { util::cstr(display_name) } {
+            Some(n) => n,
+            None => {
+                error::set_error("bad name pointer");
+                return ptr::null_mut();
+            }
+        };
+        match h.create(name) {
+            Ok(id) => util::to_c_string(id),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut());
+    if !out.is_null() {
+        notify::emit("profiles");
+    }
+    out
+}
+
+/// Renames a profile; persists and emits "profiles".  A blank name
+/// resolves to "Profile" like ProfileStore::renameProfile.
+///
+/// # Safety
+/// Both strings must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_rename(
+    h: *mut profiles::RcProfiles,
+    id: *const c_char,
+    name: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = profiles_ref(h)?;
+        let id = unsafe { util::cstr(id) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad id pointer".into(),
+        })?;
+        let name = unsafe { util::cstr(name) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad name pointer".into(),
+        })?;
+        h.rename(id, name)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("profiles");
+    }
+    status
+}
+
+/// Points a profile's avatar field at a basename inside
+/// profiles/<id>/ (the PNG itself is the Qt side's to write);
+/// NULL/empty clears the field.  Separators and dot segments are
+/// refused.  Persists and emits "profiles".
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8; `name_or_null` likewise or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_set_avatar(
+    h: *mut profiles::RcProfiles,
+    id: *const c_char,
+    name_or_null: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = profiles_ref(h)?;
+        let id = unsafe { util::cstr(id) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad id pointer".into(),
+        })?;
+        let name = if name_or_null.is_null() {
+            None
+        } else {
+            Some(unsafe { util::cstr(name_or_null) }.ok_or_else(|| {
+                error::Fail {
+                    status: RcStatus::InvalidArgument,
+                    msg: "bad avatar pointer".into(),
+                }
+            })?)
+        };
+        h.set_avatar(id, name)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("profiles");
+    }
+    status
+}
+
+/// Deletes a profile: removes the registry row and profiles/<id>/
+/// recursively.  "default" and non-slug ids are refused
+/// (RC_INVALID_ARGUMENT), unknown ids RC_NOT_FOUND.  Emits
+/// "profiles".
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_delete(
+    h: *mut profiles::RcProfiles,
+    id: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = profiles_ref(h)?;
+        let id = unsafe { util::cstr(id) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad id pointer".into(),
+        })?;
+        h.delete(id)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("profiles");
+    }
+    status
+}
+
+/// The ambient persona id — per-handle process state mirroring
+/// BrowserPaths::activeProfileId ("default" before any push).
+/// rc_string_free the result.
+///
+/// # Safety
+/// `h` must come from rc_profiles_open.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_active(
+    h: *mut profiles::RcProfiles,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match profiles_ref(h) {
+            Ok(h) => util::to_c_string(h.active_id()),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Pushes the ambient persona — a non-slug id resolves to "default"
+/// like BrowserPaths::setActiveProfileId.  Process state only: not
+/// persisted, no change topic.
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_set_active(
+    h: *mut profiles::RcProfiles,
+    id: *const c_char,
+) -> RcStatus {
+    status_of(|| {
+        let h = profiles_ref(h)?;
+        let id = unsafe { util::cstr(id) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad id pointer".into(),
+        })?;
+        h.set_active(id);
+        Ok(())
+    })
+}
+
+macro_rules! profiles_path_getter {
+    ($name:ident, $call:ident) => {
+        /// # Safety
+        /// `id` must be NULL (resolves to "default") or
+        /// NUL-terminated UTF-8.
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(
+            h: *mut profiles::RcProfiles,
+            id: *const c_char,
+        ) -> *mut c_char {
+            catch_unwind(AssertUnwindSafe(|| {
+                let h = match profiles_ref(h) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        error::set_error(&e.msg);
+                        return ptr::null_mut();
+                    }
+                };
+                let id = unsafe { util::cstr(id) }.unwrap_or("");
+                util::to_c_string(h.$call(id))
+            }))
+            .unwrap_or(ptr::null_mut())
+        }
+    };
+}
+
+// <root>/profiles/<id> — BrowserPaths::profileDataDir.  A non-slug
+// id resolves to "default" rather than escaping the tree.
+// rc_string_free the result.
+profiles_path_getter!(rc_profiles_dir, profile_dir);
+
+// <root>/profiles/<id>/cache — the profile's disposable lane.
+// rc_string_free the result.
+profiles_path_getter!(rc_profiles_cache_dir, cache_dir);
+
+// <root>/profiles/<id>/QtWebEngine — BrowserPaths::engineStorageDir.
+// rc_string_free the result.
+profiles_path_getter!(rc_profiles_engine_storage_dir, engine_storage_dir);
+
+// <root>/profiles/<id>/cache/QtWebEngine —
+// BrowserPaths::engineCacheDir.  rc_string_free the result.
+profiles_path_getter!(rc_profiles_engine_cache_dir, engine_cache_dir);
+
+// The dir an rc_settings profile scope anchors at — the profile
+// data dir itself.  rc_string_free the result.
+profiles_path_getter!(rc_profiles_settings_dir, settings_dir);
+
+// profiles/<id>/<avatar> — the row's avatar field joined under the
+// profile dir, falling back to profile-avatar.png when unset.
+// rc_string_free the result.
+profiles_path_getter!(rc_profiles_avatar_path, avatar_path);
+
+/// The registry file this handle owns — <root>/profiles.json.
+/// rc_string_free the result.
+///
+/// # Safety
+/// `h` must come from rc_profiles_open.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_file(
+    h: *mut profiles::RcProfiles,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match profiles_ref(h) {
+            Ok(h) => util::to_c_string(h.registry_path()),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Display name -> filesystem slug, mirroring
+/// ProfileStore::slugify.  rc_string_free the result.
+///
+/// # Safety
+/// `display_name` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_slugify(
+    display_name: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(display_name) } {
+            Some(n) => util::to_c_string(profiles::slugify(n)),
+            None => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 // ---- OSE01: OpenSearch engine registry ----

@@ -63,6 +63,7 @@ SUBDIRS  = \
     vaultengine \
     qrcode \
     rustdownload \
+    rustprofiles \
     safetext \
     sandbox \
     schemehandlers \
