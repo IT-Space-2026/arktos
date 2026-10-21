@@ -1807,9 +1807,17 @@ void ExtensionManager::finishHealthProbe(ProbeVerdict verdict,
 {
     const QString id = m_healthProbeId;
     m_healthProbeId.clear();
-    delete m_healthPage;
+    // Re-entrancy guard: ~QWebEnginePage's clearJavaScriptCallbacks
+    // delivers every still-pending runJavaScript callback DURING the
+    // delete — one of them lands back in evaluateHealthReport →
+    // finishHealthProbe → delete m_healthPage while the same object
+    // is mid-destruction.  On macOS that recursed 8000 levels deep
+    // and blew the main-thread stack.  Detach first: a nested call
+    // then sees an empty probe state and the delete is a no-op.
+    QWebEnginePage *page = m_healthPage;
     m_healthPage = nullptr;
     m_healthProfile = nullptr;
+    delete page;
     if (!id.isEmpty()) {
         if (verdict != ProbeVerdict::Pending)
             m_healthVerdicts.insert(id, verdict);
@@ -1836,12 +1844,15 @@ void ExtensionManager::abandonHealthProbe()
 {
     // The profile under the probe page is going away — drop the page
     // first, then leave the id verdict-less so the next attach can
-    // measure fresh.
+    // measure fresh.  Same detach-before-delete ordering as
+    // finishHealthProbe: callbacks delivered mid-destruction must
+    // see an already-empty probe state.
     const QString id = m_healthProbeId;
     m_healthProbeId.clear();
-    delete m_healthPage;
+    QWebEnginePage *page = m_healthPage;
     m_healthPage = nullptr;
     m_healthProfile = nullptr;
+    delete page;
     if (!id.isEmpty())
         m_healthVerdicts.remove(id);
     m_healthQueue.clear();
