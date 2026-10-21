@@ -343,10 +343,17 @@ jobs:
           # classic drag-to-Applications layout ourselves: a staging
           # dir holding the .app beside an Applications symlink, then
           # a compressed UDZO image of it.
+          # Trim what we own: strip the app binary (Qt frameworks ship
+          # pre-stripped) and drop .dSYM/debug droppings if any slipped in.
+          strip -x Arktos.app/Contents/MacOS/Arktos 2>/dev/null || true
+          find Arktos.app -name '*.dSYM' -exec rm -rf {} + 2>/dev/null || true
           mkdir dmg-root
           cp -R Arktos.app dmg-root/
           ln -s /Applications dmg-root/Applications
-          hdiutil create -volname "Arktos" -srcfolder dmg-root -ov -format UDZO Arktos.dmg
+          # ULFO = lzfse (macOS 10.11+): ~10-15% smaller than UDZO zlib
+          # on binary payloads.  The floor is QtWebEngineCore (~300MB
+          # of Chromium) — compression can't shrink the engine itself.
+          hdiutil create -volname "Arktos" -srcfolder dmg-root -ov -format ULFO Arktos.dmg
 
       - uses: actions/upload-artifact@v7
         with:
