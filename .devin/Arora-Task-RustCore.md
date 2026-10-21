@@ -32,7 +32,7 @@ Rules for the agent working this file:
 | RC02 | rustcore `settings` module — typed per-profile key-value store + FFI | done | 1 | settings store + ini import + rc_settings_* FFI + RustCoreSettings landed; verified cargo 282/282, real-QSettings ini via FFI 18/18, rust+no-rust make -j2 link clean; fixed pre-existing no-rust tst_cookiejar include bug |
 | RC03 | rustcore `profiles` module — persona registry + roots under home dir + FFI | done | 0 | profiles.json registry in rustcore behind rc_profiles_* (byte-compatible QJsonDocument::Indented writer), RcProfiles handle + RustCoreProfiles wrapper, BrowserPaths layout mirrored; verified cargo 292/292, tst_rustprofiles 6/6, rust + no-rust make -j2 clean |
 | RC04 | rustcore `history` module — visit/query/clear, compat with existing store | done | 0 | history module verified + completed: store was already landed (sqlite history.db, legacy QDataStream import, icons/hosts/suggest); added rc_hist_query (term/date-range/limit-offset) + rc_hist_expire_older_than bulk retention; verified cargo 294/294, tst_historymanager 49/49 + historyui 8/8 + filtermodel 37/37 offscreen, rust + no-rust make -j2 clean |
-| RC05 | rustcore `bookmarks` module — tree ops + XBEL import/export compat | pending | 0 | needs:task:RC02 needs:tool:cargo |
+| RC05 | rustcore `bookmarks` module — tree ops + XBEL import/export compat | done | 0 | bookmarks store verified + XBEL export fixed: <desc> now emitted as child element on folders+bookmarks (XbelWriter shape; was bookmark-only attr C++ reader ignores, folder desc dropped); legacy attr form still parses; new tst_xbel rustStoreInterchange proves C++-write->rust-edit->rust-save->C++-read identical tree; cargo 296/296, xbel 16/16 + bookmark node/model/html/dialog tests all pass offscreen, rust+no-rust make -j2 clean |
 | RC06 | rustcore `policy` module — cookie/storage/site-decision/trust data + FFI | pending | 0 | needs:task:RC01 needs:tool:cargo |
 | RC07 | Stable `arktos_core.h` C ABI facade v1 + RustCoreBridge v2 | pending | 0 | needs:task:RC02 needs:task:RC03 needs:task:RC04 needs:task:RC05 needs:task:RC06 needs:tool:cargo |
 | RC08 | QtWebEngine adoption — services read/write through facade, parity proof | pending | 0 | needs:task:RC07 |
@@ -228,6 +228,42 @@ C ABI + bridge same as before.
 Verify: cargo test — XBEL round-trip: a fixture file produced by the
 C++ writer parses, edits, re-exports, and the C++ reader accepts the
 result with identical tree.
+
+
+Outcome (2026-10-22): audit confirmed RC01's call — the module was
+already landed end to end (handle-addressed tree, rc_bm_* CRUD +
+detach/attach move + undo-aware destroy, per-profile
+bookmarks.xbel load/save via BookmarksManager, BookmarkNode lazy
+view, BKIMP01 url-scheme gate, "bookmarks" change topic).  The one
+real spec violation found and fixed:
+
+- XBEL export shape: write_item emitted a bookmark's description as
+  a `desc=` ATTRIBUTE and never wrote folder descriptions at all,
+  while XbelWriter's on-disk convention — the only form the C++
+  XbelReader binds — is a `<desc>` child element on both folders and
+  bookmarks (title, desc, then children).  Rust-written saves were
+  silently losing folder descriptions outright and writing bookmark
+  descriptions a no-rust build or foreign XBEL tool could not read
+  back.  The writer now emits the element form in XbelWriter's exact
+  positions; the reader still tolerates the interim attribute shape
+  (element wins when both exist) so files written by the broken
+  revision keep their data.  The tags= extension attribute stays —
+  foreign readers ignore it by design.
+
+Verify legs: new tst_xbel rustStoreInterchange does the spec's exact
+round-trip — XbelWriter-produced fixture (folder+bookmark desc,
+entity url, separator) -> rc_bm_load -> rc_bm_* edits (rename,
+describe, detach+attach move, create) -> rc_bm_save -> C++
+XbelReader re-reads a tree QCOMPARE-identical to the expected one,
+and the emitted bytes carry <desc> elements, no desc= attribute.
+Cargo 296/296 (+xbel_writer_emits_desc_elements_like_xbelwriter,
++xbel_reader_tolerates_legacy_desc_attributes); tst_xbel 16/16,
+tst_bookmarknode 20/20, tst_bookmarksmodel 12/12 (incl.
+rustPersistence + rustHtmlImportExport), tst_htmlbookmarks 6/6,
+tst_addbookmarkdialog 6/6 — all offscreen --disable-gpu; qmake &&
+make -j2 (rust on) 0-error, and a full qmake CONFIG+=no-rust &&
+make -j2 in a copied tree links clean (stale-Makefile/Object carry
+from the source tree excluded).
 
 ### RC06
 

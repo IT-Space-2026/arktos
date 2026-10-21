@@ -4594,3 +4594,11 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   Typed javascript: is untouched, so typed bookmarklets keep
   working; ordinary fields (the bookmark dialog's address box)
   are unaffected.
+- Bookmark descriptions survive saves from the Rust bookmark store
+  (RC05): the store now writes <desc> as a child element on folders
+  and bookmarks — the only shape the XBEL reader binds — instead of a
+  bookmark-only attribute foreign readers ignore, and folder
+  descriptions are no longer dropped on save. Descriptions made or
+  imported under a Rust build now read back identically in no-rust
+  builds and in third-party XBEL tools; files written in the interim
+  attribute shape still parse.

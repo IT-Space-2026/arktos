@@ -24,6 +24,10 @@
 #include "xbelreader.h"
 #include "xbelwriter.h"
 
+#ifdef ARKTOS_RUSTCORE
+#include <rustcore.h>
+#endif
+
 class tst_Xbel : public QObject
 {
     Q_OBJECT
@@ -53,6 +57,10 @@ private slots:
 
     void hostileInput();
     void errorPaths();
+
+#ifdef ARKTOS_RUSTCORE
+    void rustStoreInterchange();
+#endif
 };
 
 // Subclass that exposes the protected functions.
@@ -506,6 +514,99 @@ void tst_Xbel::errorPaths()
         delete root;
     }
 }
+
+#ifdef ARKTOS_RUSTCORE
+// RC05: the full interchange contract — a document produced by the
+// C++ XbelWriter parses through rc_bm_load, edits via rc_bm_* land in
+// the re-export, and the C++ XbelReader accepts the result with an
+// identical tree.  This is what keeps bookmarks.xbel flowing both
+// ways between rust and no-rust builds (and foreign XBEL tools).
+void tst_Xbel::rustStoreInterchange()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QLatin1String("bookmarks.xbel"));
+
+    // Fixture produced by the C++ writer — descriptions on both the
+    // folder and a bookmark, entities in the url, a separator.
+    {
+        BookmarkNode root(BookmarkNode::Root);
+        BookmarkNode *folder = new BookmarkNode(BookmarkNode::Folder, &root);
+        folder->title = QLatin1String("Folder");
+        folder->desc = QLatin1String("folder desc");
+        folder->expanded = true;
+        BookmarkNode *a = new BookmarkNode(BookmarkNode::Bookmark, folder);
+        a->url = QLatin1String("http://a.example/?x=1&y=2");
+        a->title = QLatin1String("A");
+        a->desc = QLatin1String("first");
+        BookmarkNode *b = new BookmarkNode(BookmarkNode::Bookmark, folder);
+        b->url = QLatin1String("http://b.example/");
+        b->title = QLatin1String("B");
+        new BookmarkNode(BookmarkNode::Separator, folder);
+        SubXbelWriter writer;
+        QVERIFY(writer.write(path, &root));
+    }
+
+    // Rust parses it, then edits through the ABI: rename the folder,
+    // describe B, move A behind the separator, insert C at the top.
+    QCOMPARE(rc_bm_load(path.toUtf8().constData()), RC_OK);
+    const uint64_t root = rc_bm_root();
+    QVERIFY(root);
+    QCOMPARE(rc_bm_child_count(root), 1);
+    const uint64_t folder = rc_bm_child_at(root, 0);
+    QVERIFY(folder);
+    QCOMPARE(rc_bm_child_count(folder), 3);
+    const uint64_t a = rc_bm_child_at(folder, 0);
+    const uint64_t b = rc_bm_child_at(folder, 1);
+    QVERIFY(a && b);
+    QCOMPARE(rc_bm_set_title(folder, "Renamed"), RC_OK);
+    QCOMPARE(rc_bm_set_desc(b, "second"), RC_OK);
+    QCOMPARE(rc_bm_detach(a), RC_OK);
+    QCOMPARE(rc_bm_attach(folder, 2, a), RC_OK);
+    QVERIFY(rc_bm_create(folder, 0,
+        "{\"type\":2,\"title\":\"C\",\"url\":\"http://c.example/\","
+        "\"desc\":\"third\"}"));
+    QCOMPARE(rc_bm_save(path.toUtf8().constData()), RC_OK);
+
+    // The re-export carries descriptions as <desc> elements — the only
+    // form the C++ reader binds — never as attributes.
+    {
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        const QByteArray xml = f.readAll();
+        QVERIFY(xml.contains("<desc>folder desc</desc>"));
+        QVERIFY(xml.contains("<desc>second</desc>"));
+        QVERIFY(!xml.contains("desc=\""));
+    }
+
+    // The C++ reader accepts the result with the expected tree.
+    BookmarkNode expected(BookmarkNode::Root);
+    BookmarkNode *ef = new BookmarkNode(BookmarkNode::Folder, &expected);
+    ef->title = QLatin1String("Renamed");
+    ef->desc = QLatin1String("folder desc");
+    ef->expanded = true;
+    BookmarkNode *ec = new BookmarkNode(BookmarkNode::Bookmark, ef);
+    ec->url = QLatin1String("http://c.example/");
+    ec->title = QLatin1String("C");
+    ec->desc = QLatin1String("third");
+    BookmarkNode *eb = new BookmarkNode(BookmarkNode::Bookmark, ef);
+    eb->url = QLatin1String("http://b.example/");
+    eb->title = QLatin1String("B");
+    eb->desc = QLatin1String("second");
+    new BookmarkNode(BookmarkNode::Separator, ef);
+    BookmarkNode *ea = new BookmarkNode(BookmarkNode::Bookmark, ef);
+    ea->url = QLatin1String("http://a.example/?x=1&y=2");
+    ea->title = QLatin1String("A");
+    ea->desc = QLatin1String("first");
+
+    SubXbelReader reader;
+    BookmarkNode *back = reader.read(path);
+    QVERIFY(back);
+    QCOMPARE(reader.error(), QXmlStreamReader::NoError);
+    QVERIFY(*back == expected);
+    delete back;
+}
+#endif // ARKTOS_RUSTCORE
 
 QTEST_MAIN(tst_Xbel)
 #include "tst_xbel.moc"

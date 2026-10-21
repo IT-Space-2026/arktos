@@ -488,6 +488,11 @@ impl Bookmarks {
                 out.push_str(&open);
                 out.push_str(">\n");
                 write_text_element(out, &pad, "title", &n.title);
+                // XbelWriter's order: title, desc, then children —
+                // <desc> is a child element, and folders carry it too.
+                if !n.desc.is_empty() {
+                    write_text_element(out, &pad, "desc", &n.desc);
+                }
                 for c in &n.children {
                     self.write_item(out, *c, depth + 1);
                 }
@@ -500,16 +505,18 @@ impl Bookmarks {
                 if !n.url.is_empty() {
                     let _ = write!(out, " href=\"{}\"", escape_attr(&n.url));
                 }
-                if !n.desc.is_empty() {
-                    // XbelWriter emits desc as an attribute (nonstandard
-                    // but the on-disk convention this file format has).
-                    let _ = write!(out, " desc=\"{}\"", escape_attr(&n.desc));
-                }
                 if !n.tags.is_empty() {
                     let _ = write!(out, " tags=\"{}\"", escape_attr(&n.tags.join(",")));
                 }
                 out.push_str(">\n");
                 write_text_element(out, &pad, "title", &n.title);
+                // <desc> is an ELEMENT in XBEL and the only form the
+                // C++ XbelReader binds — the attribute shape an earlier
+                // revision of this writer emitted stays readable (the
+                // parser tolerates it) but is never produced.
+                if !n.desc.is_empty() {
+                    write_text_element(out, &pad, "desc", &n.desc);
+                }
                 out.push_str(&pad);
                 out.push_str("</bookmark>\n");
             }
@@ -801,6 +808,59 @@ mod tests {
         assert_eq!(s2.nodes[&b2].url, "http://q/?a=1&b=2");
         assert_eq!(s2.nodes[&b2].desc, "d");
         assert_eq!(s2.nodes[&s2.child_at(f2, 1).unwrap()].kind, TYPE_SEPARATOR);
+    }
+
+    #[test]
+    fn xbel_writer_emits_desc_elements_like_xbelwriter() {
+        // LEG01 shape: XbelWriter emits <desc> as a child element on
+        // folders AND bookmarks — the C++ reader binds no other form,
+        // so the Rust writer must not emit the desc= attribute it once
+        // did, and must not drop folder descriptions.
+        let mut s = store();
+        let f = s
+            .create(
+                s.root(),
+                -1,
+                &json!({"type":1,"title":"F","desc":"folder & <desc>"}),
+            )
+            .unwrap();
+        s.create(
+            f,
+            -1,
+            &json!({"type":2,"title":"B","url":"http://b/","desc":"bm desc"}),
+        )
+        .unwrap();
+        let xml = s.to_xbel();
+        assert!(xml.contains("<desc>folder &amp; &lt;desc&gt;</desc>"), "{xml}");
+        assert!(xml.contains("<desc>bm desc</desc>"), "{xml}");
+        assert!(!xml.contains("desc=\""), "{xml}");
+
+        let mut s2 = store();
+        s2.load_bytes(xml.as_bytes()).unwrap();
+        let f2 = s2.child_at(s2.root(), 0).unwrap();
+        assert_eq!(s2.nodes[&f2].desc, "folder & <desc>");
+        let b2 = s2.child_at(f2, 0).unwrap();
+        assert_eq!(s2.nodes[&b2].desc, "bm desc");
+    }
+
+    #[test]
+    fn xbel_reader_tolerates_legacy_desc_attributes() {
+        // Files written while this crate emitted desc= attributes must
+        // still read — the attribute is a pre-expansion, and a later
+        // <desc> element wins when both exist.
+        let s = parse(
+            "<xbel version='1.0'>\
+               <folder desc='attr'><title>F</title><desc>elem</desc></folder>\
+               <bookmark href='http://b/' desc='battr'><title>B</title></bookmark>\
+               <bookmark href='http://c/' desc='conly'><title>C</title></bookmark>\
+             </xbel>",
+        );
+        let f = s.child_at(s.root(), 0).unwrap();
+        assert_eq!(s.nodes[&f].desc, "elem");
+        let b = s.child_at(s.root(), 1).unwrap();
+        assert_eq!(s.nodes[&b].desc, "battr");
+        let c = s.child_at(s.root(), 2).unwrap();
+        assert_eq!(s.nodes[&c].desc, "conly");
     }
 
     #[test]
