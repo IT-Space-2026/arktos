@@ -74,10 +74,11 @@ QByteArray open(const QString &profileId, const QByteArray &blob,
                 bool *ok = nullptr);
 
 // QSettings-friendly wrappers: sealString() returns
-// "arsec1:<base64>" when the backend works and the unchanged input
-// otherwise (keep the old plaintext behavior rather than lose the
-// setting).  openString() decrypts the prefixed form and passes
-// legacy plaintext values through so existing settings keep working.
+// "arsec1:<base64>" on success and an EMPTY string when the seal is
+// refused — fail closed, callers must not persist the empty result
+// over an existing value (SEC28).  openString() decrypts the
+// prefixed form and passes legacy plaintext values through so
+// existing settings keep working.
 QString sealString(const QString &plain);
 QString openString(const QString &stored, bool *ok = nullptr);
 QString sealString(const QString &profileId, const QString &plain);

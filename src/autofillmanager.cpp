@@ -440,13 +440,58 @@ static bool decodeLegacyPayload(const QString &profileId,
     return true;
 }
 
+// One zero overwrite + remove — the same honest "no readable
+// plaintext at the path" guarantee profilevault's secureEraseTree
+// makes (wear-leveling/CoW caveats apply equally).  ReadOnly is not
+// enough: the file has to be opened for writing to overwrite it.
+static bool secureEraseFile(const QString &fileName)
+{
+    {
+        QFile file(fileName);
+        if (file.open(QIODevice::ReadWrite)) {
+            const qint64 size = file.size();
+            const QByteArray zeros(65536, '\0');
+            if (file.seek(0)) {
+                qint64 left = size;
+                while (left > 0) {
+                    const qint64 written = file.write(zeros.constData(),
+                        qMin(left, qint64(zeros.size())));
+                    if (written <= 0)
+                        break;
+                    left -= written;
+                }
+                file.flush();
+            }
+        }
+    }
+    return QFile::remove(fileName);
+}
+
+// The legacy file's custody state without trusting its contents —
+// the ARSEC1 magic is unauthenticated but only ever decides between
+// "ciphertext backup" and "plaintext to erase".
+static bool fileIsSealed(const QString &fileName)
+{
+    QFile file(fileName);
+    return file.open(QIODevice::ReadOnly)
+        && file.read(6) == QByteArrayLiteral("ARSEC1");
+}
+
 // The import consumed the legacy file: move it out of the live path
-// so neither store re-reads it.  The renamed copy (still sealed
-// ciphertext) is kept as a recoverable backup.
+// so neither store re-reads it.  A sealed blob is renamed aside and
+// kept as a recoverable ciphertext backup; a plaintext Qt4-era file
+// is securely erased instead — a renamed plaintext copy would keep
+// credentials on disk in the clear indefinitely, the exact leak the
+// sealed store exists to close (SEC28).
 static void retireLegacyFile(const QString &fileName)
 {
     if (!QFile::exists(fileName))
         return;
+    if (!fileIsSealed(fileName)) {
+        if (!secureEraseFile(fileName))
+            qWarning() << "AutoFillManager: cannot erase" << fileName;
+        return;
+    }
     const QString retired = fileName + QLatin1String(".migrated");
     QFile::remove(retired);
     if (!QFile::rename(fileName, retired))
@@ -521,23 +566,34 @@ void AutoFillManager::saveFormData() const
     if (sealed.isEmpty()) {
         // No crypto backend on this box: never re-serialize password
         // forms as plaintext — keep them in memory for this session
-        // and leave whatever file was there untouched.  Password-free
-        // forms hold no credentials and still get the legacy store.
+        // and leave whatever file was there untouched.  SEC28: a
+        // passphrase-protected store is the same refusal — a failed
+        // seal there means the unlock was declined, not that the
+        // crypto is absent, so writing plaintext would silently
+        // downgrade the sealed file.
         bool hasPassword = false;
         for (const Form &form : m_forms)
             hasPassword |= form.hasAPassword;
-        if (hasPassword) {
+        if (hasPassword
+            || SecureStore::passphraseProtectionEnabled(m_profileId)) {
             qWarning() << "AutoFillManager: secure store unavailable;"
                        << "not persisting autofill data to" << fileName;
             return;
         }
-        QFile file(fileName);
-        if (!file.open(QFile::WriteOnly)) {
+        // Password-free forms hold no credentials and still get the
+        // legacy plaintext store — atomically and owner-only like
+        // the sealed path.
+        QSaveFile file(fileName);
+        if (!file.open(QIODevice::WriteOnly)) {
             qWarning() << "Unable to open" << fileName
                        << "to store autofill data";
             return;
         }
         file.write(payload);
+        if (!file.commit())
+            qWarning() << "Unable to commit" << fileName;
+        QFile::setPermissions(fileName,
+                              QFile::ReadUser | QFile::WriteUser);
         return;
     }
 
@@ -562,6 +618,13 @@ void AutoFillManager::loadFormData()
     rustCoreEnsureDataDirFor(m_profileId);
     if (rc_passphrase_enabled() && !rc_is_unlocked())
         SecureStore::ensureUnlocked(m_profileId, nullptr);
+
+    // SEC28: pre-fix imports retired even a plaintext legacy file by
+    // rename — a surviving plaintext ".migrated" copy is credentials
+    // left at rest, so erase it (a sealed backup stays).
+    const QString retiredName = fileName + QLatin1String(".migrated");
+    if (QFile::exists(retiredName) && !fileIsSealed(retiredName))
+        secureEraseFile(retiredName);
 
     // One-shot import: when the Rust store does not exist yet the
     // legacy file is decoded by the original reader, replayed into

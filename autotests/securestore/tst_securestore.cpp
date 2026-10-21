@@ -67,6 +67,9 @@ private slots:
     void disableRestoresFileKey();
     void interactiveUnlockPrompt();
     void nonInteractiveUnlockFails();
+    void unlockReopensPostEnableSeals();
+    void hostileKdfFileRejected();
+    void sealStringFailsClosed();
 
 private:
     QTemporaryDir m_settingsDir;
@@ -436,6 +439,96 @@ void tst_SecureStore::nonInteractiveUnlockFails()
     // appear and the request must fail cleanly.
     QVERIFY(!SecureStore::ensureUnlocked());
     QVERIFY(!SecureStore::isUnlocked());
+}
+
+// SEC28: data sealed in the same session as enablePassphraseProtection
+// must keep opening under the passphrase-derived key after a lock /
+// re-unlock.  Regression for the no-rust custody switch zeroing the
+// cached derived key while leaving it registered — seals then ran
+// under an all-zero key anyone can reproduce, and the blobs stopped
+// opening under the real key.
+void tst_SecureStore::unlockReopensPostEnableSeals()
+{
+    QVERIFY(SecureStore::enablePassphraseProtection(
+        QLatin1String("passphrase1")));
+    const QByteArray blob =
+        SecureStore::seal("sealed right after enable");
+    QVERIFY(SecureStore::isSealed(blob));
+
+    SecureStore::lock();
+    QVERIFY(SecureStore::unlock(QLatin1String("passphrase1")));
+    bool ok = false;
+    QCOMPARE(SecureStore::open(blob, &ok),
+             QByteArray("sealed right after enable"));
+    QVERIFY(ok);
+}
+
+// SEC28: securestore.kdf is unauthenticated and user-writable — its
+// derive parameters are attacker-controlled input.  Out-of-envelope
+// values must be rejected before the KDF runs: an unbounded memory
+// cost is a malloc/OOM kill-switch and an unbounded lane count
+// overflows the vendored argon2's lane arithmetic into out-of-bounds
+// heap writes.  Both backends share the same envelope now.
+void tst_SecureStore::hostileKdfFileRejected()
+{
+    // A genuine file supplies the salt + verifier scaffolding; only
+    // the parameter words are edited.
+    QVERIFY(SecureStore::enablePassphraseProtection(
+        QLatin1String("passphrase1")));
+    QFile in(kdfPath());
+    QVERIFY(in.open(QIODevice::ReadOnly));
+    const QByteArray honest = in.readAll();
+    in.close();
+    QVERIFY(honest.size() > 34);
+    SecureStore::lock();
+
+    struct Case { int offset; quint32 value; };
+    const Case cases[] = {
+        { 6, 0u },          // memoryKiB below the minimum
+        { 6, 0xffffffffu }, // memoryKiB asking for terabytes
+        { 10, 0u },         // passes == 0
+        { 10, 0xffffffffu },// passes pinning the UI thread
+        { 14, 0u },         // lanes == 0
+        { 14, 0x20000001u },// lanes overflowing 8*lanes/lane_length
+        { 14, 64u },        // lanes past the envelope
+    };
+    for (const Case &c : cases) {
+        QByteArray kdf = honest;
+        kdf[c.offset]     = char(c.value & 0xff);
+        kdf[c.offset + 1] = char((c.value >> 8) & 0xff);
+        kdf[c.offset + 2] = char((c.value >> 16) & 0xff);
+        kdf[c.offset + 3] = char((c.value >> 24) & 0xff);
+        QFile out(kdfPath());
+        QVERIFY(out.open(QIODevice::WriteOnly));
+        QCOMPARE(out.write(kdf), qint64(kdf.size()));
+        out.close();
+        QVERIFY2(!SecureStore::unlock(QLatin1String("passphrase1")),
+                 "hostile kdf params must be refused before the KDF");
+        QVERIFY(!SecureStore::isUnlocked());
+    }
+
+    // The honest file still unlocks after the hostile edits.
+    QFile restore(kdfPath());
+    QVERIFY(restore.open(QIODevice::WriteOnly));
+    QCOMPARE(restore.write(honest), qint64(honest.size()));
+    restore.close();
+    QVERIFY(SecureStore::unlock(QLatin1String("passphrase1")));
+    QVERIFY(SecureStore::isUnlocked());
+}
+
+// SEC28: sealString must fail closed — a refused seal (locked store,
+// declined prompt, missing backend) returns empty rather than the
+// plaintext input that would then be persisted into QSettings.
+void tst_SecureStore::sealStringFailsClosed()
+{
+    QVERIFY(SecureStore::enablePassphraseProtection(
+        QLatin1String("passphrase1")));
+    SecureStore::lock();
+    // init() disabled interactive unlock, so the seal is refused.
+    QVERIFY(SecureStore::sealString(QLatin1String("s3cret")).isEmpty());
+    QVERIFY(SecureStore::unlock(QLatin1String("passphrase1")));
+    QVERIFY(SecureStore::sealString(QLatin1String("s3cret"))
+            .startsWith(QLatin1String("arsec1:")));
 }
 
 QTEST_MAIN(tst_SecureStore)

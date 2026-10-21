@@ -4546,3 +4546,19 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   from the rewritten file entirely instead of being carried through
   byte-for-byte. Pages a non-PDF .pdf link actually serves (error
   pages, redirects) still render as their true type.
+- Saved-password vault hardened after a coverage audit (SEC28): on
+  builds without the Rust core, enabling a master passphrase left the
+  store claiming to be unlocked while holding a blank key — new
+  autofill saves were encrypted with a publicly-known key and could
+  no longer be opened under the real passphrase. A tampered
+  passphrase-parameters file that could crash or hang the unlock —
+  or corrupt memory through the bundled Argon2 — is now rejected
+  before any derivation, matching the Rust backend's bounds.
+  Importing an old plaintext autofill.dat now securely erases it
+  instead of keeping a readable ".migrated" backup, and any
+  plaintext copy left behind by an earlier import is scrubbed on the
+  next run. Saving settings while the vault is locked can no longer
+  write the proxy password into the settings file in plaintext, and
+  on the no-Rust path a declined unlock no longer downgrades the
+  sealed autofill file to plaintext. The full audit report lives at
+  .devin/security/SEC28-report.md.

@@ -311,6 +311,18 @@ void wipeKeys(QByteArray &a, QByteArray &b)
 const quint32 kKdfMemoryKiB = 65536;
 const quint32 kKdfPasses = 3;
 const quint32 kKdfLanes = 4;
+// SEC28: securestore.kdf is a user-modifiable FILE — nothing
+// authenticates it, so the derive parameters it carries are
+// untrusted.  VSEC01/F7 bounded the Rust parser but not this one:
+// an unbounded memoryKiB is a malloc/OOM kill-switch, an unbounded
+// pass count hangs the UI thread, and an unbounded lane count
+// overflows the vendored argon2's 8*lanes / lanes*sync-points
+// arithmetic into out-of-bounds heap writes.  Same envelope the
+// rustcore store applies before argon2 ever sees the values.
+const quint32 kKdfMinMemoryKiB = 8192;
+const quint32 kKdfMaxMemoryKiB = 4 * 1024 * 1024;
+const quint32 kKdfMaxPasses = 16;
+const quint32 kKdfMaxLanes = 16;
 const int kKdfSaltSize = 16;
 const char kKdfMagic[] = "ARKDF1";
 // BRAND01: frozen at the pre-rebrand spelling — the verifier bytes are
@@ -491,6 +503,13 @@ bool parseKdfFile(const QString &profileId, KdfParams *params)
     params->lanes = readU32(14);
     params->salt = data.mid(18, kKdfSaltSize);
     params->verifier = data.mid(34);
+    // Untrusted-file bounds check BEFORE the KDF ever sees the
+    // values — parity with the Rust parser (SEC28).
+    if (params->memoryKiB < kKdfMinMemoryKiB
+        || params->memoryKiB > kKdfMaxMemoryKiB
+        || params->passes == 0 || params->passes > kKdfMaxPasses
+        || params->lanes == 0 || params->lanes > kKdfMaxLanes)
+        return false;
     return params->salt.size() == kKdfSaltSize
         && SecureStore::isSealed(params->verifier);
 }
@@ -1164,7 +1183,13 @@ bool SecureStore::enablePassphraseProtection(const QString &profileId,
         s_fileKeys.remove(id);
     }
     secureZero(oldKey);
-    secureZero(s_derivedKeys[id]);
+    // SEC28: wipe the local copy only — the hash entry must KEEP the
+    // derived key so the store stays usable (the rustcore backend
+    // does the same: kdf_create leaves derived_key set).  Zeroing
+    // s_derivedKeys[id] without removing it leaves an unlocked-
+    // looking store whose key is all zeros: seals would produce
+    // blobs decryptable by anyone and opens would fail outright.
+    secureZero(newKey);
     return true;
 }
 
@@ -1304,8 +1329,15 @@ QString SecureStore::sealString(const QString &profileId,
                                 const QString &plain)
 {
     const QByteArray blob = seal(profileId, plain.toUtf8());
-    if (blob.isEmpty())
-        return plain;
+    if (blob.isEmpty()) {
+        // SEC28: fail closed.  Returning the input would persist a
+        // credential as plaintext when the seal was refused — a
+        // locked store whose unlock prompt was declined, a non-
+        // interactive caller, or a missing crypto backend.
+        qWarning() << "SecureStore: cannot seal a settings value —"
+                      " not storing it as plaintext";
+        return QString();
+    }
     return QLatin1String("arsec1:")
         + QString::fromLatin1(blob.toBase64());
 }

@@ -2076,7 +2076,13 @@ void SettingsDialog::saveToSettings()
     settings.setValue(QLatin1String("hostName"), proxyHostName->text());
     settings.setValue(QLatin1String("port"), proxyPort->text());
     settings.setValue(QLatin1String("userName"), proxyUserName->text());
-    settings.setValue(QLatin1String("password"), SecureStore::sealString(proxyPassword->text()));
+    // SEC28: sealString fails closed (empty) when the store is locked
+    // or the crypto backend is missing — keep the previous stored
+    // value rather than overwrite it with plaintext or a blank.
+    const QString proxyPass = proxyPassword->text();
+    const QString sealedPass = SecureStore::sealString(proxyPass);
+    if (!sealedPass.isEmpty() || proxyPass.isEmpty())
+        settings.setValue(QLatin1String("password"), sealedPass);
     settings.endGroup();
 
     // Tabs

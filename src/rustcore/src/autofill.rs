@@ -44,15 +44,17 @@
 //! The legacy autofill.dat (ARSEC1-wrapped or Qt4-era plaintext
 //! QDataStream) is a READ-ONLY import source: the Qt side parses it
 //! once with its existing bounded reader and replays the records
-//! through rc_autofill_set_forms, then retires the file.  New writes
-//! never reach it — like the history.db migration, the two stores
-//! keep separate names so a no-Rust build never trips over a payload
-//! it cannot read.
+//! through rc_autofill_set_forms, then retires the file — a sealed
+//! copy is renamed aside as a ciphertext backup, a plaintext one is
+//! zero-overwritten and removed (SEC28).  New writes never reach it —
+//! like the history.db migration, the two stores keep separate names
+//! so a no-Rust build never trips over a payload it cannot read.
 
 use std::fs;
 use std::path::PathBuf;
 
 use serde_json::{json, Map, Value};
+use zeroize::Zeroize;
 
 use crate::error::{fail, Fail, RcResult, RcStatus};
 use crate::store::{Store, KEY_SIZE};
@@ -98,6 +100,35 @@ pub struct AddressRecord {
 pub struct AutofillData {
     pub forms: Vec<FormRecord>,
     pub addresses: Vec<AddressRecord>,
+}
+
+// SEC28: the decoded cache holds passwords and card numbers — wipe
+// it on drop so Store::lock() and data-dir switches leave no
+// plaintext in freed heap, the same guarantee the Zeroizing key
+// material gets.  (zeroize's derive feature would add a crate to the
+// pinned supply chain; a hand-rolled Drop covers the same fields.)
+impl Drop for AutofillData {
+    fn drop(&mut self) {
+        for form in &mut self.forms {
+            form.url.zeroize();
+            form.name.zeroize();
+            for (key, value) in &mut form.elements {
+                key.zeroize();
+                value.zeroize();
+            }
+        }
+        for address in &mut self.addresses {
+            address.country.zeroize();
+            address.name.zeroize();
+            address.organization.zeroize();
+            address.street.zeroize();
+            address.city.zeroize();
+            address.state.zeroize();
+            address.zip.zeroize();
+            address.phone.zeroize();
+            address.email.zeroize();
+        }
+    }
 }
 
 // ---- binary codec -----------------------------------------------------

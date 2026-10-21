@@ -58,8 +58,10 @@ private slots:
     void sealedOnDisk();
     void legacySealedImport();
     void legacyPlaintextImport();
+    void plaintextRetiredCopyErased();
     void tamperedStoreRejected();
     void passphraseCustody();
+    void lockedStoreKeepsSealedFile();
     void noPlaintextOnDisk();
 
 private:
@@ -270,6 +272,49 @@ void tst_AutoFill::legacyPlaintextImport()
 #ifdef ARKTOS_RUSTCORE
     QVERIFY(QFile::exists(storePath()));
     QVERIFY(!QFile::exists(legacyPath()));
+    // SEC28: plaintext is erased, not renamed — no readable copy may
+    // survive the import under any name.
+    QVERIFY(!QFile::exists(retiredPath()));
+#endif
+}
+
+// SEC28: an earlier import retired a plaintext legacy file by rename —
+// the ".migrated" copy keeps credentials at rest in the clear, so the
+// next load must erase it.  A sealed backup copy is ciphertext and
+// stays.
+void tst_AutoFill::plaintextRetiredCopyErased()
+{
+#ifdef ARKTOS_RUSTCORE
+    // A populated Rust store means no import is attempted; the stale
+    // plaintext backup must still be scrubbed by the load.
+    const QList<AutoFillManager::Form> forms{sampleForm()};
+    {
+        AutoFillManager manager;
+        manager.setForms(forms);
+        flushSave(&manager);
+    }
+    QVERIFY(QFile::exists(storePath()));
+    {
+        QFile file(retiredPath());
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(legacyPayload(forms));
+    }
+    {
+        AutoFillManager manager;
+        QVERIFY(sameForms(manager.forms(), forms));
+        QVERIFY(!QFile::exists(retiredPath()));
+    }
+    {
+        QFile file(retiredPath());
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(SecureStore::seal(legacyPayload(forms)));
+    }
+    {
+        AutoFillManager manager;
+        QVERIFY(QFile::exists(retiredPath()));
+    }
+#else
+    QSKIP("the .migrated retirement sweep is a rustcore-custody path");
 #endif
 }
 
@@ -330,6 +375,52 @@ void tst_AutoFill::passphraseCustody()
         QVERIFY(sameForms(manager.forms(), forms));
     }
     QVERIFY(SecureStore::disablePassphraseProtection());
+}
+
+// SEC28 (no-rust path): a failed seal on a passphrase-protected
+// store means the unlock was declined — the plaintext fallback that
+// exists for a crypto-less system must NOT downgrade the sealed
+// autofill.dat while the store is merely locked.
+void tst_AutoFill::lockedStoreKeepsSealedFile()
+{
+#ifdef ARKTOS_RUSTCORE
+    QSKIP("the plaintext fallback only exists in the Qt build");
+#else
+    QVERIFY(SecureStore::enablePassphraseProtection(
+        QLatin1String("passphrase1")));
+    AutoFillManager::Form form = sampleForm();
+    form.hasAPassword = false;
+    form.elements.clear();
+    form.elements << AutoFillManager::Element(
+        QLatin1String("color"), QLatin1String("blue"));
+    {
+        AutoFillManager manager;
+        manager.setForms(QList<AutoFillManager::Form>() << form);
+        flushSave(&manager);
+    }
+    {
+        QFile file(storePath());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QVERIFY(SecureStore::isSealed(file.readAll()));
+    }
+
+    // Locked + non-interactive: the save must leave the sealed file
+    // untouched rather than overwrite it in plaintext.
+    SecureStore::lock();
+    {
+        AutoFillManager manager;
+        QVERIFY(manager.forms().isEmpty());
+        manager.setForms(QList<AutoFillManager::Form>() << form);
+        flushSave(&manager);
+    }
+    {
+        QFile file(storePath());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QVERIFY(SecureStore::isSealed(file.readAll()));
+    }
+    QVERIFY(SecureStore::unlock(QLatin1String("passphrase1")));
+    QVERIFY(SecureStore::disablePassphraseProtection());
+#endif
 }
 
 // PII fields (a card number here) must never land on disk unsealed:
