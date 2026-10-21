@@ -254,11 +254,9 @@ jobs:
 
   macos:
     runs-on: macos-latest
-    env:
-      # rustdl pulls aws-lc-sys through reqwest/rustls; the C fallback
-      # (no hand asm) builds anywhere clang exists — constant-time is
-      # preserved, the download engine does not need the asm speed.
-      AWS_LC_SYS_NO_ASM: '1'
+    # NOTE: do NOT set AWS_LC_SYS_NO_ASM here — aws-lc-sys panics on it
+    # for release builds ("only allowed for debug builds"), and the
+    # aarch64-apple-darwin target has pregenerated clang asm anyway.
     steps:
       - uses: actions/checkout@v7
 

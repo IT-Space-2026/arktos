@@ -26,7 +26,7 @@
 #include <qjsonarray.h>
 #include <quuid.h>
 
-#if QT_CONFIG(dbus)
+#if defined(QT_DBUS_LIB)
 #include <qdbusconnection.h>
 #include <qdbusinterface.h>
 #include <qdbuspendingcall.h>
@@ -403,7 +403,7 @@ QString ExtensionNotificationCenter::present(
         return QString();
     }
 
-#if QT_CONFIG(dbus)
+#if defined(QT_DBUS_LIB)
     QDBusConnection bus = QDBusConnection::sessionBus();
     if (!bus.isConnected()) {
         unserve(extensionId, QStringLiteral("no session D-Bus"));
@@ -532,12 +532,12 @@ void ExtensionNotificationCenter::closePresented(const Record &record)
 {
     if (!record.platformId || record.stubbed)
         return;
-#if QT_CONFIG(dbus)
+#if defined(QT_DBUS_LIB)
     closeNotify(record.platformId);
 #endif
 }
 
-#if QT_CONFIG(dbus)
+#if defined(QT_DBUS_LIB)
 void ExtensionNotificationCenter::closeNotify(quint32 platformId)
 {
     const QDBusConnection bus = QDBusConnection::sessionBus();

@@ -133,7 +133,7 @@ private:
     Record *find(const QString &extensionId,
                  const QString &notificationId);
     void noteTo(const QString &extensionId, const QString &text);
-#if QT_CONFIG(dbus)
+#if defined(QT_DBUS_LIB)
     void closeNotify(quint32 platformId);
 #endif
 
