@@ -58,7 +58,7 @@ jobs:
       - uses: jurplel/install-qt-action@v4
         with:
           version: '6.12.0'
-          modules: 'qtwebengine qt5compat qtwebchannel qtpositioning'
+          modules: 'qtwebengine qt5compat qtwebchannel qtpositioning qtserialport'
           aqtversion: '>=3.3.0'
           cache: true
 
@@ -108,7 +108,7 @@ jobs:
       - uses: jurplel/install-qt-action@v4
         with:
           version: '6.12.0'
-          modules: 'qtwebengine qt5compat qtwebchannel qtpositioning'
+          modules: 'qtwebengine qt5compat qtwebchannel qtpositioning qtserialport'
           aqtversion: '>=3.3.0'
           cache: true
 
@@ -295,7 +295,7 @@ jobs:
         with:
           version: '6.12.0'
           arch: 'clang_64'
-          modules: 'qtwebengine qt5compat qtwebchannel qtpositioning'
+          modules: 'qtwebengine qt5compat qtwebchannel qtpositioning qtserialport'
           cache: true
 
       - name: Derive QTDIR
@@ -332,6 +332,12 @@ jobs:
       - name: Package .dmg
         run: |
           "$QTDIR/bin/macdeployqt" Arktos.app -verbose=1
+          # Launch smoke on the DEPLOYED bundle: macdeployqt shipped a
+          # dmg once with an unresolved @rpath/QtSerialPort inside
+          # QtWebEngineProcess — silent quit on the user's Mac.
+          # Missing frameworks must kill CI, not the dock icon.
+          QT_QPA_PLATFORM=offscreen QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu \
+            gtimeout 120 Arktos.app/Contents/MacOS/Arktos --quit-after-load
           # macdeployqt's own -dmg output is a bare volume — no
           # /Applications link, no install affordance. Build the
           # classic drag-to-Applications layout ourselves: a staging
