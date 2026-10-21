@@ -20,6 +20,10 @@ Rules for the agent working this file:
 - `blocked:<reason>` in Notes when genuinely stuck — never fake done.
 - One task per run: after committing, STOP.
 - Never revert unrelated working-tree changes.
+- ALL writes to this file MUST go through `.devin/taskfile.sh`
+  (flock-serialized — direct edits race the loop's row updates and
+  lose data): `set <ID> field=…` for row cells, `append-detail <ID>`
+  (stdin) for the `### <id>` section, `with-lock -- <cmd>` otherwise.
 
 Context: repo is Arktos (ex-Arora), a Qt 6.12.0 / QtWebEngine browser
 with a pluggable engine layer: `Engine::Backend/Profile/Page`

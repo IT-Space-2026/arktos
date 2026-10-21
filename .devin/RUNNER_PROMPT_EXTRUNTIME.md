@@ -41,8 +41,10 @@ Your job in THIS run:
    missing, do NOT start — set Status `blocked` with Notes
    `blocked:missing <what>`, commit just Arora-Task-ExtRuntime.md,
    stop.
-4. Set that row's Status to `in_progress` and save
-   Arora-Task-ExtRuntime.md.
+4. Set that row's Status to `in_progress` via
+   `.devin/taskfile.sh .devin/Arora-Task-ExtRuntime.md set <ID>
+   status=in_progress` (never edit the task file directly — see Hard
+   rules).
 5. Do the task fully:
    - Follow existing conventions (Qt-style C++ in
      src/extensions/, the shim's dispatch shape — `invoke<Ns>`
@@ -73,8 +75,9 @@ Your job in THIS run:
    - Verify per the task's "Verify:" hint.
 6. On success:
    a. Update the row Status to `done` and write a one-line summary +
-      verification result into the Notes column of
-      `.devin/Arora-Task-ExtRuntime.md`.
+      verification result into the Notes column via
+      `.devin/taskfile.sh .devin/Arora-Task-ExtRuntime.md set <ID>
+      status=done notes='<one-line summary + verify result>'`.
    b. Append a bullet to `ChangeLog` (user-visible change wording).
    c. Update `README` if the change affects documented extension
       support — otherwise skip.
@@ -83,9 +86,11 @@ Your job in THIS run:
    e. `git add -A`, `git commit` with a descriptive message
       (why, not just what), then `git push` (branch extruntime-work
       only).
-7. If you genuinely cannot complete it, set Status `blocked` and
-   Notes `blocked:<short reason>`, then commit+push just the
-   Arora-Task-ExtRuntime.md update. ER06 is the lane's decision gate —
+7. If you genuinely cannot complete it, set it `blocked` via
+   `.devin/taskfile.sh .devin/Arora-Task-ExtRuntime.md set <ID>
+   status=blocked notes='blocked:<short reason>'`, then commit+push
+   just the Arora-Task-ExtRuntime.md update. ER06 is the lane's
+   decision gate —
    a measured isolation finding is a legitimate `blocked` outcome
    there, documented in `.devin/EXT-RUNTIME-SPIKE.md`, not a failure
    to disguise.
@@ -98,6 +103,11 @@ Hard rules:
   touch master.
 - NEVER edit `.devin/Arora-Task.md` or the other lanes' task files —
   each lane owns its own queue. Never edit the sibling worktrees.
+- ALL writes to Arora-Task-ExtRuntime.md MUST go through
+  `.devin/taskfile.sh` (flock-serialized against the loop's own row
+  updates — direct file-tool edits are a lost-update race): `set <ID>
+  field=…` for row cells, `append-detail <ID>` (stdin) for the `###
+  <ID>` details section, `with-lock -- <cmd>` for anything else.
 - Never revert unrelated working-tree changes. `git status` first.
 - No force-push, no git history rewrite, no git config changes.
 - No sudo, no system package installs, no writes outside $HOME.

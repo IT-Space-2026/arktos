@@ -25,7 +25,9 @@ Your job in THIS run:
    (in_progress means a previous run was interrupted — inspect the file's
    remaining `type="unfinished"` entries and CONTINUE where it stopped,
    do not retranslate finished entries).
-3. Set that row's Status to `in_progress` and save the task file.
+3. Set that row's Status to `in_progress` via
+   `.devin/taskfile.sh .devin/Arora-Task-Lang.md set <ID> status=in_progress`
+   (never edit the task file directly — see Hard rules).
 4. Do the task fully:
    - Open the named `src/locale/<locale>.ts`. Translate EVERY
      `<translation type="unfinished">` entry into the target language.
@@ -45,13 +47,16 @@ Your job in THIS run:
      -qm /tmp/<locale>.qm` must exit 0 (the .ts must stay well-formed).
 5. On success:
    a. Update the row Status to `done` with a one-line summary +
-      validation result in Notes of `.devin/Arora-Task-Lang.md`.
+      validation result in Notes via
+      `.devin/taskfile.sh .devin/Arora-Task-Lang.md set <ID> status=done
+      notes='<one-line summary + validation result>'`.
    b. Append one line to `.devin/WORKLOG.md`:
       `- <date> <ID>: <locale> catalog completed — <counts>, lrelease PASS`.
    c. `git add -A`, `git commit` (message: `<ID>: complete <locale> UI
       translation`), then `git push -u origin lang-work`.
-6. If you genuinely cannot finish, set Status `blocked` with Notes
-   `blocked:<reason>`, commit just the task file, and stop.
+6. If you genuinely cannot finish, set it `blocked` via
+   `.devin/taskfile.sh .devin/Arora-Task-Lang.md set <ID> status=blocked
+   notes='blocked:<reason>'`, commit just the task file, and stop.
 7. STOP after exactly one task — the outer loop launches a fresh run.
 
 Hard rules:
@@ -59,6 +64,11 @@ Hard rules:
   or push any other branch; never touch master or the sibling worktrees.
 - Edit ONLY the one .ts file named by the task + the .devin bookkeeping
   files. Never touch source code, other .ts files, or locale.pri.
+- ALL writes to Arora-Task-Lang.md MUST go through `.devin/taskfile.sh`
+  (flock-serialized against the loop's own row updates — direct
+  file-tool edits are a lost-update race): `set <ID> field=…` for row
+  cells, `append-detail <ID>` (stdin) for the `### <ID>` details
+  section, `with-lock -- <cmd>` for anything else.
 - Never revert unrelated working-tree changes. `git status` first.
 - No sudo, no network installs, no writes outside $HOME.
 - Work in bounded chunks (e.g. ~150 entries per pass through the file);

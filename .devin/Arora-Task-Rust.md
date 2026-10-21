@@ -19,6 +19,10 @@ Rules for the agent working this file:
 - Format: the table holds a one-line summary per row; the FULL spec
   lives in the `### <id>` section under `## Task details`. Keep table
   cells short — long text belongs in the details section.
+- ALL writes to this file MUST go through `.devin/taskfile.sh`
+  (flock-serialized — direct edits race the loop's row updates and
+  lose data): `set <ID> field=…` for row cells, `append-detail <ID>`
+  (stdin) for the `### <id>` section, `with-lock -- <cmd>` otherwise.
 
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|

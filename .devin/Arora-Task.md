@@ -17,6 +17,10 @@ Rules for the agent working this file:
 - Format: the table holds a one-line summary per row; the FULL spec
   lives in the `### <id>` section under `## Task details`. Keep table
   cells short — long text belongs in the details section.
+- ALL writes to this file MUST go through `.devin/taskfile.sh`
+  (flock-serialized — direct edits race the loop's row updates and
+  lose data): `set <ID> field=…` for row cells, `append-detail <ID>`
+  (stdin) for the `### <id>` section, `with-lock -- <cmd>` otherwise.
 
 Context: repo is Arora, a Qt WebKit-era browser (upstream dead ~2010),
 being ported to Qt 6.12.0 + QtWebEngine. User-local Qt lives at
@@ -375,7 +379,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | SEC29 | PDF sanitize-pipeline audit: pdfsanitize.rs + pdfworker.cpp — verify the "sanitized before view" claim, fail-closed on unsanitizable files — details below | done | 0 | 4 real fixes: fail-open raw reload on sanitize/transfer failure closed (refuse()→error page, no bypass), GoToR/GoToE/GoToDp/Thread/RichMediaExecute/GoTo3DView actions stripped, /EF FileSpec payloads + FileAttachment/RichMedia/Screen/Sound/Movie/3D annots dropped, trailer-rooted reachability sweep drops orphan/incremental bodies — verified: cargo pdfsanitize 5/5, --pdf-smoke + --pdfview-smoke PASS offscreen; report .devin/security/SEC29-report.md |
 | SEC28 | Vault crypto coverage check: confirm VSEC01 audited KDF params + seal/unseal of the credential/autofill stores, not just the FFI seam — fill any gap — details below | done | 0 | VSEC01 audited the Rust crypto core only — 6 real gaps fixed in the no-rust backend + legacy retire: unbounded .kdf params (OOB heap writes via lanes overflow in vendored argon2), enablePassphraseProtection zeroed-but-registered derived key (seals ran under public all-zero key), plaintext autofill.dat kept as .migrated, sealString fail-open → plaintext proxy password, locked-store plaintext downgrade of autofill.dat, autofill decoded cache now zeroized on drop — verified: tst_securestore 20/20 + tst_autofill 10/10 under BOTH rustcore and CONFIG+=no-rust, no-rust check-warnings PASS, --autofill-smoke PASS, settingsdialog/NAM green, cargo 267/268 (1 pre-existing); report .devin/security/SEC28-report.md |
 | CONC01 | Concurrent store writers: two windows writing bookmarks.xbel + history.db — xbel write atomicity across windows, SQLite writer contention — details below | done | 0 | 3 real fixes: rustcore save_path shared .rc-tmp name → atomic_write (pid+seq staging — torn-rename hole closed), XbelWriter QFile truncate → QSaveFile (no-rust + export path), history.db PRAGMA busy_timeout=5000 (peer-commit SQLITE_BUSY no longer surfaces); session.dat/QSettings/sitedecisions/profiles/vault audited already-atomic, last-writer-wins documented in details — verified: cargo 269/270 (1 pre-existing), tst_xbel 15/15, 12 concurrent standalone smoke runs on one profile all PASS |
-| INFRA01 | taskloop task-file race: runner read-modify-write clobbers concurrent edits (lost-update hit twice today) — flock around the row update — details below | pending | 0 | |
+| INFRA01 | taskloop task-file race: runner read-modify-write clobbers concurrent edits (lost-update hit twice today) — flock around the row update — details below | done | 0 | new .devin/taskfile.sh — flock on <file>.lock + temp+rename for every task-file write (set row fields, append-detail, with-lock escape hatch); all 6 taskloop-* lanes route bump_attempts/mark_blocked through it; RUNNER_PROMPT_*+file headers require it so agent edits serialize too. Verified: queued set waited out a held lock (1.7s) — both edits survived; 12-writer storm 0 losses; error paths reject bad id/status/pipe; bash -n clean |
 | SEC30 | Omnibox paste self-XSS: pasting javascript:... + Enter executes via loadUrl's javascript branch — typed bookmarklets stay allowed, but strip the scheme from pasted text like Chrome — details below | pending | 0 | |
 
 ## Task details
@@ -3687,6 +3691,12 @@ taskcheck.sh helper that writes): take flock on the task file
 use a sed in-place row update instead of full-file rewrite.
 Verify: queue a dummy task edit while a run is mid-task; both the
 row mark and the edit survive.
+
+
+Implementation evidence (INFRA01):
+- `.devin/taskfile.sh` takes a blocking `flock` on `<taskfile>.lock` for every mutation; `set` rewrites one table row (status/attempts±/task/notes=/notes+=), `append-detail` appends stdin under `### <ID>`, `with-lock -- cmd` is the escape hatch. Writes land via mktemp+`mv -f` (atomic install; readers never see a torn file; `.devin/*.lock` already gitignored).
+- All six taskloop-*.sh now delegate bump_attempts/mark_blocked to it; next_task/attempts_of stay lock-free reads.
+- Verify performed: lock-holder test — a `set` queued behind a `with-lock` sleep+sed waited 1.7s and both edits survived; parallel storm — 6 rows x (set+append) all landed; rejects: unknown id, bad status, pipe/newline in fields, bad attempts; `bash -n` clean on all 7 scripts; taskcheck output unchanged (pre-existing quirks only).
 
 ### SEC30
 

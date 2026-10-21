@@ -22,7 +22,9 @@ Your job in THIS run:
    set Status `blocked` with Notes `blocked:missing <what>`, commit
    just Arora-Task.md, and stop. Never burn the run grinding on an
    impossible prerequisite.
-4. Set that row's Status to `in_progress` and save Arora-Task.md.
+4. Set that row's Status to `in_progress` via
+   `.devin/taskfile.sh .devin/Arora-Task.md set <ID> status=in_progress`
+   (never edit the task file directly — see Hard rules).
 5. Do the task fully:
    - The task row points at relevant files. Follow existing code
      conventions (Qt-style code, qmake .pro/.pri build files).
@@ -37,7 +39,9 @@ Your job in THIS run:
    - Verify per the task's "Verify:" hint.
 6. On success:
    a. Update the row Status to `done` and write a one-line summary +
-      verification result into the Notes column of `.devin/Arora-Task.md`.
+      verification result into the Notes column via
+      `.devin/taskfile.sh .devin/Arora-Task.md set <ID> status=done
+      notes='<one-line summary + verify result>'`.
    b. Append a bullet to `ChangeLog` (user-visible change wording).
    c. Update `README` if the change affects documented features,
       requirements, or usage — otherwise skip.
@@ -45,12 +49,19 @@ Your job in THIS run:
       `- <date> <ID>: <what changed> — <verification>`.
    e. `git add -A`, `git commit` with a descriptive message
       (why, not just what), then `git push`.
-7. If you genuinely cannot complete it, set Status `blocked` and Notes
-   `blocked:<short reason>`, then commit+push just the Arora-Task.md update.
+7. If you genuinely cannot complete it, set it `blocked` via
+   `.devin/taskfile.sh .devin/Arora-Task.md set <ID> status=blocked
+   notes='blocked:<short reason>'`, then commit+push just the
+   Arora-Task.md update.
 8. STOP after exactly one task. Do NOT start the next row — the outer
    loop launches a fresh run for it.
 
 Hard rules:
+- ALL writes to Arora-Task.md MUST go through `.devin/taskfile.sh`
+  (flock-serialized against the loop's own row updates — direct
+  file-tool edits are a lost-update race): `set <ID> field=…` for row
+  cells, `append-detail <ID>` (stdin) to add lines under a `### <ID>`
+  details section, `with-lock -- <cmd>` for anything else.
 - Never revert unrelated working-tree changes. `git status` first and
   be careful what you stage.
 - No force-push, no git history rewrite, no git config changes.

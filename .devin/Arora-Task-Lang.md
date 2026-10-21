@@ -19,6 +19,10 @@ Rules for the agent working this file:
   lives in the `### <id>` section under `## Task details`. Keep table
   cells short — long text belongs in the details section.
 - Edit ONLY the .ts file the row names + .devin bookkeeping files.
+- ALL writes to this file MUST go through `.devin/taskfile.sh`
+  (flock-serialized — direct edits race the loop's row updates and
+  lose data): `set <ID> field=…` for row cells, `append-detail <ID>`
+  (stdin) for the `### <id>` section, `with-lock -- <cmd>` otherwise.
 
 Context: repo is Arora, a Qt WebKit-era browser (upstream dead ~2010),
 ported to Qt 6.12.0 + QtWebEngine. Catalogs were refreshed by lupdate —

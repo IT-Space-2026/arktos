@@ -4573,3 +4573,13 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   settings, container and profile stores were verified to install
   atomically already. Concurrent saves resolve last-writer-wins, as
   before — just never to a half-written file.
+- Task-loop queue hardening (INFRA01): the autonomous task queue files
+  under .devin/ can no longer lose updates when the loop and a runner
+  (or a human edit) write them at the same time. All task-file
+  mutations now go through .devin/taskfile.sh, which serialises
+  writers on a flock lock file and installs changes via atomic rename;
+  every taskloop-* lane script routes its attempt-bump and blocked-mark
+  writes through it, and the runner prompts + file headers require it
+  for row/status/notes updates and detail-section appends. Verified:
+  a queued row update waited out a held lock and both it and the
+  concurrent edit survived; a 12-writer parallel storm lost nothing.

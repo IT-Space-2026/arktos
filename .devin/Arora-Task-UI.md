@@ -2,6 +2,13 @@
 
 This file is the task queue for the Devin CLI task loop
 (`.devin/taskloop.sh`). Each run of the loop picks the FIRST row whose
+Status is `pending` | `in_progress` | `done` | `blocked`.
+
+ALL writes to this file MUST go through `.devin/taskfile.sh`
+(flock-serialized — direct edits race the loop's row updates and lose
+data): `set <ID> field=…` for row cells, `append-detail <ID>` (stdin)
+for the `### <id>` section, `with-lock -- <cmd>` otherwise.
+
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
 | HIST01 | History site icons never show — details below | done | 0 | host-keyed persistent icon store under <data>/icons + lazy load + live entryUpdated refresh; iconChanged confirmed firing on Qt 6.12 (e2e tst iconsFromPage); tst_historymanager 48/48; make check rc=0 |

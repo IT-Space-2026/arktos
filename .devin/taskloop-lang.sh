@@ -104,31 +104,25 @@ attempts_of() {
 		}' "$TASKS"
 }
 
+# All task-file writes go through taskfile.sh, which serialises on
+# $TASKS.lock (flock) — an unlocked read-modify-write here raced
+# agent/human edits and silently lost them (INFRA01).
+TASKFILE_SH="$REPO/.devin/taskfile.sh"
+
 # bump Attempts of row $id by 1 (task rows are `| ID | Task | Status | Attempts | Notes |`)
 bump_attempts() {
-	local tmp
-	tmp=$(mktemp) || return 1
-	awk -v id="$1" 'BEGIN{FS="|";OFS="|"}
-		$0 ~ ("^\\|[[:space:]]*" id "[[:space:]]*\\|") {
-			a=$5; gsub(/[^0-9]/,"",a); a++;
-			$5=" " a " "; print; next
-		} {print}' "$TASKS" > "$tmp" && mv "$tmp" "$TASKS"
+	"$TASKFILE_SH" "$TASKS" set "$1" attempts=+1
 }
 
 # mark row $id blocked with a reason in Notes
 mark_blocked() {
-	local tmp
-	tmp=$(mktemp) || return 1
-	awk -v id="$1" -v r="$2" 'BEGIN{FS="|";OFS="|"}
-		$0 ~ ("^\\|[[:space:]]*" id "[[:space:]]*\\|") {
-			$4=" blocked ";
-			$6=" blocked:" r " "; print; next
-		} {print}' "$TASKS" > "$tmp" && mv "$tmp" "$TASKS"
+	"$TASKFILE_SH" "$TASKS" set "$1" status=blocked "notes=blocked:$2"
 }
 
 [ -x "$DEVIN" ] || { log "FATAL: devin CLI not found ($DEVIN)"; exit 1; }
 [ -f "$TASKS" ] || { log "FATAL: $TASKS missing"; exit 1; }
 [ -f "$PROMPT" ] || { log "FATAL: $PROMPT missing"; exit 1; }
+[ -x "$TASKFILE_SH" ] || { log "FATAL: $TASKFILE_SH missing/not executable"; exit 1; }
 
 log "taskloop starting: repo=$REPO devin=$DEVIN timeout=${RUN_TIMEOUT}s max_attempts=$MAX_ATTEMPTS"
 
