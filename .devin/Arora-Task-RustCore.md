@@ -28,7 +28,7 @@ Rules for the agent working this file:
 
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
-| RC01 | Rust-core architecture audit + target design doc | pending | 0 | needs:tool:cargo |
+| RC01 | Rust-core architecture audit + target design doc | done | 1 | audit landed .devin/RUSTCORE-ARCH.md — full store map w/ keep-move decisions + format choices (settings+profiles are the real gaps; RC04-06 stores already landed in retired lane); facade sketch + per-profile handle scoping spec; verified cargo test 270/270 green |
 | RC02 | rustcore `settings` module — typed per-profile key-value store + FFI | pending | 0 | needs:task:RC01 needs:tool:cargo |
 | RC03 | rustcore `profiles` module — persona registry + roots under home dir + FFI | pending | 0 | needs:task:RC01 needs:tool:cargo |
 | RC04 | rustcore `history` module — visit/query/clear, compat with existing store | pending | 0 | needs:task:RC02 needs:tool:cargo |
@@ -39,6 +39,17 @@ Rules for the agent working this file:
 | RC09 | Servo/WebKit backends consume the same facade + capability reporting | pending | 0 | needs:task:RC08 |
 | RC10 | Packaging: new crates linked + staged in deb/rpm/flatpak/dmg/exe legs | pending | 0 | needs:task:RC07 |
 | RC11 | CEF spike — bounded adapter design + QWebEngine touchpoint audit + go/no-go | pending | 0 | needs:task:RC08 |
+
+| RC12 | rustcore `reader` module — engine-agnostic article extraction (reader mode) | pending | 0 | needs:task:RC01 needs:tool:cargo |
+| RC13 | rustcore `sessions` module — per-profile tab/window session store | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC14 | `torctl` client — Tor control protocol in Rust (NEWNYM, circuits, auth) | pending | 0 | needs:tool:cargo |
+| RC15 | rustcore `cookies` module — per-profile cookie db for Servo/WPE (Chromium stays engine-owned) | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC16 | rustcore `icons` module — per-profile favicon/site-icon cache | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC17 | rustcore `autofill` module — address/contact profiles under secure custody | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC18 | rustcore `opensearch` module — engine XML parse/validate + registry CRUD | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC19 | rustcore `containers` module — container registry + storage namespace map | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC20 | rustcore `updates` module — update-check state + manifest/semver policy | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC21 | rustcore `notes` module — side-panel notes persistence | pending | 0 | needs:task:RC07 needs:tool:cargo |
 
 ## Task details
 
@@ -73,6 +84,18 @@ module independently usable so backends adopt piecemeal.
 Verify: doc exists, lists every store above with a keep/move decision +
 format choice; `cargo test` in src/rustcore still green (no code change
 expected).
+
+
+Outcome (2026-10-21): `.devin/RUSTCORE-ARCH.md` written. Key findings:
+retired rust lane landed far more than assumed — bookmarks/history/
+sitedecisions/policy/session/autofill/opensearch/blocklist/tranco/UA/
+profilevault are already Rust + consumed; RC04/05/06 are facade+
+verify work, not new modules. Real gaps: settings (RC02, JSON +
+ini-import decision) and the profiles.json registry (RC03, keeps the
+byte-compatible MPROF01 format, retires the ProfileRegistry/ProfileStore
+duplication). Design call recorded: ac_* module handles bind profile at
+open, retiring rustCoreEnsureDataDirFor global re-anchoring. Verified:
+cargo test 270 passed / 0 failed (1 dead-code warning, pre-existing).
 
 ### RC02
 
@@ -239,3 +262,142 @@ does not serve Servo/WebKit.
 
 Verify: doc exists with the numbered inventory; no code changes beyond
 the doc (any exploratory branch work stays out of rust-core).
+
+### RC12
+
+`reader` module: Readability-style article extraction — HTML+base-url in,
+sanitized article fragment + metadata (title, byline, lang, excerpt,
+length) out. Powers readersanitizer/readermode for ALL engines: the C++
+side keeps only the trigger+overlay, the transform lives in Rust.
+
+Stateless (no profile data), so it only needs RC01's conventions — not
+the facade. Rust has mature crates for this (e.g. a readability port);
+vendoring policy per existing cargo-deny rules, no telemetry deps.
+
+Verify: cargo test on a fixture corpus (save real article pages of
+different shapes); extraction parity-or-better vs the current C++
+readersanitizer on the same fixtures; `rc_reader_extract` FFI returns
+identical output on repeat calls.
+
+### RC13
+
+`sessions` module: per-profile session store — open windows, tab list
+(url, title, engine id, scroll position, container id), clean-shutdown
+flag + crash-dirty marker so "restore previous session?" works the
+same across engines. Private-tab data must never persist — same rule
+the C++ session writer follows (audit how private/otr tabs are
+excluded today and mirror it).
+
+Atomic writes, versioned schema. If today's restore data lives in
+QSettings/session files, the RC02 ini-import rule applies.
+
+Verify: cargo test — write/read round-trip incl. private-exclusion
+fixture; a session written by the C++ path restores identically via FFI.
+
+### RC14
+
+`torctl` client: standalone Tor control-protocol port of torcontrol.cpp —
+connect, authenticate (COOKIE + HASHEDPASSWORD), NEWNYM, GETINFO for
+circuit/stream status, async event subscription (CIRC/STREAM). Pure
+socket protocol, zero profile data — independent of the facade, the
+only RC task that does not wait on RC07.
+
+Qt side keeps the UI (circuit button/panel); the crate exposes the
+protocol surface via FFI and a change-callback like the existing
+rustcore entries. Must honor the no-leak rule: control connection is
+localhost-only, auth secrets zeroed on drop.
+
+Verify: cargo test against a mock control-port fixture (scripted
+protocol transcript); integration leg skipped gracefully when no tor
+expert bundle is present.
+
+### RC15
+
+`cookies` module: per-profile cookie database — name/value/domain/path/
+expires/secure/httponly/samesite plus container-id partitioning. The
+store is engine-owned reality check: QWebEngineProfile owns Chromium's
+cookie jar and CANNOT be displaced — for chromium the module is an
+export/sync surface at most; for Servo/WPE it is the authoritative
+store the backend applies. Design the API so both modes are honest
+(capability flag: authoritative vs mirror).
+
+First audit cookiejar/* + BrowserProfile for the authoritative list of
+fields and the container partitioning model — the schema must carry
+what SiteDecisionStore policy needs (RC06 interplay).
+
+Verify: cargo test — CRUD + expiry/samesite semantics; import fixture
+from a C++ cookie export; chromium-mode mirror semantics documented.
+
+### RC16
+
+`icons` module: per-profile site-icon/favicon cache — page-url/origin
+keyed records pointing at icon files under the profile CACHE dir (not
+the data dir — it is disposable). Fetch is Qt/engine-side (the page
+already has the bytes); Rust owns index, dedup-by-host, expiry, and
+file lifecycle. Match the existing favicon behavior LocationBarSiteIcon
+relies on — audit it first.
+
+Verify: cargo test — index round-trip, dedup, expiry sweep; cache
+files land under the BrowserPaths cache root, never the data root.
+
+### RC17
+
+`autofill` module: address/contact profiles (name, org, address lines,
+phone, email, custom fields) — personal data, so storage must meet the
+SecureStore custody bar: prefer reusing the existing rc_cred_*
+encrypted map (audit whether it fits structured records; a dedicated
+0600 JSON store keyed per profile is the fallback, decided in the
+implementation note). AutofillManager's field semantics are the API
+contract — audit it first.
+
+Verify: cargo test — CRUD round-trip; file permissions 0600/0700;
+a record written via FFI reads back in AutofillDialog.
+
+### RC18
+
+`opensearch` module: OpenSearch description-document parse+validate
+(search URL templates, suggestion endpoints, icons, mime types) and
+the engine registry CRUD (add/remove/reorder/set-default, per profile).
+Qt keeps the network fetch and the dropdown UI; Rust owns the parsed
+model + registry persistence. Must read the existing searchengines.xml
+storage the C++ writer produces — audit opensearchreader/writer.
+
+Verify: cargo test — parse the bundled engine XMLs in
+data/searchengines, round-trip the registry file the C++ side reads.
+
+### RC19
+
+`containers` module: container registry (id/name/color/icon) + the
+storage-namespace mapping (which container partitions cookies/cache/
+site data). FIRST audit containermanager.* — container metadata may
+already persist inside profile settings; if so this module is a typed
+specialization over RC02's store, not a new file format. The mapping
+rules feed RC15's cookie partitioning.
+
+Verify: cargo test — registry CRUD + namespace derivation matches
+ContainerManager's paths; a registry written via FFI is honored by the
+C++ side on next launch.
+
+### RC20
+
+`updates` module: update-check policy + parse half — last-check
+timestamp/snooze state (per profile or global — decide per the
+existing updatechecker keys), manifest parsing, semver comparison,
+channel rules. Network fetch stays Qt/rustdl-side. Thin module — if
+the state is just a few keys it may live as typed helpers over
+RC02 settings; decide in the implementation note and record why.
+
+Verify: cargo test — semver compare matrix + manifest parse fixtures;
+no regression in updatechecker behavior (its existing tests pass).
+
+### RC21
+
+`notes` module: side-panel notes persistence — per-profile notes CRUD
+with the ordering/format notesmodel uses today (audit first; if it is
+already a plain file under the profile dir this is a read-compat
+module, if it lives in settings it folds into RC02's typed API).
+Smallest module in the queue — good first adoption-proof task after
+RC07 lands.
+
+Verify: cargo test — CRUD round-trip; notes written by C++ load via
+FFI and vice versa.
