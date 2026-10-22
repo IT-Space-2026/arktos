@@ -221,42 +221,41 @@ void RustHistorySuggestModel::refresh()
 {
     beginResetModel();
     m_rows.clear();
-    // RC08: a facade handle binds the active profile's database for
-    // this query — per-profile HistoryManager instances re-bind the
-    // global store as they run (MPROF02), and the window's completer
-    // follows the ambient persona (MPROF03).  The legacy spelling
+    // MB06: the suggest query is one envelope round trip — the
+    // payload's "profile" binds the ambient persona per call
+    // (MPROF03), no AcHistory handle is minted.  The legacy spelling
     // anchors the same path by hand when the bridge cannot serve.
-    AcHistory *store = nullptr;
-    if (RustCoreBridge *bridge = RustCoreBridge::serving())
-        store = bridge->history(BrowserPaths::activeProfileId());
-    // The cap bounds the FFI marshal; the dropdown never shows more.
-    const QByteArray t = m_term.toUtf8();
-    char *json;
-    if (store) {
-        json = ac_hist_suggest(store, t.constData(), 500);
-        ac_hist_close(store);
+    QJsonArray rows;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        rows = bridge->mwQuery(
+            AcMw::History, AcMw::HistorySuggest,
+            QJsonObject{{QStringLiteral("profile"),
+                         BrowserPaths::activeProfileId()},
+                        {QStringLiteral("term"), m_term},
+                        // The cap bounds the marshal; the dropdown
+                        // never shows more.
+                        {QStringLiteral("limit"), 500}}).toArray();
     } else {
         const QByteArray dbPath = BrowserPaths::profileDataFilePath(
             BrowserPaths::activeProfileId(),
             QLatin1String("history.db")).toUtf8();
         rc_hist_open(dbPath.constData());
-        json = rc_history_suggest(t.constData(), 500);
-    }
-    if (json) {
-        const QJsonArray rows =
-            QJsonDocument::fromJson(QByteArray(json)).array();
-        rc_string_free(json);
-        m_rows.reserve(rows.size());
-        for (const QJsonValue &value : rows) {
-            const QJsonObject o = value.toObject();
-            Row row;
-            row.url = o.value(QLatin1String("url")).toString();
-            row.title = o.value(QLatin1String("title")).toString();
-            row.ts = o.value(QLatin1String("ts")).toInteger();
-            row.frecency =
-                o.value(QLatin1String("frecency")).toInteger();
-            m_rows.append(row);
+        char *json = rc_history_suggest(m_term.toUtf8().constData(), 500);
+        if (json) {
+            rows = QJsonDocument::fromJson(QByteArray(json)).array();
+            rc_string_free(json);
         }
+    }
+    m_rows.reserve(rows.size());
+    for (const QJsonValue &value : rows) {
+        const QJsonObject o = value.toObject();
+        Row row;
+        row.url = o.value(QLatin1String("url")).toString();
+        row.title = o.value(QLatin1String("title")).toString();
+        row.ts = o.value(QLatin1String("ts")).toInteger();
+        row.frecency =
+            o.value(QLatin1String("frecency")).toInteger();
+        m_rows.append(row);
     }
     endResetModel();
 }

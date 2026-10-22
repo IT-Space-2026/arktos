@@ -557,9 +557,17 @@ lifecycle op stay flat. Per-call outcomes get recorded here as the
 cutover lands; the verify bar is unchanged behavior + unchanged
 autotest counts.
 
-| Caller site | Flat today | Decision (pending MB06/MB07) |
+| Caller site | Flat today | Decision (MB06 landed) |
 |-------------|-----------|------------------------------|
-| settings/profiles/history/bookmarks callers | ac_* typed | TBD — MB06 |
+| `RustCoreSettings` (all ops: value/setValue/remove/contains/allKeys/clear/sync/importLegacyIni) | ac_* typed | **envelope** — settings.get/set/remove/contains/list/sync/import_ini; the handle is gone entirely, the payload's `"profile"` binds the scope per call; lazy `rc_settings_open` fallback when the bridge cannot serve |
+| `RustCoreProfiles` registry ops (list/get/create/rename/setAvatar/delete/reload) | ac_* typed | **envelope** — profiles.list/get/create/rename/set_avatar/delete/reload on the shared-root spelling; explicit fixture roots keep the flat lane |
+| `RustCoreProfiles::activeProfileId`/`setActiveProfileId` | rc_* | **flat** — the ambient persona is per-handle in-memory state; an envelope op would read a fresh handle's "default" and `set_active` would die with the call |
+| `RustCoreProfiles` path derivations (profileDir/avatarPath/…) | rc_* | **flat** — pure path math, no store I/O to batch |
+| `HistoryManager` mutations (add/updateTitle/remove/clear/clearSince/expire) | ac_hist_* | **envelope** — history.add/update_title/remove/clear/clear_since/expire; `m_hist` handle deleted, `"profile"` binds per call, `histAnchor()` + `rc_hist_*` stays the no-bridge fallback |
+| `HistoryManager::load` (exists probe + full listing) | ac_history_exists + count/entry_at loop | **envelope** — history.exists stat + one history.query returns the whole deduped listing; the per-row entry_at loop is exactly what the batch read replaces |
+| `RustHistorySuggestModel::refresh` (HistoryCompleter) | ac_hist_suggest on a minted-then-closed handle | **envelope** — history.suggest; the per-refresh handle mint disappears |
+| `BookmarkNode`/`BookmarksManager` per-node ops (get/find/parent/child_*/attach/detach/destroy/set_*) | ac_bm_* | **flat** — opaque node handles cannot cross the frame (§2.3); every call site is already a single flat call on the model's `m_store`, JSON framing would only add code |
+| `BookmarksManager` bulk ops (load/load_mem/save/import_html/export_html) | ac_bm_* | **flat** — one scalar FFI call each with nothing batchable on the Qt side; no envelope ops registered for them and none would shrink the call site |
 | policy/sessions/cookies/icons/opensearch callers | ac_* + rc_* mixed | TBD — MB07 |
 
 ## 10. What this doc deliberately did not decide

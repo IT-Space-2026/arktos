@@ -620,6 +620,33 @@ fn op_settings_remove(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
     Ok(json!({ "ok": true }))
 }
 
+fn op_settings_contains(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let key = arg_str(p, "key")?;
+    let (h, _pid) = settings_scope(ctx, p)?;
+    Ok(json!({ "present": h.contains(key)? }))
+}
+
+/// rc_settings_sync parity: a flush with no change topic —
+/// mutations already write through, so nothing moved to announce.
+fn op_settings_sync(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let (h, _pid) = settings_scope(ctx, p)?;
+    h.sync()?;
+    Ok(json!({ "ok": true }))
+}
+
+/// rc_settings_import_ini parity: the absent-keys-only merge.  The
+/// imported markers persist inside settings.json, so the per-call
+/// bind keeps the flat path's one-shot semantics; "settings" emits
+/// on every Ok like the flat spelling.
+fn op_settings_import_ini(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let path = arg_str(p, "path")?;
+    let (h, pid) = settings_scope(ctx, p)?;
+    let _hint = pid.as_deref().map(notify::profile_hint);
+    h.import_ini(path)?;
+    notify::emit("settings");
+    Ok(json!({ "ok": true }))
+}
+
 const SETTINGS_OPS: &[Op] = &[
     Op {
         id: 0x0001,
@@ -661,6 +688,30 @@ const SETTINGS_OPS: &[Op] = &[
         since: 1,
         handler: op_settings_remove,
     },
+    Op {
+        id: 0x0006,
+        name: "contains",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_settings_contains,
+    },
+    Op {
+        id: 0x0007,
+        name: "sync",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_settings_sync,
+    },
+    Op {
+        id: 0x0008,
+        name: "import_ini",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_settings_import_ini,
+    },
 ];
 
 // ---- profiles (domain 2) ------------------------------------------------------
@@ -696,6 +747,58 @@ fn op_profiles_reload(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
     Ok(json!({ "ok": true }))
 }
 
+fn profile_json(p: profiles::ProfileRecord) -> Value {
+    json!({
+        "id": p.id,
+        "name": p.name,
+        "avatar": p.avatar,
+        "createdAt": p.created_at,
+    })
+}
+
+fn op_profiles_get(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let id = arg_str(p, "id")?;
+    let row = profiles_handle(ctx)?
+        .get(id)
+        .ok_or_else(|| error::Fail {
+            status: RcStatus::NotFound,
+            msg: "no such profile".into(),
+        })?;
+    Ok(profile_json(row))
+}
+
+// The registry mutations mirror rc_profiles_*'s emit: "profiles" on
+// every Ok, unscoped — the registry is global, so no profile hint.
+fn op_profiles_create(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let name = arg_str(p, "display_name")?;
+    let id = profiles_handle(ctx)?.create(name)?;
+    notify::emit("profiles");
+    Ok(json!({ "id": id }))
+}
+
+fn op_profiles_rename(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let id = arg_str(p, "id")?;
+    let name = arg_str(p, "name")?;
+    profiles_handle(ctx)?.rename(id, name)?;
+    notify::emit("profiles");
+    Ok(json!({ "ok": true }))
+}
+
+fn op_profiles_set_avatar(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let id = arg_str(p, "id")?;
+    let name = opt_str(p, "name")?;
+    profiles_handle(ctx)?.set_avatar(id, name)?;
+    notify::emit("profiles");
+    Ok(json!({ "ok": true }))
+}
+
+fn op_profiles_delete(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let id = arg_str(p, "id")?;
+    profiles_handle(ctx)?.delete(id)?;
+    notify::emit("profiles");
+    Ok(json!({ "ok": true }))
+}
+
 const PROFILES_OPS: &[Op] = &[
     Op {
         id: 0x0001,
@@ -712,6 +815,46 @@ const PROFILES_OPS: &[Op] = &[
         profile_scoped: false,
         since: 1,
         handler: op_profiles_reload,
+    },
+    Op {
+        id: 0x0003,
+        name: "get",
+        class: OpClass::Query,
+        profile_scoped: false,
+        since: 1,
+        handler: op_profiles_get,
+    },
+    Op {
+        id: 0x0004,
+        name: "create",
+        class: OpClass::Command,
+        profile_scoped: false,
+        since: 1,
+        handler: op_profiles_create,
+    },
+    Op {
+        id: 0x0005,
+        name: "rename",
+        class: OpClass::Command,
+        profile_scoped: false,
+        since: 1,
+        handler: op_profiles_rename,
+    },
+    Op {
+        id: 0x0006,
+        name: "set_avatar",
+        class: OpClass::Command,
+        profile_scoped: false,
+        since: 1,
+        handler: op_profiles_set_avatar,
+    },
+    Op {
+        id: 0x0007,
+        name: "delete",
+        class: OpClass::Command,
+        profile_scoped: false,
+        since: 1,
+        handler: op_profiles_delete,
     },
 ];
 
@@ -767,6 +910,98 @@ fn op_history_query(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
     Ok(serde_json::from_str(&out).unwrap_or(Value::Null))
 }
 
+/// ac_hist_suggest / rc_history_suggest parity: the completer's
+/// ranked rows — `now` is computed here, as in the flat spelling.
+fn op_history_suggest(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let term = arg_str(p, "term")?;
+    let limit = opt_i64(p, "limit")?.unwrap_or(0);
+    let (db, _eff) = history_db(ctx, p)?;
+    let out = history::with(|h| -> error::RcResult<String> {
+        h.open(Some(db.as_str()))?;
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        h.suggest(term, limit, now_ms)
+    })?;
+    Ok(serde_json::from_str(&out).unwrap_or(Value::Null))
+}
+
+/// ac_history_exists parity: a path stat for the legacy-import
+/// gate — never opens the database.
+fn op_history_exists(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let (db, _eff) = history_db(ctx, p)?;
+    Ok(json!({
+        "exists": history::HistoryStore::exists_on_disk(Some(db.as_str())),
+    }))
+}
+
+/// The flat rc_hist_* notification pair, verbatim: the legacy
+/// "history" topic plus namespaced "history/changed", both stamped
+/// with the bound profile the way ac_hist_*'s hint did.
+fn history_emit(eff: &str, verb: &str) {
+    let _hint = notify::profile_hint(eff);
+    notify::emit("history");
+    notify::emit_event("history/changed", json!({ "op": verb }));
+}
+
+fn op_history_update_title(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let url = arg_str(p, "url")?;
+    let title = arg_str(p, "title")?;
+    let (db, eff) = history_db(ctx, p)?;
+    history::with(|h| -> error::RcResult<()> {
+        h.open(Some(db.as_str()))?;
+        h.update_title(url, title)
+    })?;
+    history_emit(&eff, "title");
+    Ok(json!({ "ok": true }))
+}
+
+fn op_history_remove(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let url = arg_str(p, "url")?;
+    let title = arg_str(p, "title")?;
+    let ts_ms = arg_i64(p, "ts_ms")?;
+    let (db, eff) = history_db(ctx, p)?;
+    history::with(|h| -> error::RcResult<()> {
+        h.open(Some(db.as_str()))?;
+        h.remove(url, title, ts_ms)
+    })?;
+    history_emit(&eff, "remove");
+    Ok(json!({ "ok": true }))
+}
+
+fn op_history_clear(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let (db, eff) = history_db(ctx, p)?;
+    history::with(|h| -> error::RcResult<()> {
+        h.open(Some(db.as_str()))?;
+        h.clear()
+    })?;
+    history_emit(&eff, "clear");
+    Ok(json!({ "ok": true }))
+}
+
+fn op_history_clear_since(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let since_ms = arg_i64(p, "since_ms")?;
+    let (db, eff) = history_db(ctx, p)?;
+    history::with(|h| -> error::RcResult<()> {
+        h.open(Some(db.as_str()))?;
+        h.clear_since(since_ms)
+    })?;
+    history_emit(&eff, "clear_since");
+    Ok(json!({ "ok": true }))
+}
+
+fn op_history_expire(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let cutoff_ms = arg_i64(p, "cutoff_ms")?;
+    let (db, eff) = history_db(ctx, p)?;
+    let removed = history::with(|h| -> error::RcResult<i64> {
+        h.open(Some(db.as_str()))?;
+        h.expire_older_than(cutoff_ms)
+    })?;
+    history_emit(&eff, "expire");
+    Ok(json!({ "removed": removed }))
+}
+
 const HISTORY_OPS: &[Op] = &[
     Op {
         id: 0x0001,
@@ -791,6 +1026,62 @@ const HISTORY_OPS: &[Op] = &[
         profile_scoped: true,
         since: 1,
         handler: op_history_query,
+    },
+    Op {
+        id: 0x0004,
+        name: "suggest",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_history_suggest,
+    },
+    Op {
+        id: 0x0005,
+        name: "exists",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_history_exists,
+    },
+    Op {
+        id: 0x0006,
+        name: "update_title",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_history_update_title,
+    },
+    Op {
+        id: 0x0007,
+        name: "remove",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_history_remove,
+    },
+    Op {
+        id: 0x0008,
+        name: "clear",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_history_clear,
+    },
+    Op {
+        id: 0x0009,
+        name: "clear_since",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_history_clear_since,
+    },
+    Op {
+        id: 0x000a,
+        name: "expire",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_history_expire,
     },
 ];
 
@@ -2047,6 +2338,64 @@ mod tests {
     }
 
     #[test]
+    fn settings_contains_sync_import_ini() {
+        let _g = guard();
+        let dir = tmpdir("setx");
+        let core = TestCore::new(&dir);
+
+        // contains is the boolean probe get's NotFound can't express.
+        let r = call(core.0, &query(1, 1, 0x0006, r#"{"key":"k"}"#));
+        assert_eq!(r.ok()["present"], false);
+        let r = call(
+            core.0,
+            &command(2, 1, 0x0004, r#"{"key":"k","value":{"t":"b","v":true}}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(3, 1, 0x0006, r#"{"key":"k"}"#));
+        assert_eq!(r.ok()["present"], true);
+
+        // sync is a silent command — the flush shape, no verdict.
+        let r = call(core.0, &command(4, 1, 0x0007, ""));
+        assert_eq!(r.ok()["ok"], true);
+
+        // import_ini merges absent keys only, one-shot per file
+        // (the imported marker persists, so a second dispatch is a
+        // no-op even though every op re-opens the store).
+        // ("misc" is not a persona-classified group, so the global
+        // scope's filter keeps it — a classified key would be the
+        // profile scope's to import).
+        let ini = std::path::Path::new(&dir).join("legacy.ini");
+        std::fs::write(&ini, "[misc]\nthing=https://legacy/\n").unwrap();
+        let payload =
+            format!(r#"{{"path":"{}"}}"#, ini.to_string_lossy());
+        let r = call(core.0, &command(5, 1, 0x0008, &payload));
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core.0,
+            &query(6, 1, 0x0002, r#"{"key":"misc/thing"}"#),
+        );
+        assert_eq!(r.ok()["value"], "https://legacy/");
+        // A stored key is never overwritten by the import.
+        let r = call(
+            core.0,
+            &command(
+                7,
+                1,
+                0x0004,
+                r#"{"key":"misc/thing","value":{"t":"s","v":"https://new/"}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &command(8, 1, 0x0008, &payload));
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core.0,
+            &query(9, 1, 0x0002, r#"{"key":"misc/thing"}"#),
+        );
+        assert_eq!(r.ok()["value"], "https://new/");
+    }
+
+    #[test]
     fn session_file_ops_round_trip() {
         let _g = guard();
         let core = TestCore::new(&tmpdir("sess"));
@@ -2361,6 +2710,64 @@ mod tests {
         assert!(rows.iter().any(|p| p["id"] == "default"), "{rows:?}");
         let r = call(core.0, &command(2, 2, 0x0002, ""));
         assert_eq!(r.ok()["ok"], true);
+
+        // create -> get -> rename -> set_avatar -> delete round trip.
+        let r = call(
+            core.0,
+            &command(3, 2, 0x0004, r#"{"display_name":"Work Stuff!"}"#),
+        );
+        let id = r.ok()["id"].as_str().unwrap().to_string();
+        assert_eq!(id, "work-stuff");
+        let payload = format!(r#"{{"id":"{id}"}}"#);
+        let r = call(core.0, &query(4, 2, 0x0003, &payload));
+        assert_eq!(r.ok()["name"], "Work Stuff!");
+        let r = call(
+            core.0,
+            &command(
+                5,
+                2,
+                0x0005,
+                &format!(r#"{{"id":"{id}","name":"Day Job"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(6, 2, 0x0003, &payload));
+        assert_eq!(r.ok()["name"], "Day Job");
+        let r = call(
+            core.0,
+            &command(
+                7,
+                2,
+                0x0006,
+                &format!(r#"{{"id":"{id}","name":"face.png"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(8, 2, 0x0003, &payload));
+        assert_eq!(r.ok()["avatar"], "face.png");
+        // A null name clears the field; an unknown id is op_failed.
+        let r = call(
+            core.0,
+            &command(9, 2, 0x0006, &format!(r#"{{"id":"{id}"}}"#)),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(10, 2, 0x0003, &payload));
+        assert_eq!(r.ok()["avatar"], "");
+        let r = call(
+            core.0,
+            &command(11, 2, 0x0007, &payload),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(12, 2, 0x0003, &payload));
+        let (code, status, _m) = r.err();
+        assert_eq!(code, "op_failed");
+        assert_eq!(status, RcStatus::NotFound as i64);
+        // "default" is undeletable like the flat spelling.
+        let r = call(
+            core.0,
+            &command(13, 2, 0x0007, r#"{"id":"default"}"#),
+        );
+        assert_eq!(r.err().0, "op_failed");
     }
 
     #[test]
@@ -2394,6 +2801,88 @@ mod tests {
         // Persona isolation: the same core, another profile id.
         let r = call(core.0, &query(5, 3, 0x0001, r#"{"profile":"w2"}"#));
         assert_eq!(r.ok()["count"], 0);
+    }
+
+    #[test]
+    fn history_extended_ops_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("hisx"));
+
+        // exists is the path-stat probe — false before any write.
+        let r = call(core.0, &query(1, 3, 0x0005, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["exists"], false);
+        let r = call(
+            core.0,
+            &command(
+                2,
+                3,
+                0x0002,
+                r#"{"profile":"w1","url":"https://a/","title":"A","ts_ms":111}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(3, 3, 0x0005, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["exists"], true);
+
+        // suggest ranks the row back like rc_history_suggest.
+        let r = call(
+            core.0,
+            &query(4, 3, 0x0004, r#"{"profile":"w1","term":"a","limit":10}"#),
+        );
+        let rows = r.ok().as_array().unwrap().clone();
+        assert!(rows.iter().any(|e| e["url"] == "https://a/"), "{rows:?}");
+
+        // update_title rewrites the row; remove takes it back out.
+        let r = call(
+            core.0,
+            &command(
+                5,
+                3,
+                0x0006,
+                r#"{"profile":"w1","url":"https://a/","title":"Renamed"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core.0,
+            &query(6, 3, 0x0003, r#"{"profile":"w1","spec":{}}"#),
+        );
+        assert_eq!(r.ok()[0]["title"], "Renamed");
+        let r = call(
+            core.0,
+            &command(
+                7,
+                3,
+                0x0007,
+                r#"{"profile":"w1","url":"https://a/","title":"Renamed","ts_ms":111}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(8, 3, 0x0001, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["count"], 0);
+
+        // expire reports the dropped row count; clear_since and
+        // clear take the rest out.
+        for (url, ts) in [("https://b/", 100i64), ("https://c/", 200)] {
+            let p = format!(
+                r#"{{"profile":"w1","url":"{url}","title":"","ts_ms":{ts}}}"#
+            );
+            assert_eq!(call(core.0, &command(9, 3, 0x0002, &p)).ok()["ok"], true);
+        }
+        let r = call(
+            core.0,
+            &command(10, 3, 0x000a, r#"{"profile":"w1","cutoff_ms":150}"#),
+        );
+        assert_eq!(r.ok()["removed"], 1);
+        let r = call(
+            core.0,
+            &command(11, 3, 0x0009, r#"{"profile":"w1","since_ms":200}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(12, 3, 0x0001, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["count"], 0);
+        let r = call(core.0, &command(13, 3, 0x0008, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["ok"], true);
     }
 
     #[test]
