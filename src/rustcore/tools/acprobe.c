@@ -100,7 +100,7 @@ int main(int argc, char **argv)
     CHECK(ac_capabilities() ==
               (AC_CAP_SETTINGS | AC_CAP_PROFILES | AC_CAP_HISTORY |
                AC_CAP_BOOKMARKS | AC_CAP_POLICY | AC_CAP_SESSION |
-               AC_CAP_COOKIES),
+               AC_CAP_COOKIES | AC_CAP_ICONS),
           "capabilities bitmask incomplete");
 
     CHECK(ac_init(NULL) == NULL, "ac_init(NULL) must fail");
@@ -508,6 +508,98 @@ int main(int argc, char **argv)
     ac_cookies_close(ck);
     ac_cookies_close(ck_other);
 
+    /* ---- icons (RC16) -------------------------------------------------- */
+    AcIcons *ic = ac_icons(core, "work");
+    AcIcons *ic_other = ac_icons(core, "other");
+    CHECK(ic && ic_other, "ac_icons accessors failed");
+    {
+        static const uint8_t png_a[] = "\x89PNG-probe-a";
+        static const uint8_t png_b[] = "\x89PNG-probe-b";
+        char *key = ac_icons_key(ic, "https://ICON.example/x");
+        CHECK(key && strcmp(key, "icon.example") == 0,
+              "icon key is the lowercase host");
+        if (key)
+            ac_string_free(key);
+        CHECK(ac_icons_put(ic, "https://icon.example/a", png_a,
+                           sizeof(png_a) - 1) == AC_OK,
+              "ac_icons_put");
+        /* dedup-by-host: a second page of the same host rewrites the
+         * one record. */
+        CHECK(ac_icons_put(ic, "https://icon.example/b", png_b,
+                           sizeof(png_b) - 1) == AC_OK,
+              "dedup put");
+        CHECK(ac_icons_count(ic) == 1, "host dedup keeps one row");
+        {
+            AcBuffer out = {0};
+            CHECK(ac_icons_get(ic, "https://icon.example/a",
+                               &out) == AC_OK,
+                  "ac_icons_get");
+            CHECK(out.data && out.len == sizeof(png_b) - 1 &&
+                      memcmp(out.data, png_b, out.len) == 0,
+                  "latest write wins for the host");
+            if (out.data)
+                ac_buffer_free(out);
+        }
+        {
+            /* Files land under profiles/<id>/cache/icons — the
+             * disposable lane — and never the data root's icons/. */
+            char p[512];
+            struct stat st;
+            join_path(p, sizeof(p), root, "profiles/work",
+                      "cache/icons/icons.json");
+            CHECK(stat(p, &st) == 0 && st.st_size > 0,
+                  "index lives under the cache root");
+            join_path(p, sizeof(p), root, "profiles/work",
+                      "icons");
+            CHECK(stat(p, &st) != 0,
+                  "no icons/ dir under the data root");
+            char *list = ac_icons_list(ic);
+            CHECK(list && strstr(list, "\"key\":\"icon.example\""),
+                  "ac_icons_list");
+            if (list)
+                ac_string_free(list);
+        }
+        /* The expiry sweep at a boundary newer than the record
+         * drops it; 0 keeps it. */
+        {
+            int64_t removed = -1;
+            CHECK(ac_icons_sweep(ic, 0, &removed) == AC_OK &&
+                      removed == 0,
+                  "sweep at epoch keeps the row");
+            CHECK(ac_icons_sweep(ic, 9999999999999LL, &removed) ==
+                          AC_OK &&
+                      removed == 1,
+                  "sweep drops the aged row");
+            CHECK(ac_icons_count(ic) == 0, "swept store is empty");
+        }
+        CHECK(ac_icons_put(ic, "https://icon.example/a", png_a,
+                           sizeof(png_a) - 1) == AC_OK,
+              "re-put after sweep");
+        CHECK(ac_icons_remove(ic, "https://icon.example/") == AC_OK,
+              "ac_icons_remove");
+        CHECK(ac_icons_count(ic) == 0, "remove empties the row");
+        /* clear is the clearIconDatabase equivalent. */
+        CHECK(ac_icons_put(ic, "https://icon.example/", png_a,
+                           sizeof(png_a) - 1) == AC_OK,
+              "put before clear");
+        CHECK(ac_icons_clear(ic) == AC_OK, "ac_icons_clear");
+        {
+            /* The wipe removes the store wholesale — checked before
+             * the count below, which lazily rebuilds the (empty)
+             * index. */
+            char p[512];
+            struct stat st;
+            join_path(p, sizeof(p), root, "profiles/work",
+                      "cache/icons");
+            CHECK(stat(p, &st) != 0, "clear removed the icons dir");
+        }
+        CHECK(ac_icons_count(ic) == 0, "clear emptied the cache");
+    }
+    /* profile isolation: work's icons never reach other's cache. */
+    CHECK(ac_icons_count(ic_other) == 0, "other profile stays empty");
+    ac_icons_close(ic);
+    ac_icons_close(ic_other);
+
     /* ---- close-out ---------------------------------------------------- */
     ac_settings_close(gs);
     ac_settings_close(ps);
@@ -523,6 +615,7 @@ int main(int argc, char **argv)
     ac_profiles_close(NULL);
     ac_session_close(NULL);
     ac_cookies_close(NULL);
+    ac_icons_close(NULL);
     ac_shutdown(core);
     ac_shutdown(NULL);
 

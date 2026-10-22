@@ -2283,6 +2283,110 @@ fn cookies_ffi_roundtrip() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn icons_ffi_roundtrip() {
+    let _g = guard();
+    // The anchored data dir IS the profile dir — the rc_* lane lands
+    // on <dir>/cache/icons (rustCoreEnsureDataDirFor's contract).
+    let dir = tmpdir("rc-icons");
+    init(&dir);
+
+    // Bad-input legs: every entry point degrades, none crash.
+    assert_eq!(
+        unsafe { crate::rc_icons_put(ptr::null(), b"x".as_ptr(), 1) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_icons_put(cs("https://x/").as_ptr(), ptr::null(), 4) },
+        RcStatus::InvalidArgument
+    );
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_icons_get(ptr::null(), &mut out) },
+        RcStatus::InvalidArgument
+    );
+    assert!(unsafe { crate::rc_icons_key(ptr::null()) }.is_null());
+
+    // Round-trip + dedup-by-host through the C ABI.
+    let png = b"\x89PNG-ffi";
+    let url = cs("https://Icon.Example/a");
+    let url2 = cs("https://icon.example/b");
+    assert_eq!(
+        unsafe { crate::rc_icons_put(url.as_ptr(), png.as_ptr(), png.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_icons_count() }, 1);
+    // A second page of the same host rewrites the one record.
+    assert_eq!(
+        unsafe { crate::rc_icons_put(url2.as_ptr(), png.as_ptr(), png.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_icons_count() }, 1);
+    assert_eq!(
+        unsafe { crate::rc_icons_get(url.as_ptr(), &mut out) },
+        RcStatus::Ok
+    );
+    assert_eq!(take_buf(&mut out), png);
+    // The derived key matches the historyIconKey contract.
+    assert_eq!(
+        take_str(unsafe { crate::rc_icons_key(url.as_ptr()) }).as_deref(),
+        Some("icon.example")
+    );
+    let list = take_str(unsafe { crate::rc_icons_list() }).unwrap();
+    assert!(list.contains("\"key\":\"icon.example\""));
+    // Files live under the cache lane, never the data root proper.
+    assert!(
+        std::path::Path::new(&dir)
+            .join("cache/icons/icons.json")
+            .exists()
+    );
+    assert!(!std::path::Path::new(&dir).join("icons").exists());
+
+    // Miss is NotFound; the sweep drops only aged rows.
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_icons_get(cs("https://other/").as_ptr(), &mut out) },
+        RcStatus::NotFound
+    );
+    let mut removed: i64 = -1;
+    assert_eq!(
+        unsafe { crate::rc_icons_sweep(0, &mut removed) },
+        RcStatus::Ok
+    );
+    assert_eq!(removed, 0);
+    assert_eq!(
+        unsafe { crate::rc_icons_sweep(9999999999999, &mut removed) },
+        RcStatus::Ok
+    );
+    assert_eq!(removed, 1);
+    assert_eq!(unsafe { crate::rc_icons_count() }, 0);
+
+    // remove + clear legs.
+    assert_eq!(
+        unsafe { crate::rc_icons_put(url.as_ptr(), png.as_ptr(), png.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_icons_remove(url.as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_icons_count() }, 0);
+    assert_eq!(
+        unsafe { crate::rc_icons_put(url.as_ptr(), png.as_ptr(), png.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_icons_clear() }, RcStatus::Ok);
+    // The wipe removes the store wholesale; a subsequent read lazily
+    // rebuilds the (empty) index — the imported flag must persist.
+    assert!(
+        !std::path::Path::new(&dir)
+            .join("cache/icons")
+            .exists()
+    );
+    assert_eq!(unsafe { crate::rc_icons_count() }, 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ---- RC07: the arktos_core.h facade -------------------------------------
 //
 // The facade forwards every op to the same rc_* entry points, so the
@@ -2308,7 +2412,7 @@ fn facade_init_and_accessors() {
     let croot = cs(&root);
 
     // housekeeping
-    assert_eq!(crate::facade::ac_api_version(), 3);
+    assert_eq!(crate::facade::ac_api_version(), 4);
     assert_ne!(crate::facade::ac_capabilities(), 0);
 
     // rejected configs fail clean with a stashed error
@@ -2631,9 +2735,93 @@ fn facade_init_and_accessors() {
         0
     );
 
+    // RC16: the icons handle is path-bound to profiles/<id> — the
+    // cache lands under its cache/icons lane and never touches the
+    // process-global anchor.
+    let ic = unsafe { crate::facade::ac_icons(core, cs("work").as_ptr()) };
+    assert!(!ic.is_null());
+    assert_eq!(
+        take_str(unsafe {
+            crate::facade::ac_icons_key(ic, cs("https://ICON.example/x").as_ptr())
+        })
+        .as_deref(),
+        Some("icon.example")
+    );
+    let png = b"\x89PNG-ac";
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_icons_put(
+                ic,
+                cs("https://icon.example/a").as_ptr(),
+                png.as_ptr(),
+                png.len(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_icons_put(
+                ic,
+                cs("https://icon.example/b").as_ptr(),
+                png.as_ptr(),
+                png.len(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_icons_count(ic) }, 1);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_icons_get(
+                ic,
+                cs("https://icon.example/a").as_ptr(),
+                &mut out,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(take_buf(&mut out), png);
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/cache/icons/icons.json")
+        .exists());
+    assert!(!std::path::Path::new(&root)
+        .join("profiles/work/icons")
+        .exists());
+    let list = take_str(unsafe { crate::facade::ac_icons_list(ic) }).unwrap();
+    assert!(list.contains("\"key\":\"icon.example\""));
+    let mut removed: i64 = -1;
+    assert_eq!(
+        unsafe { crate::facade::ac_icons_sweep(ic, 9999999999999, &mut removed) },
+        RcStatus::Ok
+    );
+    assert_eq!(removed, 1);
+    assert_eq!(unsafe { crate::facade::ac_icons_count(ic) }, 0);
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_icons_put(
+                ic,
+                cs("https://icon.example/").as_ptr(),
+                png.as_ptr(),
+                png.len(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_icons_remove(ic, cs("https://icon.example/").as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_icons_clear(ic) },
+        RcStatus::Ok
+    );
+
     // explicit closes, then shutdown reclaims the rest — both
     // NULL-tolerant.
     unsafe {
+        crate::facade::ac_icons_close(ic);
         crate::facade::ac_cookies_close(ck);
         crate::facade::ac_hist_close(h);
         crate::facade::ac_bm_close(b);
@@ -2805,6 +2993,53 @@ fn facade_profile_isolation() {
     unsafe {
         crate::facade::ac_cookies_close(ca);
         crate::facade::ac_cookies_close(cb);
+    }
+
+    // Icon isolation: each persona's cache/icons lane is its own.
+    let ia = unsafe { crate::facade::ac_icons(core, cs("alice").as_ptr()) };
+    let ib = unsafe { crate::facade::ac_icons(core, cs("bob").as_ptr()) };
+    let png = b"\x89PNG-iso";
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_icons_put(
+                ia,
+                cs("https://alice.example/").as_ptr(),
+                png.as_ptr(),
+                png.len(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_icons_count(ia) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_icons_count(ib) }, 0);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_icons_get(
+                ib,
+                cs("https://alice.example/").as_ptr(),
+                &mut out,
+            )
+        },
+        RcStatus::NotFound
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/alice/cache/icons/icons.json")
+        .exists());
+    // Bob's store holds no icon files — his count read above may have
+    // persisted the (empty) index itself, which carries no rows.
+    assert!(
+        std::fs::read_dir(
+            std::path::Path::new(&root).join("profiles/bob/cache/icons")
+        )
+        .map(|rd| !rd.flatten().any(|e| {
+            e.file_name().to_string_lossy().ends_with(".png")
+        }))
+        .unwrap_or(true)
+    );
+    unsafe {
+        crate::facade::ac_icons_close(ia);
+        crate::facade::ac_icons_close(ib);
         crate::facade::ac_shutdown(core);
     }
     let _ = std::fs::remove_dir_all(&root);

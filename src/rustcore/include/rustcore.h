@@ -74,7 +74,8 @@ typedef struct RcBuffer {
 /* Change topics emitted so far: "credentials" (rc_cred_* map),
  * "autofill" (rc_autofill_* record set), "settings" (rc_settings_*
  * mutations), "profiles" (rc_profiles_* registry mutations),
- * "torctl" (RC14: a control reply/event/link-state push is pending). */
+ * "torctl" (RC14: a control reply/event/link-state push is pending),
+ * "icons" (RC16: the icon cache changed). */
 typedef void (*RcChangeCallback)(const char *topicUtf8, void *userdata);
 
 /* --- housekeeping ------------------------------------------------- */
@@ -992,6 +993,57 @@ RcStatus rc_cookies_purge_expired(int64_t now_ms);
 /* The exit-sweep: drop every session row (also run at open — a     */
 /* persistent db can only have inherited them from a dead run).     */
 RcStatus rc_cookies_purge_session(void);
+
+/* ------------------------------------------------------------------ */
+/* RC16: per-profile site-icon/favicon cache                           */
+/*                                                                      */
+/* Icon records keyed by page-url/origin, pointing at PNG files      */
+/* under the profile's CACHE dir (<data dir>/cache/icons/ on this    */
+/* anchored surface — profiles/<id>/cache/icons for the facade).     */
+/* The cache is disposable by contract: never stored under the data  */
+/* root proper.  Fetch stays Qt/engine-side (the page already has    */
+/* the bytes); this store owns the index, dedup-by-host file naming, */
+/* the expiry sweep and the file lifecycle.  On a profile's first    */
+/* touch the legacy sources are folded in once — the pre-rustcore    */
+/* <profile>/icons/ png files and the history.db icons table —       */
+/* gated by a stamp that survives an explicit clear.                 */
+/*                                                                      */
+/* The icon key is the historyIconKey rule the LocationBarSiteIcon   */
+/* consumers rely on: the lowercase host of the page url, or the     */
+/* whole url when it carries none.  Mutations emit the "icons"       */
+/* change topic.                                                      */
+
+/* Store the favicon PNG for url's icon key; a rewrite carrying      */
+/* identical bytes is a no-op. */
+RcStatus rc_icons_put(const char *urlUtf8, const uint8_t *png,
+                      size_t len);
+
+/* The stored PNG for url's key into *out (rc_buffer_free);          */
+/* RC_NOT_FOUND on a miss. */
+RcStatus rc_icons_get(const char *urlUtf8, RcBuffer *out);
+
+/* Drop the record for url's key — RC_OK either way. */
+RcStatus rc_icons_remove(const char *urlUtf8);
+
+/* Wipe the whole icon cache — the clearIconDatabase equivalent. */
+RcStatus rc_icons_clear(void);
+
+/* Expiry sweep: drop records not refreshed at-or-before cutoffMs;   */
+/* outRemoved may be NULL.  HistoryManager passes its history        */
+/* retention boundary — icons age out with the visits they belong    */
+/* to and re-record on the next load's iconChanged. */
+RcStatus rc_icons_sweep(int64_t cutoffMs, int64_t *outRemoved);
+
+/* Record count; -1 when no data dir is anchored. */
+int64_t rc_icons_count(void);
+
+/* The store's icon key for a url (lowercase host, or the whole url */
+/* when hostless) — caller frees with rc_string_free. */
+char *rc_icons_key(const char *urlUtf8);
+
+/* The index rows as a JSON array [{"key","file","updated","pages"}] */
+/* — caller frees with rc_string_free. */
+char *rc_icons_list(void);
 
 /* ------------------------------------------------------------------ */
 /* RC02: typed per-profile settings store                              */

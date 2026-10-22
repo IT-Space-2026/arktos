@@ -53,8 +53,9 @@ extern "C" {
 
 /* The facade ABI version this header was written for.
  * v2 adds the AcSession module (RC13).
- * v3 adds the AcCookies module (RC15). */
-#define AC_API_VERSION 3u
+ * v3 adds the AcCookies module (RC15).
+ * v4 adds the AcIcons module (RC16). */
+#define AC_API_VERSION 4u
 
 /* ac_capabilities() bits — one per module. */
 #define AC_CAP_SETTINGS  0x01ull
@@ -64,6 +65,7 @@ extern "C" {
 #define AC_CAP_POLICY    0x10ull
 #define AC_CAP_SESSION   0x20ull
 #define AC_CAP_COOKIES   0x40ull
+#define AC_CAP_ICONS     0x80ull
 
 /* AcStatus and AcBuffer are the RC02–RC06 types verbatim — the
  * facade shares their spelling so mixed ac_/rc_ code compiles
@@ -91,12 +93,14 @@ typedef struct AcBookmarks  AcBookmarks;
 typedef struct AcPolicy     AcPolicy;
 typedef struct AcSession    AcSession;
 typedef struct AcCookies    AcCookies;
+typedef struct AcIcons      AcIcons;
 typedef RcSettings AcSettings;
 typedef RcProfiles AcProfiles;
 
 /* Change notification, one per AcCore.  `module` is a stable topic
  * ("settings", "profiles", "history", "bookmarks", "sitedec",
- * "policy", "uaspoof", "cookies"); `profile_id` is the bound profile that
+ * "policy", "uaspoof", "cookies", "icons"); `profile_id` is the bound
+ * profile that
  * changed or NULL for global/unscoped mutations.  Both pointers are
  * borrowed — valid only for the duration of the call.  Fires
  * synchronously on the mutating thread outside every store lock;
@@ -145,6 +149,7 @@ AcBookmarks *ac_bookmarks(AcCore *core, const char *profile_id);
 AcPolicy    *ac_policy(AcCore *core, const char *profile_id);
 AcSession   *ac_session(AcCore *core, const char *profile_id);
 AcCookies   *ac_cookies(AcCore *core, const char *profile_id);
+AcIcons     *ac_icons(AcCore *core, const char *profile_id);
 
 void ac_settings_close(AcSettings *h);
 void ac_profiles_close(AcProfiles *h);
@@ -153,6 +158,7 @@ void ac_bm_close(AcBookmarks *h);
 void ac_policy_close(AcPolicy *h);
 void ac_session_close(AcSession *h);
 void ac_cookies_close(AcCookies *h);
+void ac_icons_close(AcIcons *h);
 
 /* ---- settings (RC02) --------------------------------------------------- */
 
@@ -411,6 +417,43 @@ int64_t  ac_cookies_count(const AcCookies *h,
                           const char *container_or_null); /* -1 err */
 AcStatus ac_cookies_purge_expired(AcCookies *h, int64_t now_ms);
 AcStatus ac_cookies_purge_session(AcCookies *h);
+
+/* ---- icons: per-profile favicon/site-icon cache (RC16) ------------
+ *
+ * The bound profile's profiles/<id>/cache/icons/ — the disposable
+ * lane (icon files live under the cache root, never the data root;
+ * the vault's "cache" exclusion already holds them aside unsealed).
+ * Records are keyed by page-url/origin and dedup by host: every page
+ * of a host shares one PNG file.  Fetch stays engine-side — the
+ * backend already has the bytes (QWebEnginePage::iconChanged); the
+ * store owns the index, expiry and file lifecycle.  Path-bound like
+ * AcSession (no process-global anchor), and a profile's first touch
+ * folds the legacy stores in once — the <profile>/icons/ png files
+ * and the history.db icons table — gated by a stamp that survives an
+ * explicit clear.  Mutations emit the "icons" change topic stamped
+ * with the bound profile.
+ */
+
+/* Record the favicon PNG for `url`'s icon key (lowercase host, or
+ * the whole url when hostless).  An identical-bytes rewrite is a
+ * no-op. */
+AcStatus ac_icons_put(const AcIcons *h, const char *url,
+                      const uint8_t *png, size_t len);
+/* The stored PNG into *out (ac_buffer_free); AC_ERR_NOT_FOUND on a
+ * miss. */
+AcStatus ac_icons_get(const AcIcons *h, const char *url,
+                      AcBuffer *out);
+AcStatus ac_icons_remove(const AcIcons *h, const char *url);
+AcStatus ac_icons_clear(const AcIcons *h);
+/* Drop records not refreshed at-or-before cutoff_ms; out_removed may
+ * be NULL. */
+AcStatus ac_icons_sweep(const AcIcons *h, int64_t cutoff_ms,
+                        int64_t *out_removed);
+int64_t  ac_icons_count(const AcIcons *h);               /* -1 on err */
+/* The derived icon key for `url` — caller frees. */
+char    *ac_icons_key(const AcIcons *h, const char *url);
+/* The index rows as a JSON array — caller frees. */
+char    *ac_icons_list(const AcIcons *h);
 
 #ifdef __cplusplus
 }

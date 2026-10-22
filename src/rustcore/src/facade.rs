@@ -35,12 +35,13 @@ use std::ptr;
 use std::sync::{LazyLock, Mutex};
 
 use crate::error::{self, RcStatus};
-use crate::{bookmarks, notify, profiles, settings, util};
+use crate::{bookmarks, icons, notify, profiles, settings, util};
 
 /// The facade ABI version — AC_API_VERSION in arktos_core.h.  Bump
 /// on every ABI-affecting addition; never renumber existing symbols
-/// or enum values.  v3 added AcCookies (RC15).
-pub const AC_API_VERSION: u32 = 3;
+/// or enum values.  v3 added AcCookies (RC15).  v4 added AcIcons
+/// (RC16).
+pub const AC_API_VERSION: u32 = 4;
 
 const AC_CAP_SETTINGS: u64 = 0x01;
 const AC_CAP_PROFILES: u64 = 0x02;
@@ -49,13 +50,15 @@ const AC_CAP_BOOKMARKS: u64 = 0x08;
 const AC_CAP_POLICY: u64 = 0x10;
 const AC_CAP_SESSION: u64 = 0x20;
 const AC_CAP_COOKIES: u64 = 0x40;
+const AC_CAP_ICONS: u64 = 0x80;
 const AC_CAP_ALL: u64 = AC_CAP_SETTINGS
     | AC_CAP_PROFILES
     | AC_CAP_HISTORY
     | AC_CAP_BOOKMARKS
     | AC_CAP_POLICY
     | AC_CAP_SESSION
-    | AC_CAP_COOKIES;
+    | AC_CAP_COOKIES
+    | AC_CAP_ICONS;
 
 const DEFAULT_PROFILE: &str = "default";
 
@@ -96,6 +99,7 @@ enum Live {
     Policy(usize),
     Session(usize),
     Cookies(usize),
+    Icons(usize),
 }
 
 impl Live {
@@ -107,7 +111,8 @@ impl Live {
             | Live::Bookmarks(p)
             | Live::Policy(p)
             | Live::Session(p)
-            | Live::Cookies(p) => p,
+            | Live::Cookies(p)
+            | Live::Icons(p) => p,
         }
     }
 }
@@ -170,6 +175,19 @@ pub struct AcCookies {
     profile: String,
     /// profiles/<id>/cookies.db.
     db_path: CString,
+}
+
+/// RC16: the icon cache is fully path-explicit like the session
+/// store — the handle carries the resolved profiles/<id>/ dir and
+/// every op works under its cache/icons/ lane directly, so there is
+/// no process-global anchor to re-assert at all.
+pub struct AcIcons {
+    /// The effective profile id — stamped on "icons" notifications.
+    profile: String,
+    /// profiles/<id> — the icons module derives cache/icons under it
+    /// (and reads the legacy siblings, icons/ + history.db, for the
+    /// one-shot import).
+    dir: CString,
 }
 
 // ---- shared plumbing ---------------------------------------------------
@@ -268,6 +286,7 @@ unsafe fn free_live(live: Live) {
         Live::Cookies(p) => {
             drop(unsafe { Box::from_raw(p as *mut AcCookies) })
         }
+        Live::Icons(p) => drop(unsafe { Box::from_raw(p as *mut AcIcons) }),
     }
 }
 
@@ -766,6 +785,47 @@ pub unsafe extern "C" fn ac_cookies(
     .unwrap_or(ptr::null_mut())
 }
 
+/// Binds the icon cache of `profile_id` — profiles/<id>/cache/icons/
+/// (RC16).  Path-bound like ac_session: the handle only carries the
+/// resolved profile dir; every op works under it with no
+/// process-global anchoring.
+///
+/// # Safety
+/// `profile_id` must be NUL-terminated UTF-8 or NULL.  Free with
+/// ac_icons_close; the handle dies with its core.
+#[no_mangle]
+pub unsafe extern "C" fn ac_icons(
+    core: *mut AcCore,
+    profile_id: *const c_char,
+) -> *mut AcIcons {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let core = match core_ref(core) {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let eff = bound_profile(profile_id);
+        let root = PathBuf::from(core.root.to_string_lossy().into_owned());
+        let dir = profile_dir(&root, &eff);
+        let dir_c = match CString::new(dir.to_string_lossy().into_owned()) {
+            Ok(c) => c,
+            Err(_) => {
+                error::set_error("profile dir is not UTF-8");
+                return ptr::null_mut();
+            }
+        };
+        let h = Box::into_raw(Box::new(AcIcons {
+            profile: eff,
+            dir: dir_c,
+        }));
+        track(core, Live::Icons(h as usize));
+        h
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 // ---- handle closes ---------------------------------------------------------
 
 /// Releases a settings handle — NULL-tolerant; also legal on a
@@ -825,6 +885,7 @@ ac_close!(ac_bm_close, AcBookmarks);
 ac_close!(ac_policy_close, AcPolicy);
 ac_close!(ac_session_close, AcSession);
 ac_close!(ac_cookies_close, AcCookies);
+ac_close!(ac_icons_close, AcIcons);
 
 // ---- re-assert helpers ------------------------------------------------------
 
@@ -1636,3 +1697,248 @@ ac_status_op!(ac_cookies_purge_expired, AcCookies, ensure_cookies,
     rc_cookies_purge_expired(now_ms: i64));
 ac_status_op!(ac_cookies_purge_session, AcCookies, ensure_cookies,
     rc_cookies_purge_session());
+
+// ---- icons (RC16) ----------------------------------------------------
+//
+// Path-explicit like the session lane: the handle's profiles/<id>/ dir
+// is resolved once at bind and every op works under its
+// cache/icons/ subtree — no process-global anchor exists to
+// re-assert.  Mutations emit "icons" stamped with the bound profile.
+
+fn icons_ref<'a>(h: *const AcIcons) -> Result<&'a AcIcons, RcStatus> {
+    match unsafe { h.as_ref() } {
+        Some(h) => Ok(h),
+        None => fail(RcStatus::InvalidArgument, "bad icons handle"),
+    }
+}
+
+fn icons_profile_dir(h: &AcIcons) -> PathBuf {
+    PathBuf::from(h.dir.to_string_lossy().into_owned())
+}
+
+fn icons_arg<'a>(ptr: *const c_char) -> Result<&'a str, RcStatus> {
+    match unsafe { util::cstr(ptr) } {
+        Some(s) => Ok(s),
+        None => fail(RcStatus::InvalidArgument, "bad icon url pointer"),
+    }
+}
+
+fn icons_st<T>(r: error::RcResult<T>) -> RcStatus {
+    match r {
+        Ok(_) => RcStatus::Ok,
+        Err(e) => {
+            error::set_error(&e.msg);
+            e.status
+        }
+    }
+}
+
+/// Records the favicon PNG for `url`'s icon key in the bound
+/// profile's cache — dedup-by-host, identical-bytes rewrites are
+/// no-ops.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8; `png` points to `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ac_icons_put(
+    h: *const AcIcons,
+    url: *const c_char,
+    png: *const u8,
+    len: usize,
+) -> RcStatus {
+    let h = match icons_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    let _hint = notify::profile_hint(&h.profile);
+    let url = match icons_arg(url) {
+        Ok(u) => u,
+        Err(s) => return s,
+    };
+    let data = match unsafe { util::bytes(png, len) } {
+        Some(d) => d,
+        None => {
+            error::set_error("bad icon pointer");
+            return RcStatus::InvalidArgument;
+        }
+    };
+    match icons::put_in(&icons_profile_dir(h), url, data) {
+        Ok(true) => {
+            notify::emit("icons");
+            RcStatus::Ok
+        }
+        Ok(false) => RcStatus::Ok,
+        Err(e) => icons_st::<()>(Err(e)),
+    }
+}
+
+/// The stored PNG for `url`'s key into `out` — AC_ERR_NOT_FOUND on a
+/// miss.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8; `out` receives a buffer to
+/// release with ac_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn ac_icons_get(
+    h: *const AcIcons,
+    url: *const c_char,
+    out: *mut crate::RcBuffer,
+) -> RcStatus {
+    let h = match icons_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    let url = match icons_arg(url) {
+        Ok(u) => u,
+        Err(s) => return s,
+    };
+    match icons::get_in(&icons_profile_dir(h), url) {
+        Ok(png) => {
+            crate::buffer_out(out, png);
+            RcStatus::Ok
+        }
+        Err(e) => icons_st::<()>(Err(e)),
+    }
+}
+
+/// Drops the record for `url`'s key — AC_OK either way.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn ac_icons_remove(
+    h: *const AcIcons,
+    url: *const c_char,
+) -> RcStatus {
+    let h = match icons_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    let _hint = notify::profile_hint(&h.profile);
+    let url = match icons_arg(url) {
+        Ok(u) => u,
+        Err(s) => return s,
+    };
+    match icons::remove_in(&icons_profile_dir(h), url) {
+        Ok(true) => {
+            notify::emit("icons");
+            RcStatus::Ok
+        }
+        Ok(false) => RcStatus::Ok,
+        Err(e) => icons_st::<()>(Err(e)),
+    }
+}
+
+/// Wipes the bound profile's icon cache — the clearIconDatabase
+/// equivalent.
+///
+/// # Safety
+/// `h` must come from ac_icons.
+#[no_mangle]
+pub unsafe extern "C" fn ac_icons_clear(h: *const AcIcons) -> RcStatus {
+    let h = match icons_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    let _hint = notify::profile_hint(&h.profile);
+    let dir = icons_profile_dir(h);
+    let had = icons::count_in(&dir).unwrap_or(0) > 0;
+    let st = icons_st(icons::clear_in(&dir));
+    if st == RcStatus::Ok && had {
+        notify::emit("icons");
+    }
+    st
+}
+
+/// The expiry sweep — drops records not refreshed at-or-before
+/// `cutoff_ms`; `out_removed` may be NULL.
+///
+/// # Safety
+/// `h` must come from ac_icons.
+#[no_mangle]
+pub unsafe extern "C" fn ac_icons_sweep(
+    h: *const AcIcons,
+    cutoff_ms: i64,
+    out_removed: *mut i64,
+) -> RcStatus {
+    let h = match icons_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    let _hint = notify::profile_hint(&h.profile);
+    match icons::sweep_in(&icons_profile_dir(h), cutoff_ms) {
+        Ok(n) => {
+            if !out_removed.is_null() {
+                unsafe { *out_removed = n as i64 };
+            }
+            if n > 0 {
+                notify::emit("icons");
+            }
+            RcStatus::Ok
+        }
+        Err(e) => icons_st::<()>(Err(e)),
+    }
+}
+
+/// Record count; -1 on a bad handle.
+///
+/// # Safety
+/// `h` must come from ac_icons.
+#[no_mangle]
+pub unsafe extern "C" fn ac_icons_count(h: *const AcIcons) -> i64 {
+    match icons_ref(h) {
+        Ok(h) => icons::count_in(&icons_profile_dir(h)).unwrap_or(-1),
+        Err(_) => -1,
+    }
+}
+
+/// The store's icon key for `url` — caller frees with
+/// ac_string_free; NULL on invalid input.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8 or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn ac_icons_key(
+    h: *const AcIcons,
+    url: *const c_char,
+) -> *mut c_char {
+    if icons_ref(h).is_err() {
+        return ptr::null_mut();
+    }
+    match icons_arg(url) {
+        Ok(u) => match icons::key_for(u) {
+            Ok(k) => util::to_c_string(k),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        },
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// The bound profile's index rows as a JSON array — caller frees
+/// with ac_string_free; NULL on a bad handle.
+///
+/// # Safety
+/// `h` must come from ac_icons.
+#[no_mangle]
+pub unsafe extern "C" fn ac_icons_list(h: *const AcIcons) -> *mut c_char {
+    let h = match icons_ref(h) {
+        Ok(h) => h,
+        Err(_) => return ptr::null_mut(),
+    };
+    match icons::list_in(&icons_profile_dir(h)) {
+        Ok(v) => match CString::new(v) {
+            Ok(c) => c.into_raw(),
+            Err(_) => {
+                error::set_error("icon list is not utf8-clean");
+                ptr::null_mut()
+            }
+        },
+        Err(e) => {
+            error::set_error(&e.msg);
+            ptr::null_mut()
+        }
+    }
+}

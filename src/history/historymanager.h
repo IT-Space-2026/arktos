@@ -101,6 +101,7 @@ class HistoryFilterModel;
 class HistoryTreeModel;
 #ifdef ARKTOS_RUSTCORE
 struct AcHistory;
+struct AcIcons;
 #endif
 // QtWebKit's QWebHistoryInterface pushed visited urls into the
 // application; QtWebEngine keeps Chromium's own internal history, so
@@ -157,10 +158,12 @@ public:
     // BrowserApplication::icon() / the WebKit icon database).  Pages
     // feed entries via setIcon() from WebPage's iconChanged hook.
     // Icons are keyed by host and persisted so they survive restarts:
-    // under rustcore as per-host PNG blobs in history.db (the HIST01
-    // store folded into the Rust core), otherwise as png files under
-    // the data dir's icons/; in the C++ store hostless urls keep a
-    // memory-only per-url entry.
+    // under rustcore as per-key PNG files under the profile's
+    // cache/icons dir (the RC16 disposable cache — the history.db
+    // icons table and the legacy icons/ dir are folded in once on
+    // first touch), otherwise as png files under the data dir's
+    // icons/; in the C++ store hostless urls keep a memory-only
+    // per-url entry.
     QIcon icon(const QUrl &url) const;
     void setIcon(const QUrl &url, const QIcon &icon);
     // QWebSettings::clearIconDatabase() replacement: drops the
@@ -210,6 +213,16 @@ private:
     // connection to this profile's history.db.  rustStore() calls it
     // only when no facade handle exists.
     void ensureRustStore() const;
+    // RC16: this profile's icon-cache handle — minted lazily through
+    // the shared AcCore like m_hist, but path-bound (no per-op
+    // re-assert needed; the store lives under profiles/<id>/cache/
+    // icons).  NULL when the bridge cannot serve — the legacy
+    // rc_icons_* spelling over ensureRustIcons() is the fallback.
+    AcIcons *rustIconStore() const;
+    // Legacy-path anchor for the icon lane: points the process-global
+    // data dir at this profile's dir so the rc_icons_* ops land under
+    // profiles/<id>/cache/icons.
+    void ensureRustIcons() const;
     void importLegacyHistory();
     void rustReplaceAll();
 #endif
@@ -217,6 +230,7 @@ private:
     QString m_profileId;
 #ifdef ARKTOS_RUSTCORE
     mutable AcHistory *m_hist = nullptr;
+    mutable AcIcons *m_iconStore = nullptr;
 #endif
     AutoSaver *m_saveTimer;
     int m_daysToExpire;

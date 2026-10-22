@@ -43,7 +43,7 @@ Rules for the agent working this file:
 | RC13 | rustcore `sessions` module — per-profile tab/window session store | done | 0 | per-profile ARSS session.dat + session.state lifecycle, AcSession facade (ABI v2), scroll v4, private stripping — cargo 310/310, acprobe OK, tst_tabwidget 46 + tst_browserapp 11 green offscreen |
 | RC14 | `torctl` client — Tor control protocol in Rust (NEWNYM, circuits, auth) | done | 0 | torctl module: loopback-only control client, cookie+password auth (zeroized), serialized cmds, 650-event drain via "torctl" topic, rc_tor_* FFI + TorControl shell (no-rust keeps QTcpSocket) — cargo 326/326, tst_tormanager 22/0f/1skip both lanes (real daemon skipped, no tor binary), qmake+no-rust builds clean |
 | RC15 | rustcore `cookies` module — per-profile cookie db for Servo/WPE (Chromium stays engine-owned) | done | 0 | per-profile cookies.db w/ container partitioning, Qt-parity match, Set-Cookie+toRawForm io, sitedecisions gate, honest authoritative/mirror role; verified: cargo 338/338, acprobe OK, qmake+make clean |
-| RC16 | rustcore `icons` module — per-profile favicon/site-icon cache | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC16 | rustcore `icons` module — per-profile favicon/site-icon cache | done | 0 | icons module: cache/icons index+PNG store, host dedup, expiry sweep, legacy icons/+history.db fold-once; AcIcons at ABI v4; HistoryManager dispatched; cargo 347/348 (pre-existing vault flake), acprobe OK, qmake+make clean, tst_historymanager 52/52 |
 | RC17 | rustcore `autofill` module — address/contact profiles under secure custody | pending | 0 | needs:task:RC07 needs:tool:cargo |
 | RC18 | rustcore `opensearch` module — engine XML parse/validate + registry CRUD | pending | 0 | needs:task:RC07 needs:tool:cargo |
 | RC19 | rustcore `containers` module — container registry + storage namespace map | pending | 0 | needs:task:RC07 needs:tool:cargo |
@@ -792,6 +792,8 @@ relies on — audit it first.
 
 Verify: cargo test — index round-trip, dedup, expiry sweep; cache
 files land under the BrowserPaths cache root, never the data root.
+
+Done 2026-10-22. Store: profiles/<id>/cache/icons/{icons.json,<key>.png}; key = lowercase host or whole hostless url (historyIconKey). Import-once stamp cache/icons.done sits OUTSIDE the icons dir so clearIcons cannot resurrect legacy rows. rc_hist_icon_* stay exported (append-only ABI) but HistoryManager now uses rc_icons_*/AcIcons.
 
 ### RC17
 

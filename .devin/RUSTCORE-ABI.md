@@ -20,6 +20,8 @@ The facade is a thin ownership layer over the RC02–RC06 modules:
   marker (`AcSession`), RC13 — added at ABI v2
 - cookies: per-profile cookie database (`AcCookies`), RC15 —
   added at ABI v3
+- icons: per-profile favicon/site-icon cache (`AcIcons`), RC16 —
+  added at ABI v4
 
 It deliberately does NOT wrap the other rc_* surfaces (credentials,
 autofill, opensearch, readability, vault, …). Those keep
@@ -36,13 +38,15 @@ their rc_* spellings until their own adoption rows land.
   `RC_ERR_WRONG_PASSWORD=5`, `RC_ERR_TAMPERED=6`,
   `RC_ERR_INTERNAL=7`. New failures get new numbers; retiring a
   value leaves a gap.
-- **`ac_api_version()`** returns the library ABI version (`3`).
+- **`ac_api_version()`** returns the library ABI version (`4`).
   It bumps only on ABI-visible additions — the probe/autotests pin
   it per release. (v2: `AcSession` + `ac_session_*`, RC13.
-  v3: `AcCookies` + `ac_cookies_*`, RC15.)
+  v3: `AcCookies` + `ac_cookies_*`, RC15.
+  v4: `AcIcons` + `ac_icons_*`, RC16.)
 - **`ac_capabilities()`** is a per-module bitmask
   (`AC_CAP_SETTINGS=0x01` … `AC_CAP_POLICY=0x10`,
-  `AC_CAP_SESSION=0x20`, `AC_CAP_COOKIES=0x40`). A module built
+  `AC_CAP_SESSION=0x20`, `AC_CAP_COOKIES=0x40`,
+  `AC_CAP_ICONS=0x80`). A module built
   out of the library reports `0` — callers must test bits, not
   assume presence.
 - **`AcConfig.struct_size`** is the caller's `sizeof(AcConfig)`.
@@ -59,7 +63,7 @@ their rc_* spellings until their own adoption rows land.
   the core minted and unregisters its change callback.
 - Module handles come from the accessors
   (`ac_settings`, `ac_profiles`, `ac_history`, `ac_bookmarks`,
-  `ac_policy`, `ac_session`, `ac_cookies`), are released
+  `ac_policy`, `ac_session`, `ac_cookies`, `ac_icons`), are released
   individually with the matching
   `ac_*_close`, and **die with their core** — using a handle after
   `ac_shutdown` is a use-after-free.
@@ -150,6 +154,25 @@ non-`AC_OK` return the thread-local error string is populated —
   caller-supplied third-party/keep/session-length inputs — the
   same precedence `CookieJar`'s IO-thread filter applies to
   Chromium, exposed for backends whose jar this store is.
+- `ac_icons` nuance (v4): path-bound like `ac_session` — the
+  handle carries the resolved `profiles/<id>/` dir and every op
+  works under its `cache/icons/` lane (the disposable lane the
+  profile vault's "cache" exclusion already holds unsealed —
+  icon files never land in the data root proper). `NULL`/non-slug
+  binds `"default"`. Ops take the PAGE url; the store derives the
+  `historyIconKey` (lowercase host, or the whole url when
+  hostless) so every page of a host shares one PNG — that is the
+  dedup-by-host rule. Fetch stays engine-side (the backend
+  already has the bytes); the store owns the index
+  (`icons.json`), the file lifecycle, and the expiry sweep
+  (`ac_icons_sweep(cutoff_ms)` — HistoryManager passes its
+  history retention boundary). A profile's first touch folds the
+  legacy sources in once — the pre-rustcore
+  `<profile>/icons/<pct-host>.png` files and the `history.db`
+  `icons` table — read-only, gated by a `cache/icons.done` stamp
+  that survives an explicit `ac_icons_clear` so cleared icons
+  cannot resurrect. Mutations emit the `"icons"` change topic
+  stamped with the bound profile.
 
 ## 6. Notifications
 

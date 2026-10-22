@@ -135,6 +135,7 @@ mod error;
 mod extverify;
 mod facade;
 mod history;
+mod icons;
 mod inifmt;
 mod lookalike;
 mod notify;
@@ -3948,6 +3949,209 @@ pub unsafe extern "C" fn rc_cookies_purge_session() -> RcStatus {
         notify::emit("cookies");
     }
     status
+}
+
+// ---- RC16: per-profile site-icon cache ----
+//
+// The disposable lane: icon records keyed by page-url/origin, pointing
+// at PNG files under <data dir>/cache/icons/ — never the data root.
+// Fetch is Qt/engine-side (the page already carries the bytes); this
+// store owns the index, the dedup-by-host file naming, the expiry
+// sweep and the file lifecycle.  Mutations emit the "icons" change
+// topic.  See icons.rs for the layout and the legacy import.
+
+/// Stores the favicon PNG for `url`'s icon key — the lowercase host,
+/// or the whole url when it carries no host (the historyIconKey rule
+/// the LocationBarSiteIcon consumers rely on).  Every page of a host
+/// shares one file.  A rewrite carrying identical bytes is a no-op.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8; `png` points to `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_put(
+    url: *const c_char,
+    png: *const u8,
+    len: usize,
+) -> RcStatus {
+    let mut changed = false;
+    let status = status_of(|| {
+        let url = unsafe { util::cstr(url) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad icon url pointer".into(),
+        })?;
+        let data = unsafe { util::bytes(png, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad icon pointer".into(),
+        })?;
+        icons::put(url, data).map(|c| changed = c)
+    });
+    if status == RcStatus::Ok && changed {
+        notify::emit("icons");
+    }
+    status
+}
+
+/// Fetches the stored favicon PNG for `url`'s key; RC_NOT_FOUND when
+/// the site has none.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8; `out` receives a buffer to
+/// release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_get(url: *const c_char, out: *mut RcBuffer) -> RcStatus {
+    status_of(|| {
+        let url = unsafe { util::cstr(url) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad icon url pointer".into(),
+        })?;
+        buffer_out(out, icons::get(url)?);
+        Ok(())
+    })
+}
+
+/// Drops the icon record for `url`'s key — RC_OK either way.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_remove(url: *const c_char) -> RcStatus {
+    let mut removed = false;
+    let status = status_of(|| {
+        let url = unsafe { util::cstr(url) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad icon url pointer".into(),
+        })?;
+        icons::remove(url).map(|r| removed = r)
+    });
+    if status == RcStatus::Ok && removed {
+        notify::emit("icons");
+    }
+    status
+}
+
+/// Wipes the profile's whole icon cache — the clearIconDatabase
+/// equivalent.  RC_OK whether or not anything existed.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_clear() -> RcStatus {
+    let had = catch_unwind(AssertUnwindSafe(|| icons::count().unwrap_or(0)))
+        .unwrap_or(0)
+        > 0;
+    let status = status_of(icons::clear);
+    if status == RcStatus::Ok && had {
+        notify::emit("icons");
+    }
+    status
+}
+
+/// Expiry sweep: drops records not refreshed at-or-before `cutoff_ms`
+/// and unlinks their files — the caller computes the retention
+/// boundary (HistoryManager passes its history cutoff).  `out_removed`
+/// may be NULL; when given it receives the dropped count.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_sweep(
+    cutoff_ms: i64,
+    out_removed: *mut i64,
+) -> RcStatus {
+    let mut removed = 0u64;
+    let status = status_of(|| icons::sweep(cutoff_ms).map(|n| removed = n));
+    if status == RcStatus::Ok {
+        if !out_removed.is_null() {
+            unsafe { *out_removed = removed as i64 };
+        }
+        if removed > 0 {
+            notify::emit("icons");
+        }
+    }
+    status
+}
+
+/// Record count; -1 on error (no anchored data dir).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_count() -> i64 {
+    catch_unwind(AssertUnwindSafe(|| icons::count().unwrap_or(-1))).unwrap_or(-1)
+}
+
+/// The store's icon key for `url` — lowercase host, or the whole url
+/// when hostless; the derivation both FFI spellings share.  Caller
+/// frees with rc_string_free; NULL on invalid input.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_key(url: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let url = match unsafe { util::cstr(url) } {
+            Some(u) => u,
+            None => {
+                error::set_error("bad icon url pointer");
+                return ptr::null_mut();
+            }
+        };
+        match icons::key_for(url) {
+            Ok(k) => util::to_c_string(k),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The index rows as a JSON array — [{"key","file","updated",
+/// "pages":[]}] — caller frees with rc_string_free.  NULL on error.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_list() -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| match icons::list() {
+        Ok(v) => match CString::new(v) {
+            Ok(c) => c.into_raw(),
+            Err(_) => {
+                error::set_error("icon list is not utf8-clean");
+                ptr::null_mut()
+            }
+        },
+        Err(e) => {
+            error::set_error(&e.msg);
+            ptr::null_mut()
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 // ---- RC02: typed per-profile settings store ----
