@@ -37,7 +37,7 @@ Rules for the agent working this file:
 | RC07 | Stable `arktos_core.h` C ABI facade v1 + RustCoreBridge v2 | done | 0 | arktos_core.h facade: AcCore + profile-bound ac_* handles over shared rc_* stores, (module,profile) cb lane, bridge v2 + ABI doc — cargo 299+1preexisting, acprobe OK, make clean, autotests green |
 | RC08 | QtWebEngine adoption — services read/write through facade, parity proof | done | 0 | facade adoption across settings/profiles/history/bookmarks/policy consumers w/ rc_* fallback; fixed root-drift, bm UAF + stale-tree remint, profile_dir mkpath — 19 parity binaries 0-fail, rust+no-rust clean, cargo 299+1preexisting |
 | RC09 | Servo/WebKit backends consume the same facade + capability reporting | done | 0 | Servo/WebKit profiles bound to window persona: shared profileId() resolver, EngineTab history->instanceFor(persona), servo persona-named profile cache, persona-scoped adblock/downloads; smoke quick_exit on pre-existing teardown segv — verified: --servo-smoke all legs PASS incl history-recorded rc=0, webkit=1 build clean, no-rust TUs clean |
-| RC10 | Packaging: new crates linked + staged in deb/rpm/flatpak/dmg/exe legs | in_progress | 0 | needs:task:RC07 |
+| RC10 | Packaging: new crates linked + staged in deb/rpm/flatpak/dmg/exe legs | done | 0 | packaging audit closed the silent no-rust gap: ac_init/servo_embed link-proofs asserted on all 5 legs (deb both tags, rpm, flatpak, dmg, exe) + rust-core added to packages.yml triggers; fixed pre-existing verify abort (set -e grep-to-sed pipe) + sbin PATH; CI run 39703330845 all-green on this branch |
 | RC11 | CEF spike — bounded adapter design + QWebEngine touchpoint audit + go/no-go | pending | 0 | needs:task:RC08 |
 | RC12 | rustcore `reader` module — engine-agnostic article extraction (reader mode) | pending | 0 | needs:task:RC01 needs:tool:cargo |
 | RC13 | rustcore `sessions` module — per-profile tab/window session store | pending | 0 | needs:task:RC07 needs:tool:cargo |
@@ -591,6 +591,22 @@ Audit + outcome (2026-10-22):
   libsoup/libGLESv2 — a local env artifact; CI builds webengine-only.
   assert_rust_payload's predicates verified directly on the staged
   tree.
+
+- CI verification: packages run 39703330845 on rust-core @ 7f7c0336 —
+  ALL legs success: deb(ubuntu-24.04), deb(ubuntu-26.04), rpm, flatpak,
+  windows, macos; release correctly skipped (tags only). Each leg
+  exercised the new link-proofs live (facade ac_init byte-grep /
+  findstr marker, servo_embed staged-file asserts).
+- Local: pkg-deb.sh all PASS (dpkg install, ldd clean, offscreen
+  launch, "facade linked: ac_init present in the packaged binary").
+
+- CI verification: packages run 39703330845 on rust-core @ 7f7c0336 —
+  ALL legs success: deb(ubuntu-24.04), deb(ubuntu-26.04), rpm, flatpak,
+  windows, macos; release correctly skipped (tags only). Each leg
+  exercised the new link-proofs live (facade ac_init byte-grep /
+  findstr marker, servo_embed staged-file asserts).
+- Local: pkg-deb.sh all PASS (dpkg install, ldd clean, offscreen
+  launch, "facade linked: ac_init present in the packaged binary").
 
 ### RC11
 
