@@ -28,7 +28,7 @@ Rules for the agent working this file:
 
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
-| MB01 | Middleware architecture doc — typed cmd/query/event surface over arktos_core.h | pending | 0 | produce .devin/MW-ARCH.md; map every ac_*/rc_* export into command|query|event classes; define ABI versioning + envelope wire format; keep-out list (JS exec, WebChannel, render stay Qt-side) |
+| MB01 | Middleware architecture doc — typed cmd/query/event surface over arktos_core.h | done | 0 | MW-ARCH.md written: envelope dispatch chosen (16B header + JSON payload, corr-id echo); all 468 ac_*/rc_*/rv_* exports classified Q/C/E/L; event lane + topics inventoried; keep-out list; verify: every export present (script-checked) |query|event classes; define ABI versioning + envelope wire format; keep-out list (JS exec, WebChannel, render stay Qt-side) |
 | MB02 | rustcore `mw` envelope — versioned request/response framing over the C ABI | pending | 0 | ac_mw_dispatch(buf,len)->buf: header{ver,type,corr-id,domain,op} + payload; error codes table; Rust unit tests round-trip; no consumer cutover yet |
 | MB03 | Event bus — Rust->Qt notification channel + AcEventNotifier QObject bridge | pending | 0 | topics: store-changed/policy-changed/profile-changed/session-saved; callback lane already in facade — formalize topic registry + payload schema; Qt notifier emits QSignals; offscreen autotest |
 | MB04 | Engine capability table in rustcore + ac_engine_caps() FFI | pending | 0 | per-engine feature registry (devtools/pdf/extensions/webchannel/otr/tor/containers/reader/downloads/sessions); JSON or fixed-struct out; honest caps per qtwebengine|servo|webkit; consumed later by MS06 |
@@ -88,6 +88,11 @@ Extend `src/rustcore/tools/acprobe` (or wherever acprobe lives) with a
 the MB02 envelope, subscribe to MB03 topics and provoke one event,
 dump MB04 caps. Wire as an autotest target. Verify: probe exits 0 in
 build tree, make target green.
+
+
+AMENDMENT (slicing): if envelope coverage per domain exceeds one run's
+budget, land the harness + a core-domain subset and leave in_progress —
+the loop resumes; never mark done with untested domains.
 
 ### MB06
 Move settings/profiles/history/bookmarks Qt callers onto the envelope
