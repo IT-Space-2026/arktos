@@ -496,6 +496,13 @@ QPalette ArktosStyle::darkPalette()
     palette.setColor(QPalette::Highlight, QColor(42, 130, 218));
     palette.setColor(QPalette::Disabled, QPalette::Highlight,
                      QColor(80, 80, 80));
+    // Accent drives the reader button's suggested/active marks —
+    // left unset it resolves to whatever the platform theme happens
+    // to carry (or nothing), which reads as a stray color next to
+    // the pinned Highlight.
+    palette.setColor(QPalette::Accent, QColor(42, 130, 218));
+    palette.setColor(QPalette::Disabled, QPalette::Accent,
+                     QColor(80, 80, 80));
     palette.setColor(QPalette::HighlightedText, Qt::black);
     palette.setColor(QPalette::Disabled, QPalette::HighlightedText,
                      QColor(127, 127, 127));
@@ -535,6 +542,9 @@ QPalette ArktosStyle::lightPalette()
     palette.setColor(QPalette::LinkVisited, QColor(82, 24, 139));
     palette.setColor(QPalette::Highlight, QColor(48, 140, 198));
     palette.setColor(QPalette::Disabled, QPalette::Highlight,
+                     QColor(145, 145, 145));
+    palette.setColor(QPalette::Accent, QColor(48, 140, 198));
+    palette.setColor(QPalette::Disabled, QPalette::Accent,
                      QColor(145, 145, 145));
     palette.setColor(QPalette::HighlightedText, Qt::white);
     palette.setColor(QPalette::Disabled, QPalette::HighlightedText,
