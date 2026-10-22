@@ -381,6 +381,8 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | CONC01 | Concurrent store writers: two windows writing bookmarks.xbel + history.db — xbel write atomicity across windows, SQLite writer contention — details below | done | 0 | 3 real fixes: rustcore save_path shared .rc-tmp name → atomic_write (pid+seq staging — torn-rename hole closed), XbelWriter QFile truncate → QSaveFile (no-rust + export path), history.db PRAGMA busy_timeout=5000 (peer-commit SQLITE_BUSY no longer surfaces); session.dat/QSettings/sitedecisions/profiles/vault audited already-atomic, last-writer-wins documented in details — verified: cargo 269/270 (1 pre-existing), tst_xbel 15/15, 12 concurrent standalone smoke runs on one profile all PASS |
 | INFRA01 | taskloop task-file race: runner read-modify-write clobbers concurrent edits (lost-update hit twice today) — flock around the row update — details below | done | 0 | new .devin/taskfile.sh — flock on <file>.lock + temp+rename for every task-file write (set row fields, append-detail, with-lock escape hatch); all 6 taskloop-* lanes route bump_attempts/mark_blocked through it; RUNNER_PROMPT_*+file headers require it so agent edits serialize too. Verified: queued set waited out a held lock (1.7s) — both edits survived; 12-writer storm 0 losses; error paths reject bad id/status/pipe; bash -n clean |
 | SEC30 | Omnibox paste self-XSS: pasting javascript:... + Enter executes via loadUrl's javascript branch — typed bookmarklets stay allowed, but strip the scheme from pasted text like Chrome — details below | done | 0 | omnibox javascript: strip on every untrusted paste/drop gesture via opt-in LineEdit sanitizer; typed bookmarklets untouched — verified: tst_locationbar 57/57, tst_tabwidget 45/45 incl e2e offscreen --disable-gpu |
+| MAC02 | macOS verify: extension action popup renders (Bitwarden login) — was white, then black under WA_NativeWindow; 37ea0aaf switched to frameless Tool window — details below | pending | 0 | needs:macos — parked until a macOS host runs the loop; blind-fixed on Linux, verify on real hardware |
+| MAC03 | macOS verify: reader button presence + glyph — now eligibility-gated in 37ea0aaf (was permanently visible); if "looks wrong" persists compare glyph vs Safari/Firefox on Retina — details below | pending | 0 | needs:macos — parked until a macOS host runs the loop |
 
 ## Task details
 
@@ -3753,3 +3755,38 @@ Implementation evidence (SEC30):
   unmodified while typed javascript: sets document.title; regressions
   searchlineedit 4/4, toolbarsearch 12/12, webview 29/29 — offscreen,
   QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu.
+
+### MAC02
+
+User report (build f7b85d58): Bitwarden popup opened as a WHITE page;
+after WA_NativeWindow (b7a64b55) it composites but paints BLACK.
+Root cause hypothesis (implemented blind in 37ea0aaf): a
+QWebEngineView cannot composite inside a non-native child overlay on
+macOS at all — the popup is now a frameless Qt::Tool window with
+global-coordinate placement. VERIFY on real hardware:
+1. Install the dmg, enable Bitwarden, click its toolbar action.
+2. Popup must show the rendered login form (not white, not black),
+   sized to the document, positioned top-right under the anchor.
+3. Outside click and Escape dismiss it; Cmd+Q exits cleanly with the
+   popup having been open in the session.
+IF STILL FAILING — do not mark done: iterate on the surface path.
+Leads: QWindow::fromWinId container, WA_DontCreateNativeAncestors on
+the chain, ARKTOS_DEBUG_POPUP=1 env for /tmp/popup_*.png grabs,
+QTWEBENGINE remote debugging to inspect the RWHV. Capture
+`--version` output and window server logs. Only mark done with a
+rendered-popup screenshot or equivalent runtime proof.
+
+### MAC03
+User report (build f7b85d58): "reader mode button still bad" after
+stroke-weight + Accent pinning (ad8f9c12). 37ea0aaf changed the
+likely real defect: the button was permanently visible on every page
+(Chrome/Safari show reader only on article-eligible pages) — now
+gated on ReaderMode::isAvailable(). VERIFY on real macOS:
+1. Non-article page → button hidden; article page → appears.
+2. While reader active → accent-filled glyph; toggles correctly.
+3. Glyph itself: if it still "looks wrong" on Retina (user's words),
+   screenshot the location bar at 2x and compare against Safari's
+   reader glyph + the themed sibling icons — then fix the geometry,
+   do not guess blind again. Ask the user for their screenshot if
+   the defect is not obvious.
+Only mark done with runtime proof on Retina hardware.
