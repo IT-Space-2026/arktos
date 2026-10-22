@@ -30,7 +30,7 @@ Rules for the agent working this file:
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
 | MS01 | Shell audit — business logic inside widgets + keep/thin table | done | 0 | audit: .devin/MW-SHELL.md — method-level thin/keep/thin-blocked:MDnn map for locationbar/webview/browsermainwindow/tabbar/tabwidget/settings/history/bookmarks; verified vs facade handles in arktos_core.h |
-| MS02 | EngineAdapter contract doc — formalize EngineInterface surface + caps path | pending | 0 | .devin/ENGINE-ADAPTER.md: what every backend must implement, how caps (bridge MB04) map to adapter methods, honest per-engine matrix |
+| MS02 | EngineAdapter contract doc — formalize EngineInterface surface + caps path | done | 0 | .devin/ENGINE-ADAPTER.md: 13-area contract mapped to EngineInterface/EngineTab surface, MB04 feature→adapter mapping table (MB04 pending in mw-bridge), measured 3-engine caps matrix + new-backend checklist; doc-only |
 | MS03 | LocationBar thinning — suggestion/accept/navigate policy via facade | pending | 0 | widget keeps painting+input; suggestion sources + accept decisions (search-vs-url, urlclean hook) move behind facade queries |
 | MS04 | WebView thinning slice 1 — context-menu + link-hover policy to controller | pending | 0 | menu action availability/enabledness + hover-status policy via facade decisions, not inline widget code |
 | MS05 | WebView thinning slice 2 — zoom/find/print/devtools gating by capability | pending | 0 | needs:task:MB04 (mw-bridge lane); actions gated by ac_engine_caps not #ifdef/hardcode |
