@@ -33,6 +33,7 @@ struct AcBookmarks;
 struct AcPolicy;
 struct AcSession;
 struct AcIcons;
+struct RcNotes;
 struct RcSettings;
 struct RcProfiles;
 
@@ -46,7 +47,8 @@ struct RcProfiles;
 // RCORE05 record set), "settings" (RC02), "profiles" (RC03),
 // "torctl" (RC14 — a control reply/event is queued for drain; the
 // TorControl shell pulls them off the handle), "icons" (RC16 — the
-// profile's favicon cache changed).
+// profile's favicon cache changed), "notes" (RC21 — the sidebar's
+// per-persona note list changed).
 // Compiled only under CONFIG+=rustcore (ARKTOS_RUSTCORE).
 //
 // RC07: the same object is also the app's AcCore — the facade root
@@ -101,6 +103,8 @@ public:
     AcPolicy *policy(const QString &profileId = QString());
     AcSession *session(const QString &profileId = QString());
     AcIcons *icons(const QString &profileId = QString());
+    // AcNotes — the facade typedef of RcNotes (arktos_core.h).
+    RcNotes *notes(const QString &profileId = QString());
 
 signals:
     void storeChanged(const QString &topic);

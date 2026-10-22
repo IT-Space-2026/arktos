@@ -205,6 +205,15 @@ AcIcons *RustCoreBridge::icons(const QString &profileId)
                     id.isEmpty() ? nullptr : id.constData());
 }
 
+RcNotes *RustCoreBridge::notes(const QString &profileId)
+{
+    if (m_core == nullptr)
+        return nullptr;
+    const QByteArray id = profileId.toUtf8();
+    return ac_notes(m_core,
+                    id.isEmpty() ? nullptr : id.constData());
+}
+
 void rustCoreEnsureDataDir()
 {
     // Cheap and idempotent — call per operation so test-mode

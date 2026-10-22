@@ -24,6 +24,12 @@
 #include "browserpaths.h"
 #include "browserprofile.h"
 
+#if defined(ARKTOS_RUSTCORE)
+#include "rustcorebridge.h"
+
+#include <arktos_core.h>
+#endif
+
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileinfo.h>
@@ -36,17 +42,49 @@
 #include <qsettings.h>
 #include <qwebengineprofile.h>
 
-NotesModel::NotesModel(const QString &storageFile, QObject *parent)
+NotesModel::NotesModel(const QString &storageFile, QObject *parent,
+                       const QString &profileId)
     : QAbstractListModel(parent)
     , m_storageFile(storageFile)
     , m_autoSaver(new AutoSaver(this))
 {
+#if !defined(ARKTOS_RUSTCORE)
+    Q_UNUSED(profileId);
+#endif
+#if defined(ARKTOS_RUSTCORE)
+    // RC21: the Rust store owns the file.  A persona-bound model
+    // mints through the shared AcCore when the bridge can serve —
+    // the facade binds the same profiles/<id>/notes.json the caller
+    // computed — and any other binding takes the explicit-file lane
+    // (an empty file mints the volatile off-the-record store).
+    // A mint failure leaves m_store NULL and the Qt file I/O below
+    // is the fallback, same as CONFIG+=no-rust.
+    if (!profileId.isEmpty()) {
+        if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+            m_store = bridge->notes(profileId);
+            m_facadeMinted = (m_store != nullptr);
+        }
+    }
+    if (!m_store) {
+        const QByteArray path = m_storageFile.toUtf8();
+        m_store = rc_notes_open_file(
+            m_storageFile.isEmpty() ? nullptr : path.constData());
+    }
+#endif
     load();
 }
 
 NotesModel::~NotesModel()
 {
     m_autoSaver->saveIfNeccessary();
+#if defined(ARKTOS_RUSTCORE)
+    if (m_store) {
+        if (m_facadeMinted)
+            ac_notes_close(m_store);
+        else
+            rc_notes_close(m_store);
+    }
+#endif
 }
 
 NotesModel *NotesModel::instance(QWebEngineProfile *profile)
@@ -116,7 +154,7 @@ NotesModel *NotesModel::instanceFor(const QString &profileId)
             }
         }
     }
-    model = new NotesModel(storageFile, qApp);
+    model = new NotesModel(storageFile, qApp, id);
     migrateLegacyScratch(model, id);
     models.insert(id, model);
     return model;
@@ -209,6 +247,23 @@ bool NotesModel::setData(const QModelIndex &index, const QVariant &value,
     } else {
         return false;
     }
+#if defined(ARKTOS_RUSTCORE)
+    // Mirror the accepted write into the Rust store — the equality
+    // checks above already did its changed/no-change split.
+    if (m_store) {
+        int changed = 0;
+        const QByteArray bytes = value.toString().toUtf8();
+        if (role == Qt::EditRole)
+            rc_notes_set_title(m_store, index.row(),
+                               bytes.constData(), &changed);
+        else if (role == BodyRole)
+            rc_notes_set_body(m_store, index.row(),
+                              bytes.constData(), &changed);
+        else
+            rc_notes_set_markdown(m_store, index.row(),
+                                  value.toBool() ? 1 : 0, &changed);
+    }
+#endif
     emit dataChanged(index, index,
                      { Qt::DisplayRole, Qt::EditRole, Qt::ToolTipRole,
                        BodyRole, MarkdownRole });
@@ -233,6 +288,10 @@ bool NotesModel::removeRows(int row, int count, const QModelIndex &parent)
     beginRemoveRows(parent, row, row + count - 1);
     m_notes.erase(m_notes.begin() + row, m_notes.begin() + row + count);
     endRemoveRows();
+#if defined(ARKTOS_RUSTCORE)
+    if (m_store)
+        rc_notes_remove(m_store, row, count);
+#endif
     markDirty();
     return true;
 }
@@ -249,6 +308,11 @@ QModelIndex NotesModel::insertNote(int row, const QString &title,
     beginInsertRows(QModelIndex(), row, row);
     m_notes.insert(row, { title, body });
     endInsertRows();
+#if defined(ARKTOS_RUSTCORE)
+    if (m_store)
+        rc_notes_insert(m_store, row, title.toUtf8().constData(),
+                        body.toUtf8().constData());
+#endif
     markDirty();
     return index(row);
 }
@@ -271,13 +335,25 @@ QString NotesModel::storageFile() const
 
 void NotesModel::load()
 {
-    if (m_storageFile.isEmpty())
+    QByteArray bytes;
+#if defined(ARKTOS_RUSTCORE)
+    // The Rust store decoded the file at open — hydrate the Qt-side
+    // cache from it rather than re-reading the file.
+    if (m_store) {
+        if (char *json = rc_notes_list(m_store)) {
+            bytes = QByteArray(json);
+            rc_string_free(json);
+        }
+    } else
+#endif
+    if (!m_storageFile.isEmpty()) {
+        QFile file(m_storageFile);
+        if (file.open(QIODevice::ReadOnly))
+            bytes = file.readAll();
+    }
+    if (bytes.isEmpty())
         return;
-    QFile file(m_storageFile);
-    if (!file.open(QIODevice::ReadOnly))
-        return;
-    const QJsonDocument doc =
-        QJsonDocument::fromJson(file.readAll());
+    const QJsonDocument doc = QJsonDocument::fromJson(bytes);
     if (!doc.isArray())
         return;
     const QJsonArray notes = doc.array();
@@ -299,6 +375,20 @@ void NotesModel::load()
 
 void NotesModel::save()
 {
+#if defined(ARKTOS_RUSTCORE)
+    if (m_store) {
+        // rc_notes_sync commits atomically (temp+rename) like the
+        // QSaveFile below and creates the parent dir like the
+        // mkpath; the volatile lane is a no-op.
+        if (rc_notes_sync(m_store) != RC_OK) {
+            char *err = rc_last_error_message();
+            qWarning() << "NotesModel: cannot write" << m_storageFile
+                       << QString::fromUtf8(err ? err : "");
+            rc_string_free(err);
+        }
+        return;
+    }
+#endif
     if (m_storageFile.isEmpty())
         return;
     const QString directory =

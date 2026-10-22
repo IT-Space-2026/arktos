@@ -26,6 +26,9 @@
 
 class AutoSaver;
 class QWebEngineProfile;
+#if defined(ARKTOS_RUSTCORE)
+struct RcNotes;
+#endif
 
 // NOTE02: the sidebar's multi-note store — one shared list model per
 // browsing profile.  A note is a title plus free-form body text; an
@@ -51,9 +54,15 @@ public:
 
     // A standalone store bound to an explicit file — the form tests
     // and any future per-path caller use.  An empty storageFile makes
-    // the model volatile: load/save become no-ops.
+    // the model volatile: load/save become no-ops.  RC21: under
+    // ARKTOS_RUSTCORE a non-empty profileId mints the store through
+    // the shared facade core when the bridge can serve (tracked
+    // handle, profile-stamped notifications); otherwise the rc_*
+    // explicit-file lane binds storageFile directly — either way the
+    // same notes.json the Qt fallback writes.
     explicit NotesModel(const QString &storageFile,
-                        QObject *parent = nullptr);
+                        QObject *parent = nullptr,
+                        const QString &profileId = QString());
     ~NotesModel() override;
 
     // The shared notes model for a browsing profile.  Persistent
@@ -122,6 +131,15 @@ private:
     QList<Note> m_notes;
     QString m_storageFile;
     AutoSaver *m_autoSaver;
+#if defined(ARKTOS_RUSTCORE)
+    // RC21: the Rust store owns the file — m_notes stays the Qt-side
+    // read cache hydrated at open and mirrored on every mutation, so
+    // the debounced save() is one rc_notes_sync.  An empty
+    // storageFile mints the volatile off-the-record lane.  NULL when
+    // the mint failed — the Qt file I/O below is the fallback.
+    RcNotes *m_store = nullptr;
+    bool m_facadeMinted = false;
+#endif
 };
 
 #endif // NOTESMODEL_H

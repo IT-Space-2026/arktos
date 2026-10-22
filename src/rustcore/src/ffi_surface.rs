@@ -2588,7 +2588,7 @@ fn facade_init_and_accessors() {
     let croot = cs(&root);
 
     // housekeeping
-    assert_eq!(crate::facade::ac_api_version(), 5);
+    assert_eq!(crate::facade::ac_api_version(), 6);
     assert_ne!(crate::facade::ac_capabilities(), 0);
 
     // rejected configs fail clean with a stashed error
@@ -3047,6 +3047,31 @@ fn facade_init_and_accessors() {
         crate::facade::ac_containers_get(ct, cid.as_ptr())
     }
     .is_null());
+
+    // RC21: the notes handle binds profiles/<id>/notes.json.
+    let nt = unsafe { crate::facade::ac_notes(core, cs("work").as_ptr()) };
+    assert!(!nt.is_null());
+    assert_eq!(unsafe { crate::facade::ac_notes_is_persistent(nt) }, 1);
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_notes_insert(
+                nt,
+                0,
+                cs("facade note").as_ptr(),
+                cs("body").as_ptr(),
+            )
+        },
+        0
+    );
+    assert_eq!(unsafe { crate::facade::ac_notes_count(nt) }, 1);
+    assert_eq!(
+        unsafe { crate::facade::ac_notes_sync(nt) },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/notes.json")
+        .exists());
+    unsafe { crate::facade::ac_notes_close(nt) };
 
     // explicit closes, then shutdown reclaims the rest — both
     // NULL-tolerant.
@@ -3873,4 +3898,213 @@ fn updates_surface() {
     assert_eq!(sj["snooze_until_ms"], 0);
 
     unsafe { crate::rc_settings_close(h) };
+}
+
+// RC21: every rc_notes_* entry point — the volatile off-the-record
+// binding, the explicit-file lane, the root+profile lane and the
+// facade's ac_notes_* forwards, happy path plus bad-argument legs.
+#[test]
+fn notes_surface() {
+    let _g = guard();
+
+    // Bad-argument legs first — NULL handles everywhere.
+    assert_eq!(unsafe { crate::rc_notes_count(ptr::null_mut()) }, -1);
+    assert!(unsafe { crate::rc_notes_get(ptr::null_mut(), 0) }.is_null());
+    assert!(unsafe { crate::rc_notes_list(ptr::null_mut()) }.is_null());
+    assert_eq!(
+        unsafe {
+            crate::rc_notes_insert(ptr::null_mut(), 0, cs("t").as_ptr(),
+                cs("b").as_ptr())
+        },
+        -1
+    );
+    let mut changed = -1;
+    assert_eq!(
+        unsafe {
+            crate::rc_notes_set_title(ptr::null_mut(), 0, cs("t").as_ptr(),
+                &mut changed)
+        },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_notes_set_body(ptr::null_mut(), 0, cs("b").as_ptr(),
+                &mut changed)
+        },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_notes_set_markdown(ptr::null_mut(), 0, 1, &mut changed) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_notes_remove(ptr::null_mut(), 0, 1) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_notes_sync(ptr::null_mut()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(unsafe { crate::rc_notes_is_persistent(ptr::null_mut()) }, 0);
+    assert_eq!(unsafe { crate::rc_notes_is_dirty(ptr::null_mut()) }, 0);
+    unsafe { crate::rc_notes_close(ptr::null_mut()) }; // NULL-tolerant
+    // A non-slug profile id refuses; an empty root with a slug does too.
+    assert!(unsafe {
+        crate::rc_notes_open(cs("/tmp/x").as_ptr(), cs("Bad Id").as_ptr())
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_notes_open(cs("").as_ptr(), cs("work").as_ptr())
+    }
+    .is_null());
+
+    // The volatile lane — NULL profile id, CRUD in memory, sync and
+    // close flush nothing.
+    let v = unsafe { crate::rc_notes_open(cs("/nonexistent").as_ptr(), ptr::null()) };
+    assert!(!v.is_null());
+    assert_eq!(unsafe { crate::rc_notes_is_persistent(v) }, 0);
+    assert_eq!(unsafe { crate::rc_notes_insert(v, 0, ptr::null(), cs("secret").as_ptr()) }, 0);
+    assert_eq!(unsafe { crate::rc_notes_count(v) }, 1);
+    assert_eq!(unsafe { crate::rc_notes_is_dirty(v) }, 1);
+    assert_eq!(unsafe { crate::rc_notes_sync(v) }, RcStatus::Ok);
+    unsafe { crate::rc_notes_close(v) };
+
+    // The explicit-file lane — the standalone model's binding.
+    let root = tmpdir("notes");
+    let croot = cs(&root);
+    let file = format!("{root}/deep/notes.json");
+    let cfile = cs(&file);
+    let h = unsafe { crate::rc_notes_open_file(cfile.as_ptr()) };
+    assert!(!h.is_null());
+    assert_eq!(unsafe { crate::rc_notes_is_persistent(h) }, 1);
+
+    // insert at clamped rows; NULL title reads as "".
+    assert_eq!(unsafe { crate::rc_notes_insert(h, 9, cs("A").as_ptr(), cs("body a").as_ptr()) }, 0);
+    assert_eq!(unsafe { crate::rc_notes_insert(h, 0, ptr::null(), cs("lead").as_ptr()) }, 0);
+    assert_eq!(unsafe { crate::rc_notes_count(h) }, 2);
+
+    // get/list over the ABI — the persisted object shape.
+    let g = take_str(unsafe { crate::rc_notes_get(h, 0) }).unwrap();
+    let gj: serde_json::Value = serde_json::from_str(&g).unwrap();
+    assert_eq!(gj["title"], "");
+    assert_eq!(gj["body"], "lead");
+    assert_eq!(gj["markdown"], false);
+    let l = take_str(unsafe { crate::rc_notes_list(h) }).unwrap();
+    let lj: serde_json::Value = serde_json::from_str(&l).unwrap();
+    assert_eq!(lj.as_array().unwrap().len(), 2);
+    assert_eq!(lj[1]["title"], "A");
+    assert!(unsafe { crate::rc_notes_get(h, 7) }.is_null());
+
+    // Setters: changed flags mirror the model's setData contract.
+    assert_eq!(
+        unsafe { crate::rc_notes_set_title(h, 0, cs("lead t").as_ptr(), &mut changed) },
+        RcStatus::Ok
+    );
+    assert_eq!(changed, 1);
+    assert_eq!(
+        unsafe { crate::rc_notes_set_title(h, 0, cs("lead t").as_ptr(), &mut changed) },
+        RcStatus::Ok
+    );
+    assert_eq!(changed, 0); // identical value — the setData false return
+    assert_eq!(
+        unsafe { crate::rc_notes_set_body(h, 1, cs("milk").as_ptr(), &mut changed) },
+        RcStatus::Ok
+    );
+    assert_eq!(changed, 1);
+    assert_eq!(
+        unsafe { crate::rc_notes_set_markdown(h, 1, 1, &mut changed) },
+        RcStatus::Ok
+    );
+    assert_eq!(changed, 1);
+    assert_eq!(
+        unsafe { crate::rc_notes_set_title(h, 9, cs("x").as_ptr(), &mut changed) },
+        RcStatus::NotFound
+    );
+    // NULL out_changed is legal; a NULL value pointer is not.
+    assert_eq!(
+        unsafe { crate::rc_notes_set_title(h, 0, cs("z").as_ptr(), ptr::null_mut()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_notes_set_title(h, 0, ptr::null(), &mut changed) },
+        RcStatus::InvalidArgument
+    );
+
+    // removeRows refusals then a real span.
+    assert_eq!(
+        unsafe { crate::rc_notes_remove(h, -1, 1) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_notes_remove(h, 1, 5) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(unsafe { crate::rc_notes_remove(h, 0, 1) }, RcStatus::Ok);
+    assert_eq!(unsafe { crate::rc_notes_count(h) }, 1);
+
+    // Dirty until sync commits — the file materializes with the
+    // parent dir created like the C++ mkpath.
+    assert_eq!(unsafe { crate::rc_notes_is_dirty(h) }, 1);
+    assert_eq!(unsafe { crate::rc_notes_sync(h) }, RcStatus::Ok);
+    assert_eq!(unsafe { crate::rc_notes_is_dirty(h) }, 0);
+    assert!(std::path::Path::new(&file).exists());
+    unsafe { crate::rc_notes_close(h) };
+
+    // A C++-shaped file reads identically through the FFI — the
+    // spec's cross-write leg, both directions.
+    let h2 = unsafe { crate::rc_notes_open_file(cfile.as_ptr()) };
+    assert!(!h2.is_null());
+    assert_eq!(unsafe { crate::rc_notes_count(h2) }, 1);
+    let g = take_str(unsafe { crate::rc_notes_get(h2, 0) }).unwrap();
+    let gj: serde_json::Value = serde_json::from_str(&g).unwrap();
+    assert_eq!(gj["title"], "A");
+    assert_eq!(gj["body"], "milk");
+    assert_eq!(gj["markdown"], true);
+    unsafe { crate::rc_notes_close(h2) };
+
+    // The root+profile lane — profiles/<id>/notes.json.
+    let pid = cs("work");
+    let hp = unsafe { crate::rc_notes_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!hp.is_null());
+    assert_eq!(unsafe { crate::rc_notes_insert(hp, 0, cs("w").as_ptr(), cs("wb").as_ptr()) }, 0);
+    unsafe { crate::rc_notes_close(hp) }; // close flushes the dirty store
+    assert!(std::path::Path::new(&format!("{root}/profiles/work/notes.json")).exists());
+
+    // The facade spelling on the same store — one file, two lanes.
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+    let an = unsafe { crate::facade::ac_notes(core, pid.as_ptr()) };
+    assert!(!an.is_null());
+    assert_eq!(unsafe { crate::facade::ac_notes_count(an) }, 1);
+    let l = take_str(unsafe { crate::facade::ac_notes_list(an) }).unwrap();
+    assert!(l.contains("\"title\":\"w\""));
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_notes_set_body(an, 0, cs("wb2").as_ptr(),
+                &mut changed)
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(changed, 1);
+    assert_eq!(
+        unsafe { crate::facade::ac_notes_insert(an, 5, cs("w2").as_ptr(), ptr::null()) },
+        1
+    );
+    let g = take_str(unsafe { crate::facade::ac_notes_get(an, 1) }).unwrap();
+    assert!(g.contains("\"title\":\"w2\""));
+    assert_eq!(
+        unsafe { crate::facade::ac_notes_set_markdown(an, 1, 1, &mut changed) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_notes_is_dirty(an) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_notes_sync(an) }, RcStatus::Ok);
+    assert_eq!(
+        unsafe { crate::facade::ac_notes_remove(an, 0, 1) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_notes_count(an) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_notes_is_persistent(an) }, 1);
+    unsafe { crate::facade::ac_notes_close(an) };
+    unsafe { crate::facade::ac_shutdown(core) };
 }

@@ -33,20 +33,28 @@ their rc_* spellings until their own adoption rows land.
   be appended. Existing signatures, struct field order/type, and
   enum values are frozen for the life of the ABI.
 - **Never repurpose an enum value.** `AcStatus` (alias of
-  `RcStatus`) values are stable: `RC_OK=0`, `RC_ERR_GENERIC=1`,
-  `RC_ERR_NOT_FOUND=2`, `RC_ERR_INVALID=3`, `RC_ERR_IO=4`,
-  `RC_ERR_WRONG_PASSWORD=5`, `RC_ERR_TAMPERED=6`,
-  `RC_ERR_INTERNAL=7`. New failures get new numbers; retiring a
-  value leaves a gap.
-- **`ac_api_version()`** returns the library ABI version (`4`).
+  `RcStatus`) values are frozen with the `RcStatus` enum in
+  `rustcore.h`: `RC_OK=0`, `RC_INVALID_ARGUMENT=1`, `RC_IO=2`,
+  `RC_LOCKED=3`, `RC_WRONG_PASSPHRASE=4`, `RC_CRYPTO=5`,
+  `RC_NOT_INITIALIZED=6`, `RC_CORRUPT=7`, `RC_ALREADY_ENABLED=8`,
+  `RC_NOT_ENABLED=9`, `RC_UNAVAILABLE=10`, `RC_NOT_FOUND=11`,
+  `RC_EMPTY_PASSPHRASE=12`, `RC_WRONG_PASSWORD=13`,
+  `RC_TAMPERED=14`, `RC_UNSUPPORTED_ALGO=15`. The `AC_ERR_*`
+  aliases in the header resolve onto these values (`RC_CRYPTO`
+  doubles as the internal/panic fallback). New failures get new
+  numbers; retiring a value leaves a gap.
+- **`ac_api_version()`** returns the library ABI version (`6`).
   It bumps only on ABI-visible additions — the probe/autotests pin
   it per release. (v2: `AcSession` + `ac_session_*`, RC13.
   v3: `AcCookies` + `ac_cookies_*`, RC15.
-  v4: `AcIcons` + `ac_icons_*`, RC16.)
+  v4: `AcIcons` + `ac_icons_*`, RC16.
+  v5: `AcContainers` + `ac_containers_*`, RC19.
+  v6: `AcNotes` + `ac_notes_*`, RC21.)
 - **`ac_capabilities()`** is a per-module bitmask
   (`AC_CAP_SETTINGS=0x01` … `AC_CAP_POLICY=0x10`,
   `AC_CAP_SESSION=0x20`, `AC_CAP_COOKIES=0x40`,
-  `AC_CAP_ICONS=0x80`). A module built
+  `AC_CAP_ICONS=0x80`, `AC_CAP_CONTAINERS=0x100`,
+  `AC_CAP_NOTES=0x200`). A module built
   out of the library reports `0` — callers must test bits, not
   assume presence.
 - **`AcConfig.struct_size`** is the caller's `sizeof(AcConfig)`.
@@ -63,12 +71,14 @@ their rc_* spellings until their own adoption rows land.
   the core minted and unregisters its change callback.
 - Module handles come from the accessors
   (`ac_settings`, `ac_profiles`, `ac_history`, `ac_bookmarks`,
-  `ac_policy`, `ac_session`, `ac_cookies`, `ac_icons`), are released
+  `ac_policy`, `ac_session`, `ac_cookies`, `ac_icons`,
+  `ac_containers`, `ac_notes`), are released
   individually with the matching
   `ac_*_close`, and **die with their core** — using a handle after
   `ac_shutdown` is a use-after-free.
-- `ac_*_close(NULL)` is a no-op. `AcSettings`/`AcProfiles` handles
-  may also be closed by `rc_settings_close`/`rc_profiles_close` —
+- `ac_*_close(NULL)` is a no-op. `AcSettings`/`AcProfiles`/`AcNotes`
+  handles may also be closed by
+  `rc_settings_close`/`rc_profiles_close`/`rc_notes_close` —
   same types, same stores.
 - Returned `char *` and `AcBuffer` are caller-owned: free with
   `ac_string_free` / `ac_buffer_free` (aliases of the rc_*
@@ -173,6 +183,23 @@ non-`AC_OK` return the thread-local error string is populated —
   that survives an explicit `ac_icons_clear` so cleared icons
   cannot resurrect. Mutations emit the `"icons"` change topic
   stamped with the bound profile.
+- `ac_containers` nuance (v5): the registry is a typed
+  specialization over the bound profile's settings scope — every
+  op opens that scope's `settings.json` fresh (a mid-process
+  C++ mirror write is honored) and stamps `"containers"` with the
+  bound profile.
+- `ac_notes` nuance (v6): the handle IS an `RcNotes` like
+  `AcSettings`/`AcProfiles` — minted bound to
+  `profiles/<id>/notes.json` (NULL/non-slug resolves `"default"`),
+  closed by `ac_notes_close` or `rc_notes_close`, and the rc/ac
+  spellings mix freely on one handle. Two contract points differ
+  from the write-through stores: mutations dirty the decoded list
+  and `ac_notes_sync` (plus `ac_notes_close`) is what persists —
+  the Qt AutoSaver debounce carried across the ABI — and the
+  VOLATILE off-the-record binding lives only on the rc_*
+  spelling (`rc_notes_open*(.., NULL)`); `ac_notes` always binds a
+  persistent persona file. Mutations emit `"notes"` stamped with
+  the bound profile — file-bound `RcNotes` handles stamp NULL.
 
 ## 6. Notifications
 

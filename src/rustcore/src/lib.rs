@@ -133,6 +133,12 @@
 //!     rules (stable/beta vs draft/prerelease), and the
 //!     last-check/snooze/skipped state as typed helpers over the
 //!     GLOBAL settings scope.  The network fetch stays Qt-side.
+//!   * notes (RC21): the per-profile side-panel note list —
+//!     profiles/<id>/notes.json in the C++ writer's compact
+//!     sorted-key JSON shape, row-addressed CRUD preserving the
+//!     model's insert/remove/display order, a volatile
+//!     off-the-record binding, and a dirty+sync contract that
+//!     carries the Qt AutoSaver debounce across the FFI boundary.
 //!
 mod autofill;
 mod bidi;
@@ -151,6 +157,7 @@ mod history;
 mod icons;
 mod inifmt;
 mod lookalike;
+mod notes;
 mod notify;
 mod omnibox;
 mod opensearch;
@@ -5344,6 +5351,358 @@ pub unsafe extern "C" fn rc_updates_should_notify(
         }
     }))
     .unwrap_or(-1)
+}
+
+// ---- RC21: per-profile side-panel notes store ----
+//
+// The sidebar's ordered multi-note list — profiles/<id>/notes.json
+// in the C++ writer's compact sorted-key JSON shape (see notes.rs
+// for the byte-compat details).  rc_notes_open binds a persona's
+// file; a NULL/empty profile id — or an empty path on
+// rc_notes_open_file — mints the VOLATILE off-the-record store the
+// model hands private/tor windows: CRUD in memory, sync() a no-op,
+// nothing reaches disk.  Row-addressed ops mirror the model
+// contract (clamped insert rows, refused remove ranges, identical-
+// value setters reporting "unchanged"); mutations dirty the store
+// and emit "notes", sync()/close commit atomically — the AutoSaver
+// debounce rides across the boundary unchanged.
+
+fn notes_ref<'a>(h: *const notes::RcNotes) -> error::RcResult<&'a notes::RcNotes> {
+    unsafe { h.as_ref() }.ok_or_else(|| error::Fail {
+        status: RcStatus::InvalidArgument,
+        msg: "bad notes handle".into(),
+    })
+}
+
+/// Opens the notes store for `profile_id` under `data_root` — a
+/// slug binds profiles/<id>/notes.json, NULL/empty mints a volatile
+/// off-the-record store, a non-slug id is an error.  NULL handle +
+/// stashed error on failure; release with rc_notes_close().
+///
+/// # Safety
+/// String pointers must be NUL-terminated UTF-8 or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_open(
+    data_root: *const c_char,
+    profile_id: *const c_char,
+) -> *mut notes::RcNotes {
+    catch_unwind(AssertUnwindSafe(|| {
+        let root = unsafe { util::cstr(data_root) }.unwrap_or("");
+        let id = match unsafe { util::cstr(profile_id) } {
+            Some(s) if !s.is_empty() => Some(s),
+            _ => None,
+        };
+        match notes::RcNotes::open(root, id) {
+            Ok(h) => Box::into_raw(Box::new(h)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Opens the store bound to an explicit file — the standalone
+/// NotesModel(storageFile) lane (tests, per-path callers).
+/// NULL/empty mints a volatile store.  NULL + stashed error on
+/// failure; release with rc_notes_close().
+///
+/// # Safety
+/// `path` must be NUL-terminated UTF-8 or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_open_file(
+    path: *const c_char,
+) -> *mut notes::RcNotes {
+    catch_unwind(AssertUnwindSafe(|| {
+        let path = unsafe { util::cstr(path) }.unwrap_or("");
+        match notes::RcNotes::open_file(path) {
+            Ok(h) => Box::into_raw(Box::new(h)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Releases the store — a dirty persistent handle flushes first
+/// (the model destructor's saveIfNeccessary).  NULL-tolerant.
+///
+/// # Safety
+/// `h` must come from rc_notes_open/rc_notes_open_file/ac_notes,
+/// unused after.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_close(h: *mut notes::RcNotes) {
+    if h.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        drop(unsafe { Box::from_raw(h) });
+    }));
+}
+
+/// Row count — -1 on a bad handle.
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_count(h: *const notes::RcNotes) -> i64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        notes_ref(h).map(|h| h.count()).unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
+}
+
+/// One note as JSON {"body","markdown","title"} — NULL on a bad
+/// handle or an out-of-range row (NotFound stashed).  Free with
+/// rc_string_free().
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_get(
+    h: *const notes::RcNotes,
+    row: i64,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match notes_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match h.get(row) {
+            Ok(n) => util::to_c_string(
+                serde_json::json!({
+                    "body": n.body,
+                    "markdown": n.markdown,
+                    "title": n.title,
+                })
+                .to_string(),
+            ),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The whole list as the persisted JSON array — the same shape the
+/// file carries.  NULL on a bad handle; free with rc_string_free().
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_list(h: *const notes::RcNotes) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match notes_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        util::to_c_string(
+            serde_json::Value::Array(
+                h.list()
+                    .iter()
+                    .map(|n| {
+                        serde_json::json!({
+                            "body": n.body,
+                            "markdown": n.markdown,
+                            "title": n.title,
+                        })
+                    })
+                    .collect(),
+            )
+            .to_string(),
+        )
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// insertNote — appends/inserts a {title, body} note at the
+/// clamped row (out-of-range positions prepend/append like qBound,
+/// never fail) with markdown cleared.  NULL title/body read as "".
+/// Returns the new row or -1 on error.
+///
+/// # Safety
+/// `h` must come from an open call; strings must be NUL-terminated
+/// UTF-8 or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_insert(
+    h: *mut notes::RcNotes,
+    row: i64,
+    title: *const c_char,
+    body: *const c_char,
+) -> i64 {
+    let mut out = -1i64;
+    let status = status_of(|| {
+        let h = notes_ref(h)?;
+        let title = unsafe { util::cstr(title) }.unwrap_or("");
+        let body = unsafe { util::cstr(body) }.unwrap_or("");
+        h.insert(row, title, body).map(|r| out = r)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("notes");
+    } else {
+        out = -1;
+    }
+    out
+}
+
+/// Shared setter tail: emits "notes" and writes `out_changed`
+/// (1 real change, 0 identical-value no-op — the model's setData
+/// false return) on success.
+fn notes_set_out(
+    status: RcStatus,
+    changed: bool,
+    out_changed: *mut i32,
+) -> RcStatus {
+    if status == RcStatus::Ok {
+        if !out_changed.is_null() {
+            unsafe { *out_changed = changed as i32 };
+        }
+        if changed {
+            notify::emit("notes");
+        }
+    }
+    status
+}
+
+/// Qt::EditRole — rename the note.  RC_NOT_FOUND out of range;
+/// an identical value is Ok + out_changed 0.
+///
+/// # Safety
+/// `h` must come from an open call; `value` must be NUL-terminated
+/// UTF-8; `out_changed` may be NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_set_title(
+    h: *mut notes::RcNotes,
+    row: i64,
+    value: *const c_char,
+    out_changed: *mut i32,
+) -> RcStatus {
+    let mut changed = false;
+    let status = status_of(|| {
+        let h = notes_ref(h)?;
+        let value = unsafe { util::cstr(value) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad title pointer".into(),
+        })?;
+        h.set_title(row, value).map(|c| changed = c)
+    });
+    notes_set_out(status, changed, out_changed)
+}
+
+/// BodyRole — the note's committed body text.  Same contract as
+/// rc_notes_set_title.
+///
+/// # Safety
+/// `h` must come from an open call; `value` must be NUL-terminated
+/// UTF-8; `out_changed` may be NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_set_body(
+    h: *mut notes::RcNotes,
+    row: i64,
+    value: *const c_char,
+    out_changed: *mut i32,
+) -> RcStatus {
+    let mut changed = false;
+    let status = status_of(|| {
+        let h = notes_ref(h)?;
+        let value = unsafe { util::cstr(value) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad body pointer".into(),
+        })?;
+        h.set_body(row, value).map(|c| changed = c)
+    });
+    notes_set_out(status, changed, out_changed)
+}
+
+/// MarkdownRole — the per-note render flag.  Same contract as
+/// rc_notes_set_title.
+///
+/// # Safety
+/// `h` must come from an open call; `out_changed` may be NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_set_markdown(
+    h: *mut notes::RcNotes,
+    row: i64,
+    on: i32,
+    out_changed: *mut i32,
+) -> RcStatus {
+    let mut changed = false;
+    let status = status_of(|| {
+        let h = notes_ref(h)?;
+        h.set_markdown(row, on != 0).map(|c| changed = c)
+    });
+    notes_set_out(status, changed, out_changed)
+}
+
+/// removeRows — deletes the [row, row+count) span.  RC_INVALID on
+/// a refused range (negative, empty or overflowing — the model's
+/// false return).
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_remove(
+    h: *mut notes::RcNotes,
+    row: i64,
+    count: i64,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = notes_ref(h)?;
+        h.remove(row, count)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("notes");
+    }
+    status
+}
+
+/// Commit — the AutoSaver-fired save(): persists when dirty, a
+/// no-op on a clean or volatile store.
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_sync(h: *mut notes::RcNotes) -> RcStatus {
+    status_of(|| {
+        let h = notes_ref(h)?;
+        h.sync()
+    })
+}
+
+/// 1 on a file-backed store, 0 on a volatile one or a bad handle —
+/// the model's isPersistent().
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_is_persistent(h: *const notes::RcNotes) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        notes_ref(h).map(|h| h.is_persistent() as i32).unwrap_or(0)
+    }))
+    .unwrap_or(0)
+}
+
+/// 1 while uncommitted mutations exist, 0 clean/bad handle.
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_is_dirty(h: *const notes::RcNotes) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        notes_ref(h).map(|h| h.is_dirty() as i32).unwrap_or(0)
+    }))
+    .unwrap_or(0)
 }
 
 // ---- RC03: profile registry ----

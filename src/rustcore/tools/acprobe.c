@@ -100,7 +100,8 @@ int main(int argc, char **argv)
     CHECK(ac_capabilities() ==
               (AC_CAP_SETTINGS | AC_CAP_PROFILES | AC_CAP_HISTORY |
                AC_CAP_BOOKMARKS | AC_CAP_POLICY | AC_CAP_SESSION |
-               AC_CAP_COOKIES | AC_CAP_ICONS),
+               AC_CAP_COOKIES | AC_CAP_ICONS | AC_CAP_CONTAINERS |
+               AC_CAP_NOTES),
           "capabilities bitmask incomplete");
 
     CHECK(ac_init(NULL) == NULL, "ac_init(NULL) must fail");
@@ -600,6 +601,127 @@ int main(int argc, char **argv)
     ac_icons_close(ic);
     ac_icons_close(ic_other);
 
+    /* ---- containers (RC19) ------------------------------------------
+     * The registry lives in the bound profile's settings scope;
+     * the namespace map is the storage-derivation engines consume. */
+    AcContainers *cm = ac_containers(core, "work");
+    CHECK(cm != NULL, "ac_containers failed");
+    {
+        static const char spec[] =
+            "{\"name\":\"Probe Box\",\"color\":\"#112233\"}";
+        char *row = ac_containers_create(
+            cm, (const uint8_t *)spec, sizeof(spec) - 1);
+        CHECK(row && strstr(row, "\"name\":\"Probe Box\""),
+              "ac_containers_create");
+        char id[64] = {0};
+        if (row) {
+            /* fish the minted uuid out of the row JSON */
+            const char *k = strstr(row, "\"id\":\"");
+            if (k)
+                snprintf(id, sizeof(id), "%s", k + 6);
+            char *e = strchr(id, '"');
+            if (e)
+                *e = '\0';
+            ac_string_free(row);
+        }
+        CHECK(id[0], "create returns a minted id");
+        char *list = ac_containers_list(cm);
+        CHECK(list && strstr(list, "\"Probe Box\"") &&
+                  strstr(list, "\"color\":\"#112233\""),
+              "ac_containers_list");
+        if (list)
+            ac_string_free(list);
+        char *ns = ac_containers_namespace(cm, id);
+        CHECK(ns && strstr(ns, "arktos-container-work-") &&
+                  strstr(ns, "\"cookie_partition\""),
+              "ac_containers_namespace");
+        if (ns)
+            ac_string_free(ns);
+        static const char patch[] = "{\"name\":\"Renamed\"}";
+        CHECK(ac_containers_update(
+                  cm, id, (const uint8_t *)patch,
+                  sizeof(patch) - 1) == AC_OK,
+              "ac_containers_update");
+        char *got = ac_containers_get(cm, id);
+        CHECK(got && strstr(got, "\"Renamed\""), "ac_containers_get");
+        if (got)
+            ac_string_free(got);
+        CHECK(ac_containers_get(cm, "ghost") == NULL,
+              "unregistered id is a clean miss");
+        CHECK(ac_containers_remove(cm, id) == AC_OK,
+              "ac_containers_remove");
+        CHECK(ac_containers_remove(cm, id) == AC_ERR_NOT_FOUND,
+              "second remove is NotFound");
+    }
+    ac_containers_close(cm);
+
+    /* ---- notes (RC21) -------------------------------------------------
+     * profiles/<id>/notes.json — the sidebar's ordered list, the
+     * dirty+sync debounce contract carried over the ABI. */
+    AcNotes *nt = ac_notes(core, "work");
+    AcNotes *nt_other = ac_notes(core, "other");
+    CHECK(nt && nt_other, "ac_notes accessors failed");
+    CHECK(ac_notes_is_persistent(nt) == 1, "bound store persists");
+    {
+        CHECK(ac_notes_insert(nt, 9, "Probe note",
+                              "first body") == 0,
+              "ac_notes_insert clamps the row");
+        CHECK(ac_notes_insert(nt, 0, "Lead", NULL) == 0,
+              "insert at 0 + NULL body reads empty");
+        CHECK(ac_notes_count(nt) == 2, "ac_notes_count");
+        int changed = -1;
+        CHECK(ac_notes_set_title(nt, 0, "Lead note", &changed) ==
+                  AC_OK && changed == 1,
+              "ac_notes_set_title changed");
+        CHECK(ac_notes_set_title(nt, 0, "Lead note", &changed) ==
+                  AC_OK && changed == 0,
+              "identical title is a no-op (setData false)");
+        CHECK(ac_notes_set_markdown(nt, 1, 1, &changed) == AC_OK &&
+                  changed == 1,
+              "ac_notes_set_markdown");
+        CHECK(ac_notes_set_title(nt, 9, "x", &changed) ==
+                  AC_ERR_NOT_FOUND,
+              "out-of-range set is NotFound");
+        {
+            char *g = ac_notes_get(nt, 1);
+            CHECK(g && strstr(g, "\"title\":\"Probe note\"") &&
+                      strstr(g, "\"markdown\":true"),
+                  "ac_notes_get");
+            if (g)
+                ac_string_free(g);
+            char *l = ac_notes_list(nt);
+            CHECK(l && strstr(l, "\"Lead note\""),
+                  "ac_notes_list keeps the order");
+            if (l)
+                ac_string_free(l);
+        }
+        /* dirty until the debounced commit — then the file exists
+         * under the bound profile's dir. */
+        CHECK(ac_notes_is_dirty(nt) == 1, "mutations mark dirty");
+        CHECK(ac_notes_sync(nt) == AC_OK, "ac_notes_sync");
+        CHECK(ac_notes_is_dirty(nt) == 0, "sync clears dirty");
+        {
+            char p[512];
+            struct stat st;
+            join_path(p, sizeof(p), root, "profiles/work",
+                      "notes.json");
+            CHECK(stat(p, &st) == 0 && st.st_size > 0,
+                  "notes.json written under profiles/work");
+        }
+        CHECK(ac_notes_remove(nt, 0, 1) == AC_OK,
+              "ac_notes_remove");
+        CHECK(ac_notes_remove(nt, -1, 1) == AC_ERR_INVALID,
+              "refused range is Invalid");
+        CHECK(ac_notes_count(nt) == 1, "count after remove");
+    }
+    /* profile isolation: work's notes never reach other's file. */
+    CHECK(ac_notes_count(nt_other) == 0, "other profile stays empty");
+    ac_notes_close(nt);
+    ac_notes_close(nt_other);
+    CHECK(strcmp(cb_last_module, "notes") == 0 &&
+              strcmp(cb_last_profile, "work") == 0,
+          "notes mutations stamp the bound profile");
+
     /* ---- close-out ---------------------------------------------------- */
     ac_settings_close(gs);
     ac_settings_close(ps);
@@ -616,6 +738,8 @@ int main(int argc, char **argv)
     ac_session_close(NULL);
     ac_cookies_close(NULL);
     ac_icons_close(NULL);
+    ac_containers_close(NULL);
+    ac_notes_close(NULL);
     ac_shutdown(core);
     ac_shutdown(NULL);
 

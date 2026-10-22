@@ -1271,6 +1271,79 @@ int rc_updates_should_notify(RcSettings *h, const char *remote_version,
                              const char *local_version, int64_t now_ms);
 
 /* ------------------------------------------------------------------ */
+/* RC21: per-profile side-panel notes store                            */
+/*                                                                     */
+/* The sidebar's ordered multi-note list — profiles/<id>/notes.json   */
+/* in the C++ writer's byte shape: a compact JSON array of            */
+/* {"body","markdown","title"} objects (QJsonObject's sorted-key      */
+/* emission — both writers produce identical bytes), array order =    */
+/* list order.  The load mirrors the model: missing/unreadable file   */
+/* or a non-array document is an empty store, a non-object element    */
+/* is a blank note, wrong-typed fields default.                       */
+/*                                                                     */
+/* Two bindings: rc_notes_open takes a data root + persona slug (the */
+/* facade lane); rc_notes_open_file takes an explicit file (the      */
+/* standalone NotesModel(storageFile) lane).  A NULL/empty profile   */
+/* id or path mints the VOLATILE off-the-record store the model      */
+/* hands private/tor windows — CRUD in memory, sync() a no-op,       */
+/* nothing reaches disk.                                              */
+/*                                                                     */
+/* Mutations dirty the decoded list and emit the "notes" topic;      */
+/* rc_notes_sync commits atomically (temp+rename+fsync, parent dir   */
+/* created like the C++ mkpath) and rc_notes_close flushes too —     */
+/* the Qt AutoSaver debounce contract carries across unchanged.      */
+
+typedef struct RcNotes RcNotes;
+
+/* Open the persona store: slug → profiles/<id>/notes.json,
+ * NULL/empty → volatile, non-slug → NULL + stashed error.
+ * Release with rc_notes_close. */
+RcNotes *rc_notes_open(const char *data_root, const char *profile_id);
+/* Open a store on an explicit file; NULL/empty → volatile. */
+RcNotes *rc_notes_open_file(const char *path);
+/* Close — a dirty persistent handle flushes first (the model
+ * destructor's saveIfNeccessary).  NULL-tolerant. */
+void rc_notes_close(RcNotes *h);
+
+/* Row count; -1 on a bad handle. */
+int64_t rc_notes_count(const RcNotes *h);
+/* One note as {"body","markdown","title"} JSON; NULL on a bad
+ * handle or out-of-range row (NotFound stashed).  rc_string_free. */
+char *rc_notes_get(const RcNotes *h, int64_t row);
+/* The whole list in the persisted array shape; rc_string_free. */
+char *rc_notes_list(const RcNotes *h);
+
+/* insertNote — {title, body} at the clamped row (out-of-range
+ * positions prepend/append like qBound), markdown cleared; NULL
+ * strings read as "".  Returns the new row, -1 on error. */
+int64_t rc_notes_insert(RcNotes *h, int64_t row, const char *title,
+                        const char *body);
+
+/* Field setters — Qt::EditRole / BodyRole / MarkdownRole.
+ * RC_NOT_FOUND out of range; an identical value is RC_OK with
+ * out_changed=0 (the model's setData false return); out_changed
+ * may be NULL. */
+RcStatus rc_notes_set_title(RcNotes *h, int64_t row, const char *value,
+                            int *out_changed);
+RcStatus rc_notes_set_body(RcNotes *h, int64_t row, const char *value,
+                           int *out_changed);
+RcStatus rc_notes_set_markdown(RcNotes *h, int64_t row, int on,
+                               int *out_changed);
+
+/* removeRows — RC_INVALID on a refused range (negative, empty or
+ * overflowing), the model's false return. */
+RcStatus rc_notes_remove(RcNotes *h, int64_t row, int64_t count);
+
+/* The AutoSaver-fired save(): persists when dirty; a clean or
+ * volatile store is a no-op. */
+RcStatus rc_notes_sync(RcNotes *h);
+
+/* 1 file-backed / 0 volatile (or bad handle) — isPersistent(). */
+int rc_notes_is_persistent(const RcNotes *h);
+/* 1 while uncommitted mutations exist, 0 clean/bad handle. */
+int rc_notes_is_dirty(const RcNotes *h);
+
+/* ------------------------------------------------------------------ */
 /* RC03: profile registry                                              */
 /*                                                                     */
 /* The persona list — <data root>/profiles.json, byte-compatible with */

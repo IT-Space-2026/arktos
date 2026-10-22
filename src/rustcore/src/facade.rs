@@ -35,13 +35,13 @@ use std::ptr;
 use std::sync::{LazyLock, Mutex};
 
 use crate::error::{self, RcStatus};
-use crate::{bookmarks, icons, notify, profiles, settings, util};
+use crate::{bookmarks, icons, notes, notify, profiles, settings, util};
 
 /// The facade ABI version — AC_API_VERSION in arktos_core.h.  Bump
 /// on every ABI-affecting addition; never renumber existing symbols
 /// or enum values.  v3 added AcCookies (RC15).  v4 added AcIcons
-/// (RC16).  v5 added AcContainers (RC19).
-pub const AC_API_VERSION: u32 = 5;
+/// (RC16).  v5 added AcContainers (RC19).  v6 added AcNotes (RC21).
+pub const AC_API_VERSION: u32 = 6;
 
 const AC_CAP_SETTINGS: u64 = 0x01;
 const AC_CAP_PROFILES: u64 = 0x02;
@@ -52,6 +52,7 @@ const AC_CAP_SESSION: u64 = 0x20;
 const AC_CAP_COOKIES: u64 = 0x40;
 const AC_CAP_ICONS: u64 = 0x80;
 const AC_CAP_CONTAINERS: u64 = 0x100;
+const AC_CAP_NOTES: u64 = 0x200;
 const AC_CAP_ALL: u64 = AC_CAP_SETTINGS
     | AC_CAP_PROFILES
     | AC_CAP_HISTORY
@@ -60,7 +61,8 @@ const AC_CAP_ALL: u64 = AC_CAP_SETTINGS
     | AC_CAP_SESSION
     | AC_CAP_COOKIES
     | AC_CAP_ICONS
-    | AC_CAP_CONTAINERS;
+    | AC_CAP_CONTAINERS
+    | AC_CAP_NOTES;
 
 const DEFAULT_PROFILE: &str = "default";
 
@@ -103,6 +105,7 @@ enum Live {
     Cookies(usize),
     Icons(usize),
     Containers(usize),
+    Notes(usize),
 }
 
 impl Live {
@@ -116,7 +119,8 @@ impl Live {
             | Live::Session(p)
             | Live::Cookies(p)
             | Live::Icons(p)
-            | Live::Containers(p) => p,
+            | Live::Containers(p)
+            | Live::Notes(p) => p,
         }
     }
 }
@@ -312,6 +316,9 @@ unsafe fn free_live(live: Live) {
         Live::Containers(p) => {
             drop(unsafe { Box::from_raw(p as *mut AcContainers) })
         }
+        Live::Notes(p) => unsafe {
+            crate::rc_notes_close(p as *mut crate::notes::RcNotes)
+        },
     }
 }
 
@@ -884,6 +891,42 @@ pub unsafe extern "C" fn ac_containers(
     .unwrap_or(ptr::null_mut())
 }
 
+/// Binds the notes store of `profile_id` — profiles/<id>/notes.json
+/// (RC21).  The returned handle IS an RcNotes minted by
+/// rc_notes_open, so rc_notes_* calls on it stay legal (and the
+/// ac_notes_* spellings work on rc-opened handles).  A non-slug id
+/// resolves to "default" like every bound accessor.  NULL + stashed
+/// error on failure.
+///
+/// # Safety
+/// `profile_id` must be NUL-terminated UTF-8 or NULL.  Free with
+/// ac_notes_close; the handle dies with its core.
+#[no_mangle]
+pub unsafe extern "C" fn ac_notes(
+    core: *mut AcCore,
+    profile_id: *const c_char,
+) -> *mut notes::RcNotes {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let core = match core_ref(core) {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let eff = match CString::new(bound_profile(profile_id)) {
+            Ok(e) => e,
+            Err(_) => return ptr::null_mut(),
+        };
+        let h = unsafe { crate::rc_notes_open(core.root.as_ptr(), eff.as_ptr()) };
+        if !h.is_null() {
+            track(core, Live::Notes(h as usize));
+        }
+        h
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 // ---- handle closes ---------------------------------------------------------
 
 /// Releases a settings handle — NULL-tolerant; also legal on a
@@ -945,6 +988,24 @@ ac_close!(ac_session_close, AcSession);
 ac_close!(ac_cookies_close, AcCookies);
 ac_close!(ac_icons_close, AcIcons);
 ac_close!(ac_containers_close, AcContainers);
+
+/// Releases a notes handle — flushes a dirty store first (the
+/// rc_notes_close contract); NULL-tolerant and also legal on a
+/// handle rc_notes_open minted directly (the untrack lookup just
+/// misses).
+///
+/// # Safety
+/// `h` must come from ac_notes/rc_notes_open*, unused after.
+#[no_mangle]
+pub unsafe extern "C" fn ac_notes_close(h: *mut notes::RcNotes) {
+    if h.is_null() {
+        return;
+    }
+    if let Some(core) = untrack(h as usize) {
+        unlink(core, h as usize);
+    }
+    unsafe { crate::rc_notes_close(h) }
+}
 
 // ---- re-assert helpers ------------------------------------------------------
 
@@ -2189,3 +2250,85 @@ pub unsafe extern "C" fn ac_containers_namespace(
         crate::rc_containers_namespace(h.root.as_ptr(), pid.as_ptr(), container_id)
     }
 }
+
+// ---- notes (RC21) ----------------------------------------------------------
+//
+// The handle IS an RcNotes (the AcSettings pattern): the accessor
+// mints it bound to profiles/<id>/notes.json and the ops forward to
+/// the rc_notes_* entry points with the bound profile stamped on
+/// "notes" notifications.  rc-opened handles accept the ac_* spellings
+/// too — a file-bound handle just stamps NULL (a bare path names no
+/// persona).
+
+fn notes_hint(h: *const notes::RcNotes) -> Option<notify::ProfileHint> {
+    unsafe { h.as_ref() }
+        .and_then(|s| s.profile_id())
+        .map(|id| notify::profile_hint(&id))
+}
+
+/// Notes op -> AcStatus: profile hint from the bound store +
+/// forward.
+macro_rules! ac_note_status {
+    ($name:ident, $rc:ident ( $($a:ident : $t:ty),* $(,)? )) => {
+        /// # Safety
+        /// `h` must come from ac_notes/rc_notes_open*; pointer
+        /// arguments per the rc_* contract.
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(
+            h: *mut notes::RcNotes,
+            $($a: $t),*
+        ) -> RcStatus {
+            let _hint = notes_hint(h);
+            unsafe { crate::$rc(h, $($a),*) }
+        }
+    };
+}
+macro_rules! ac_note_ptr {
+    ($name:ident, $rc:ident ( $($a:ident : $t:ty),* $(,)? )) => {
+        /// # Safety
+        /// `h` must come from ac_notes/rc_notes_open*; free the
+        /// result with ac_string_free.
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(
+            h: *mut notes::RcNotes,
+            $($a: $t),*
+        ) -> *mut c_char {
+            let _hint = notes_hint(h);
+            unsafe { crate::$rc(h, $($a),*) }
+        }
+    };
+}
+macro_rules! ac_note_val {
+    ($name:ident, $rc:ident ( $($a:ident : $t:ty),* $(,)? ) -> $ret:ty) => {
+        /// # Safety
+        /// `h` must come from ac_notes/rc_notes_open*.
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(
+            h: *mut notes::RcNotes,
+            $($a: $t),*
+        ) -> $ret {
+            let _hint = notes_hint(h);
+            unsafe { crate::$rc(h, $($a),*) }
+        }
+    };
+}
+
+ac_note_val!(ac_notes_count, rc_notes_count() -> i64);
+ac_note_ptr!(ac_notes_get, rc_notes_get(row: i64));
+ac_note_ptr!(ac_notes_list, rc_notes_list());
+ac_note_val!(ac_notes_insert,
+    rc_notes_insert(row: i64, title: *const c_char, body: *const c_char)
+        -> i64);
+ac_note_status!(ac_notes_set_title,
+    rc_notes_set_title(row: i64, value: *const c_char,
+                       out_changed: *mut i32));
+ac_note_status!(ac_notes_set_body,
+    rc_notes_set_body(row: i64, value: *const c_char,
+                      out_changed: *mut i32));
+ac_note_status!(ac_notes_set_markdown,
+    rc_notes_set_markdown(row: i64, on: i32, out_changed: *mut i32));
+ac_note_status!(ac_notes_remove,
+    rc_notes_remove(row: i64, count: i64));
+ac_note_status!(ac_notes_sync, rc_notes_sync());
+ac_note_val!(ac_notes_is_persistent, rc_notes_is_persistent() -> i32);
+ac_note_val!(ac_notes_is_dirty, rc_notes_is_dirty() -> i32);

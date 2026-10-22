@@ -55,8 +55,9 @@ extern "C" {
  * v2 adds the AcSession module (RC13).
  * v3 adds the AcCookies module (RC15).
  * v4 adds the AcIcons module (RC16).
- * v5 adds the AcContainers module (RC19). */
-#define AC_API_VERSION 5u
+ * v5 adds the AcContainers module (RC19).
+ * v6 adds the AcNotes module (RC21). */
+#define AC_API_VERSION 6u
 
 /* ac_capabilities() bits — one per module. */
 #define AC_CAP_SETTINGS   0x01ull
@@ -68,6 +69,7 @@ extern "C" {
 #define AC_CAP_COOKIES    0x40ull
 #define AC_CAP_ICONS      0x80ull
 #define AC_CAP_CONTAINERS 0x100ull
+#define AC_CAP_NOTES      0x200ull
 
 /* AcStatus and AcBuffer are the RC02–RC06 types verbatim — the
  * facade shares their spelling so mixed ac_/rc_ code compiles
@@ -76,15 +78,18 @@ typedef RcStatus AcStatus;
 typedef RcBuffer AcBuffer;
 
 /* The legacy status values remain reachable under the AcStatus
- * typedef; these aliases give facade-only callers the ac_* names. */
+ * typedef; these aliases give facade-only callers the ac_* names.
+ * They map onto the real RcStatus enum (rustcore.h) — RC_CRYPTO is
+ * the status rustcore returns for its internal/panic fallback, so
+ * both "generic" and "internal" resolve there. */
 #define AC_OK             RC_OK
-#define AC_ERR_GENERIC    RC_ERR_GENERIC
-#define AC_ERR_NOT_FOUND  RC_ERR_NOT_FOUND
-#define AC_ERR_INVALID    RC_ERR_INVALID
-#define AC_ERR_IO         RC_ERR_IO
-#define AC_ERR_WRONG_PASSWORD RC_ERR_WRONG_PASSWORD
-#define AC_ERR_TAMPERED   RC_ERR_TAMPERED
-#define AC_ERR_INTERNAL   RC_ERR_INTERNAL
+#define AC_ERR_GENERIC    RC_CRYPTO
+#define AC_ERR_NOT_FOUND  RC_NOT_FOUND
+#define AC_ERR_INVALID    RC_INVALID_ARGUMENT
+#define AC_ERR_IO         RC_IO
+#define AC_ERR_WRONG_PASSWORD RC_WRONG_PASSWORD
+#define AC_ERR_TAMPERED   RC_TAMPERED
+#define AC_ERR_INTERNAL   RC_CRYPTO
 
 /* Opaque core + module handles.  AcSettings and AcProfiles are the
  * RC02/RC03 handle types — legacy rc_settings_* / rc_profiles_*
@@ -99,10 +104,12 @@ typedef struct AcIcons      AcIcons;
 typedef struct AcContainers AcContainers;
 typedef RcSettings AcSettings;
 typedef RcProfiles AcProfiles;
+typedef RcNotes AcNotes;
 
 /* Change notification, one per AcCore.  `module` is a stable topic
  * ("settings", "profiles", "history", "bookmarks", "sitedec",
- * "policy", "uaspoof", "cookies", "icons", "containers");
+ * "policy", "uaspoof", "cookies", "icons", "containers",
+ * "notes");
  * `profile_id` is the bound
  * profile that
  * changed or NULL for global/unscoped mutations.  Both pointers are
@@ -155,6 +162,7 @@ AcSession   *ac_session(AcCore *core, const char *profile_id);
 AcCookies   *ac_cookies(AcCore *core, const char *profile_id);
 AcIcons     *ac_icons(AcCore *core, const char *profile_id);
 AcContainers *ac_containers(AcCore *core, const char *profile_id);
+AcNotes     *ac_notes(AcCore *core, const char *profile_id);
 
 void ac_settings_close(AcSettings *h);
 void ac_profiles_close(AcProfiles *h);
@@ -165,6 +173,7 @@ void ac_session_close(AcSession *h);
 void ac_cookies_close(AcCookies *h);
 void ac_icons_close(AcIcons *h);
 void ac_containers_close(AcContainers *h);
+void ac_notes_close(AcNotes *h);
 
 /* ---- settings (RC02) --------------------------------------------------- */
 
@@ -505,6 +514,55 @@ AcStatus ac_containers_remove(const AcContainers *h, const char *id);
  * frees; NULL + stashed error on a bad id. */
 char    *ac_containers_namespace(const AcContainers *h,
                                  const char *container_id);
+
+/* ---- notes: per-profile side-panel store (RC21) -------------------
+ *
+ * The bound profile's profiles/<id>/notes.json — the sidebar's
+ * ordered multi-note list in the C++ writer's byte shape (a compact
+ * JSON array of {"body","markdown","title"} objects — see the
+ * RC21 section of rustcore.h for the load/write semantics both
+ * spellings share).  The handle IS an RcNotes — rc_notes_* calls on
+ * it stay legal, and ac_notes_* on an rc_notes_open*-minted handle
+ * work too (a file-bound handle stamps a NULL profile on "notes"
+ * notifications; a bare path names no persona).
+ *
+ * The facade lane always binds a persistent persona file — a
+ * NULL/non-slug profile_id resolves to "default" like every bound
+ * accessor.  The VOLATILE off-the-record store lives on
+ * rc_notes_open*(.., NULL) — private notes never reach the facade's
+ * persistent profile binding by design.
+ *
+ * Mutations dirty the decoded list and emit "notes" stamped with
+ * the bound profile; ac_notes_sync commits atomically and
+ * ac_notes_close flushes — the Qt AutoSaver debounce contract.
+ */
+
+int64_t  ac_notes_count(const AcNotes *h);          /* -1 on err */
+/* One note {"body","markdown","title"} — NULL + stashed
+ * AC_ERR_NOT_FOUND out of range; caller frees. */
+char    *ac_notes_get(const AcNotes *h, int64_t row);
+/* The whole list in the persisted array shape — caller frees. */
+char    *ac_notes_list(const AcNotes *h);
+/* insertNote — {title, body} at the clamped row, markdown cleared;
+ * NULL strings read as "".  Returns the new row, -1 on error. */
+int64_t  ac_notes_insert(AcNotes *h, int64_t row, const char *title,
+                         const char *body);
+/* Field setters — EditRole/BodyRole/MarkdownRole.  AC_ERR_NOT_FOUND
+ * out of range; an identical value is AC_OK with out_changed=0;
+ * out_changed may be NULL. */
+AcStatus ac_notes_set_title(AcNotes *h, int64_t row, const char *value,
+                            int *out_changed);
+AcStatus ac_notes_set_body(AcNotes *h, int64_t row, const char *value,
+                           int *out_changed);
+AcStatus ac_notes_set_markdown(AcNotes *h, int64_t row, int on,
+                               int *out_changed);
+/* removeRows — AC_ERR_INVALID on a refused range. */
+AcStatus ac_notes_remove(AcNotes *h, int64_t row, int64_t count);
+/* The debounced commit — persists only when dirty; a volatile
+ * handle is a no-op. */
+AcStatus ac_notes_sync(AcNotes *h);
+int      ac_notes_is_persistent(const AcNotes *h); /* 0 on volatile */
+int      ac_notes_is_dirty(const AcNotes *h);
 
 #ifdef __cplusplus
 }
