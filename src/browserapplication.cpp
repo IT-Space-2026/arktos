@@ -122,6 +122,7 @@
 #include <qnetworkproxy.h>
 #include <qprocess.h>
 #include <qset.h>
+#include <cstdlib>
 #include <qsettings.h>
 #include <qstandardpaths.h>
 #include <qstatusbar.h>
@@ -470,6 +471,24 @@ BrowserApplication::~BrowserApplication()
     // PVAULT02: last — the auto-lock re-seal must run after every
     // store flushed; a seal earlier would orphan late plaintext.
     ProfileVault::instance()->sealUnlockedProfilesAtShutdown();
+}
+
+void BrowserApplication::shutdownAndQuickExit(int exitCode)
+{
+    // EXTEXIT01: same cleanup the destructor runs — minus the engine
+    // teardown that follows it (~QApplication's profile children and
+    // QtWebEngineCore's global shutdown), which traps when an MV3
+    // extension was enabled in-session.  Windows still get their
+    // destructors here: their AutoSaver/geometry flush is state we
+    // want persisted, and page teardown is not what trips the trap.
+    quitting = true;
+    clearPrivateDataOnExit();
+    SecureStore::lock();
+    qDeleteAll(m_mainWindows);
+    if (m_torManager)
+        m_torManager->stop();
+    ProfileVault::instance()->sealUnlockedProfilesAtShutdown();
+    std::quick_exit(exitCode);
 }
 
 #if defined(Q_OS_MACOS)

@@ -91,6 +91,16 @@ class BrowserApplication : public SingleApplication
 public:
     BrowserApplication(int &argc, char **argv);
     ~BrowserApplication();
+    // EXTEXIT01: normal-exit teardown — runs the destructor's cleanup
+    // work (private-data wipe, secure-store lock, vault seal, tor
+    // daemon stop) and then std::quick_exit()s.  QtWebEngine's own
+    // teardown traps (SIGTRAP on Linux, SIGSEGV in this destructor on
+    // macOS) whenever an MV3 extension was enabled in the session —
+    // verified on 6.12 against a profile with Bitwarden — so the
+    // engine teardown simply must not run on the quit path, the same
+    // lesson the smoke legs already follow with quick_exit (MIG12).
+    // Never returns.
+    [[noreturn]] void shutdownAndQuickExit(int exitCode);
     static BrowserApplication *instance();
     // A run with any --option argument (smoke tests, --quit-after-load,
     // --help, ...) is standalone: it does not take part in the

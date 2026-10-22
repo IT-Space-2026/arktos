@@ -22163,5 +22163,11 @@ int main(int argc, char **argv)
         std::quick_exit(failures == 0 ? 0 : 1);
     }
 
-    return application.exec();
+    // EXTEXIT01: never let the normal run reach ~QApplication's
+    // engine teardown — it traps (SIGTRAP on Linux, SIGSEGV inside
+    // ~BrowserApplication on macOS) once an MV3 extension was enabled
+    // in the session.  shutdownAndQuickExit runs the real cleanup
+    // first, then quick_exits; the destructor only serves the
+    // non-browsing exit lanes above.
+    application.shutdownAndQuickExit(application.exec());
 }
