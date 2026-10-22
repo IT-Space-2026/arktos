@@ -45,7 +45,7 @@ Rules for the agent working this file:
 | RC15 | rustcore `cookies` module — per-profile cookie db for Servo/WPE (Chromium stays engine-owned) | done | 0 | per-profile cookies.db w/ container partitioning, Qt-parity match, Set-Cookie+toRawForm io, sitedecisions gate, honest authoritative/mirror role; verified: cargo 338/338, acprobe OK, qmake+make clean |
 | RC16 | rustcore `icons` module — per-profile favicon/site-icon cache | done | 0 | icons module: cache/icons index+PNG store, host dedup, expiry sweep, legacy icons/+history.db fold-once; AcIcons at ABI v4; HistoryManager dispatched; cargo 347/348 (pre-existing vault flake), acprobe OK, qmake+make clean, tst_historymanager 52/52 |
 | RC17 | rustcore `autofill` module — address/contact profiles under secure custody | done | 0 | autofill audited complete: ARSEC1 custody shared w/ rc_cred_* (preferred option), fields match AutoFillManager contract; closed verify gaps — store::ensure_private_dir 0700 + 0600/0700 legs + ffiStoreReachesDialog; cargo 349/349, tst_autofill 11p/0f/1s offscreen, make clean, no-rust TU clean |
-| RC18 | rustcore `opensearch` module — engine XML parse/validate + registry CRUD | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC18 | rustcore `opensearch` module — engine XML parse/validate + registry CRUD | done | 0 | audit: OSE01 module+adoption complete vs spec — parse/validate (rc_opensearch_parse+rc_suggest_parse), per-profile searchengines.json CRUD rc_ose_*, legacy xml+QSettings once-migration, Qt-parity URL expansion; verified cargo 349/349, 4 ose autotests 99/99 offscreen temp-XDG, make clean, no-rust TU clean |
 | RC19 | rustcore `containers` module — container registry + storage namespace map | pending | 0 | needs:task:RC07 needs:tool:cargo |
 | RC20 | rustcore `updates` module — update-check state + manifest/semver policy | pending | 0 | needs:task:RC07 needs:tool:cargo |
 | RC21 | rustcore `notes` module — side-panel notes persistence | pending | 0 | needs:task:RC07 needs:tool:cargo |
@@ -866,6 +866,43 @@ storage the C++ writer produces — audit opensearchreader/writer.
 
 Verify: cargo test — parse the bundled engine XMLs in
 data/searchengines, round-trip the registry file the C++ side reads.
+
+
+RC18 audit: the module landed in the retired lane as OSE01 and is
+complete against the spec — nothing to port, verification only.
+
+- Parse+validate: parsers::opensearch (bounded 1 MiB, DTD refused,
+  BOM/UTF-16 transcode, namespaced p:Parameter children) behind
+  rc_opensearch_parse emits the field map OpenSearchReader now
+  consumes; covers ShortName/Description/Image/Alias + Url
+  type/purpose/method/template/params — the full grammar
+  OpenSearchWriter emits. Suggestion replies parse via
+  rc_suggest_parse.
+- Registry CRUD: opensearch.rs owns profiles/<id>/searchengines.json
+  (atomic 0600) — put/import/remove/rename/reorder, exclusive keyword
+  bindings (insert never steals, explicit write sweeps),
+  removed_bundled blocklist, vendored bundled descriptors
+  seed/restore. Row-tolerant decode; corrupt file degrades empty.
+  rc_ose_* exports + rustcore.h docs + "searchengines" change topic.
+- "set-default" stays a preference: openSearch/engine in
+  ProfileSettings (RC02 per-profile settings lane), not registry data
+  — matching the C++ manager's split.
+- Legacy read: importLegacyRegistry migrates the per-profile
+  searchengines/ descriptor dir + openSearch keywords/engineOrder/
+  removedBundledEngines keys exactly once (dir renamed .migrated,
+  keys retired); rc_ose_import is what parses the writer-produced
+  XML. USER DATA preserved — no clean-room rewrite.
+- Scoping note: the registry file is per-profile (store dir anchors
+  at dataFilePath → profiles/<id>/); no Ac* facade handle since the
+  arch doc designates rc_ose_* as the surface and engine backends
+  don't consume it.
+
+Verified: cargo test 349/349 (bundled_parse_parity parses all 10
+vendored XMLs; expand_matches_qt golden vectors; corrupt degrade);
+qmake && make -j2 clean; offscreen+temp-XDG autotests —
+opensearchmanager 24/24 incl. legacyMigration, opensearchengine
+55/55, opensearchreader 13/13, opensearchwriter 7/7; no-rust
+opensearchmanager.cpp TU -fsyntax-only clean.
 
 ### RC19
 
