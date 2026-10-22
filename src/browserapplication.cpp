@@ -107,6 +107,7 @@
 #include "rustcore.h"
 #include "rustcorebridge.h"
 
+#include <arktos_core.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 #endif
@@ -957,6 +958,97 @@ static bool vaultUnlockForRestore(const QString &persona,
     return false;
 }
 
+#ifdef ARKTOS_RUSTCORE
+// RC13: the session store is per-persona — profiles/<id>/session.dat
+// holds only that persona's windows, so an engine swap, a deleted
+// container or a sealed profile on one persona can never strand the
+// others.  The facade handle binds the dir outright when the bridge
+// serves; the legacy spelling re-anchors the process-global store per
+// call like every other rc_* consumer.
+class SessionAccess
+{
+public:
+    explicit SessionAccess(const QString &profileId) : h(nullptr)
+    {
+        if (RustCoreBridge *bridge = RustCoreBridge::serving())
+            h = bridge->session(profileId);
+        if (!h) {
+            rustCoreEnsureDataDirFor(
+                profileId.isEmpty() ? QStringLiteral("default")
+                                    : profileId);
+        }
+    }
+    ~SessionAccess() { if (h) ac_session_close(h); }
+
+    AcSession *h;
+};
+
+// Personas that currently hold a session.dat on disk — "default"
+// first so the restore's first-window reuse prefers the primary
+// persona like the pre-RC13 aggregate did.
+static QStringList sessionStoreProfileIds()
+{
+    QStringList ids;
+    const QDir profilesDir(
+        BrowserPaths::dataRoot() + QLatin1String("/profiles"));
+    const QFileInfoList entries = profilesDir.entryInfoList(
+        QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &entry : entries) {
+        const QString id = entry.fileName();
+        if (!BrowserPaths::isProfileId(id))
+            continue;
+        if (QFileInfo::exists(entry.absoluteFilePath()
+                              + QLatin1String("/session.dat")))
+            ids.append(id);
+    }
+    if (ids.removeAll(QStringLiteral("default")))
+        ids.prepend(QStringLiteral("default"));
+    return ids;
+}
+
+static RcStatus sessionSaveFor(const QString &persona,
+                               const QByteArray &manifest)
+{
+    const SessionAccess access(persona);
+    const auto *data =
+        reinterpret_cast<const uint8_t *>(manifest.constData());
+    return access.h
+        ? ac_session_save(access.h, data, size_t(manifest.size()))
+        : rc_session_save(data, size_t(manifest.size()));
+}
+
+static bool sessionLoadFor(const QString &persona, QByteArray *manifest,
+                           bool *corrupt)
+{
+    const SessionAccess access(persona);
+    RcBuffer stored{nullptr, 0};
+    const RcStatus status = access.h
+        ? ac_session_load(access.h, &stored)
+        : rc_session_load(&stored);
+    if (status == RC_NOT_FOUND)
+        return false;
+    if (status != RC_OK) {
+        if (stored.data)
+            rc_buffer_free(stored);
+        *corrupt = true;
+        return false;
+    }
+    *manifest = QByteArray(
+        reinterpret_cast<const char *>(stored.data), int(stored.len));
+    rc_buffer_free(stored);
+    return true;
+}
+
+static void sessionClearFor(const QString &persona)
+{
+    const SessionAccess access(persona);
+    if (access.h)
+        ac_session_clear(access.h);
+    else
+        rc_session_clear();
+}
+#endif // ARKTOS_RUSTCORE
+
 void BrowserApplication::saveSession()
 {
     if (quitting)
@@ -977,14 +1069,18 @@ void BrowserApplication::saveSession()
     settings.beginGroup(QLatin1String("sessions"));
 
 #ifdef ARKTOS_RUSTCORE
-    // RCORE03: the rustcore session store owns the schema and the
-    // file — a JSON manifest per window (opaque shell blob, structured
-    // tab records with container binding + engine tag + opaque
-    // engine-state blob), atomically installed as session.dat.
-    // Anchored to the primary persona's rust store like the QSettings
-    // manifest above.
-    rustCoreEnsureDataDirFor(QStringLiteral("default"));
-    QJsonArray windows;
+    // RC13: the rustcore session store owns the schema and the files
+    // — a JSON manifest per window (opaque shell blob, structured tab
+    // records with container binding + engine tag + opaque
+    // engine-state blob), atomically installed as
+    // profiles/<persona>/session.dat.  Each persona's file holds only
+    // its own windows now; a pre-RC13 aggregate still sitting in
+    // default's file restores once through the loader below (its
+    // per-window "profile" tags route each window home) and this save
+    // then drains the set into per-persona files.  A private window
+    // emits the "private" marker and a fully private tab set serializes
+    // empty — the store strips both before anything reaches disk.
+    QHash<QString, QJsonArray> windowsByPersona;
     for (int i = 0; i < m_mainWindows.count(); ++i) {
         BrowserMainWindow *window = m_mainWindows.at(i);
         QJsonObject win = window->tabWidget()->sessionStateJson();
@@ -992,30 +1088,55 @@ void BrowserApplication::saveSession()
             window->saveState(false).toBase64()));
         // MPROF03: the window's persona binding restores it on the
         // right named profile — a missing key reads as "default".
-        win.insert(QLatin1String("profile"), window->profileId());
-        windows.append(win);
+        const QString persona = window->profileId().isEmpty()
+            ? QStringLiteral("default") : window->profileId();
+        win.insert(QLatin1String("profile"), persona);
+        windowsByPersona[persona].append(win);
     }
-    QJsonObject root;
-    // Manifest schema v1 — the per-window "profile" key is an optional
-    // extension the rust core preserves verbatim.
-    root.insert(QLatin1String("version"), 1);
-    root.insert(QLatin1String("windows"), windows);
-    const QByteArray manifest =
-        QJsonDocument(root).toJson(QJsonDocument::Compact);
-    if (rc_session_save(
-            reinterpret_cast<const uint8_t *>(manifest.constData()),
-            size_t(manifest.size())) == RC_OK) {
+    // Every persona that could hold a file: the live set plus any
+    // stale session.dat left on disk — a persona whose last window
+    // closed gets its file cleared instead of resurrecting dead
+    // windows on the next restore.
+    QStringList boundIds = sessionStoreProfileIds();
+    for (auto it = windowsByPersona.constBegin();
+         it != windowsByPersona.constEnd(); ++it) {
+        if (!boundIds.contains(it.key()))
+            boundIds.append(it.key());
+    }
+    bool allSaved = true;
+    for (const QString &persona : std::as_const(boundIds)) {
+        const QJsonArray windows = windowsByPersona.value(persona);
+        if (windows.isEmpty()) {
+            sessionClearFor(persona);
+            continue;
+        }
+        QJsonObject root;
+        // Manifest schema v1 — the per-window "profile" key is an
+        // optional extension the rust core preserves verbatim.
+        root.insert(QLatin1String("version"), 1);
+        root.insert(QLatin1String("windows"), windows);
+        const QByteArray manifest =
+            QJsonDocument(root).toJson(QJsonDocument::Compact);
+        if (sessionSaveFor(persona, manifest) != RC_OK) {
+            allSaved = false;
+            char *err = rc_last_error_message();
+            qWarning() << "BrowserApplication::saveSession rustcore"
+                       << persona << ":" << (err ? err : "");
+            rc_string_free(err);
+        }
+    }
+    if (allSaved) {
         // Retire the pre-rustcore QSettings blob so a stale copy can
-        // never win a restore or survive the exit wipe.
+        // never win a restore or survive the exit wipe.  Clearing a
+        // stale file counts as saved — an empty session is an honest
+        // "nothing to restore".
         settings.remove(QLatin1String("lastSession"));
         settings.endGroup();
         m_lastSession.clear();
         return;
     }
-    char *err = rc_last_error_message();
     qWarning() << "BrowserApplication::saveSession rustcore:"
-               << (err ? err : "") << "— falling back to QSettings";
-    rc_string_free(err);
+                  "— falling back to QSettings";
 #endif
 
     int version = 3; // MPROF03: v3 tails each window with its persona id
@@ -1094,10 +1215,9 @@ bool BrowserApplication::ensureSessionWindow()
 bool BrowserApplication::canRestoreSession() const
 {
 #ifdef ARKTOS_RUSTCORE
-    // Session manifests anchor to the primary persona's rust store —
-    // see saveSession().
-    rustCoreEnsureDataDirFor(QStringLiteral("default"));
-    if (rc_session_exists())
+    // RC13: any persona's session.dat counts — the manifests live
+    // per-profile now, not only on the primary persona.
+    if (!sessionStoreProfileIds().isEmpty())
         return true;
 #endif
     return !m_lastSession.isEmpty();
@@ -1142,24 +1262,32 @@ bool BrowserApplication::restoreLastSession()
         }
     }
 #ifdef ARKTOS_RUSTCORE
-    // RCORE03: the canonical store is the rustcore session file — the
-    // crate validated the whole blob before it reached us, so RC_OK
-    // means the window set is complete and safe to arm the guard on.
-    // Anchored to the primary persona's store like saveSession().
-    rustCoreEnsureDataDirFor(QStringLiteral("default"));
+    // RC13: the canonical store is the per-persona session files —
+    // the crate validated each blob before it reached us, so a
+    // parsed manifest is safe to arm the guard on.  One persona's
+    // corrupt file skips only that persona's windows; the others
+    // still restore.
     {
-        RcBuffer stored{nullptr, 0};
-        const RcStatus sessionStatus = rc_session_load(&stored);
-        if (sessionStatus == RC_OK) {
-            const QByteArray manifest(
-                reinterpret_cast<const char *>(stored.data),
-                int(stored.len));
-            rc_buffer_free(stored);
+        bool sawManifest = false;
+        bool sawCorrupt = false;
+        QJsonArray windows;
+        const QStringList storeIds = sessionStoreProfileIds();
+        for (const QString &persona : storeIds) {
+            QByteArray manifest;
+            if (!sessionLoadFor(persona, &manifest, &sawCorrupt))
+                continue;
             const QJsonDocument doc = QJsonDocument::fromJson(manifest);
-            if (!doc.isObject())
-                return false;
-            const QJsonArray windows = doc.object()
+            if (!doc.isObject()) {
+                sawCorrupt = true;
+                continue;
+            }
+            sawManifest = true;
+            const QJsonArray wins = doc.object()
                 .value(QLatin1String("windows")).toArray();
+            for (const QJsonValue &win : wins)
+                windows.append(win);
+        }
+        if (sawManifest) {
             {
                 ProfileSettings settings;
                 settings.beginGroup(QLatin1String("MainWindow"));
@@ -1212,11 +1340,12 @@ bool BrowserApplication::restoreLastSession()
             }
             return true;
         }
-        if (sessionStatus == RC_CORRUPT)
+        if (sawCorrupt)
             return false;
-        // RC_NOT_FOUND: fall through to the legacy QSettings blob — a
-        // session saved before the Rust store restores once through
-        // the old reader, and the next save writes the new file.
+        // No session.dat anywhere: fall through to the legacy
+        // QSettings blob — a session saved before the Rust store
+        // restores once through the old reader, and the next save
+        // writes the new files.
     }
 #endif
     QList<QByteArray> windows;

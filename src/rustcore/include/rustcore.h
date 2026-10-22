@@ -621,22 +621,31 @@ RcStatus rc_hist_icon_set(const char *hostUtf8,
 RcStatus rc_hist_icon_get(const char *hostUtf8, RcBuffer *out);
 RcStatus rc_hist_icon_clear(void);
 
-/* --- session store (RCORE03) ----------------------------------------
- * The canonical session file "<data dir>/session.dat" — a versioned
- * binary schema (magic "ARSS", version 1) written atomically
+/* --- session store (RCORE03; per-profile + lifecycle in RC13) --------
+ * The canonical session file "<profile dir>/session.dat" — a versioned
+ * binary schema (magic "ARSS", bin version 4) written atomically
  * (temp + fsync + rename, 0600) and decoded under strict bounds: a
  * corrupt or truncated file fails RC_CORRUPT whole, so it can never
  * loop the crash-restore prompt or drop part of the window set.
+ * RC13 makes the store per-profile: anchor the data dir to the
+ * persona's profile dir (rc_set_data_dir) and each rc_session_* op
+ * lands on that persona's own file.
  *
  * The C ABI carries the session as a JSON manifest:
  *   {"version":1,"windows":[{"shell":"<base64>","current":0,
- *     "tabs":[{"url","container","group","engine","state":"<base64>"}],
- *     "groups":[{"id","name","color","collapsed"]}]}]}
+ *     "tabs":[{"url","container","group","engine","state":"<base64>",
+ *              "pinned","title","scroll":{"x","y"}}],
+ *     "groups":[{"id","name","color","collapsed"]}],
+ *     "profile","activeContainer"}]}
  * "shell" is the opaque window-chrome blob (the Qt shell's own
  * serialization), "state" the opaque per-tab engine-state blob
  * (WebEngine's serialized history today; a different engine supplies
  * its own bytes — the format survives the swap).  "container" is the
- * tab's container binding, "engine" its engine tag ("webengine").
+ * tab's container binding, "engine" its engine tag ("webengine"),
+ * "scroll" its recorded viewport position (v4, optional).
+ * "private":true on a window or tab is a strip marker — private data
+ * is never persisted; the flagged record drops out of the stored
+ * blob entirely.
  *
  * rc_session_load returns RC_NOT_FOUND when no session exists.
  * rc_session_encode/decode are the pure codec (test seam). */
@@ -650,6 +659,30 @@ RcStatus rc_session_decode(const uint8_t *blob, size_t len,
                            RcBuffer *outJson);
 
 #define RC_SESSION_FILE "session.dat"
+
+/* --- session lifecycle marker (RC13) ---------------------------------
+ * "<profile dir>/session.state" — the clean-shutdown flag +
+ * crash-dirty record + restore-loop guard, so "restore previous
+ * session?" works identically on every engine.  Mirrors
+ * BrowserProfile's markSession* sentinels; a still-armed marker at
+ * boot means the previous run never recorded an exit.
+ *
+ * rc_session_mark_start arms this run's marker and returns 1 when
+ * the previous run died uncleanly (crash counter bumped, "unclean"
+ * breadcrumb written), 0 otherwise, -1 on error.
+ * rc_session_last_exit yields "clean rc=N", "terminated by signal N
+ * (NAME)" or "unclean (crash or external kill)" — RC_NOT_FOUND when
+ * no exit was ever recorded. */
+int      rc_session_mark_start(void);
+RcStatus rc_session_mark_exit(int32_t code);
+RcStatus rc_session_mark_terminated(int32_t signal);
+int      rc_session_dirty(void);
+int      rc_session_crash_count(void);
+RcStatus rc_session_last_exit(RcBuffer *out);
+RcStatus rc_session_set_restoring(int on);
+int      rc_session_restoring(void);
+
+#define RC_SESSION_STATE_FILE "session.state"
 
 /* --- DEVT03 devtools client ----------------------------------------
  *

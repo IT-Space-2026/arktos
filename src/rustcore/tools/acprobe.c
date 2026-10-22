@@ -23,6 +23,21 @@
 
 static int failures;
 
+/* AcBuffer is {data,len}, not NUL-terminated — substring check over
+ * the raw span (portable memmem). */
+static int buf_contains(const void *hay, size_t hlen, const char *needle)
+{
+    const size_t nlen = strlen(needle);
+    const unsigned char *h = hay;
+    size_t i;
+    if (!hay || nlen == 0 || hlen < nlen)
+        return 0;
+    for (i = 0; i + nlen <= hlen; ++i)
+        if (memcmp(h + i, needle, nlen) == 0)
+            return 1;
+    return 0;
+}
+
 #define CHECK(cond, msg)                                                \
     do {                                                                \
         if (!(cond)) {                                                  \
@@ -84,7 +99,7 @@ int main(int argc, char **argv)
     CHECK(ac_api_version() == AC_API_VERSION, "api version mismatch");
     CHECK(ac_capabilities() ==
               (AC_CAP_SETTINGS | AC_CAP_PROFILES | AC_CAP_HISTORY |
-               AC_CAP_BOOKMARKS | AC_CAP_POLICY),
+               AC_CAP_BOOKMARKS | AC_CAP_POLICY | AC_CAP_SESSION),
           "capabilities bitmask incomplete");
 
     CHECK(ac_init(NULL) == NULL, "ac_init(NULL) must fail");
@@ -272,6 +287,86 @@ int main(int argc, char **argv)
             ac_string_free(st);
     }
 
+    /* ---- session (RC13) ------------------------------------------------ */
+    AcSession *sess = ac_session(core, "work");
+    AcSession *sess_default = ac_session(core, NULL);
+    CHECK(sess && sess_default, "ac_session accessors failed");
+    {
+        static const char manifest[] =
+            "{\"version\":1,\"windows\":[{\"shell\":\"AAAA\","
+            "\"current\":0,\"profile\":\"work\",\"tabs\":[{\"url\":"
+            "\"https://probe.example/\",\"engine\":\"webengine\","
+            "\"state\":\"\",\"scroll\":{\"x\":0,\"y\":640}}]}]}";
+        CHECK(ac_session_exists(sess) == 0, "no session.dat yet");
+        CHECK(ac_session_save(sess, (const uint8_t *)manifest,
+                              sizeof(manifest) - 1) == AC_OK,
+              "ac_session_save");
+        CHECK(ac_session_exists(sess) == 1, "session.dat exists");
+        /* path-bound isolation: the default profile must not see
+         * the work profile's session. */
+        CHECK(ac_session_exists(sess_default) == 0,
+              "default session must not see work's file");
+        {
+            AcBuffer out = {0};
+            CHECK(ac_session_load(sess, &out) == AC_OK,
+                  "ac_session_load");
+            /* load() re-emits the canonical manifest — the content
+             * round-trips, byte shape is the codec's own. */
+            CHECK(out.data && out.len &&
+                      buf_contains(out.data, out.len, "probe.example") &&
+                      buf_contains(out.data, out.len, "\"webengine\"") &&
+                      buf_contains(out.data, out.len, "\"scroll\""),
+                  "session manifest roundtrip");
+            if (out.data)
+                ac_buffer_free(out);
+            struct stat st;
+            char file[512];
+            join_path(file, sizeof(file), root, "profiles/work",
+                      "session.dat");
+            CHECK(stat(file, &st) == 0 && st.st_size > 0,
+                  "session.dat written under profiles/work");
+        }
+        /* lifecycle: fresh dir reads clean; mark_start arms;
+         * mark_terminated leaves the signal breadcrumb. */
+        CHECK(ac_session_dirty(sess) == 0, "fresh dir reads clean");
+        CHECK(ac_session_mark_start(sess) == 0,
+              "first mark_start not dirty");
+        CHECK(ac_session_dirty(sess) == 1, "marker armed");
+        CHECK(ac_session_mark_terminated(sess, 15) == AC_OK,
+              "ac_session_mark_terminated");
+        {
+            AcBuffer out = {0};
+            CHECK(ac_session_last_exit(sess, &out) == AC_OK,
+                  "ac_session_last_exit");
+            /* AcBuffer is {data,len}, not NUL-terminated. */
+            char crumb[128];
+            const size_t clen =
+                out.len < sizeof(crumb) - 1 ? out.len
+                                            : sizeof(crumb) - 1;
+            if (out.data)
+                memcpy(crumb, out.data, clen);
+            crumb[clen] = '\0';
+            CHECK(strstr(crumb, "SIGTERM") != NULL,
+                  "signal breadcrumb recorded");
+            if (out.data)
+                ac_buffer_free(out);
+        }
+        CHECK(ac_session_mark_start(sess) == 0,
+              "cleaned marker not dirty on next start");
+        CHECK(ac_session_crash_count(sess) == 0,
+              "clean exit cleared crash count");
+        CHECK(ac_session_set_restoring(sess, 1) == AC_OK &&
+                  ac_session_restoring(sess) == 1,
+              "restoring flag sets");
+        CHECK(ac_session_set_restoring(sess, 0) == AC_OK &&
+                  ac_session_restoring(sess) == 0,
+              "restoring flag clears");
+        CHECK(ac_session_clear(sess) == AC_OK, "ac_session_clear");
+        CHECK(ac_session_exists(sess) == 0, "session.dat gone");
+    }
+    ac_session_close(sess);
+    ac_session_close(sess_default);
+
     /* ---- close-out ---------------------------------------------------- */
     ac_settings_close(gs);
     ac_settings_close(ps);
@@ -285,6 +380,7 @@ int main(int argc, char **argv)
     ac_policy_close(NULL);
     ac_settings_close(NULL);
     ac_profiles_close(NULL);
+    ac_session_close(NULL);
     ac_shutdown(core);
     ac_shutdown(NULL);
 

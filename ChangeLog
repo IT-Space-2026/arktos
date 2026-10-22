@@ -52,6 +52,12 @@ Core / Qt 6 port:
   accounted for — the next start reports whether the previous run
   exited cleanly, was terminated by a signal, or died uncleanly, so
   a crash never masquerades as a normal quit or vice versa.
+- Sessions are now saved and restored per profile (RC13): each
+  profile's windows live in their own session file under
+  profiles/<id>/session.dat, so windows of different personas no
+  longer travel in one aggregate. Restored tabs also remember their
+  scroll position, and private/off-the-record tabs are still
+  excluded — a window that is private-only saves nothing at all.
 - Command-line URL arguments treated as untrusted input (SEC09).
 - GPU crash safe mode: Qt 6.12's WebEngine can trap (SIGTRAP) on a
   display-compositor CHECK on some driver stacks, killing the whole

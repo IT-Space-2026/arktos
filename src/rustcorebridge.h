@@ -31,6 +31,7 @@ struct AcCore;
 struct AcHistory;
 struct AcBookmarks;
 struct AcPolicy;
+struct AcSession;
 struct RcSettings;
 struct RcProfiles;
 
@@ -94,6 +95,7 @@ public:
     AcHistory *history(const QString &profileId = QString());
     AcBookmarks *bookmarks(const QString &profileId = QString());
     AcPolicy *policy(const QString &profileId = QString());
+    AcSession *session(const QString &profileId = QString());
 
 signals:
     void storeChanged(const QString &topic);

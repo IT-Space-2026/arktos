@@ -1124,6 +1124,45 @@ fn session_ffi_roundtrip() {
         unsafe { crate::rc_session_save(b"{bad".as_ptr(), 4) },
         RcStatus::Corrupt
     );
+
+    // RC13 lifecycle marker over the same anchored dir: arm -> dirty,
+    // a second start reports the unclean run and counts it, a clean
+    // exit disarms; the restore guard is its own flag.
+    assert_eq!(unsafe { crate::rc_session_dirty() }, 0);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_session_last_exit(&mut out) },
+        RcStatus::NotFound
+    );
+    assert_eq!(unsafe { crate::rc_session_mark_start() }, 0);
+    assert_eq!(unsafe { crate::rc_session_dirty() }, 1);
+    assert_eq!(unsafe { crate::rc_session_mark_start() }, 1);
+    assert_eq!(unsafe { crate::rc_session_crash_count() }, 1);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_session_last_exit(&mut out) },
+        RcStatus::Ok
+    );
+    let rec = take_buf(&mut out);
+    assert_eq!(
+        String::from_utf8_lossy(&rec),
+        "unclean (crash or external kill)"
+    );
+    assert_eq!(unsafe { crate::rc_session_mark_exit(0) }, RcStatus::Ok);
+    assert_eq!(unsafe { crate::rc_session_dirty() }, 0);
+    assert_eq!(unsafe { crate::rc_session_crash_count() }, 0);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_session_last_exit(&mut out) },
+        RcStatus::Ok
+    );
+    let rec = take_buf(&mut out);
+    assert_eq!(String::from_utf8_lossy(&rec), "clean rc=0");
+    assert_eq!(
+        unsafe { crate::rc_session_set_restoring(1) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_session_restoring() }, 1);
 }
 
 #[test]
@@ -2064,7 +2103,7 @@ fn facade_init_and_accessors() {
     let croot = cs(&root);
 
     // housekeeping
-    assert_eq!(crate::facade::ac_api_version(), 1);
+    assert_eq!(crate::facade::ac_api_version(), 2);
     assert_ne!(crate::facade::ac_capabilities(), 0);
 
     // rejected configs fail clean with a stashed error
@@ -2217,6 +2256,75 @@ fn facade_init_and_accessors() {
     let snap = take_str(unsafe { crate::facade::ac_sitedec_snapshot(p) }).unwrap();
     assert!(snap.contains("x.example"));
     assert!(crate::facade::ac_policy_eval_generation() > 0);
+
+    // RC13: the session handle is path-bound — writes land in the
+    // bound profile's dir and reads never touch the global anchor.
+    let s = unsafe { crate::facade::ac_session(core, cs("work").as_ptr()) };
+    assert!(!s.is_null());
+    assert_eq!(unsafe { crate::facade::ac_session_exists(s) }, 0);
+    let manifest = br#"{"version":1,"windows":[{"shell":"","current":0,
+        "tabs":[{"url":"https://w/","engine":"servo","state":"",
+                 "scroll":{"x":0,"y":120}}]}]}"#;
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_session_save(s, manifest.as_ptr(), manifest.len())
+        },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/session.dat")
+        .exists());
+    assert_eq!(unsafe { crate::facade::ac_session_exists(s) }, 1);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::facade::ac_session_load(s, &mut out) },
+        RcStatus::Ok
+    );
+    let loaded = take_buf(&mut out);
+    let text = String::from_utf8_lossy(&loaded);
+    assert!(text.contains("https://w/") && text.contains("\"scroll\""));
+    // The lifecycle marker binds the same profile dir.
+    assert_eq!(unsafe { crate::facade::ac_session_dirty(s) }, 0);
+    assert_eq!(unsafe { crate::facade::ac_session_mark_start(s) }, 0);
+    assert_eq!(unsafe { crate::facade::ac_session_dirty(s) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_session_mark_start(s) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_session_crash_count(s) }, 1);
+    assert_eq!(
+        unsafe { crate::facade::ac_session_mark_exit(s, 0) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_session_dirty(s) }, 0);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::facade::ac_session_last_exit(s, &mut out) },
+        RcStatus::Ok
+    );
+    assert_eq!(String::from_utf8_lossy(&take_buf(&mut out)), "clean rc=0");
+    assert_eq!(
+        unsafe { crate::facade::ac_session_set_restoring(s, 1) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_session_restoring(s) }, 1);
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/session.state")
+        .exists());
+    // A different persona's handle sees none of it.
+    let s2 = unsafe { crate::facade::ac_session(core, ptr::null()) };
+    assert!(!s2.is_null());
+    assert_eq!(unsafe { crate::facade::ac_session_exists(s2) }, 0);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::facade::ac_session_load(s2, &mut out) },
+        RcStatus::NotFound
+    );
+    unsafe {
+        crate::facade::ac_session_clear(s);
+        crate::facade::ac_session_close(s2);
+        crate::facade::ac_session_close(s);
+    }
+    assert!(!std::path::Path::new(&root)
+        .join("profiles/work/session.dat")
+        .exists());
 
     // explicit closes, then shutdown reclaims the rest — both
     // NULL-tolerant.

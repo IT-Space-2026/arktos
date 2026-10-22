@@ -670,6 +670,17 @@ private:
         // (EngineTab's backend()->id()); a missing/short list reads
         // "webengine" on restore.
         QStringList engines;
+        // RC13: parallel — the scroll offset enginePage()->
+        // scrollPosition() reported at collect time (or the recorded
+        // restore a pending/deferred tab still carries); (-1,-1) marks
+        // a tab with nothing to restore.  Foreign EngineTabs always
+        // record the sentinel — scrollPosition() is backend-optional.
+        QList<QPointF> scrolls;
+        // RC13: how many off-the-record tabs the pass skipped — the
+        // manifest writer marks the whole window "private" when only
+        // private tabs would have serialized, so an all-OTR window
+        // never persists even an empty record.
+        int droppedPrivate = 0;
         QList<TabGroup> groups;        // group table, first-appearance order
         QString activeContainerHeader; // CONT06: window's level-1 selection
         // SESS01: whether the blob/manifest carried the header at all
@@ -783,6 +794,11 @@ private:
     struct PendingRestore {
         QUrl url;
         QByteArray historyState;
+        // RC13: the scroll offset the session recorded for the tab —
+        // stashed alongside url+history so a re-save of a never-loaded
+        // deferred tab keeps it; restorePendingTab() hands it to
+        // m_pendingScrollRestore before the load.  (-1,-1) = none.
+        QPointF scroll = QPointF(-1, -1);
     };
     QHash<WebView *, PendingRestore> m_pendingRestores;
     // POL02/TPREV02: per-view thumbnail cache for the hover preview —

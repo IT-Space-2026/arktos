@@ -156,7 +156,7 @@ verifies.  User data survives the cutover byte-for-byte.
 | credentials/autofill | `securestore.key/.kdf`, `credentials.dat`, `autofill-store.dat` | **keep** — ARSEC1/ARKDF1 frozen byte-identical by RCORE01/05 |
 | bookmarks | `profiles/<id>/bookmarks.xbel` | **keep XBEL** — interchange format; users export/import it |
 | history | `profiles/<id>/history` (QDataStream legacy) → `history.db` | **sqlite canonical** (landed); legacy import once, source untouched until verified |
-| session | `profiles/<id>/session.dat` | **keep ARSS v1** — opaque engine blobs survive engine swaps |
+| session | `profiles/<id>/session.dat` | **keep ARSS** — opaque engine blobs survive engine swaps; RC13: v4 adds per-tab scroll, one file per persona, `session.state` lifecycle marker alongside |
 | site decisions | `profiles/<id>/sitedecisions.json` | **keep** — landed SITED01; kind strings are wire contract, never rename without migration |
 | settings | `profiles/<id>/settings.ini` + global QSettings ini | **new `settings.json`** — see §4.1 |
 | profiles registry | `<data root>/profiles.json` | **keep byte-compatible** — already the contract two C++ impls share; moving it to Rust retires the duplication |

@@ -16,9 +16,11 @@ The facade is a thin ownership layer over the RC02–RC06 modules:
 - bookmarks (`AcBookmarks`), RC05
 - policy: site decisions, verdict evaluation, blocklist/Tranco,
   site-trust, lookalike, UA-spoof tables (`AcPolicy`), RC06
+- sessions: per-profile window/tab session store + lifecycle
+  marker (`AcSession`), RC13 — added at ABI v2
 
 It deliberately does NOT wrap the other rc_* surfaces (credentials,
-autofill, session, opensearch, readability, vault, …). Those keep
+autofill, opensearch, readability, vault, …). Those keep
 their rc_* spellings until their own adoption rows land.
 
 ## 2. Versioning and growth rules
@@ -32,11 +34,12 @@ their rc_* spellings until their own adoption rows land.
   `RC_ERR_WRONG_PASSWORD=5`, `RC_ERR_TAMPERED=6`,
   `RC_ERR_INTERNAL=7`. New failures get new numbers; retiring a
   value leaves a gap.
-- **`ac_api_version()`** returns the library ABI version (`1`).
+- **`ac_api_version()`** returns the library ABI version (`2`).
   It bumps only on ABI-visible additions — the probe/autotests pin
-  it per release.
+  it per release. (v2: `AcSession` + `ac_session_*`, RC13.)
 - **`ac_capabilities()`** is a per-module bitmask
-  (`AC_CAP_SETTINGS=0x01` … `AC_CAP_POLICY=0x10`). A module built
+  (`AC_CAP_SETTINGS=0x01` … `AC_CAP_POLICY=0x10`,
+  `AC_CAP_SESSION=0x20`). A module built
   out of the library reports `0` — callers must test bits, not
   assume presence.
 - **`AcConfig.struct_size`** is the caller's `sizeof(AcConfig)`.
@@ -94,6 +97,12 @@ non-`AC_OK` return the thread-local error string is populated —
 - `ac_policy` nuance: `ac_sitetrust_*` calls also re-open the bound
   profile's `history.db` — the first-seen input can't leak another
   persona's visits into a verdict.
+- `ac_session` nuance (v2): the handle carries only the resolved
+  `profiles/<id>/` dir — every op is path-explicit under it
+  (`session.dat`, `session.state`), so unlike the re-asserted
+  stores above there is no process-global anchor to race at all.
+  `NULL`/non-slug binds `"default"`. Session ops emit no change
+  notifications — per-run scratch state, not shared service data.
 
 ## 6. Notifications
 

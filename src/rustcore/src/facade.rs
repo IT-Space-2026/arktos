@@ -40,15 +40,20 @@ use crate::{bookmarks, notify, profiles, settings, util};
 /// The facade ABI version — AC_API_VERSION in arktos_core.h.  Bump
 /// on every ABI-affecting addition; never renumber existing symbols
 /// or enum values.
-pub const AC_API_VERSION: u32 = 1;
+pub const AC_API_VERSION: u32 = 2;
 
 const AC_CAP_SETTINGS: u64 = 0x01;
 const AC_CAP_PROFILES: u64 = 0x02;
 const AC_CAP_HISTORY: u64 = 0x04;
 const AC_CAP_BOOKMARKS: u64 = 0x08;
 const AC_CAP_POLICY: u64 = 0x10;
-const AC_CAP_ALL: u64 =
-    AC_CAP_SETTINGS | AC_CAP_PROFILES | AC_CAP_HISTORY | AC_CAP_BOOKMARKS | AC_CAP_POLICY;
+const AC_CAP_SESSION: u64 = 0x20;
+const AC_CAP_ALL: u64 = AC_CAP_SETTINGS
+    | AC_CAP_PROFILES
+    | AC_CAP_HISTORY
+    | AC_CAP_BOOKMARKS
+    | AC_CAP_POLICY
+    | AC_CAP_SESSION;
 
 const DEFAULT_PROFILE: &str = "default";
 
@@ -87,6 +92,7 @@ enum Live {
     History(usize),
     Bookmarks(usize),
     Policy(usize),
+    Session(usize),
 }
 
 impl Live {
@@ -96,7 +102,8 @@ impl Live {
             | Live::Profiles(p)
             | Live::History(p)
             | Live::Bookmarks(p)
-            | Live::Policy(p) => p,
+            | Live::Policy(p)
+            | Live::Session(p) => p,
         }
     }
 }
@@ -141,6 +148,14 @@ pub struct AcPolicy {
     /// profiles/<id>/history.db — the first-seen input to the site-
     /// trust composite; re-opened per sitetrust op (same-path no-op).
     hist_db: CString,
+}
+
+/// RC13: the session store is fully path-explicit — no process-global
+/// anchor at all, so the handle only needs its bound dir; every op
+/// resolves profiles/<id>/session.dat + session.state under it.
+pub struct AcSession {
+    /// profiles/<id> — mkpath'd at bind time like every bound dir.
+    dir: CString,
 }
 
 // ---- shared plumbing ---------------------------------------------------
@@ -233,6 +248,9 @@ unsafe fn free_live(live: Live) {
             drop(unsafe { Box::from_raw(p as *mut AcBookmarks) })
         }
         Live::Policy(p) => drop(unsafe { Box::from_raw(p as *mut AcPolicy) }),
+        Live::Session(p) => {
+            drop(unsafe { Box::from_raw(p as *mut AcSession) })
+        }
     }
 }
 
@@ -644,6 +662,44 @@ pub unsafe extern "C" fn ac_policy(
     .unwrap_or(ptr::null_mut())
 }
 
+/// Binds the session store of `profile_id` — profiles/<id>/session.dat
+/// plus its session.state lifecycle marker (RC13).  The store is
+/// path-explicit, so the handle only carries the resolved dir; every
+/// op works under it directly with no process-global re-anchoring.
+///
+/// # Safety
+/// `profile_id` must be NUL-terminated UTF-8 or NULL.  Free with
+/// ac_session_close; the handle dies with its core.
+#[no_mangle]
+pub unsafe extern "C" fn ac_session(
+    core: *mut AcCore,
+    profile_id: *const c_char,
+) -> *mut AcSession {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let core = match core_ref(core) {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let eff = bound_profile(profile_id);
+        let root = PathBuf::from(core.root.to_string_lossy().into_owned());
+        let dir = profile_dir(&root, &eff);
+        let dir_c = match CString::new(dir.to_string_lossy().into_owned()) {
+            Ok(c) => c,
+            Err(_) => {
+                error::set_error("profile dir is not UTF-8");
+                return ptr::null_mut();
+            }
+        };
+        let h = Box::into_raw(Box::new(AcSession { dir: dir_c }));
+        track(core, Live::Session(h as usize));
+        h
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 // ---- handle closes ---------------------------------------------------------
 
 /// Releases a settings handle — NULL-tolerant; also legal on a
@@ -701,6 +757,7 @@ macro_rules! ac_close {
 ac_close!(ac_hist_close, AcHistory);
 ac_close!(ac_bm_close, AcBookmarks);
 ac_close!(ac_policy_close, AcPolicy);
+ac_close!(ac_session_close, AcSession);
 
 // ---- re-assert helpers ------------------------------------------------------
 
@@ -1214,3 +1271,243 @@ ac_status_op!(ac_ua_spoof_remove, AcPolicy, ensure_policy,
     rc_ua_spoof_remove(host: *const c_char));
 ac_ptr_op!(ac_ua_spoof_list, AcPolicy, ensure_policy,
     rc_ua_spoof_list());
+
+// ---- sessions (RC13) ---------------------------------------------------
+//
+// Path-explicit ops — they call the session module's *_at/*_in fns on
+// the bound profile dir directly rather than forwarding through rc_*,
+// so the handle needs no global re-anchor at all.  Session ops fire
+// no change callbacks: the file is per-run scratch state (each save
+// is the whole window set), not shared-observable data.
+
+fn sess_ref<'a>(h: *const AcSession) -> Result<&'a AcSession, RcStatus> {
+    match unsafe { h.as_ref() } {
+        Some(h) => Ok(h),
+        None => fail(RcStatus::InvalidArgument, "bad session handle"),
+    }
+}
+
+fn sess_dir(h: &AcSession) -> PathBuf {
+    PathBuf::from(h.dir.to_string_lossy().into_owned())
+}
+
+fn sess_file(h: &AcSession) -> PathBuf {
+    sess_dir(h).join(crate::session::FILE_NAME)
+}
+
+fn sess_status(r: error::RcResult<()>) -> RcStatus {
+    match r {
+        Ok(()) => RcStatus::Ok,
+        Err(e) => {
+            error::set_error(&e.msg);
+            e.status
+        }
+    }
+}
+
+/// Validates + atomically installs the bound profile's session
+/// manifest — the rc_session_save contract on a bound path.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_save(
+    h: *const AcSession,
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    let h = match sess_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    let data = match unsafe { util::bytes(json, len) } {
+        Some(d) => d,
+        None => {
+            error::set_error("bad session pointer");
+            return RcStatus::InvalidArgument;
+        }
+    };
+    sess_status(crate::session::save_at(&sess_file(h), data))
+}
+
+/// Decodes the bound profile's session into its canonical JSON
+/// manifest (ac_buffer_free the result).  AC_ERR_NOT_FOUND when none.
+///
+/// # Safety
+/// `out` receives a buffer to release with ac_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_load(
+    h: *const AcSession,
+    out: *mut crate::RcBuffer,
+) -> RcStatus {
+    let h = match sess_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    match crate::session::load_at(&sess_file(h)) {
+        Ok(json) => {
+            crate::buffer_out(out, json);
+            RcStatus::Ok
+        }
+        Err(e) => {
+            error::set_error(&e.msg);
+            e.status
+        }
+    }
+}
+
+/// True when the bound profile's session file exists.
+///
+/// # Safety
+/// `h` must come from ac_session.
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_exists(h: *const AcSession) -> i32 {
+    match sess_ref(h) {
+        Ok(h) => crate::session::exists_at(&sess_file(h)) as i32,
+        Err(_) => 0,
+    }
+}
+
+/// Deletes the bound profile's session file; absent is not an error.
+///
+/// # Safety
+/// `h` must come from ac_session.
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_clear(h: *const AcSession) -> RcStatus {
+    let h = match sess_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    sess_status(crate::session::clear_at(&sess_file(h)))
+}
+
+/// Boots the bound profile's session marker — 1 when the previous
+/// run died uncleanly, 0 on a clean/absent record, -1 on error.
+/// Same semantics as rc_session_mark_start.
+///
+/// # Safety
+/// `h` must come from ac_session.
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_mark_start(h: *const AcSession) -> i32 {
+    let h = match sess_ref(h) {
+        Ok(h) => h,
+        Err(_) => return -1,
+    };
+    match crate::session::mark_start_in(&sess_dir(h)) {
+        Ok(dirty) => dirty as i32,
+        Err(e) => {
+            error::set_error(&e.msg);
+            -1
+        }
+    }
+}
+
+/// Records a clean exit on the bound profile's marker.
+///
+/// # Safety
+/// `h` must come from ac_session.
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_mark_exit(
+    h: *const AcSession,
+    code: i32,
+) -> RcStatus {
+    let h = match sess_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    sess_status(crate::session::mark_exit_in(&sess_dir(h), code))
+}
+
+/// Records a handled signal termination on the bound profile's marker.
+///
+/// # Safety
+/// `h` must come from ac_session.
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_mark_terminated(
+    h: *const AcSession,
+    signal: i32,
+) -> RcStatus {
+    let h = match sess_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    sess_status(crate::session::mark_terminated_in(&sess_dir(h), signal))
+}
+
+/// True while the bound profile's session marker reads armed.
+///
+/// # Safety
+/// `h` must come from ac_session.
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_dirty(h: *const AcSession) -> i32 {
+    match sess_ref(h) {
+        Ok(h) => crate::session::dirty_in(&sess_dir(h)) as i32,
+        Err(_) => 0,
+    }
+}
+
+/// The bound profile's consecutive-unclean count.
+///
+/// # Safety
+/// `h` must come from ac_session.
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_crash_count(h: *const AcSession) -> i32 {
+    match sess_ref(h) {
+        Ok(h) => crate::session::crash_count_in(&sess_dir(h)) as i32,
+        Err(_) => 0,
+    }
+}
+
+/// The bound profile's last recorded exit breadcrumb —
+/// AC_ERR_NOT_FOUND when none was ever written.
+///
+/// # Safety
+/// `out` receives a buffer to release with ac_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_last_exit(
+    h: *const AcSession,
+    out: *mut crate::RcBuffer,
+) -> RcStatus {
+    let h = match sess_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    match crate::session::last_exit_in(&sess_dir(h)) {
+        Some(s) => {
+            crate::buffer_out(out, s.into_bytes());
+            RcStatus::Ok
+        }
+        None => {
+            error::set_error("no recorded exit");
+            RcStatus::NotFound
+        }
+    }
+}
+
+/// Arms/disarms the bound profile's restore-loop guard.
+///
+/// # Safety
+/// `h` must come from ac_session.
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_set_restoring(
+    h: *const AcSession,
+    on: i32,
+) -> RcStatus {
+    let h = match sess_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    sess_status(crate::session::set_restoring_in(&sess_dir(h), on != 0))
+}
+
+/// True while the bound profile's restore guard reads armed.
+///
+/// # Safety
+/// `h` must come from ac_session.
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_restoring(h: *const AcSession) -> i32 {
+    match sess_ref(h) {
+        Ok(h) => crate::session::restoring_in(&sess_dir(h)) as i32,
+        Err(_) => 0,
+    }
+}

@@ -5010,7 +5010,12 @@ void TabWidget::restorePendingTab(int index)
     if (it == m_pendingRestores.end())
         return;
     const QUrl url = it->url;
+    const QPointF scroll = it->scroll;
     m_pendingRestores.erase(it);
+    // RC13: a deferred tab's recorded scroll rides the stash until the
+    // real load — queue it like an eagerly restored tab's would be.
+    if (scroll.x() >= 0 && scroll.y() >= 0)
+        m_pendingScrollRestore.insert(webView, scroll);
     // SESS01: a hidden-store reinsert fires currentChanged() inside
     // insertTab() — the record's location bar is not back on the
     // stack yet, so the bar is null here (it arrives with
@@ -5087,8 +5092,10 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
                                  : qobject_cast<EngineTab*>(page);
         if (!tab && !foreign)
             continue;
-        if (tab && tab->enginePage() && tab->enginePage()->isOffTheRecord())
+        if (tab && tab->enginePage() && tab->enginePage()->isOffTheRecord()) {
+            ++snap.droppedPrivate;
             continue;
+        }
         if (page == currentPage)
             snap.currentIndex = snap.urls.count();
         if (foreign) {
@@ -5102,6 +5109,7 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
             snap.groupIds.append(QString());
             snap.engines.append(foreign->backend()
                 ? foreign->backend()->id() : QStringLiteral("webengine"));
+            snap.scrolls.append(QPointF(-1, -1));
         } else {
             // PREFUI04: a lazily restored tab never loaded its page —
             // its stashed url + history blob stand in for the live
@@ -5110,12 +5118,36 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
             if (pending != m_pendingRestores.constEnd()) {
                 snap.urls.append(QString::fromUtf8(pending->url.toEncoded()));
                 snap.histories.append(pending->historyState);
+                snap.scrolls.append(pending->scroll);
             } else {
                 snap.urls.append(QString::fromUtf8(tab->url().toEncoded()));
                 if (tab->enginePage()->historyCount() != 0)
                     snap.histories.append(serializePageHistory(tab->enginePage()));
                 else
                     snap.histories.append(QByteArray());
+                // RC13: the recorded restore wins over the live
+                // offset — a pending scroll belongs to a page that
+                // never loaded (or hasn't yet), so scrollPosition()
+                // would report (0,0) and clobber the real record.  A
+                // sleeping tab's captured offsets outrank it the same
+                // way: the discarded page lost its live value.
+                const auto scroll =
+                    m_pendingScrollRestore.constFind(tab);
+                if (scroll != m_pendingScrollRestore.constEnd()) {
+                    snap.scrolls.append(scroll.value());
+                } else {
+                    const auto sleep = m_sleepStates.constFind(tab);
+                    if (sleep != m_sleepStates.constEnd()
+                            && sleep->restoreScroll) {
+                        snap.scrolls.append(
+                            QPointF(sleep->scrollX, sleep->scrollY));
+                    } else if (tab->enginePage()) {
+                        snap.scrolls.append(
+                            tab->enginePage()->scrollPosition());
+                    } else {
+                        snap.scrolls.append(QPointF(-1, -1));
+                    }
+                }
             }
             snap.containers.append(tab->containerId());
             snap.groupIds.append(m_tabGroups.value(tab));
@@ -5158,7 +5190,7 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
 
 QByteArray TabWidget::saveState() const
 {
-    int version = 7; // SESS01: v7 tails with each tab's engine tag
+    int version = 8; // RC13: v8 tails with each tab's scroll offset
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
 
@@ -5189,6 +5221,9 @@ QByteArray TabWidget::saveState() const
     // SESS01: the per-tab engine tags — read back under v>=7.
     stream << snap.engines;
 
+    // RC13: the per-tab scroll offsets — read back under v>=8.
+    stream << snap.scrolls;
+
     return data;
 }
 
@@ -5203,7 +5238,7 @@ bool TabWidget::restoreState(const QByteArray &state)
     qint32 v;
     stream >> marker;
     stream >> v;
-    if (marker != TabWidgetMagic || v < 1 || v > 7)
+    if (marker != TabWidgetMagic || v < 1 || v > 8)
         return false;
 
     TabSessionSnapshot snap;
@@ -5251,6 +5286,11 @@ bool TabWidget::restoreState(const QByteArray &state)
     // truncated tail restores everything on WebEngine.
     if (v >= 7)
         StreamingUtils::readBoundedList(stream, snap.engines);
+    // RC13: v8 tails with each tab's scroll offset — a missing or
+    // truncated tail restores at the top like a blob that never
+    // recorded scroll.
+    if (v >= 8)
+        StreamingUtils::readBoundedList(stream, snap.scrolls);
     if (stream.status() != QDataStream::Ok)
         return false;
 
@@ -5346,6 +5386,13 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
             ? currentWebView()
             : makeNewTabInContainer(containerId, false);
         createdPages.append(webView ? tabPageWidget(webView) : nullptr);
+        // RC13: the recorded scroll offset — (-1,-1) marks a tab with
+        // nothing to restore, matching collect's sentinel.
+        const QPointF savedScroll =
+            snap.scrolls.value(i, QPointF(-1, -1));
+        const bool hasScroll = savedScroll.x() >= 0
+            && savedScroll.y() >= 0
+            && (savedScroll.x() != 0 || savedScroll.y() != 0);
         if (webView) {
             // TABS04: flag the restored pin before the next saved tab
             // is created — the pinned-prefix insert then keeps the
@@ -5372,7 +5419,11 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
                 && !(savedPinned.value(i) && m_lazyRestorePinnedTabs);
             const int index = webViewIndex(webView);
             if (deferred) {
-                m_pendingRestores.insert(webView, {url, historyState});
+                PendingRestore pending;
+                pending.url = url;
+                pending.historyState = historyState;
+                pending.scroll = savedScroll;
+                m_pendingRestores.insert(webView, pending);
                 // The strip reads restored before the first load:
                 // saved title (history store lookup, url fallback)
                 // and the persisted favicon.
@@ -5399,6 +5450,10 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
                 }
             } else {
                 webView->loadUrl(url);
+                // RC13: applied once on the first finished load — the
+                // same once-only pattern TABS05's undo-close uses.
+                if (hasScroll)
+                    m_pendingScrollRestore.insert(webView, savedScroll);
             }
             // TABS12: the saved rename override lands last so it wins
             // over the restored-from-history title above; a tab that
@@ -5544,6 +5599,16 @@ QJsonObject TabWidget::sessionStateJson() const
         const QString title = snap.titles.value(i);
         if (!title.isEmpty())
             tab.insert(QLatin1String("title"), title);
+        // RC13: the recorded scroll offset rides the v4 schema —
+        // "scroll" stays absent when nothing was captured so old
+        // files and readers carry no dead field.
+        const QPointF scroll = snap.scrolls.value(i, QPointF(-1, -1));
+        if (scroll.x() >= 0 && scroll.y() >= 0) {
+            QJsonObject point;
+            point.insert(QLatin1String("x"), scroll.x());
+            point.insert(QLatin1String("y"), scroll.y());
+            tab.insert(QLatin1String("scroll"), point);
+        }
         tabs.append(tab);
     }
     QJsonArray groups;
@@ -5560,6 +5625,13 @@ QJsonObject TabWidget::sessionStateJson() const
     state.insert(QLatin1String("activeContainer"), snap.activeContainerHeader);
     state.insert(QLatin1String("tabs"), tabs);
     state.insert(QLatin1String("groups"), groups);
+    // RC13: a window whose tabs were ALL off-the-record marks itself
+    // private — the store strips the whole record so an all-OTR
+    // window never persists even an empty slot.  A window with any
+    // surviving public tab stays unmarked (its dropped private tabs
+    // are already absent).
+    if (snap.droppedPrivate > 0 && tabs.isEmpty())
+        state.insert(QLatin1String("private"), true);
     return state;
 }
 
@@ -5595,6 +5667,18 @@ bool TabWidget::restoreSessionState(const QJsonObject &state)
         snap.pinned.append(
             tab.value(QLatin1String("pinned")).toBool() ? 1 : 0);
         snap.titles.append(tab.value(QLatin1String("title")).toString());
+        // RC13: the recorded scroll offset — an absent field or the
+        // (-1,-1) sentinel both read as "nothing to restore".
+        const QJsonObject scroll =
+            tab.value(QLatin1String("scroll")).toObject();
+        if (scroll.value(QLatin1String("x")).isDouble()
+                && scroll.value(QLatin1String("y")).isDouble()) {
+            snap.scrolls.append(QPointF(
+                scroll.value(QLatin1String("x")).toDouble(),
+                scroll.value(QLatin1String("y")).toDouble()));
+        } else {
+            snap.scrolls.append(QPointF(-1, -1));
+        }
     }
     const QJsonArray groups = state.value(QLatin1String("groups")).toArray();
     for (const QJsonValue &v : groups) {

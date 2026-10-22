@@ -51,8 +51,9 @@
 extern "C" {
 #endif
 
-/* The facade ABI version this header was written for. */
-#define AC_API_VERSION 1u
+/* The facade ABI version this header was written for.
+ * v2 adds the AcSession module (RC13). */
+#define AC_API_VERSION 2u
 
 /* ac_capabilities() bits — one per module. */
 #define AC_CAP_SETTINGS  0x01ull
@@ -60,6 +61,7 @@ extern "C" {
 #define AC_CAP_HISTORY   0x04ull
 #define AC_CAP_BOOKMARKS 0x08ull
 #define AC_CAP_POLICY    0x10ull
+#define AC_CAP_SESSION   0x20ull
 
 /* AcStatus and AcBuffer are the RC02–RC06 types verbatim — the
  * facade shares their spelling so mixed ac_/rc_ code compiles
@@ -85,6 +87,7 @@ typedef struct AcCore   AcCore;
 typedef struct AcHistory    AcHistory;
 typedef struct AcBookmarks  AcBookmarks;
 typedef struct AcPolicy     AcPolicy;
+typedef struct AcSession    AcSession;
 typedef RcSettings AcSettings;
 typedef RcProfiles AcProfiles;
 
@@ -137,12 +140,14 @@ AcHistory   *ac_history(AcCore *core, const char *profile_id);
 int          ac_history_exists(AcCore *core, const char *profile_id);
 AcBookmarks *ac_bookmarks(AcCore *core, const char *profile_id);
 AcPolicy    *ac_policy(AcCore *core, const char *profile_id);
+AcSession   *ac_session(AcCore *core, const char *profile_id);
 
 void ac_settings_close(AcSettings *h);
 void ac_profiles_close(AcProfiles *h);
 void ac_hist_close(AcHistory *h);
 void ac_bm_close(AcBookmarks *h);
 void ac_policy_close(AcPolicy *h);
+void ac_session_close(AcSession *h);
 
 /* ---- settings (RC02) --------------------------------------------------- */
 
@@ -296,6 +301,33 @@ AcStatus ac_ua_spoof_set(const AcPolicy *h, const char *host,
                          const char *ua);
 AcStatus ac_ua_spoof_remove(const AcPolicy *h, const char *host);
 char    *ac_ua_spoof_list(const AcPolicy *h);
+
+/* ---- sessions: per-profile window/tab store + lifecycle (RC13) ------
+ * The bound profile's profiles/<id>/session.dat — the same versioned
+ * ARSS blob and JSON manifest the rc_session_* surface carries (see
+ * rustcore.h for the manifest grammar, the "private" strip markers
+ * and the "scroll" field).  These ops are path-bound: they run on the
+ * handle's own file with no global data-dir switching.
+ *
+ * The lifecycle ops drive profiles/<id>/session.state — the
+ * clean-shutdown flag + crash-dirty marker + restore-loop guard, so
+ * "restore previous session?" works identically on every engine.
+ * Session ops fire no change callbacks (per-run scratch state, not
+ * shared-observable data). */
+
+AcStatus ac_session_save(AcSession *h, const uint8_t *json, size_t len);
+AcStatus ac_session_load(AcSession *h, AcBuffer *out);
+int      ac_session_exists(const AcSession *h);
+AcStatus ac_session_clear(AcSession *h);
+
+int      ac_session_mark_start(AcSession *h);   /* 1 = prev ran dirty */
+AcStatus ac_session_mark_exit(AcSession *h, int32_t code);
+AcStatus ac_session_mark_terminated(AcSession *h, int32_t signal);
+int      ac_session_dirty(const AcSession *h);
+int      ac_session_crash_count(const AcSession *h);
+AcStatus ac_session_last_exit(AcSession *h, AcBuffer *out);
+AcStatus ac_session_set_restoring(AcSession *h, int on);
+int      ac_session_restoring(const AcSession *h);
 
 #ifdef __cplusplus
 }

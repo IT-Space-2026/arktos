@@ -2657,6 +2657,111 @@ pub unsafe extern "C" fn rc_session_decode(
     })
 }
 
+// ---- session lifecycle marker (RC13) -------------------------------------
+//
+// session.state next to session.dat: the clean-shutdown flag +
+// crash-dirty record + restore-loop guard, so "restore previous
+// session?" works identically on every engine.  Same semantics as
+// BrowserProfile's markSession* sentinels — the C++ side drives both.
+
+/// Boots the session marker: returns 1 when the previous run's armed
+/// marker survived (it died uncleanly — crash counter bumped,
+/// "unclean" breadcrumb written), 0 on a clean/absent record, -1 on
+/// error (rc_last_error_message).  Either way this run's marker is
+/// now armed.
+///
+/// # Safety
+/// No pointers; thread-safe behind the store lock.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_mark_start() -> i32 {
+    catch_unwind(AssertUnwindSafe(|| match session::mark_start() {
+        Ok(dirty) => dirty as i32,
+        Err(e) => {
+            error::set_error(&e.msg);
+            -1
+        }
+    }))
+    .unwrap_or(-1)
+}
+
+/// Records a clean exit — disarms the marker, resets the crash
+/// counter, breadcrumbs "clean rc=N".
+///
+/// # Safety
+/// No pointers; thread-safe behind the store lock.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_mark_exit(code: i32) -> RcStatus {
+    status_of(|| session::mark_exit(code))
+}
+
+/// Records a handled signal termination — clean for crash-loop
+/// purposes, but the breadcrumb names the signal.
+///
+/// # Safety
+/// No pointers; thread-safe behind the store lock.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_mark_terminated(signal: i32) -> RcStatus {
+    status_of(|| session::mark_terminated(signal))
+}
+
+/// True while the session marker reads armed — at boot, a still-armed
+/// marker means the previous run never recorded an exit.
+///
+/// # Safety
+/// No pointers.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_dirty() -> i32 {
+    catch_unwind(AssertUnwindSafe(session::dirty)).unwrap_or(false) as i32
+}
+
+/// The consecutive-unclean count — the crash-loop signal.
+///
+/// # Safety
+/// No pointers.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_crash_count() -> i32 {
+    catch_unwind(AssertUnwindSafe(|| session::crash_count() as i32)).unwrap_or(0)
+}
+
+/// The last recorded exit breadcrumb ("clean rc=0", "terminated by
+/// signal N (NAME)", "unclean (crash or external kill)").
+/// RC_NOT_FOUND when none was ever written.
+///
+/// # Safety
+/// `out` receives a buffer to release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_last_exit(out: *mut RcBuffer) -> RcStatus {
+    status_of(|| {
+        match session::last_exit() {
+            Some(s) => {
+                buffer_out(out, s.into_bytes());
+                Ok(())
+            }
+            None => error::fail(RcStatus::NotFound, "no recorded exit"),
+        }
+    })
+}
+
+/// Arms/disarms the restore-loop guard — set before tabs reopen,
+/// cleared by the next successful save.
+///
+/// # Safety
+/// No pointers; thread-safe behind the store lock.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_set_restoring(on: i32) -> RcStatus {
+    status_of(|| session::set_restoring(on != 0))
+}
+
+/// True while the restore guard reads armed — a crash mid-restore
+/// leaves it set so the next boot prompts instead of looping.
+///
+/// # Safety
+/// No pointers.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_restoring() -> i32 {
+    catch_unwind(AssertUnwindSafe(session::restoring)).unwrap_or(false) as i32
+}
+
 // ---- omnibox (OMNI01) -------------------------------------------------
 
 /// The location-bar routing decision.  `input` is the typed text;
