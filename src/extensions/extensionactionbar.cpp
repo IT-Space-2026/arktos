@@ -435,6 +435,13 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     layout->setSpacing(0);
 
     QWebEngineView *view = new QWebEngineView(popup);
+#ifdef Q_OS_MACOS
+    // macOS: a RWHV inside a non-native child overlay may never gain a
+    // layer-backed NSView and paints white forever — the classic
+    // QWebEngineView-in-overlay failure there.  A native window handle
+    // on the view forces the compositor path Qt's own docs require.
+    view->setAttribute(Qt::WA_NativeWindow);
+#endif
     // An extension-chrome page on the extension's own profile —
     // deliberately not the app's WebPage subclass, so no arktos
     // QWebChannel objects or app page policy leak into extension
