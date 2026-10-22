@@ -99,7 +99,8 @@ int main(int argc, char **argv)
     CHECK(ac_api_version() == AC_API_VERSION, "api version mismatch");
     CHECK(ac_capabilities() ==
               (AC_CAP_SETTINGS | AC_CAP_PROFILES | AC_CAP_HISTORY |
-               AC_CAP_BOOKMARKS | AC_CAP_POLICY | AC_CAP_SESSION),
+               AC_CAP_BOOKMARKS | AC_CAP_POLICY | AC_CAP_SESSION |
+               AC_CAP_COOKIES),
           "capabilities bitmask incomplete");
 
     CHECK(ac_init(NULL) == NULL, "ac_init(NULL) must fail");
@@ -367,6 +368,146 @@ int main(int argc, char **argv)
     ac_session_close(sess);
     ac_session_close(sess_default);
 
+    /* ---- cookies (RC15) ------------------------------------------------ */
+    AcCookies *ck = ac_cookies(core, "work");
+    AcCookies *ck_other = ac_cookies(core, "other");
+    CHECK(ck && ck_other, "ac_cookies accessors failed");
+    CHECK(ac_cookies_role(ck) == AC_COOKIES_AUTHORITATIVE,
+          "fresh db declares the authoritative role");
+    CHECK(ac_cookies_set_role(ck, AC_COOKIES_MIRROR) == AC_OK,
+          "ac_cookies_set_role");
+    CHECK(ac_cookies_role(ck) == AC_COOKIES_MIRROR,
+          "role round-trips");
+    {
+        /* CRUD over the JSON record lane. */
+        static const char rec[] =
+            "{\"name\":\"sid\",\"value\":\"v1\","
+            "\"domain\":\".probe.example\",\"path\":\"/\","
+            "\"expires\":2000000000000,\"secure\":true,"
+            "\"sameSite\":2}";
+        CHECK(ac_cookies_set(ck, (const uint8_t *)rec,
+                             sizeof(rec) - 1) == AC_OK,
+              "ac_cookies_set");
+        CHECK(ac_cookies_count(ck, NULL) == 1, "ac_cookies_count");
+        AcBuffer out = {0};
+        CHECK(ac_cookies_get(ck, "probe.example", "sid", "/", NULL,
+                             &out) == AC_OK,
+              "ac_cookies_get");
+        CHECK(out.data &&
+                  buf_contains(out.data, out.len, "\"value\":\"v1\""),
+              "record roundtrip");
+        if (out.data)
+            ac_buffer_free(out);
+        /* Send-match: https carries the secure cookie, http drops
+         * it; a foreign domain sees nothing. */
+        static const char req_https[] =
+            "{\"url\":\"https://sub.probe.example/\"}";
+        char *m = ac_cookies_for_url(
+            ck, (const uint8_t *)req_https, sizeof(req_https) - 1);
+        CHECK(m && strstr(m, "\"name\":\"sid\""),
+              "secure cookie rides https");
+        if (m)
+            ac_string_free(m);
+        static const char req_http[] =
+            "{\"url\":\"http://sub.probe.example/\"}";
+        m = ac_cookies_for_url(
+            ck, (const uint8_t *)req_http, sizeof(req_http) - 1);
+        CHECK(m && !strstr(m, "\"name\":\"sid\""),
+              "secure cookie must not ride http");
+        if (m)
+            ac_string_free(m);
+        static const char req_foreign[] =
+            "{\"url\":\"https://elsewhere.invalid/\"}";
+        m = ac_cookies_for_url(
+            ck, (const uint8_t *)req_foreign,
+            sizeof(req_foreign) - 1);
+        CHECK(m && !strstr(m, "\"name\":\"sid\""),
+              "foreign domain sees no rows");
+        if (m)
+            ac_string_free(m);
+        /* Set-Cookie ingest + a list of the partition. */
+        char *v = ac_cookies_store_header(
+            ck, "https://probe.example/app/x",
+            "tok=abc; Max-Age=3600; SameSite=Strict", NULL);
+        CHECK(v && strstr(v, "\"stored\":true"),
+              "ac_cookies_store_header");
+        if (v)
+            ac_string_free(v);
+        char *list = ac_cookies_list(ck, NULL);
+        CHECK(list && strstr(list, "\"name\":\"tok\""),
+              "ac_cookies_list sees the header-stored row");
+        if (list)
+            ac_string_free(list);
+        /* The gate consults the profile's sitedecisions.json — the
+         * block rule the policy leg wrote above applies. */
+        static const char gate_blocked[] = "{\"host\":\"probe.example\"}";
+        char *g = ac_cookies_gate(
+            ck, (const uint8_t *)gate_blocked,
+            sizeof(gate_blocked) - 1);
+        CHECK(g && strstr(g, "\"accept\":false"),
+              "gate honors the block rule");
+        if (g)
+            ac_string_free(g);
+        static const char gate_open[] = "{\"host\":\"open.example\"}";
+        g = ac_cookies_gate(ck, (const uint8_t *)gate_open,
+                            sizeof(gate_open) - 1);
+        CHECK(g && strstr(g, "\"accept\":true"),
+              "gate accepts an unruled host");
+        if (g)
+            ac_string_free(g);
+        /* toRawForm export -> file -> import round-trip. */
+        char exp_file[512], imp_file[512];
+        join_path(exp_file, sizeof(exp_file), root, "", "cookies.txt");
+        join_path(imp_file, sizeof(imp_file), root, "",
+                  "cookies-in.txt");
+        CHECK(ac_cookies_export(ck, exp_file, NULL) == AC_OK,
+              "ac_cookies_export");
+        {
+            struct stat st;
+            CHECK(stat(exp_file, &st) == 0 && st.st_size > 0,
+                  "export file written");
+            FILE *f = fopen(imp_file, "w");
+            CHECK(f != NULL, "import fixture write");
+            if (f) {
+                fputs("imp=1; expires=Tue, 01-Jan-2030 00:00:00 GMT;"
+                      " domain=.imp.example; path=/\n"
+                      "noattr=1; path=/\n",
+                      f);
+                fclose(f);
+            }
+        }
+        CHECK(ac_cookies_clear(ck_other, NULL) == AC_OK,
+              "ac_cookies_clear other partition");
+        {
+            char *rep =
+                ac_cookies_import(ck, imp_file, NULL);
+            /* one Domain-carrying line lands; the no-domain line is
+             * skipped (no request host to key it on). */
+            CHECK(rep && strstr(rep, "\"imported\":1") &&
+                      strstr(rep, "\"skipped\":1"),
+                  "ac_cookies_import report");
+            if (rep)
+                ac_string_free(rep);
+        }
+        CHECK(ac_cookies_remove(ck, "probe.example", "sid", "/",
+                                NULL) == AC_OK,
+              "ac_cookies_remove");
+        CHECK(ac_cookies_remove_for_host(ck, "probe.example",
+                                         NULL) == AC_OK,
+              "ac_cookies_remove_for_host");
+        CHECK(ac_cookies_purge_expired(ck, 9999999999999LL) == AC_OK,
+              "ac_cookies_purge_expired");
+        CHECK(ac_cookies_purge_session(ck) == AC_OK,
+              "ac_cookies_purge_session");
+        CHECK(ac_cookies_clear(ck, NULL) == AC_OK, "ac_cookies_clear");
+        CHECK(ac_cookies_count(ck, NULL) == 0, "store emptied");
+    }
+    /* profile isolation: work's rows never reach other's db. */
+    CHECK(ac_cookies_count(ck_other, NULL) == 0,
+          "other profile stays empty");
+    ac_cookies_close(ck);
+    ac_cookies_close(ck_other);
+
     /* ---- close-out ---------------------------------------------------- */
     ac_settings_close(gs);
     ac_settings_close(ps);
@@ -381,6 +522,7 @@ int main(int argc, char **argv)
     ac_settings_close(NULL);
     ac_profiles_close(NULL);
     ac_session_close(NULL);
+    ac_cookies_close(NULL);
     ac_shutdown(core);
     ac_shutdown(NULL);
 

@@ -52,8 +52,9 @@ extern "C" {
 #endif
 
 /* The facade ABI version this header was written for.
- * v2 adds the AcSession module (RC13). */
-#define AC_API_VERSION 2u
+ * v2 adds the AcSession module (RC13).
+ * v3 adds the AcCookies module (RC15). */
+#define AC_API_VERSION 3u
 
 /* ac_capabilities() bits — one per module. */
 #define AC_CAP_SETTINGS  0x01ull
@@ -62,6 +63,7 @@ extern "C" {
 #define AC_CAP_BOOKMARKS 0x08ull
 #define AC_CAP_POLICY    0x10ull
 #define AC_CAP_SESSION   0x20ull
+#define AC_CAP_COOKIES   0x40ull
 
 /* AcStatus and AcBuffer are the RC02–RC06 types verbatim — the
  * facade shares their spelling so mixed ac_/rc_ code compiles
@@ -88,12 +90,13 @@ typedef struct AcHistory    AcHistory;
 typedef struct AcBookmarks  AcBookmarks;
 typedef struct AcPolicy     AcPolicy;
 typedef struct AcSession    AcSession;
+typedef struct AcCookies    AcCookies;
 typedef RcSettings AcSettings;
 typedef RcProfiles AcProfiles;
 
 /* Change notification, one per AcCore.  `module` is a stable topic
  * ("settings", "profiles", "history", "bookmarks", "sitedec",
- * "policy", "uaspoof"); `profile_id` is the bound profile that
+ * "policy", "uaspoof", "cookies"); `profile_id` is the bound profile that
  * changed or NULL for global/unscoped mutations.  Both pointers are
  * borrowed — valid only for the duration of the call.  Fires
  * synchronously on the mutating thread outside every store lock;
@@ -141,6 +144,7 @@ int          ac_history_exists(AcCore *core, const char *profile_id);
 AcBookmarks *ac_bookmarks(AcCore *core, const char *profile_id);
 AcPolicy    *ac_policy(AcCore *core, const char *profile_id);
 AcSession   *ac_session(AcCore *core, const char *profile_id);
+AcCookies   *ac_cookies(AcCore *core, const char *profile_id);
 
 void ac_settings_close(AcSettings *h);
 void ac_profiles_close(AcProfiles *h);
@@ -148,6 +152,7 @@ void ac_hist_close(AcHistory *h);
 void ac_bm_close(AcBookmarks *h);
 void ac_policy_close(AcPolicy *h);
 void ac_session_close(AcSession *h);
+void ac_cookies_close(AcCookies *h);
 
 /* ---- settings (RC02) --------------------------------------------------- */
 
@@ -328,6 +333,84 @@ int      ac_session_crash_count(const AcSession *h);
 AcStatus ac_session_last_exit(AcSession *h, AcBuffer *out);
 AcStatus ac_session_set_restoring(AcSession *h, int on);
 int      ac_session_restoring(const AcSession *h);
+
+/* ---- cookies: per-profile cookie database (RC15) --------------------
+ *
+ * The bound profile's profiles/<id>/cookies.db — SQLite/WAL like
+ * history.db, container-partitioned rows.  This is the Servo/WPE
+ * jar's persistent home (declare AC_COOKIES_AUTHORITATIVE) AND
+ * Chromium's durable mirror (Chromium's QWebEngineCookieStore stays
+ * engine-owned — declare AC_COOKIES_MIRROR and this db is its
+ * on-disk shadow for dialogs/sync).  The ops are identical under
+ * either role; the flag is the honesty contract — capability
+ * reporting must say which mode the backend actually runs.
+ *
+ * Records are JSON — {"container":"","name":"","value":"",
+ * "domain":"","path":"/","expires":ms|null,"secure":b,
+ * "httpOnly":b,"sameSite":0..3,"hostOnly":b,"created":ms}.  Domains
+ * normalize (lowercase, no leading dot); hostOnly carries the
+ * Qt-verbatim "leading-dot Domain = domain cookie, no-dot or absent
+ * = host-exact" distinction.  Mutations emit the "cookies" change
+ * topic stamped with the bound profile.
+ */
+
+#define AC_COOKIES_AUTHORITATIVE 0ll /* this file IS the jar */
+#define AC_COOKIES_MIRROR        1ll /* the engine owns the jar */
+
+int64_t  ac_cookies_role(const AcCookies *h);      /* -1 on error */
+AcStatus ac_cookies_set_role(AcCookies *h, int64_t role);
+
+/* Upsert one record JSON; a past expiry deletes the row (the
+ * Set-Cookie eviction rule); an identical rewrite is a no-op. */
+AcStatus ac_cookies_set(AcCookies *h, const uint8_t *json, size_t len);
+/* One cookie by key — AC_ERR_NOT_FOUND on a miss; container NULL =
+ * the default partition. */
+AcStatus ac_cookies_get(const AcCookies *h, const char *domain,
+                        const char *name, const char *path,
+                        const char *container_or_null, AcBuffer *out);
+AcStatus ac_cookies_remove(const AcCookies *h, const char *domain,
+                           const char *name, const char *path,
+                           const char *container_or_null);
+/* A partition's rows (NULL container = all) as a JSON array —
+ * caller frees with ac_string_free. */
+char    *ac_cookies_list(const AcCookies *h,
+                         const char *container_or_null);
+/* The send-match — request JSON {"url":"https://h/p",
+ * "container":"","first_party":"h"|null,"now_ms":0}; first_party
+ * engages the SameSite cross-site filter.  Returns a JSON array in
+ * RFC6265 §5.4 send order — caller frees. */
+char    *ac_cookies_for_url(const AcCookies *h,
+                            const uint8_t *request, size_t len);
+/* Parse + store one Set-Cookie header value against `url` — the
+ * authoritative backend's ingest.  Verdict JSON
+ * {"stored":bool,"reason":...} — caller frees. */
+char    *ac_cookies_store_header(AcCookies *h, const char *url,
+                                 const char *header,
+                                 const char *container_or_null);
+/* The cookie-policy gate — consults the profile's sitedecisions.json
+ * "cookie" kind (the file CookieJar's exceptions persist through)
+ * plus the caller's policy snapshot; see rc_cookies_gate in
+ * rustcore.h for the input/output shape.  Caller frees. */
+char    *ac_cookies_gate(const AcCookies *h,
+                         const uint8_t *input, size_t len);
+/* Import/export the QNetworkCookie::toRawForm file shape — one raw
+ * line per cookie (the vendored NetworkCookieJar's saveState
+ * format).  Import skips lines without a Domain attribute and
+ * returns {"imported":N,"skipped":M} — caller frees. */
+char    *ac_cookies_import(AcCookies *h, const char *path,
+                           const char *container_or_null);
+AcStatus ac_cookies_export(const AcCookies *h, const char *path,
+                           const char *container_or_null);
+AcStatus ac_cookies_clear(AcCookies *h, const char *container_or_null);
+/* The "clear site data" sweep — CookieJar::removeCookiesForHost
+ * verbatim (rows scoped to the host/subdomains, plus rows on parent
+ * domains the site still receives). */
+AcStatus ac_cookies_remove_for_host(AcCookies *h, const char *host,
+                                    const char *container_or_null);
+int64_t  ac_cookies_count(const AcCookies *h,
+                          const char *container_or_null); /* -1 err */
+AcStatus ac_cookies_purge_expired(AcCookies *h, int64_t now_ms);
+AcStatus ac_cookies_purge_session(AcCookies *h);
 
 #ifdef __cplusplus
 }

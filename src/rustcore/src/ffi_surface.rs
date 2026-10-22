@@ -2078,6 +2078,211 @@ fn profiles_surface() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+// ---- RC15: per-profile cookie database --------------------------------
+
+#[test]
+fn cookies_ffi_roundtrip() {
+    let _g = guard();
+    let dir = tmpdir("rc-cookies");
+    init(&dir);
+
+    // Bad-input legs: every entry point degrades, none crash.  (The
+    // store is process-global — a prior test may have left it open,
+    // so the not-initialized legs live in the module's own tests.)
+    assert_eq!(
+        unsafe { crate::rc_cookies_set(b"{}".as_ptr(), 2) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_cookies_set(ptr::null(), 0) },
+        RcStatus::InvalidArgument
+    );
+
+    // Open on the anchored data dir (NULL path).
+    assert_eq!(
+        unsafe { crate::rc_cookies_open(ptr::null()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_cookies_is_open() }, 1);
+    assert!(std::path::Path::new(&dir).join("cookies.db").exists());
+    assert_eq!(unsafe { crate::rc_cookies_role() }, 0); // authoritative
+    assert_eq!(unsafe { crate::rc_cookies_set_role(1) }, RcStatus::Ok);
+    assert_eq!(unsafe { crate::rc_cookies_role() }, 1); // mirror
+    assert_eq!(
+        unsafe { crate::rc_cookies_set_role(9) },
+        RcStatus::InvalidArgument
+    );
+
+    // CRUD over the JSON record lane.
+    let rec = br#"{"name":"sid","value":"v1","domain":".example.com",
+        "path":"/","expires":2000000000000,"secure":true,
+        "httpOnly":true,"sameSite":2}"#;
+    assert_eq!(
+        unsafe { crate::rc_cookies_set(rec.as_ptr(), rec.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_cookies_count(ptr::null()) }, 1);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::rc_cookies_get(
+                cs("example.com").as_ptr(),
+                cs("sid").as_ptr(),
+                cs("/").as_ptr(),
+                ptr::null(),
+                &mut out,
+            )
+        },
+        RcStatus::Ok
+    );
+    let got: serde_json::Value =
+        serde_json::from_slice(&take_buf(&mut out)).unwrap();
+    assert_eq!(got["value"], "v1");
+    assert_eq!(got["sameSite"], 2);
+    assert_eq!(got["hostOnly"], false);
+    assert_eq!(got["httpOnly"], true);
+    // A miss is RC_NOT_FOUND.
+    assert_eq!(
+        unsafe {
+            crate::rc_cookies_get(
+                cs("example.com").as_ptr(),
+                cs("nope").as_ptr(),
+                cs("/").as_ptr(),
+                ptr::null(),
+                &mut out_buf(),
+            )
+        },
+        RcStatus::NotFound
+    );
+
+    // The send-match: https sees the secure row, http does not.
+    let req = br#"{"url":"https://sub.example.com/"}"#;
+    let names =
+        take_str(unsafe { crate::rc_cookies_for_url(req.as_ptr(), req.len()) })
+            .unwrap();
+    assert!(names.contains("sid"));
+    let req = br#"{"url":"http://sub.example.com/"}"#;
+    let names =
+        take_str(unsafe { crate::rc_cookies_for_url(req.as_ptr(), req.len()) })
+            .unwrap();
+    assert!(!names.contains("sid"));
+
+    // The Set-Cookie ingest lane — live parse + store verdict.
+    let verdict = take_str(unsafe {
+        crate::rc_cookies_store_header(
+            cs("https://m.example.com/deep/x").as_ptr(),
+            cs("tok=abc; Max-Age=3600; Secure; SameSite=Strict").as_ptr(),
+            ptr::null(),
+        )
+    })
+    .unwrap();
+    assert!(verdict.contains("\"stored\":true"));
+    let got: serde_json::Value = serde_json::from_slice(
+        &{
+            let mut b = out_buf();
+            assert_eq!(
+                unsafe {
+                    crate::rc_cookies_get(
+                        cs("m.example.com").as_ptr(),
+                        cs("tok").as_ptr(),
+                        cs("/deep").as_ptr(),
+                        ptr::null(),
+                        &mut b,
+                    )
+                },
+                RcStatus::Ok
+            );
+            take_buf(&mut b)
+        },
+    )
+    .unwrap();
+    assert_eq!(got["sameSite"], 3);
+    assert_eq!(got["hostOnly"], true); // no Domain attr -> host-exact
+
+    // The gate consults the sibling sitedecisions.json — seed a block
+    // rule through the sibling store's own surface, then gate it.
+    assert_eq!(
+        unsafe {
+            crate::rc_sitedec_set(
+                cs("cookie").as_ptr(),
+                cs("bad.example").as_ptr(),
+                cs("block").as_ptr(),
+            )
+        },
+        RcStatus::Ok
+    );
+    let gate_in = br#"{"host":"bad.example"}"#;
+    let verdict =
+        take_str(unsafe { crate::rc_cookies_gate(gate_in.as_ptr(), gate_in.len()) })
+            .unwrap();
+    assert!(verdict.contains("\"accept\":false"));
+    let gate_in = br#"{"host":"ok.example","accept_policy":0}"#;
+    let verdict =
+        take_str(unsafe { crate::rc_cookies_gate(gate_in.as_ptr(), gate_in.len()) })
+            .unwrap();
+    assert!(verdict.contains("\"accept\":true"));
+
+    // Import the real Qt toRawForm fixture (6 domain-carrying rows
+    // land; the host-cookie line is skipped).
+    let fixture = cs(&format!(
+        "{}/testdata/cookies/export.txt",
+        env!("CARGO_MANIFEST_DIR")
+    ));
+    let report = take_str(unsafe {
+        crate::rc_cookies_import(fixture.as_ptr(), ptr::null())
+    })
+    .unwrap();
+    assert!(report.contains("\"imported\":6"));
+    assert!(report.contains("\"skipped\":1"));
+    // Export round-trips through the same file shape.
+    let out_file = format!("{dir}/cookies-export.txt");
+    let cout = cs(&out_file);
+    assert_eq!(
+        unsafe { crate::rc_cookies_export(cout.as_ptr(), ptr::null()) },
+        RcStatus::Ok
+    );
+    let exported = std::fs::read_to_string(&out_file).unwrap();
+    assert!(exported.contains("sid=a1b2c3; secure; HttpOnly; SameSite=Lax"));
+    assert!(exported.contains("domain=.example.com"));
+
+    // Host sweep + partition clear + purge ops.
+    assert_eq!(
+        unsafe {
+            crate::rc_cookies_remove_for_host(
+                cs("example.com").as_ptr(),
+                ptr::null(),
+            )
+        },
+        RcStatus::Ok
+    );
+    // expired-purge drops the 1970 row the fixture carried.
+    assert_eq!(
+        unsafe { crate::rc_cookies_purge_expired(9999999999999) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_cookies_purge_session() },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_cookies_clear(ptr::null()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_cookies_count(ptr::null()) }, 0);
+    assert_eq!(
+        unsafe {
+            crate::rc_cookies_remove(
+                cs("x.com").as_ptr(),
+                cs("n").as_ptr(),
+                cs("/").as_ptr(),
+                ptr::null(),
+            )
+        },
+        RcStatus::Ok
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ---- RC07: the arktos_core.h facade -------------------------------------
 //
 // The facade forwards every op to the same rc_* entry points, so the
@@ -2103,7 +2308,7 @@ fn facade_init_and_accessors() {
     let croot = cs(&root);
 
     // housekeeping
-    assert_eq!(crate::facade::ac_api_version(), 2);
+    assert_eq!(crate::facade::ac_api_version(), 3);
     assert_ne!(crate::facade::ac_capabilities(), 0);
 
     // rejected configs fail clean with a stashed error
@@ -2326,9 +2531,110 @@ fn facade_init_and_accessors() {
         .join("profiles/work/session.dat")
         .exists());
 
+    // RC15: the cookies handle binds profiles/<id>/cookies.db — the
+    // accessor opens it now and ops re-assert the bound path.
+    let ck = unsafe { crate::facade::ac_cookies(core, cs("work").as_ptr()) };
+    assert!(!ck.is_null());
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/cookies.db")
+        .exists());
+    assert_eq!(unsafe { crate::facade::ac_cookies_role(ck) }, 0);
+    let rec = br#"{"name":"n","value":"v","domain":".example.com",
+        "expires":2000000000000}"#;
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_set(ck, rec.as_ptr(), rec.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_count(ck, ptr::null()) },
+        1
+    );
+    let list = take_str(unsafe {
+        crate::facade::ac_cookies_list(ck, ptr::null())
+    })
+    .unwrap();
+    assert!(list.contains("\"name\":\"n\""));
+    let req = br#"{"url":"https://www.example.com/"}"#;
+    let matched = take_str(unsafe {
+        crate::facade::ac_cookies_for_url(ck, req.as_ptr(), req.len())
+    })
+    .unwrap();
+    assert!(matched.contains("\"name\":\"n\""));
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_cookies_get(
+                ck,
+                cs("example.com").as_ptr(),
+                cs("n").as_ptr(),
+                cs("/").as_ptr(),
+                ptr::null(),
+                &mut out,
+            )
+        },
+        RcStatus::Ok
+    );
+    take_buf(&mut out);
+    // The verdict lanes forward over the bound handle.
+    let verdict = take_str(unsafe {
+        crate::facade::ac_cookies_store_header(
+            ck,
+            cs("https://h.example.com/").as_ptr(),
+            cs("sh=1; Max-Age=60").as_ptr(),
+            ptr::null(),
+        )
+    })
+    .unwrap();
+    assert!(verdict.contains("\"stored\":true"));
+    let gate_in = br#"{"host":"h.example.com"}"#;
+    let gate = take_str(unsafe {
+        crate::facade::ac_cookies_gate(ck, gate_in.as_ptr(), gate_in.len())
+    })
+    .unwrap();
+    assert!(gate.contains("\"accept\":true"));
+    let fixture = cs(&format!(
+        "{}/testdata/cookies/export.txt",
+        env!("CARGO_MANIFEST_DIR")
+    ));
+    let report = take_str(unsafe {
+        crate::facade::ac_cookies_import(ck, fixture.as_ptr(), ptr::null())
+    })
+    .unwrap();
+    assert!(report.contains("\"imported\":6"));
+    let out_file = format!("{root}/cookies-out.txt");
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_cookies_export(ck, cs(&out_file).as_ptr(), ptr::null())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_purge_session(ck) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_cookies_remove_for_host(
+                ck,
+                cs("example.com").as_ptr(),
+                ptr::null(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_clear(ck, ptr::null()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_count(ck, ptr::null()) },
+        0
+    );
+
     // explicit closes, then shutdown reclaims the rest — both
     // NULL-tolerant.
     unsafe {
+        crate::facade::ac_cookies_close(ck);
         crate::facade::ac_hist_close(h);
         crate::facade::ac_bm_close(b);
         crate::facade::ac_policy_close(p);
@@ -2477,6 +2783,28 @@ fn facade_profile_isolation() {
     unsafe {
         crate::facade::ac_policy_close(pa);
         crate::facade::ac_policy_close(pb);
+    }
+
+    // Cookie isolation: alice's rows never reach bob's db.
+    let ca = unsafe { crate::facade::ac_cookies(core, cs("alice").as_ptr()) };
+    let cb = unsafe { crate::facade::ac_cookies(core, cs("bob").as_ptr()) };
+    let rec = br#"{"name":"n","value":"a","domain":".alice.example",
+        "expires":2000000000000}"#;
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_set(ca, rec.as_ptr(), rec.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_cookies_count(ca, ptr::null()) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_cookies_count(cb, ptr::null()) }, 0);
+    assert!(std::path::Path::new(&root)
+        .join("profiles/alice/cookies.db")
+        .exists());
+    assert!(std::path::Path::new(&root)
+        .join("profiles/bob/cookies.db")
+        .exists());
+    unsafe {
+        crate::facade::ac_cookies_close(ca);
+        crate::facade::ac_cookies_close(cb);
         crate::facade::ac_shutdown(core);
     }
     let _ = std::fs::remove_dir_all(&root);
@@ -2583,6 +2911,21 @@ fn facade_callbacks_carry_profile() {
     });
     unsafe { crate::facade::ac_settings_close(s) };
 
+    // A cookie mutation stamps the "cookies" topic + bound profile.
+    let ck = unsafe { crate::facade::ac_cookies(core, cs("work").as_ptr()) };
+    let rec = br#"{"name":"n","domain":".example.com",
+        "expires":2000000000000}"#;
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_set(ck, rec.as_ptr(), rec.len()) },
+        RcStatus::Ok
+    );
+    LAST.with(|l| {
+        let (t, p) = l.borrow().clone();
+        assert_eq!(t, "cookies");
+        assert_eq!(p, "work");
+    });
+    unsafe { crate::facade::ac_cookies_close(ck) };
+
     // Clearing the callback silences it; shutdown after clear is safe.
     unsafe { crate::facade::ac_set_change_callback(core, None, ptr::null_mut()) };
     let before = AC_HITS.load(Ordering::SeqCst);
@@ -2642,8 +2985,31 @@ fn facade_bad_handles_fail_clean() {
     );
     let err = take_str(unsafe { crate::facade::ac_last_error() }).unwrap();
     assert!(err.contains("bad"));
+    // Cookies legs on NULL handles degrade the same way.
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_role(ptr::null()) },
+        -1
+    );
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_cookies_set(ptr::null(), b"{}".as_ptr(), 2)
+        },
+        RcStatus::InvalidArgument
+    );
+    assert!(unsafe {
+        crate::facade::ac_cookies_list(ptr::null(), ptr::null())
+    }
+    .is_null());
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_cookies_purge_expired(ptr::null(), 0)
+        },
+        RcStatus::InvalidArgument
+    );
     // Accessors on a NULL core fail, not crash.
     assert!(unsafe { crate::facade::ac_settings(ptr::null_mut(), ptr::null()) }
+        .is_null());
+    assert!(unsafe { crate::facade::ac_cookies(ptr::null_mut(), ptr::null()) }
         .is_null());
     unsafe { crate::facade::ac_shutdown(core) };
     let _ = std::fs::remove_dir_all(&root);

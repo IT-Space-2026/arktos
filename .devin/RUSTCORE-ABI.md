@@ -18,6 +18,8 @@ The facade is a thin ownership layer over the RC02–RC06 modules:
   site-trust, lookalike, UA-spoof tables (`AcPolicy`), RC06
 - sessions: per-profile window/tab session store + lifecycle
   marker (`AcSession`), RC13 — added at ABI v2
+- cookies: per-profile cookie database (`AcCookies`), RC15 —
+  added at ABI v3
 
 It deliberately does NOT wrap the other rc_* surfaces (credentials,
 autofill, opensearch, readability, vault, …). Those keep
@@ -34,12 +36,13 @@ their rc_* spellings until their own adoption rows land.
   `RC_ERR_WRONG_PASSWORD=5`, `RC_ERR_TAMPERED=6`,
   `RC_ERR_INTERNAL=7`. New failures get new numbers; retiring a
   value leaves a gap.
-- **`ac_api_version()`** returns the library ABI version (`2`).
+- **`ac_api_version()`** returns the library ABI version (`3`).
   It bumps only on ABI-visible additions — the probe/autotests pin
-  it per release. (v2: `AcSession` + `ac_session_*`, RC13.)
+  it per release. (v2: `AcSession` + `ac_session_*`, RC13.
+  v3: `AcCookies` + `ac_cookies_*`, RC15.)
 - **`ac_capabilities()`** is a per-module bitmask
   (`AC_CAP_SETTINGS=0x01` … `AC_CAP_POLICY=0x10`,
-  `AC_CAP_SESSION=0x20`). A module built
+  `AC_CAP_SESSION=0x20`, `AC_CAP_COOKIES=0x40`). A module built
   out of the library reports `0` — callers must test bits, not
   assume presence.
 - **`AcConfig.struct_size`** is the caller's `sizeof(AcConfig)`.
@@ -56,7 +59,8 @@ their rc_* spellings until their own adoption rows land.
   the core minted and unregisters its change callback.
 - Module handles come from the accessors
   (`ac_settings`, `ac_profiles`, `ac_history`, `ac_bookmarks`,
-  `ac_policy`), are released individually with the matching
+  `ac_policy`, `ac_session`, `ac_cookies`), are released
+  individually with the matching
   `ac_*_close`, and **die with their core** — using a handle after
   `ac_shutdown` is a use-after-free.
 - `ac_*_close(NULL)` is a no-op. `AcSettings`/`AcProfiles` handles
@@ -103,6 +107,49 @@ non-`AC_OK` return the thread-local error string is populated —
   stores above there is no process-global anchor to race at all.
   `NULL`/non-slug binds `"default"`. Session ops emit no change
   notifications — per-run scratch state, not shared service data.
+- `ac_cookies` nuance (v3): the handle re-asserts
+  `profiles/<id>/cookies.db` on every op like the history model —
+  `NULL`/non-slug binds `"default"`. Mutations emit the `"cookies"`
+  change topic stamped with the bound profile.
+- **Cookie role honesty (v3).** `ac_cookies_role` /
+  `ac_cookies_set_role` record whether the database is
+  `AC_COOKIES_AUTHORITATIVE` (this file IS the jar — the Servo/WPE
+  arrangement) or `AC_COOKIES_MIRROR` (an engine owns the real jar
+  and this db is its durable shadow — the Chromium arrangement,
+  where `QWebEngineCookieStore` cannot be displaced). The flag is
+  persisted in the db's own meta table, the ops are identical
+  either way, and callers MUST report which mode they actually run
+  — never claim authoritative storage behind an engine-owned jar.
+- **Cookie schema.** One row per `(container, domain, name, path)`;
+  `container` is the persona-container partition (`""` = the
+  default context, ContainerManager uuid-hex otherwise). Columns
+  carry every field cookie policy and send-matching key on:
+  `value`, `path`, `expires` (ms-epoch, NULL = session),
+  `secure`, `httponly`, `samesite` (`QNetworkCookie::SameSite`
+  ordinals 0–3), `host_only` (Qt-verbatim: leading-dot `Domain`
+  imports as a domain cookie, no-dot or absent as host-exact),
+  `created`. Session rows are swept at open (a persistent db can
+  only have inherited them from a dead run) and via
+  `ac_cookies_purge_session` at exit. Setting a row whose expiry
+  already passed deletes it — the RFC6265 §5.3 eviction rule.
+- **Cookie send-match.** `ac_cookies_for_url` answers with the
+  Qt-jar-verified rules: host-only vs domain reach, RFC6265
+  §5.1.4 boundary-aware paths, secure gating, expiry filtering
+  (lazy deletion), the optional first-party SameSite filter, and
+  §5.4 send order (longest path, then earliest created).
+- **Cookie interchange.** `ac_cookies_import` /
+  `ac_cookies_export` speak `QNetworkCookie::toRawForm()` — one
+  raw line per cookie, the shape the vendored `NetworkCookieJar`'s
+  saveState streams (testdata: `src/rustcore/testdata/cookies/
+  export.txt`, emitted by a real Qt 6.12 build). Import skips
+  lines lacking a `Domain` attribute — there is no request host
+  to key them on.
+- **Cookie gate.** `ac_cookies_gate` resolves a cookie attempt
+  against the bound profile's `sitedecisions.json` `"cookie"`
+  kind (block > allow > session > accept-policy) plus the
+  caller-supplied third-party/keep/session-length inputs — the
+  same precedence `CookieJar`'s IO-thread filter applies to
+  Chromium, exposed for backends whose jar this store is.
 
 ## 6. Notifications
 

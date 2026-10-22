@@ -39,8 +39,8 @@ use crate::{bookmarks, notify, profiles, settings, util};
 
 /// The facade ABI version — AC_API_VERSION in arktos_core.h.  Bump
 /// on every ABI-affecting addition; never renumber existing symbols
-/// or enum values.
-pub const AC_API_VERSION: u32 = 2;
+/// or enum values.  v3 added AcCookies (RC15).
+pub const AC_API_VERSION: u32 = 3;
 
 const AC_CAP_SETTINGS: u64 = 0x01;
 const AC_CAP_PROFILES: u64 = 0x02;
@@ -48,12 +48,14 @@ const AC_CAP_HISTORY: u64 = 0x04;
 const AC_CAP_BOOKMARKS: u64 = 0x08;
 const AC_CAP_POLICY: u64 = 0x10;
 const AC_CAP_SESSION: u64 = 0x20;
+const AC_CAP_COOKIES: u64 = 0x40;
 const AC_CAP_ALL: u64 = AC_CAP_SETTINGS
     | AC_CAP_PROFILES
     | AC_CAP_HISTORY
     | AC_CAP_BOOKMARKS
     | AC_CAP_POLICY
-    | AC_CAP_SESSION;
+    | AC_CAP_SESSION
+    | AC_CAP_COOKIES;
 
 const DEFAULT_PROFILE: &str = "default";
 
@@ -93,6 +95,7 @@ enum Live {
     Bookmarks(usize),
     Policy(usize),
     Session(usize),
+    Cookies(usize),
 }
 
 impl Live {
@@ -103,7 +106,8 @@ impl Live {
             | Live::History(p)
             | Live::Bookmarks(p)
             | Live::Policy(p)
-            | Live::Session(p) => p,
+            | Live::Session(p)
+            | Live::Cookies(p) => p,
         }
     }
 }
@@ -156,6 +160,16 @@ pub struct AcPolicy {
 pub struct AcSession {
     /// profiles/<id> — mkpath'd at bind time like every bound dir.
     dir: CString,
+}
+
+/// RC15: the cookie database is process-global behind the open-path
+/// anchor (like history) — the handle owns the resolved db path and
+/// every op re-asserts it (a no-op on the hot path).
+pub struct AcCookies {
+    /// The effective profile id — stamped on "cookies" notifications.
+    profile: String,
+    /// profiles/<id>/cookies.db.
+    db_path: CString,
 }
 
 // ---- shared plumbing ---------------------------------------------------
@@ -250,6 +264,9 @@ unsafe fn free_live(live: Live) {
         Live::Policy(p) => drop(unsafe { Box::from_raw(p as *mut AcPolicy) }),
         Live::Session(p) => {
             drop(unsafe { Box::from_raw(p as *mut AcSession) })
+        }
+        Live::Cookies(p) => {
+            drop(unsafe { Box::from_raw(p as *mut AcCookies) })
         }
     }
 }
@@ -700,6 +717,55 @@ pub unsafe extern "C" fn ac_session(
     .unwrap_or(ptr::null_mut())
 }
 
+/// Binds the cookie database of `profile_id` and opens
+/// profiles/<id>/cookies.db now — open failures surface here, not
+/// inside a later op (same contract as ac_history).  NULL + stashed
+/// error on failure.
+///
+/// # Safety
+/// `profile_id` must be NUL-terminated UTF-8 or NULL.  Free with
+/// ac_cookies_close; the handle dies with its core.
+#[no_mangle]
+pub unsafe extern "C" fn ac_cookies(
+    core: *mut AcCore,
+    profile_id: *const c_char,
+) -> *mut AcCookies {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let core = match core_ref(core) {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let eff = bound_profile(profile_id);
+        let root = PathBuf::from(core.root.to_string_lossy().into_owned());
+        let db = match CString::new(
+            profile_dir(&root, &eff)
+                .join("cookies.db")
+                .to_string_lossy()
+                .into_owned(),
+        ) {
+            Ok(c) => c,
+            Err(_) => {
+                error::set_error("cookies path is not UTF-8");
+                return ptr::null_mut();
+            }
+        };
+        // Bind now — an open failure is the accessor's to report.
+        if unsafe { crate::rc_cookies_open(db.as_ptr()) } != RcStatus::Ok {
+            return ptr::null_mut();
+        }
+        let h = Box::into_raw(Box::new(AcCookies {
+            profile: eff,
+            db_path: db,
+        }));
+        track(core, Live::Cookies(h as usize));
+        h
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 // ---- handle closes ---------------------------------------------------------
 
 /// Releases a settings handle — NULL-tolerant; also legal on a
@@ -758,6 +824,7 @@ ac_close!(ac_hist_close, AcHistory);
 ac_close!(ac_bm_close, AcBookmarks);
 ac_close!(ac_policy_close, AcPolicy);
 ac_close!(ac_session_close, AcSession);
+ac_close!(ac_cookies_close, AcCookies);
 
 // ---- re-assert helpers ------------------------------------------------------
 
@@ -1511,3 +1578,61 @@ pub unsafe extern "C" fn ac_session_restoring(h: *const AcSession) -> i32 {
         Err(_) => 0,
     }
 }
+
+// ---- cookies (RC15) ----------------------------------------------------
+//
+// Process-global db behind the open-path anchor — the history model:
+// ensure_cookies re-asserts profiles/<id>/cookies.db (a no-op on the
+// hot path) then the op forwards verbatim.  The role flag is the
+// honesty seam: a Servo/WPE backend declares authoritative (this file
+// IS the jar); a Chromium mirror declares mirror (the engine owns the
+// jar, this is its durable shadow).
+
+fn ensure_cookies<'a>(h: *const AcCookies) -> Result<&'a AcCookies, RcStatus> {
+    let h = match unsafe { h.as_ref() } {
+        Some(h) => h,
+        None => return fail(RcStatus::InvalidArgument, "bad cookies handle"),
+    };
+    match unsafe { crate::rc_cookies_open(h.db_path.as_ptr()) } {
+        RcStatus::Ok => Ok(h),
+        st => Err(st),
+    }
+}
+
+ac_val_op!(ac_cookies_role, AcCookies, ensure_cookies,
+    rc_cookies_role() -> i64 = -1);
+ac_status_op!(ac_cookies_set_role, AcCookies, ensure_cookies,
+    rc_cookies_set_role(role: i64));
+ac_status_op!(ac_cookies_set, AcCookies, ensure_cookies,
+    rc_cookies_set(json: *const u8, len: usize));
+ac_status_op!(ac_cookies_get, AcCookies, ensure_cookies,
+    rc_cookies_get(domain: *const c_char, name: *const c_char,
+                   path: *const c_char, container: *const c_char,
+                   out: *mut crate::RcBuffer));
+ac_status_op!(ac_cookies_remove, AcCookies, ensure_cookies,
+    rc_cookies_remove(domain: *const c_char, name: *const c_char,
+                      path: *const c_char, container: *const c_char));
+ac_ptr_op!(ac_cookies_list, AcCookies, ensure_cookies,
+    rc_cookies_list(container: *const c_char));
+ac_ptr_op!(ac_cookies_for_url, AcCookies, ensure_cookies,
+    rc_cookies_for_url(request: *const u8, len: usize));
+ac_ptr_op!(ac_cookies_store_header, AcCookies, ensure_cookies,
+    rc_cookies_store_header(url: *const c_char, header: *const c_char,
+                            container: *const c_char));
+ac_ptr_op!(ac_cookies_gate, AcCookies, ensure_cookies,
+    rc_cookies_gate(input: *const u8, len: usize));
+ac_ptr_op!(ac_cookies_import, AcCookies, ensure_cookies,
+    rc_cookies_import(path: *const c_char, container: *const c_char));
+ac_status_op!(ac_cookies_export, AcCookies, ensure_cookies,
+    rc_cookies_export(path: *const c_char, container: *const c_char));
+ac_status_op!(ac_cookies_clear, AcCookies, ensure_cookies,
+    rc_cookies_clear(container: *const c_char));
+ac_status_op!(ac_cookies_remove_for_host, AcCookies, ensure_cookies,
+    rc_cookies_remove_for_host(host: *const c_char,
+                               container: *const c_char));
+ac_val_op!(ac_cookies_count, AcCookies, ensure_cookies,
+    rc_cookies_count(container: *const c_char) -> i64 = -1);
+ac_status_op!(ac_cookies_purge_expired, AcCookies, ensure_cookies,
+    rc_cookies_purge_expired(now_ms: i64));
+ac_status_op!(ac_cookies_purge_session, AcCookies, ensure_cookies,
+    rc_cookies_purge_session());

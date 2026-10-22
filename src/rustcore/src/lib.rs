@@ -114,6 +114,13 @@
 //!     650-event capture and a pull-drain FFI announced through the
 //!     "torctl" change topic.  Deliberately not a facade module: it
 //!     binds no profile and owns no store.
+//!   * cookies (RC15): the per-profile cookie database —
+//!     <profile>/cookies.db, container-partitioned, Qt-jar-verified
+//!     matching (host-only/domain reach, RFC6265 §5.1.4 paths, secure
+//!     gating, SameSite send filter), Set-Cookie parse, toRawForm
+//!     import/export and an authoritative/mirror role flag that
+//!     honestly reports whether the file IS the jar (Servo/WPE) or a
+//!     durable copy behind an engine-owned one (Chromium).
 //!
 mod autofill;
 mod bidi;
@@ -122,6 +129,7 @@ mod bookmarkhtml;
 mod bookmarks;
 mod clearplan;
 mod confusables_table;
+mod cookies;
 mod cred;
 mod error;
 mod extverify;
@@ -3361,6 +3369,585 @@ pub unsafe extern "C" fn rc_sitedec_reload() -> RcStatus {
 #[no_mangle]
 pub unsafe extern "C" fn rc_sitedec_reset() -> RcStatus {
     status_of(sitedecisions::reset)
+}
+
+// ---- RC15: per-profile cookie database ----
+//
+// The Servo/WPE jar's persistent home and Chromium's durable mirror:
+// cookies.db under the profile dir (or the anchored data dir on this
+// surface), container-partitioned rows, Qt-jar-verified matching, and
+// a stored role flag distinguishing "this file IS the jar" from "the
+// engine owns the jar; this is its on-disk shadow".  Mutations emit
+// the "cookies" change topic; returned records are the JSON shape
+// cookies::Cookie::to_json emits.
+
+/// NULL-or-NUL-terminated-UTF-8 for the optional string params the
+/// cookie surface takes: NULL -> Ok(None); a non-NULL pointer that is
+/// not valid UTF-8 is an error, never a silent default.
+unsafe fn cookies_opt(ptr: *const c_char) -> error::RcResult<Option<String>> {
+    if ptr.is_null() {
+        return Ok(None);
+    }
+    unsafe { util::cstr(ptr) }
+        .map(|s| Some(s.to_string()))
+        .ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad string pointer".into(),
+        })
+}
+
+/// Opens the cookie database.  `path` NULL resolves to
+/// <data dir>/cookies.db; an explicit path binds a profile dir (the
+/// facade's per-profile lane passes profiles/<id>/cookies.db).
+///
+/// # Safety
+/// `path` must be NULL or NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_open(path: *const c_char) -> RcStatus {
+    status_of(|| {
+        let path = unsafe { cookies_opt(path) }?;
+        cookies::with(|s| s.open(path.as_deref()))
+    })
+}
+
+/// 1 while a database is open — the cheap probe (never errors).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_is_open() -> i32 {
+    catch_unwind(AssertUnwindSafe(|| i32::from(cookies::with(|s| s.is_open()))))
+        .unwrap_or(0)
+}
+
+/// The declared mode — 0 authoritative (this file IS the jar), 1
+/// mirror (an engine owns the jar; this is its durable shadow),
+/// -1 on error (not open).  Honest capability reporting: the caller
+/// decides what to trust based on who declared the role.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_role() -> i64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        cookies::with(|s| s.role()).unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
+}
+
+/// Declares the mode (0 or 1) — recorded in the db's meta table so
+/// tooling reading the file later knows what it last served.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_set_role(role: i64) -> RcStatus {
+    status_of(|| cookies::with(|s| s.set_role(role)))
+}
+
+/// Upserts one cookie record — the JSON shape Cookie::to_json emits
+/// ({"container":"","name":"","value":"","domain":"","path":"/",
+/// "expires":ms|null,"secure":b,"httpOnly":b,"sameSite":n,
+/// "hostOnly":b,"created":ms}).  An already-past expiry deletes the
+/// row (the Set-Cookie eviction rule); an identical rewrite is a
+/// no-op (no "cookies" notification).
+///
+/// # Safety
+/// `json` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_set(json: *const u8, len: usize) -> RcStatus {
+    let mut changed = false;
+    let status = status_of(|| {
+        let json = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad json pointer".into(),
+        })?;
+        let v: serde_json::Value = serde_json::from_slice(json).map_err(|e| {
+            error::Fail {
+                status: RcStatus::InvalidArgument,
+                msg: format!("cookie json: {e}"),
+            }
+        })?;
+        let c = cookies::Cookie::from_json(&v)?;
+        cookies::with(|s| s.set(&c)).map(|o| {
+            changed = o != cookies::SetOutcome::Noop;
+        })
+    });
+    if status == RcStatus::Ok && changed {
+        notify::emit("cookies");
+    }
+    status
+}
+
+/// One cookie by key — RC_NOT_FOUND when absent; the record JSON in
+/// `out` (free with rc_buffer_free).
+///
+/// # Safety
+/// `domain`/`name`/`path` must be NUL-terminated UTF-8; `container`
+/// may be NULL ("" = the default partition); `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_get(
+    domain: *const c_char,
+    name: *const c_char,
+    path: *const c_char,
+    container: *const c_char,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let domain = unsafe { util::cstr(domain) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad domain pointer".into(),
+        })?;
+        let name = unsafe { util::cstr(name) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad name pointer".into(),
+        })?;
+        let path = unsafe { util::cstr(path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad path pointer".into(),
+        })?;
+        let container = unsafe { cookies_opt(container) }?.unwrap_or_default();
+        let c = cookies::with(|s| s.get(&container, &domain, &name, &path))?;
+        buffer_out(out, c.to_json().to_string().into_bytes());
+        Ok(())
+    })
+}
+
+/// Deletes one cookie by key — RC_OK either way.
+///
+/// # Safety
+/// `domain`/`name`/`path` must be NUL-terminated UTF-8; `container`
+/// may be NULL ("" = default).
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_remove(
+    domain: *const c_char,
+    name: *const c_char,
+    path: *const c_char,
+    container: *const c_char,
+) -> RcStatus {
+    let mut removed = false;
+    let status = status_of(|| {
+        let domain = unsafe { util::cstr(domain) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad domain pointer".into(),
+        })?;
+        let name = unsafe { util::cstr(name) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad name pointer".into(),
+        })?;
+        let path = unsafe { util::cstr(path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad path pointer".into(),
+        })?;
+        let container = unsafe { cookies_opt(container) }?.unwrap_or_default();
+        cookies::with(|s| s.remove(&container, &domain, &name, &path))
+            .map(|r| removed = r)
+    });
+    if status == RcStatus::Ok && removed {
+        notify::emit("cookies");
+    }
+    status
+}
+
+/// Every cookie of a partition (NULL container = the whole db) as a
+/// JSON array of records — the cookie-manager listing lane.
+/// Caller frees with rc_string_free().
+///
+/// # Safety
+/// `container` must be NULL or NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_list(container: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let container = match unsafe { cookies_opt(container) } {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match cookies::with(|s| s.list(container.as_deref())) {
+            Ok(rows) => {
+                let arr: Vec<serde_json::Value> =
+                    rows.iter().map(cookies::Cookie::to_json).collect();
+                util::to_c_string(serde_json::Value::Array(arr).to_string())
+            }
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The send-match — which cookies ride a request.  `request` is JSON:
+/// {"url":"https://h/p","container":"","first_party":"h"|null,
+/// "now_ms":0} — first_party engages the SameSite cross-site filter;
+/// now_ms 0 = system clock.  Returns a JSON array of records in
+/// RFC6265 §5.4 send order (longest path, then earliest created).
+/// Caller frees with rc_string_free().
+///
+/// # Safety
+/// `request` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_for_url(
+    request: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let body = match unsafe { util::bytes(request, len) } {
+            Some(b) => b,
+            None => {
+                error::set_error("bad request pointer");
+                return ptr::null_mut();
+            }
+        };
+        let v: serde_json::Value = match serde_json::from_slice(body) {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&format!("for_url json: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        match cookies::ForUrl::from_json(&v)
+            .and_then(|req| cookies::with(|s| s.for_url(&req)))
+        {
+            Ok(rows) => {
+                let arr: Vec<serde_json::Value> =
+                    rows.iter().map(cookies::Cookie::to_json).collect();
+                util::to_c_string(serde_json::Value::Array(arr).to_string())
+            }
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Parses + stores one Set-Cookie header value against `url` — the
+/// authoritative backend's ingest lane.  Returns a verdict JSON
+/// {"stored":bool,"reason":"stored"|"deleted"|"…"} (caller frees).
+///
+/// # Safety
+/// `url`/`header` must be NUL-terminated UTF-8; `container` may be
+/// NULL ("" = default).
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_store_header(
+    url: *const c_char,
+    header: *const c_char,
+    container: *const c_char,
+) -> *mut c_char {
+    let mut stored = false;
+    let out = catch_unwind(AssertUnwindSafe(|| {
+        let url = match unsafe { util::cstr(url) } {
+            Some(u) => u,
+            None => {
+                error::set_error("bad url pointer");
+                return ptr::null_mut();
+            }
+        };
+        let header = match unsafe { util::cstr(header) } {
+            Some(h) => h,
+            None => {
+                error::set_error("bad header pointer");
+                return ptr::null_mut();
+            }
+        };
+        let container = match unsafe { cookies_opt(container) } {
+            Ok(c) => c.unwrap_or_default(),
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match cookies::with(|s| s.store_header(&container, &url, &header)) {
+            Ok(v) => {
+                stored = v.get("stored").and_then(serde_json::Value::as_bool)
+                    == Some(true);
+                util::to_c_string(v.to_string())
+            }
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut());
+    if stored {
+        notify::emit("cookies");
+    }
+    out
+}
+
+/// The cookie-policy gate — may this attempt proceed, and with what
+/// rewrites.  Consults the sibling sitedecisions.json "cookie" kind
+/// (the file CookieJar's exceptions already persist through) plus the
+/// caller-supplied policy snapshot.  Input/output shapes are
+/// documented on cookies::gate.  Caller frees the returned JSON.
+///
+/// # Safety
+/// `input` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_gate(
+    input: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let body = match unsafe { util::bytes(input, len) } {
+            Some(b) => b,
+            None => {
+                error::set_error("bad gate input pointer");
+                return ptr::null_mut();
+            }
+        };
+        let v: serde_json::Value = match serde_json::from_slice(body) {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&format!("gate json: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        match cookies::with(|s| {
+            let dir = s.dir().ok_or_else(|| error::Fail {
+                status: RcStatus::NotInitialized,
+                msg: "rc_cookies_open() has not been called".into(),
+            })?;
+            cookies::gate(&dir, &v)
+        }) {
+            Ok(verdict) => util::to_c_string(verdict.to_string()),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Imports a QNetworkCookie::toRawForm file — one raw line per row,
+/// the shape the vendored NetworkCookieJar saveState streams and
+/// testdata/cookies/export.txt carries.  Lines lacking a Domain
+/// attribute are skipped (there is no request host to key them on).
+/// Returns a JSON report {"imported":N,"skipped":M} — caller frees.
+///
+/// # Safety
+/// `path` must be NUL-terminated UTF-8; `container` may be NULL
+/// ("" = default partition).
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_import(
+    path: *const c_char,
+    container: *const c_char,
+) -> *mut c_char {
+    let mut imported = false;
+    let out = catch_unwind(AssertUnwindSafe(|| {
+        let path = match unsafe { util::cstr(path) } {
+            Some(p) => p,
+            None => {
+                error::set_error("bad import path pointer");
+                return ptr::null_mut();
+            }
+        };
+        let container = match unsafe { cookies_opt(container) } {
+            Ok(c) => c.unwrap_or_default(),
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let meta = match std::fs::metadata(&path) {
+            Ok(m) => m,
+            Err(e) => {
+                error::set_error(&format!("import source: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        if meta.len() > 32 * 1024 * 1024 {
+            error::set_error("import file over 32 MiB cap");
+            return ptr::null_mut();
+        }
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                error::set_error(&format!("import read: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        match cookies::with(|s| s.import_text(&container, &text)) {
+            Ok(v) => {
+                imported = v.get("imported").and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
+                    > 0;
+                util::to_c_string(v.to_string())
+            }
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut());
+    if imported {
+        notify::emit("cookies");
+    }
+    out
+}
+
+/// Exports the partition (NULL container = all) as toRawForm lines —
+/// the same file shape rc_cookies_import reads back.  Written
+/// atomically under the caller's path.
+///
+/// # Safety
+/// `path` must be NUL-terminated UTF-8; `container` may be NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_export(
+    path: *const c_char,
+    container: *const c_char,
+) -> RcStatus {
+    status_of(|| {
+        let path = unsafe { util::cstr(path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad export path pointer".into(),
+        })?;
+        let container = unsafe { cookies_opt(container) }?;
+        let text = cookies::with(|s| s.export_text(container.as_deref()))?;
+        store::atomic_write(std::path::Path::new(&path), text.as_bytes())
+    })
+}
+
+/// Wipes a partition — `container` NULL wipes the whole database.
+/// RC_OK either way.
+///
+/// # Safety
+/// `container` must be NULL or NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_clear(container: *const c_char) -> RcStatus {
+    let container = match unsafe { cookies_opt(container) } {
+        Ok(c) => c,
+        Err(e) => {
+            error::set_error(&e.msg);
+            return e.status;
+        }
+    };
+    let mut wiped = 0u64;
+    let status = status_of(|| {
+        cookies::with(|s| s.clear(container.as_deref())).map(|n| wiped = n)
+    });
+    if status == RcStatus::Ok && wiped > 0 {
+        notify::emit("cookies");
+    }
+    status
+}
+
+/// The shield panel's "clear site data" sweep — drops rows scoped to
+/// the host or a subdomain it controls, plus rows on a parent domain
+/// the site still receives (CookieJar::removeCookiesForHost verbatim).
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8; `container` may be NULL
+/// ("" = default partition).
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_remove_for_host(
+    host: *const c_char,
+    container: *const c_char,
+) -> RcStatus {
+    let mut removed = 0u64;
+    let status = status_of(|| {
+        let host = unsafe { util::cstr(host) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad host pointer".into(),
+        })?;
+        let container = unsafe { cookies_opt(container) }?.unwrap_or_default();
+        cookies::with(|s| s.remove_for_host(&container, &host)).map(|n| {
+            removed = n;
+        })
+    });
+    if status == RcStatus::Ok && removed > 0 {
+        notify::emit("cookies");
+    }
+    status
+}
+
+/// Row count — a partition, or the whole db on a NULL container.
+/// -1 on error (not open).
+///
+/// # Safety
+/// `container` must be NULL or NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_count(container: *const c_char) -> i64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let container = match unsafe { cookies_opt(container) } {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        cookies::with(|s| s.count(container.as_deref())).unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
+}
+
+/// Deletes rows whose expiry is at or before `now_ms`.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_purge_expired(now_ms: i64) -> RcStatus {
+    let mut n = 0u64;
+    let status = status_of(|| {
+        cookies::with(|s| s.purge_expired(now_ms)).map(|c| n = c)
+    });
+    if status == RcStatus::Ok && n > 0 {
+        notify::emit("cookies");
+    }
+    status
+}
+
+/// The exit-sweep: drops every session row (the C++ jar's endSession
+/// equivalent — also run automatically at open).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_purge_session() -> RcStatus {
+    let mut n = 0u64;
+    let status = status_of(|| cookies::with(|s| s.purge_session()).map(|c| n = c));
+    if status == RcStatus::Ok && n > 0 {
+        notify::emit("cookies");
+    }
+    status
 }
 
 // ---- RC02: typed per-profile settings store ----

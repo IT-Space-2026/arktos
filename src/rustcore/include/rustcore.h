@@ -882,6 +882,118 @@ RcStatus rc_sitedec_reload(void);
 RcStatus rc_sitedec_reset(void);
 
 /* ------------------------------------------------------------------ */
+/* RC15: per-profile cookie database                                   */
+/*                                                                      */
+/* The Servo/WPE jar's persistent home — and Chromium's durable       */
+/* mirror (Chromium's QWebEngineCookieStore stays engine-owned; a     */
+/* mirror-role db is the honest "the engine owns the jar" shadow).    */
+/* Storage is cookies.db under the profile dir (or the anchored data  */
+/* dir on this surface), SQLite/WAL like history.db, partitioned by   */
+/* container id ("" = the default context).                            */
+/*                                                                      */
+/* Records travel as JSON — {"container":"","name":"","value":"",    */
+/* "domain":"","path":"/","expires":ms|null,"secure":b,"httpOnly":b, */
+/* "sameSite":0..3,"hostOnly":b,"created":ms} — the Qt-verified field */
+/* set SiteDecisionStore policy and send-matching need.  Domains      */
+/* normalize (lowercase, no leading dot); the leading-dot-vs-exact    */
+/* distinction lives in hostOnly, Qt-verbatim.  Mutations emit the    */
+/* "cookies" change topic.                                            */
+/*                                                                      */
+/* Opens (or re-asserts) the db.  path NULL resolves to               */
+/* <data dir>/cookies.db; an explicit path binds a profile dir.       */
+RcStatus rc_cookies_open(const char *path_or_null);
+
+/* 1 while a db is open. */
+int rc_cookies_is_open(void);
+
+/* The declared mode: 0 authoritative (this file IS the jar —        */
+/* Servo/WPE), 1 mirror (an engine owns the jar — Chromium's         */
+/* durable shadow), -1 on error.  Read from the db's meta table.     */
+int64_t rc_cookies_role(void);
+
+/* Declare the mode (0 or 1) — persisted so a db reports what it     */
+/* last served.  The ops are identical either way; the flag is the   */
+/* honesty contract, not hidden behavior.                            */
+RcStatus rc_cookies_set_role(int64_t role);
+
+/* Upsert one record JSON (shape above; `len` bytes at `json`).      */
+/* An already-past expiry deletes the row (the Set-Cookie eviction   */
+/* rule); an identical rewrite is a no-op (no notification).         */
+RcStatus rc_cookies_set(const uint8_t *json, size_t len);
+
+/* One cookie by key into *out (rc_buffer_free the record JSON).     */
+/* RC_NOT_FOUND on a miss; container NULL = the default partition.   */
+RcStatus rc_cookies_get(const char *domain, const char *name,
+                        const char *path, const char *container_or_null,
+                        RcBuffer *out);
+
+/* Delete one cookie by key — RC_OK either way. */
+RcStatus rc_cookies_remove(const char *domain, const char *name,
+                           const char *path,
+                           const char *container_or_null);
+
+/* A partition's rows (NULL container = all) as a JSON array of      */
+/* records — caller frees with rc_string_free().                     */
+char *rc_cookies_list(const char *container_or_null);
+
+/* The send-match: which cookies ride a request.  `request` is JSON  */
+/* {"url":"https://h/p","container":"","first_party":"h"|null,       */
+/* "now_ms":0} — first_party engages the SameSite cross-site         */
+/* filter; now_ms 0 = system clock.  Returns a JSON array in         */
+/* RFC6265 §5.4 send order — caller frees with rc_string_free().     */
+char *rc_cookies_for_url(const uint8_t *request, size_t len);
+
+/* Parse + store one Set-Cookie header value against `url` — the     */
+/* authoritative backend's ingest lane.  Returns a verdict JSON      */
+/* {"stored":bool,"reason":...} — caller frees with rc_string_free().*/
+char *rc_cookies_store_header(const char *url, const char *header,
+                              const char *container_or_null);
+
+/* The cookie-policy gate — may this attempt proceed, and with what  */
+/* rewrites.  Consults the sibling sitedecisions.json "cookie" kind  */
+/* (the file CookieJar's exceptions already persist through) plus    */
+/* the caller's policy snapshot.  Input JSON:                        */
+/*   {"host":"h","third_party":b,"block_3p":b,                      */
+/*    "accept_policy":0|1|2 (always/never/first-party),              */
+/*    "keep_policy":0|1|2,"session_length":days(-1 unset),           */
+/*    "filter_tracking":b,"name":"n","session":b,"expires_ms":ms}    */
+/* Output: {"accept":b,"rule":"block"|"tracking"|"third-party"|      */
+/*          "allow"|"session"|"policy","session_only":b,             */
+/*          "expires_cap_ms":ms|null} — caller frees.                */
+char *rc_cookies_gate(const uint8_t *input, size_t len);
+
+/* Import a QNetworkCookie::toRawForm file — one raw line per row,   */
+/* the shape the vendored NetworkCookieJar saveState streams.        */
+/* Lines lacking a Domain attribute are skipped (no request host to  */
+/* key them on).  Returns {"imported":N,"skipped":M} — caller frees. */
+char *rc_cookies_import(const char *path,
+                        const char *container_or_null);
+
+/* Export the partition (NULL container = all) as toRawForm lines —  */
+/* the same file shape rc_cookies_import reads back.  Atomic write.  */
+RcStatus rc_cookies_export(const char *path,
+                           const char *container_or_null);
+
+/* Wipe a partition (NULL container = the whole db). */
+RcStatus rc_cookies_clear(const char *container_or_null);
+
+/* The "clear site data" sweep — drops rows scoped to the host or a  */
+/* subdomain it controls, plus rows on a parent domain the site      */
+/* still receives (CookieJar::removeCookiesForHost verbatim).        */
+RcStatus rc_cookies_remove_for_host(const char *host,
+                                    const char *container_or_null);
+
+/* Row count — a partition, or the whole db on NULL.  -1 on error. */
+int64_t rc_cookies_count(const char *container_or_null);
+
+/* Delete rows expired at/before now_ms. */
+RcStatus rc_cookies_purge_expired(int64_t now_ms);
+
+/* The exit-sweep: drop every session row (also run at open — a     */
+/* persistent db can only have inherited them from a dead run).     */
+RcStatus rc_cookies_purge_session(void);
+
+/* ------------------------------------------------------------------ */
 /* RC02: typed per-profile settings store                              */
 /*                                                                     */
 /* Replaces ProfileSettings' persistence — a key-value map of          */
