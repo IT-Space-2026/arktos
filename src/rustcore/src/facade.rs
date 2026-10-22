@@ -101,6 +101,16 @@ impl AcCore {
     pub(crate) fn data_root(&self) -> &str {
         self.root.to_str().unwrap_or("")
     }
+
+    /// The AcConfig display-name seed for the synthesized "default"
+    /// registry row — the envelope's profiles ops mint the same
+    /// registry view ac_profiles does.
+    pub(crate) fn default_name(&self) -> Option<&str> {
+        self.default_name
+            .as_ref()
+            .and_then(|c| c.to_str().ok())
+            .filter(|s| !s.is_empty())
+    }
 }
 
 /// A live minted handle, tagged by kind so ac_shutdown frees it

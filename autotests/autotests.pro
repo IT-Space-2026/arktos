@@ -2,6 +2,7 @@ TEMPLATE = subdirs
 SUBDIRS  = \
     smoke \
     accessibility \
+    acprobe \
     adblock \
     addbookmarkdialog \
     arktosicon \

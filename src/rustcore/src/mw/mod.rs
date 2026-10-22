@@ -52,14 +52,18 @@
 //! tables — append-only, never renumber.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr;
 
 use serde_json::{json, Value};
 
 use crate::error::{self, RcStatus};
 use crate::facade::{self, AcCore};
-use crate::{notify, omnibox, session, settings, util};
+use crate::{
+    bookmarks, containers, cookies, extverify, history, icons, notes, notify, omnibox,
+    opensearch, profiles, profilevault, session, settings, sitedecisions, store, tlsprobe,
+    updates, util,
+};
 
 /// The envelope schema version — the frame's `version` byte and the
 /// ac_mw_version() report.  v1 is the only version; older-but-known
@@ -294,6 +298,45 @@ fn arg_str<'a>(p: &'a Value, name: &str) -> Result<&'a str, OpErr> {
         .ok_or_else(|| OpErr::BadPayload(format!("missing string field \"{name}\"")))
 }
 
+fn arg_i64(p: &Value, name: &str) -> Result<i64, OpErr> {
+    p.get(name)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| OpErr::BadPayload(format!("missing integer field \"{name}\"")))
+}
+
+/// Optional string field — null and absent both read as None.
+fn opt_str<'a>(p: &'a Value, name: &str) -> Result<Option<&'a str>, OpErr> {
+    match p.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.as_str())),
+        Some(_) => bad_payload(format!("\"{name}\" must be a string or null")),
+    }
+}
+
+/// Optional non-negative integer — null and absent both read as
+/// None; a non-number or negative value is a bad payload, never a
+/// silent default.
+fn opt_u64(p: &Value, name: &str) -> Result<Option<u64>, OpErr> {
+    match p.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| OpErr::BadPayload(format!("\"{name}\" must be a non-negative integer"))),
+    }
+}
+
+/// Optional signed integer — null and absent both read as None.
+fn opt_i64(p: &Value, name: &str) -> Result<Option<i64>, OpErr> {
+    match p.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| OpErr::BadPayload(format!("\"{name}\" must be an integer"))),
+    }
+}
+
 /// The {"profile":"<id>"|null} field every scoped op accepts
 /// (MW-ARCH §2.3): absent/null/"" resolves through the domain's own
 /// scope rule; a non-slug id resolves to "default" per the facade's
@@ -305,6 +348,116 @@ fn profile_arg<'a>(p: &'a Value) -> Result<Option<&'a str>, OpErr> {
         Some(Value::String(s)) => Ok(Some(s.as_str())),
         Some(_) => bad_payload("\"profile\" must be a string or null"),
     }
+}
+
+// ---- base64 -----------------------------------------------------------------
+//
+// Byte payloads cross the JSON envelope base64'd — icon PNGs, vault
+// passphrases, manifest bytes.  Field names carry the _b64 suffix so
+// the encoding is never ambiguous on either side.
+
+const B64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn b64_encode(data: &[u8]) -> String {
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(B64_ALPHABET[(n >> 18) as usize & 63] as char);
+        out.push(B64_ALPHABET[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            B64_ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            B64_ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// RFC 4648 strict decode — padding only at the tail, alphabet-only
+/// otherwise.  None on any malformed input.
+fn b64_decode(s: &str) -> Option<Vec<u8>> {
+    let bytes = s.as_bytes();
+    if bytes.len() % 4 != 0 {
+        return None;
+    }
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => (c - b'A') as u32,
+            b'a'..=b'z' => (c - b'a' + 26) as u32,
+            b'0'..=b'9' => (c - b'0' + 52) as u32,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        })
+    };
+    let chunks = bytes.len() / 4;
+    let mut out = Vec::with_capacity(chunks * 3);
+    for (i, chunk) in bytes.chunks(4).enumerate() {
+        let last = i + 1 == chunks;
+        let mut n = 0u32;
+        let mut pad = 0usize;
+        for &c in chunk {
+            if c == b'=' {
+                if !last || pad == 2 {
+                    return None;
+                }
+                pad += 1;
+                n <<= 6;
+            } else {
+                if pad > 0 {
+                    return None; // data after padding
+                }
+                n = (n << 6) | val(c)?;
+            }
+        }
+        out.push((n >> 16) as u8);
+        if pad < 2 {
+            out.push((n >> 8) as u8);
+        }
+        if pad < 1 {
+            out.push(n as u8);
+        }
+    }
+    Some(out)
+}
+
+fn arg_b64(p: &Value, name: &str) -> Result<Vec<u8>, OpErr> {
+    let s = arg_str(p, name)?;
+    b64_decode(s)
+        .ok_or_else(|| OpErr::BadPayload(format!("\"{name}\" is not valid base64")))
+}
+
+// ---- profile binding ---------------------------------------------------------
+//
+// The envelope's handle-free contract (MW-ARCH §2.3): every scoped op
+// resolves {"profile"} to the effective persona id and its
+// profiles/<id>/ dir — the same anchor an Ac* handle's bind computes
+// (profile_dir mkpaths, so first-touch writes can't ENOENT).  The
+// returned id is what change events stamp.
+fn bound_profile_dir(ctx: &MwCtx, p: &Value) -> Result<(PathBuf, String), OpErr> {
+    let eff = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    let root = std::path::Path::new(ctx.core.data_root());
+    Ok((facade::profile_dir(root, &eff), eff))
+}
+
+/// A store path that must reach a C-string contract — a non-UTF-8
+/// path is an environment fault (InvalidArgument), not a bad payload.
+fn path_str(p: &Path) -> Result<&str, OpErr> {
+    p.to_str().ok_or_else(|| {
+        OpErr::Failed(error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "path is not UTF-8".into(),
+        })
+    })
 }
 
 // ---- mw (domain 0) ---------------------------------------------------------
@@ -350,6 +503,23 @@ fn op_mw_ping(_ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
     Ok(json!({ "pong": true, "echo": p }))
 }
 
+/// Fires one namespaced event at the ac_events_* lane — the bridge
+/// lane's own provoke hook (acprobe's event round-trip drives it,
+/// so do conformance harnesses that cannot reach a store mutation).
+/// `topic` must be a declared registry topic: subscribers are
+/// promised *some* producer, and a typo'd topic is a bad payload,
+/// never a silent fire.  `fields` lands in the v1 document beside
+/// the envelope keys.
+fn op_mw_emit(_ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let topic = arg_str(p, "topic")?;
+    if !notify::EVENT_TOPICS.iter().any(|t| t.topic == topic) {
+        return bad_payload(format!("topic \"{topic}\" is not a declared event topic"));
+    }
+    let fields = p.get("fields").cloned().unwrap_or_else(|| json!({}));
+    notify::emit_event(topic, fields);
+    Ok(json!({ "ok": true, "topic": topic }))
+}
+
 const MW_OPS: &[Op] = &[
     Op {
         id: 0x0001,
@@ -374,6 +544,14 @@ const MW_OPS: &[Op] = &[
         profile_scoped: false,
         since: 1,
         handler: op_mw_ping,
+    },
+    Op {
+        id: 0x0004,
+        name: "emit",
+        class: OpClass::Command,
+        profile_scoped: false,
+        since: 1,
+        handler: op_mw_emit,
     },
 ];
 
@@ -485,6 +663,287 @@ const SETTINGS_OPS: &[Op] = &[
     },
 ];
 
+// ---- profiles (domain 2) ------------------------------------------------------
+//
+// The persona registry — RcProfiles opens on the core's data root,
+// the same handle ac_profiles mints.  reload mirrors
+// rc_profiles_reload's contract: persisted silently, no change topic
+// on either surface.
+
+fn profiles_handle(ctx: &MwCtx) -> Result<profiles::RcProfiles, OpErr> {
+    profiles::RcProfiles::open(ctx.core.data_root(), ctx.core.default_name())
+        .map_err(OpErr::Failed)
+}
+
+fn op_profiles_list(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
+    let rows: Vec<Value> = profiles_handle(ctx)?
+        .list()
+        .iter()
+        .map(|p| {
+            json!({
+                "id": p.id,
+                "name": p.name,
+                "avatar": p.avatar,
+                "createdAt": p.created_at,
+            })
+        })
+        .collect();
+    Ok(json!({ "profiles": rows }))
+}
+
+fn op_profiles_reload(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
+    profiles_handle(ctx)?.reload()?;
+    Ok(json!({ "ok": true }))
+}
+
+const PROFILES_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "list",
+        class: OpClass::Query,
+        profile_scoped: false,
+        since: 1,
+        handler: op_profiles_list,
+    },
+    Op {
+        id: 0x0002,
+        name: "reload",
+        class: OpClass::Command,
+        profile_scoped: false,
+        since: 1,
+        handler: op_profiles_reload,
+    },
+];
+
+// ---- history (domain 3) -------------------------------------------------------
+//
+// Process-global store behind the open-path anchor — the envelope
+// binds profiles/<id>/history.db per call (the AcHistory re-assert,
+// minus the handle).  Commands mirror rc_hist_*'s dual emit: the
+// legacy "history" topic plus namespaced "history/changed" stamped
+// with the bound profile.
+
+fn history_db(ctx: &MwCtx, p: &Value) -> Result<(String, String), OpErr> {
+    let (dir, eff) = bound_profile_dir(ctx, p)?;
+    Ok((path_str(&dir.join("history.db"))?.to_string(), eff))
+}
+
+fn op_history_count(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let (db, _eff) = history_db(ctx, p)?;
+    let n = history::with(|h| -> error::RcResult<i64> {
+        h.open(Some(db.as_str()))?;
+        h.count()
+    })?;
+    Ok(json!({ "count": n }))
+}
+
+fn op_history_add(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let url = arg_str(p, "url")?;
+    let title = opt_str(p, "title")?.unwrap_or("");
+    let ts_ms = arg_i64(p, "ts_ms")?;
+    let (db, eff) = history_db(ctx, p)?;
+    history::with(|h| -> error::RcResult<()> {
+        h.open(Some(db.as_str()))?;
+        h.add(url, title, ts_ms)
+    })?;
+    // Flat-path parity: hint first, then both notification lanes.
+    let _hint = notify::profile_hint(&eff);
+    notify::emit("history");
+    notify::emit_event("history/changed", json!({ "op": "visit" }));
+    Ok(json!({ "ok": true }))
+}
+
+fn op_history_query(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let spec = p
+        .get("spec")
+        .ok_or_else(|| OpErr::BadPayload("missing \"spec\" doc".into()))?;
+    let spec_json = serde_json::to_string(spec).unwrap_or_else(|_| "{}".into());
+    let (db, _eff) = history_db(ctx, p)?;
+    let out = history::with(|h| -> error::RcResult<String> {
+        h.open(Some(db.as_str()))?;
+        h.query(&spec_json)
+    })?;
+    // The store answers a JSON array — hand it back as the payload.
+    Ok(serde_json::from_str(&out).unwrap_or(Value::Null))
+}
+
+const HISTORY_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "count",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_history_count,
+    },
+    Op {
+        id: 0x0002,
+        name: "add",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_history_add,
+    },
+    Op {
+        id: 0x0003,
+        name: "query",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_history_query,
+    },
+];
+
+// ---- bookmarks (domain 4) ------------------------------------------------------
+//
+// Process-global tree behind the loaded-file anchor —
+// ensure_path() is the AcBookmarks re-assert: a displaced tree
+// flushes before re-anchoring, a same-file bind is a no-op.  A load
+// that ran emits "bookmarks" like rc_bm_load does.
+
+fn bookmarks_xbel(ctx: &MwCtx, p: &Value) -> Result<(PathBuf, String), OpErr> {
+    let (dir, eff) = bound_profile_dir(ctx, p)?;
+    Ok((dir.join("bookmarks.xbel"), eff))
+}
+
+fn op_bookmarks_get(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let (xbel, _eff) = bookmarks_xbel(ctx, p)?;
+    let id = opt_u64(p, "id")?;
+    bookmarks::with(|b| -> error::RcResult<Value> {
+        b.ensure_path(&xbel)?;
+        match id {
+            None => {
+                let root = b.root();
+                Ok(json!({
+                    "root": root,
+                    "child_count": b.child_count(root).unwrap_or(0),
+                }))
+            }
+            Some(h) => {
+                let doc = b.get_json(h).ok_or_else(|| error::Fail {
+                    status: RcStatus::NotFound,
+                    msg: format!("no bookmark node {h}"),
+                })?;
+                Ok(serde_json::from_str(&doc).unwrap_or(Value::Null))
+            }
+        }
+    })
+    .map_err(OpErr::Failed)
+}
+
+fn op_bookmarks_create(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let node = p
+        .get("node")
+        .ok_or_else(|| OpErr::BadPayload("missing \"node\" doc".into()))?;
+    // row -1 appends, like the flat insert contract.
+    let row = opt_i64(p, "row")?.unwrap_or(-1);
+    let parent_arg = opt_u64(p, "parent")?;
+    let (xbel, eff) = bookmarks_xbel(ctx, p)?;
+    let (created, loaded) = bookmarks::with(|b| -> error::RcResult<(u64, bool)> {
+        let loaded = b.ensure_path(&xbel)?;
+        let parent = parent_arg.unwrap_or_else(|| b.root());
+        let h = b.create(parent, row, node)?;
+        Ok((h, loaded))
+    })?;
+    let _hint = notify::profile_hint(&eff);
+    if loaded {
+        notify::emit("bookmarks"); // the bind's load, like rc_bm_load
+    }
+    notify::emit("bookmarks");
+    Ok(json!({ "id": created }))
+}
+
+const BOOKMARKS_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "get",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_bookmarks_get,
+    },
+    Op {
+        id: 0x0002,
+        name: "create",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_bookmarks_create,
+    },
+];
+
+// ---- policy (domain 5) ---------------------------------------------------------
+//
+// Sitedecisions live behind the data-dir anchor — the envelope
+// re-anchors profiles/<id>/ per call, exactly what ensure_policy
+// does for the flat handle (rc_set_data_dir no-ops on a matching
+// anchor).  Emits mirror rc_sitedec_*: "sitedecisions" on every Ok.
+
+fn policy_bind(ctx: &MwCtx, p: &Value) -> Result<String, OpErr> {
+    let (dir, eff) = bound_profile_dir(ctx, p)?;
+    store::lock()
+        .set_data_dir(path_str(&dir)?)
+        .map_err(OpErr::Failed)?;
+    Ok(eff)
+}
+
+fn op_sitedec_get(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let kind = arg_str(p, "kind")?;
+    let key = arg_str(p, "key")?;
+    policy_bind(ctx, p)?;
+    let v = sitedecisions::get(kind, key)?;
+    Ok(json!({ "value": v }))
+}
+
+fn op_sitedec_set(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let kind = arg_str(p, "kind")?;
+    let key = arg_str(p, "key")?;
+    let value = arg_str(p, "value")?;
+    let eff = policy_bind(ctx, p)?;
+    let changed = sitedecisions::set(kind, key, value)?;
+    let _hint = notify::profile_hint(&eff);
+    notify::emit("sitedecisions");
+    Ok(json!({ "ok": true, "changed": changed }))
+}
+
+fn op_sitedec_lookup(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let kind = arg_str(p, "kind")?;
+    let host = arg_str(p, "host")?;
+    policy_bind(ctx, p)?;
+    let hit = sitedecisions::lookup(kind, host)?;
+    match hit {
+        Some((key, value)) => Ok(json!({ "key": key, "value": value })),
+        None => Ok(json!({ "key": Value::Null, "value": Value::Null })),
+    }
+}
+
+const POLICY_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "sitedec_get",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_sitedec_get,
+    },
+    Op {
+        id: 0x0002,
+        name: "sitedec_set",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_sitedec_set,
+    },
+    Op {
+        id: 0x0003,
+        name: "sitedec_lookup",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_sitedec_lookup,
+    },
+];
+
 // ---- session (domain 6) ------------------------------------------------------
 //
 // Path-bound like the AcSession handle: every op resolves
@@ -565,6 +1024,440 @@ const SESSION_OPS: &[Op] = &[
     },
 ];
 
+// ---- cookies (domain 7) --------------------------------------------------------
+//
+// Process-global store behind the open-path anchor, like history —
+// the envelope binds profiles/<id>/cookies.db per call.  "cookies"
+// emits only when the write actually changed a row (the
+// SetOutcome::Noop rule rc_cookies_set keeps).
+
+fn cookies_db(ctx: &MwCtx, p: &Value) -> Result<(String, String), OpErr> {
+    let (dir, eff) = bound_profile_dir(ctx, p)?;
+    Ok((path_str(&dir.join("cookies.db"))?.to_string(), eff))
+}
+
+fn container_arg<'a>(p: &'a Value) -> Result<Option<&'a str>, OpErr> {
+    opt_str(p, "container")
+}
+
+fn op_cookies_count(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let container = container_arg(p)?;
+    let (db, _eff) = cookies_db(ctx, p)?;
+    let n = cookies::with(|s| -> error::RcResult<i64> {
+        s.open(Some(db.as_str()))?;
+        s.count(container)
+    })?;
+    Ok(json!({ "count": n }))
+}
+
+fn op_cookies_list(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let container = container_arg(p)?;
+    let (db, _eff) = cookies_db(ctx, p)?;
+    let rows = cookies::with(|s| -> error::RcResult<Vec<Value>> {
+        s.open(Some(db.as_str()))?;
+        s.list(container)
+            .map(|v| v.iter().map(|c| c.to_json()).collect())
+    })?;
+    Ok(json!({ "cookies": rows }))
+}
+
+fn op_cookies_set(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let rec = p
+        .get("record")
+        .ok_or_else(|| OpErr::BadPayload("missing \"record\" doc".into()))?;
+    let cookie = cookies::Cookie::from_json(rec)?;
+    let (db, eff) = cookies_db(ctx, p)?;
+    let outcome = cookies::with(|s| -> error::RcResult<cookies::SetOutcome> {
+        s.open(Some(db.as_str()))?;
+        s.set(&cookie)
+    })?;
+    let changed = outcome != cookies::SetOutcome::Noop;
+    if changed {
+        let _hint = notify::profile_hint(&eff);
+        notify::emit("cookies");
+    }
+    let name = match outcome {
+        cookies::SetOutcome::Stored => "stored",
+        cookies::SetOutcome::Deleted => "deleted",
+        cookies::SetOutcome::Noop => "noop",
+    };
+    Ok(json!({ "ok": true, "outcome": name }))
+}
+
+const COOKIES_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "count",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_cookies_count,
+    },
+    Op {
+        id: 0x0002,
+        name: "list",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_cookies_list,
+    },
+    Op {
+        id: 0x0003,
+        name: "set",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_cookies_set,
+    },
+];
+
+// ---- icons (domain 8) ------------------------------------------------------------
+//
+// Fully path-explicit (cache/icons/ under the bound profile dir) —
+// no process-global anchor, same shape as the session ops.  The PNG
+// crosses the payload base64'd ("png_b64").
+
+fn icons_dir(ctx: &MwCtx, p: &Value) -> Result<(PathBuf, String), OpErr> {
+    bound_profile_dir(ctx, p)
+}
+
+fn op_icons_count(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let (dir, _eff) = icons_dir(ctx, p)?;
+    Ok(json!({ "count": icons::count_in(&dir)? }))
+}
+
+fn op_icons_put(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let url = arg_str(p, "url")?;
+    let png = arg_b64(p, "png_b64")?;
+    let (dir, eff) = icons_dir(ctx, p)?;
+    let changed = icons::put_in(&dir, url, &png)?;
+    if changed {
+        let _hint = notify::profile_hint(&eff);
+        notify::emit("icons");
+    }
+    Ok(json!({ "ok": true, "changed": changed }))
+}
+
+fn op_icons_get(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let url = arg_str(p, "url")?;
+    let (dir, _eff) = icons_dir(ctx, p)?;
+    let png = icons::get_in(&dir, url)?;
+    Ok(json!({ "png_b64": b64_encode(&png) }))
+}
+
+const ICONS_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "count",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_icons_count,
+    },
+    Op {
+        id: 0x0002,
+        name: "put",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_icons_put,
+    },
+    Op {
+        id: 0x0003,
+        name: "get",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_icons_get,
+    },
+];
+
+// ---- containers (domain 9) ---------------------------------------------------------
+//
+// The registry is a typed specialization over the profile scope's
+// settings.json — a short-lived RcSettings per call, the AcContainers
+// precedent the settings handlers already follow.
+
+fn containers_scope(ctx: &MwCtx, p: &Value) -> Result<(settings::RcSettings, String), OpErr> {
+    let eff = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    let s = settings::RcSettings::open(ctx.core.data_root(), Some(eff.as_str()))?;
+    Ok((s, eff))
+}
+
+fn op_containers_list(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let (s, _eff) = containers_scope(ctx, p)?;
+    let rows: Vec<Value> = containers::list(&s)?
+        .iter()
+        .map(containers::to_json)
+        .collect();
+    Ok(json!({ "containers": rows }))
+}
+
+fn op_containers_create(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let name = arg_str(p, "name")?;
+    let color = opt_str(p, "color")?.unwrap_or("");
+    let icon = opt_str(p, "icon")?;
+    let (s, eff) = containers_scope(ctx, p)?;
+    let c = containers::create(&s, name, color, icon)?;
+    let _hint = notify::profile_hint(&eff);
+    notify::emit("containers");
+    Ok(containers::to_json(&c))
+}
+
+const CONTAINERS_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "list",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_containers_list,
+    },
+    Op {
+        id: 0x0002,
+        name: "create",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_containers_create,
+    },
+];
+
+// ---- notes (domain 10) -------------------------------------------------------------
+//
+// profiles/<id>/notes.json — RcNotes drops flush a dirty store, so a
+// per-call handle keeps the debounce contract without the envelope
+// inventing a second sync rule.
+
+fn notes_handle(ctx: &MwCtx, p: &Value) -> Result<(notes::RcNotes, String), OpErr> {
+    let eff = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    let h = notes::RcNotes::open(ctx.core.data_root(), Some(eff.as_str()))?;
+    Ok((h, eff))
+}
+
+fn op_notes_count(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let (h, _eff) = notes_handle(ctx, p)?;
+    Ok(json!({ "count": h.count() }))
+}
+
+fn op_notes_list(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let (h, _eff) = notes_handle(ctx, p)?;
+    let rows: Vec<Value> = h
+        .list()
+        .iter()
+        .map(|n| {
+            json!({
+                "title": n.title,
+                "body": n.body,
+                "markdown": n.markdown,
+            })
+        })
+        .collect();
+    Ok(json!({ "notes": rows }))
+}
+
+fn op_notes_insert(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let row = arg_i64(p, "row")?;
+    let title = opt_str(p, "title")?.unwrap_or("");
+    let body = opt_str(p, "body")?.unwrap_or("");
+    let (h, eff) = notes_handle(ctx, p)?;
+    let at = h.insert(row, title, body)?;
+    let _hint = notify::profile_hint(&eff);
+    notify::emit("notes");
+    Ok(json!({ "ok": true, "row": at }))
+}
+
+const NOTES_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "count",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_notes_count,
+    },
+    Op {
+        id: 0x0002,
+        name: "list",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_notes_list,
+    },
+    Op {
+        id: 0x0003,
+        name: "insert",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_notes_insert,
+    },
+];
+
+// ---- custody (domain 11) ------------------------------------------------------------
+//
+// The credential map — profile-dir custody like the flat rc_cred_*
+// callers get after rustCoreEnsureDataDirFor: the envelope re-anchors
+// the shared Store per call (a dir switch drops cached keys, the
+// documented re-assert cost).  The unlocked-custody *handle* itself
+// stays flat (MW-ARCH §2.3) — these ops are the self-contained
+// read/write slice.
+
+fn custody_bind(ctx: &MwCtx, p: &Value) -> Result<String, OpErr> {
+    let (dir, eff) = bound_profile_dir(ctx, p)?;
+    store::lock()
+        .set_data_dir(path_str(&dir)?)
+        .map_err(OpErr::Failed)?;
+    Ok(eff)
+}
+
+fn op_custody_state(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    custody_bind(ctx, p)?;
+    let mut s = store::lock();
+    Ok(json!({
+        "available": s.is_available(),
+        "unlocked": s.is_unlocked(),
+        "passphrase_enabled": s.passphrase_enabled(),
+    }))
+}
+
+fn op_custody_cred_names(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    custody_bind(ctx, p)?;
+    let names = store::lock().cred_names()?;
+    Ok(json!({ "names": names }))
+}
+
+fn op_custody_cred_put(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let name = arg_str(p, "name")?;
+    let value = arg_b64(p, "value_b64")?;
+    let eff = custody_bind(ctx, p)?;
+    let changed = store::lock().cred_put(name, &value)?;
+    if changed {
+        let _hint = notify::profile_hint(&eff);
+        notify::emit("credentials");
+    }
+    Ok(json!({ "ok": true, "changed": changed }))
+}
+
+const CUSTODY_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "state",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_custody_state,
+    },
+    Op {
+        id: 0x0002,
+        name: "cred_names",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_custody_cred_names,
+    },
+    Op {
+        id: 0x0003,
+        name: "cred_put",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_custody_cred_put,
+    },
+];
+
+// ---- opensearch (domain 12) ----------------------------------------------------------
+//
+// searchengines.json sits at the DATA ROOT — the store is global
+// (rustCoreEnsureDataDir(), never a profile dir), so these ops carry
+// no "profile" and bind the core root per call.
+
+fn opensearch_bind(ctx: &MwCtx) -> Result<(), OpErr> {
+    store::lock()
+        .set_data_dir(ctx.core.data_root())
+        .map_err(OpErr::Failed)
+}
+
+fn op_ose_list(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
+    opensearch_bind(ctx)?;
+    let doc = opensearch::list_json()?;
+    // The store answers a bare name array — wrap it like the other
+    // list ops so every domain's payload is a self-describing doc.
+    let names = serde_json::from_str(&doc).unwrap_or_else(|_| json!([]));
+    Ok(json!({ "engines": names }))
+}
+
+fn op_ose_put(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let engine = p
+        .get("engine")
+        .ok_or_else(|| OpErr::BadPayload("missing \"engine\" doc".into()))?;
+    let bytes = serde_json::to_vec(engine)
+        .map_err(|e| OpErr::BadPayload(format!("engine doc: {e}")))?;
+    opensearch_bind(ctx)?;
+    let changed = opensearch::put_json(&bytes)?;
+    if changed {
+        notify::emit("searchengines");
+    }
+    Ok(json!({ "ok": true, "changed": changed }))
+}
+
+const OPENSEARCH_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "list",
+        class: OpClass::Query,
+        profile_scoped: false,
+        since: 1,
+        handler: op_ose_list,
+    },
+    Op {
+        id: 0x0002,
+        name: "put",
+        class: OpClass::Command,
+        profile_scoped: false,
+        since: 1,
+        handler: op_ose_put,
+    },
+];
+
+// ---- updates (domain 13) --------------------------------------------------------------
+//
+// Update-check policy/state — a GLOBAL-scope settings specialization
+// (updates::read_state's own contract: profile-bound handles would
+// silently scope the keys to the persona, which nothing writes).
+
+fn op_updates_state(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
+    let s = settings::RcSettings::open(ctx.core.data_root(), None)?;
+    Ok(updates::read_state(&s)?.to_json())
+}
+
+fn op_updates_record_check(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let now_ms = arg_i64(p, "now_ms")?;
+    let s = settings::RcSettings::open(ctx.core.data_root(), None)?;
+    updates::record_check(&s, now_ms)?;
+    notify::emit("updates");
+    Ok(json!({ "ok": true }))
+}
+
+const UPDATES_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "state",
+        class: OpClass::Query,
+        profile_scoped: false,
+        since: 1,
+        handler: op_updates_state,
+    },
+    Op {
+        id: 0x0002,
+        name: "record_check",
+        class: OpClass::Command,
+        profile_scoped: false,
+        since: 1,
+        handler: op_updates_record_check,
+    },
+];
+
 // ---- services (domain 14) -----------------------------------------------------
 //
 // Stateless queries/commands — no store, no profile, no emits.
@@ -588,39 +1481,151 @@ fn op_classify_input(_ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
     Ok(omnibox::classify(input, &keywords, search_fallback))
 }
 
-const SERVICES_OPS: &[Op] = &[Op {
+/// The second-opinion TLS probe — a COMMAND, not a query: it performs
+/// a live handshake against host:port (MW-ARCH §1's "submits work to
+/// a live channel"), the one honest network exception the keep-out
+/// list grants.  The verdict JSON reports every outcome — a refused
+/// or unreachable target is still an Ok response, never an op fault.
+fn op_tls_probe(_ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let host = arg_str(p, "host")?;
+    let port = arg_i64(p, "port")?;
+    if !(1..=65535).contains(&port) {
+        return bad_payload("\"port\" must be 1..=65535");
+    }
+    let flags = opt_u64(p, "flags")?.unwrap_or(0) as u32;
+    Ok(tlsprobe::check(host, port as u16, flags))
+}
+
+const SERVICES_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "classify_input",
+        class: OpClass::Query,
+        profile_scoped: false,
+        since: 1,
+        handler: op_classify_input,
+    },
+    Op {
+        id: 0x0002,
+        name: "tls_probe",
+        class: OpClass::Command,
+        profile_scoped: false,
+        since: 1,
+        handler: op_tls_probe,
+    },
+];
+
+// ---- extverify (domain 15) -------------------------------------------------------
+//
+// Extension package verification — pure transform, so the domain is
+// query-only BY DESIGN: a verification owns no state and writing a
+// fake "command" would be table-padding.  Command-class requests
+// correctly refuse with unknown_op.
+
+fn op_ext_manifest_check(_ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let data = arg_b64(p, "data_b64")?;
+    let report = extverify::manifest_check(&data)?;
+    // The verdict is a JSON document; hand it back as the payload.
+    Ok(serde_json::from_slice(&report).unwrap_or(Value::Null))
+}
+
+const EXTVERIFY_OPS: &[Op] = &[Op {
     id: 0x0001,
-    name: "classify_input",
+    name: "manifest_check",
     class: OpClass::Query,
     profile_scoped: false,
     since: 1,
-    handler: op_classify_input,
+    handler: op_ext_manifest_check,
 }];
+
+// ---- vault (domain 16) -------------------------------------------------------------
+//
+// The rv_* archive ops — path+passphrase self-contained calls, no
+// handle state (the *unlocked custody* handle is what §2.3 keeps
+// flat, and it lives in the custody domain anyway).  Paths are
+// explicit by design: vault ops name their own dir/blob, the
+// envelope does not bind them under profiles/.
+
+fn arg_path<'a>(p: &'a Value, name: &str) -> Result<PathBuf, OpErr> {
+    Ok(PathBuf::from(arg_str(p, name)?))
+}
+
+fn op_vault_inspect(_ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let path = arg_path(p, "path")?;
+    let doc = profilevault::inspect_file(&path)?;
+    Ok(serde_json::from_str(&doc).unwrap_or(Value::Null))
+}
+
+fn op_vault_seal(_ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let dir = arg_path(p, "dir")?;
+    let out = arg_path(p, "out")?;
+    let pass = arg_b64(p, "pass_b64")?;
+    let algo = opt_u64(p, "algo")?.unwrap_or(1) as u8;
+    let mut progress = profilevault::Progress::new(None, ptr::null_mut());
+    profilevault::seal_dir(&dir, &pass, algo, &out, &mut progress)?;
+    Ok(json!({ "ok": true, "out": out.to_string_lossy() }))
+}
+
+fn op_vault_verify(_ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let path = arg_path(p, "path")?;
+    let pass = arg_b64(p, "pass_b64")?;
+    let mut progress = profilevault::Progress::new(None, ptr::null_mut());
+    profilevault::verify_file(&path, &pass, &mut progress)?;
+    Ok(json!({ "ok": true }))
+}
+
+const VAULT_OPS: &[Op] = &[
+    Op {
+        id: 0x0001,
+        name: "inspect",
+        class: OpClass::Query,
+        profile_scoped: false,
+        since: 1,
+        handler: op_vault_inspect,
+    },
+    Op {
+        id: 0x0002,
+        name: "seal",
+        class: OpClass::Command,
+        profile_scoped: false,
+        since: 1,
+        handler: op_vault_seal,
+    },
+    Op {
+        id: 0x0003,
+        name: "verify",
+        class: OpClass::Query,
+        profile_scoped: false,
+        since: 1,
+        handler: op_vault_verify,
+    },
+];
 
 // ---- registry ------------------------------------------------------------------
 //
-// Domain ids are MW-ARCH §7's, frozen here.  Domains with no ops yet
-// register their name so mw.describe reports the full map with an
-// honest empty ops list.
+// Domain ids are MW-ARCH §7's, frozen here.  tor and bidi register
+// their names but stay op-less BY DESIGN — §2.3 keeps the tor
+// control link and the BiDi client on the flat surface, so
+// mw.describe reports an honest empty ops list for them.
 
 const DOMAINS: &[Domain] = &[
     Domain { id: 0, name: "mw", ops: MW_OPS },
     Domain { id: 1, name: "settings", ops: SETTINGS_OPS },
-    Domain { id: 2, name: "profiles", ops: &[] },
-    Domain { id: 3, name: "history", ops: &[] },
-    Domain { id: 4, name: "bookmarks", ops: &[] },
-    Domain { id: 5, name: "policy", ops: &[] },
+    Domain { id: 2, name: "profiles", ops: PROFILES_OPS },
+    Domain { id: 3, name: "history", ops: HISTORY_OPS },
+    Domain { id: 4, name: "bookmarks", ops: BOOKMARKS_OPS },
+    Domain { id: 5, name: "policy", ops: POLICY_OPS },
     Domain { id: 6, name: "session", ops: SESSION_OPS },
-    Domain { id: 7, name: "cookies", ops: &[] },
-    Domain { id: 8, name: "icons", ops: &[] },
-    Domain { id: 9, name: "containers", ops: &[] },
-    Domain { id: 10, name: "notes", ops: &[] },
-    Domain { id: 11, name: "custody", ops: &[] },
-    Domain { id: 12, name: "opensearch", ops: &[] },
-    Domain { id: 13, name: "updates", ops: &[] },
+    Domain { id: 7, name: "cookies", ops: COOKIES_OPS },
+    Domain { id: 8, name: "icons", ops: ICONS_OPS },
+    Domain { id: 9, name: "containers", ops: CONTAINERS_OPS },
+    Domain { id: 10, name: "notes", ops: NOTES_OPS },
+    Domain { id: 11, name: "custody", ops: CUSTODY_OPS },
+    Domain { id: 12, name: "opensearch", ops: OPENSEARCH_OPS },
+    Domain { id: 13, name: "updates", ops: UPDATES_OPS },
     Domain { id: 14, name: "services", ops: SERVICES_OPS },
-    Domain { id: 15, name: "extverify", ops: &[] },
-    Domain { id: 16, name: "vault", ops: &[] },
+    Domain { id: 15, name: "extverify", ops: EXTVERIFY_OPS },
+    Domain { id: 16, name: "vault", ops: VAULT_OPS },
     Domain { id: 17, name: "tor", ops: &[] },
     Domain { id: 18, name: "bidi", ops: &[] },
 ];
@@ -971,7 +1976,7 @@ mod tests {
             .iter()
             .map(|o| o["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["describe", "version", "ping"]);
+        assert_eq!(names, ["describe", "version", "ping", "emit"]);
         let events = d["events"].as_array().unwrap();
         assert_eq!(events.len(), EVENT_TOPICS.len());
         assert!(d["error_codes"]
@@ -1179,8 +2184,9 @@ mod tests {
         assert_eq!(r.err().0, "unknown_op");
 
         // An empty-ops domain reports unknown_op too (registered
-        // name, no dispatchable surface yet).
-        let r = call(core.0, &query(62, 3, 0x0001, ""));
+        // name, no dispatchable surface — tor/bidi stay flat by
+        // MW-ARCH §2.3).
+        let r = call(core.0, &query(62, 17, 0x0001, ""));
         assert_eq!(r.err().0, "unknown_op");
     }
 
@@ -1321,5 +2327,455 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn b64_round_trip_and_strictness() {
+        for bytes in [
+            &b""[..],
+            b"f",
+            b"fo",
+            b"foo",
+            b"foob",
+            b"fooba",
+            b"foobar",
+            &[0u8, 159, 146, 150, 255, 0],
+        ] {
+            let enc = b64_encode(bytes);
+            assert_eq!(b64_decode(&enc).as_deref(), Some(bytes), "{enc}");
+        }
+        // Strict grammar: no missing/wrong padding, no data after
+        // padding, no out-of-alphabet bytes.
+        for bad in ["Zg", "Zg=", "Zg==Zg==", "Z==", "Zg=b", "Zm 9v", "Zm9v!", "Zm=v"] {
+            assert_eq!(b64_decode(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn profiles_domain_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("pro"));
+        let r = call(core.0, &query(1, 2, 0x0001, ""));
+        let rows = r.ok()["profiles"].as_array().unwrap().clone();
+        // A fresh core mints the default persona.
+        assert!(rows.iter().any(|p| p["id"] == "default"), "{rows:?}");
+        let r = call(core.0, &command(2, 2, 0x0002, ""));
+        assert_eq!(r.ok()["ok"], true);
+    }
+
+    #[test]
+    fn history_domain_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("his"));
+        let r = call(core.0, &query(1, 3, 0x0001, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["count"], 0);
+
+        let r = call(
+            core.0,
+            &command(
+                2,
+                3,
+                0x0002,
+                r#"{"profile":"w1","url":"https://a/","title":"A","ts_ms":111}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+
+        let r = call(core.0, &query(3, 3, 0x0001, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["count"], 1);
+        // The spec doc passes straight through to the store's query.
+        let r = call(
+            core.0,
+            &query(4, 3, 0x0003, r#"{"profile":"w1","spec":{"limit":10}}"#),
+        );
+        let rows = r.ok().as_array().unwrap();
+        assert!(rows.iter().any(|e| e["url"] == "https://a/"), "{rows:?}");
+
+        // Persona isolation: the same core, another profile id.
+        let r = call(core.0, &query(5, 3, 0x0001, r#"{"profile":"w2"}"#));
+        assert_eq!(r.ok()["count"], 0);
+    }
+
+    #[test]
+    fn bookmarks_domain_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("bm"));
+        let r = call(core.0, &query(1, 4, 0x0001, r#"{"profile":"w1"}"#));
+        let root = r.ok()["root"].as_u64().unwrap();
+        assert_ne!(root, 0);
+
+        let r = call(
+            core.0,
+            &command(
+                2,
+                4,
+                0x0002,
+                r#"{"profile":"w1","node":{"type":2,"title":"A","url":"https://a/"}}"#,
+            ),
+        );
+        let id = r.ok()["id"].as_u64().unwrap();
+        assert_ne!(id, 0);
+
+        let payload = format!(r#"{{"profile":"w1","id":{id}}}"#);
+        let r = call(core.0, &query(3, 4, 0x0001, &payload));
+        assert_eq!(r.ok()["title"], "A");
+        assert_eq!(r.ok()["url"], "https://a/");
+
+        // A bogus node id is a structured op_failed, not a panic.
+        let r = call(
+            core.0,
+            &query(4, 4, 0x0001, r#"{"profile":"w1","id":999999}"#),
+        );
+        let (code, status, _m) = r.err();
+        assert_eq!(code, "op_failed");
+        assert_eq!(status, RcStatus::NotFound as i64);
+    }
+
+    #[test]
+    fn policy_domain_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("pol"));
+        // Miss reads as a null value — a query answering "no
+        // decision" is Ok, not an error envelope.
+        let r = call(
+            core.0,
+            &query(1, 5, 0x0001, r#"{"profile":"w1","kind":"zoom","key":"example.com"}"#),
+        );
+        assert_eq!(r.ok()["value"], Value::Null);
+
+        let r = call(
+            core.0,
+            &command(
+                2,
+                5,
+                0x0002,
+                r#"{"profile":"w1","kind":"zoom","key":"example.com","value":"125"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["changed"], true);
+
+        let r = call(
+            core.0,
+            &query(3, 5, 0x0001, r#"{"profile":"w1","kind":"zoom","key":"example.com"}"#),
+        );
+        assert_eq!(r.ok()["value"], "125");
+        // The host-walk lookup hits the stored suffix rule.
+        let r = call(
+            core.0,
+            &query(4, 5, 0x0003, r#"{"profile":"w1","kind":"zoom","host":"sub.example.com"}"#),
+        );
+        assert_eq!(r.ok()["key"], "example.com");
+        assert_eq!(r.ok()["value"], "125");
+    }
+
+    #[test]
+    fn cookies_domain_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("cok"));
+        let r = call(core.0, &query(1, 7, 0x0001, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["count"], 0);
+
+        let rec = r#"{"profile":"w1","record":{"name":"s","value":"v","domain":"example.com","path":"/"}}"#;
+        let r = call(core.0, &command(2, 7, 0x0003, rec));
+        assert_eq!(r.ok()["outcome"], "stored");
+
+        let r = call(core.0, &query(3, 7, 0x0001, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["count"], 1);
+        let r = call(core.0, &query(4, 7, 0x0002, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["cookies"][0]["name"], "s");
+
+        // Re-setting the identical record is a Noop — and stays Ok.
+        let r = call(core.0, &command(5, 7, 0x0003, rec));
+        assert_eq!(r.ok()["outcome"], "noop");
+    }
+
+    #[test]
+    fn icons_domain_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("ico"));
+        let png = b64_encode(b"\x89PNG-fake");
+        let set = format!(
+            r#"{{"profile":"w1","url":"https://a/","png_b64":"{png}"}}"#
+        );
+        let r = call(core.0, &command(1, 8, 0x0002, &set));
+        assert_eq!(r.ok()["changed"], true);
+
+        let r = call(core.0, &query(2, 8, 0x0001, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["count"], 1);
+        let r = call(
+            core.0,
+            &query(3, 8, 0x0003, r#"{"profile":"w1","url":"https://a/"}"#),
+        );
+        assert_eq!(r.ok()["png_b64"], png);
+
+        // A miss is op_failed/NotFound; malformed b64 is bad_payload.
+        let r = call(
+            core.0,
+            &query(4, 8, 0x0003, r#"{"profile":"w1","url":"https://nope/"}"#),
+        );
+        assert_eq!(r.err().1, RcStatus::NotFound as i64);
+        let r = call(
+            core.0,
+            &command(
+                5,
+                8,
+                0x0002,
+                r#"{"profile":"w1","url":"https://a/","png_b64":"!!!"}"#,
+            ),
+        );
+        assert_eq!(r.err().0, "bad_payload");
+    }
+
+    #[test]
+    fn containers_domain_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("con"));
+        let r = call(core.0, &query(1, 9, 0x0001, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["containers"].as_array().unwrap().len(), 0);
+
+        let r = call(
+            core.0,
+            &command(
+                2,
+                9,
+                0x0002,
+                r#"{"profile":"w1","name":"Work","color":"blue"}"#,
+            ),
+        );
+        let c = r.ok();
+        assert_eq!(c["name"], "Work");
+        assert!(!c["id"].as_str().unwrap().is_empty());
+
+        let r = call(core.0, &query(3, 9, 0x0001, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["containers"].as_array().unwrap().len(), 1);
+        // A blank name is a store-level InvalidArgument — op_failed.
+        let r = call(
+            core.0,
+            &command(4, 9, 0x0002, r#"{"profile":"w1","name":" "}"#),
+        );
+        assert_eq!(r.err().0, "op_failed");
+    }
+
+    #[test]
+    fn notes_domain_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("not"));
+        let r = call(
+            core.0,
+            &command(
+                1,
+                10,
+                0x0003,
+                r#"{"profile":"w1","row":-1,"title":"T","body":"B"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+
+        let r = call(core.0, &query(2, 10, 0x0001, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["count"], 1);
+        let r = call(core.0, &query(3, 10, 0x0002, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["notes"][0]["title"], "T");
+        assert_eq!(r.ok()["notes"][0]["body"], "B");
+    }
+
+    #[test]
+    fn custody_domain_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("cus"));
+        let r = call(core.0, &query(1, 11, 0x0001, r#"{"profile":"w1"}"#));
+        let st = r.ok();
+        assert!(st["available"].is_boolean());
+        assert!(st["passphrase_enabled"].is_boolean());
+
+        // put a credential (file-key custody — no passphrase needed),
+        // read the name list back.
+        let v = b64_encode(b"sekrit");
+        let payload =
+            format!(r#"{{"profile":"w1","name":"net/pw","value_b64":"{v}"}}"#);
+        let r = call(core.0, &command(2, 11, 0x0003, &payload));
+        assert_eq!(r.ok()["changed"], true);
+        let r = call(core.0, &query(3, 11, 0x0002, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["names"], json!(["net/pw"]));
+    }
+
+    #[test]
+    fn opensearch_domain_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("ose"));
+        let engine = r#"{"engine":{"name":"ProbeSE","search":{"template":"https://se/?q={searchTerms}"}}}"#;
+        let r = call(core.0, &command(1, 12, 0x0002, engine));
+        assert_eq!(r.ok()["changed"], true);
+
+        let r = call(core.0, &query(2, 12, 0x0001, ""));
+        let names: Vec<&str> = r.ok()["engines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e.as_str())
+            .collect();
+        assert!(names.contains(&"ProbeSE"), "{names:?}");
+
+        // An invalid record (no search template) is a store
+        // InvalidArgument — op_failed, not bad_payload.
+        let r = call(
+            core.0,
+            &command(3, 12, 0x0002, r#"{"engine":{"name":"Bogus"}}"#),
+        );
+        assert_eq!(r.err().0, "op_failed");
+    }
+
+    #[test]
+    fn updates_domain_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("upd"));
+        let r = call(core.0, &query(1, 13, 0x0001, ""));
+        assert_eq!(r.ok()["last_check_ms"], 0);
+
+        let r = call(
+            core.0,
+            &command(2, 13, 0x0002, r#"{"now_ms":123456789}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(3, 13, 0x0001, ""));
+        assert_eq!(r.ok()["last_check_ms"], 123456789);
+        assert!(r.ok()["channel"].is_string());
+    }
+
+    #[test]
+    fn services_tls_probe_is_a_command() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("tls"));
+        // Port range validation is bad_payload before any socket.
+        let r = call(
+            core.0,
+            &command(1, 14, 0x0002, r#"{"host":"127.0.0.1","port":0}"#),
+        );
+        assert_eq!(r.err().0, "bad_payload");
+        // A live handshake against a refused port is still an Ok
+        // envelope — the verdict JSON carries the failure.
+        let r = call(
+            core.0,
+            &command(2, 14, 0x0002, r#"{"host":"127.0.0.1","port":1}"#),
+        );
+        let v = r.ok();
+        assert!(v.is_object(), "{v}");
+    }
+
+    #[test]
+    fn extverify_manifest_check() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("ext"));
+        let manifest = b64_encode(br#"{"manifest_version":3,"name":"t","version":"1.0"}"#);
+        let payload = format!(r#"{{"data_b64":"{manifest}"}}"#);
+        let r = call(core.0, &query(1, 15, 0x0001, &payload));
+        let doc = r.ok();
+        assert!(doc.is_object(), "{doc}");
+
+        // Non-JSON manifest bytes are Corrupt — an op_failed, and
+        // malformed b64 never reaches the checker.
+        let payload = format!(r#"{{"data_b64":"{}"}}"#, b64_encode(b"not json"));
+        let r = call(core.0, &query(2, 15, 0x0001, &payload));
+        assert_eq!(r.err().0, "op_failed");
+        let r = call(core.0, &query(3, 15, 0x0001, r#"{"data_b64":"%%"}"#));
+        assert_eq!(r.err().0, "bad_payload");
+        // Query-only domain: a command demand is a class mismatch.
+        let r = call(core.0, &command(4, 15, 0x0001, &payload));
+        assert_eq!(r.err().0, "malformed");
+    }
+
+    #[test]
+    fn vault_domain_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("vt"));
+        // The vault takes explicit paths — stage a payload dir inside
+        // the same temp root, seal it under a passphrase.
+        let root = std::env::temp_dir().join(format!(
+            "rustcore-mw-{}-vtsrc-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("f.txt"), b"payload").unwrap();
+        let blob = root.join("out.rv");
+        let pass = b64_encode(b"a sufficiently long passphrase");
+
+        let payload = format!(
+            r#"{{"dir":"{}","out":"{}","pass_b64":"{pass}","algo":1}}"#,
+            src.display(),
+            blob.display()
+        );
+        let r = call(core.0, &command(1, 16, 0x0002, &payload));
+        assert_eq!(r.ok()["ok"], true);
+
+        let payload = format!(r#"{{"path":"{}"}}"#, blob.display());
+        let r = call(core.0, &query(2, 16, 0x0001, &payload));
+        let doc = r.ok();
+        assert!(doc.is_object(), "{doc}");
+
+        let payload = format!(
+            r#"{{"path":"{}","pass_b64":"{pass}"}}"#,
+            blob.display()
+        );
+        let r = call(core.0, &query(3, 16, 0x0003, &payload));
+        assert_eq!(r.ok()["ok"], true);
+
+        // A wrong passphrase is WrongPassword — op_failed, never a
+        // crash.
+        let wrong = b64_encode(b"the wrong passphrase entirely");
+        let payload = format!(
+            r#"{{"path":"{}","pass_b64":"{wrong}"}}"#,
+            blob.display()
+        );
+        let r = call(core.0, &query(4, 16, 0x0003, &payload));
+        let (code, status, _m) = r.err();
+        assert_eq!(code, "op_failed");
+        assert_eq!(status, RcStatus::WrongPassword as i64);
+    }
+
+    /// The mw.emit provoke hook fires the real subscriber lane —
+    /// the path acprobe's --bridge leg drives.
+    #[test]
+    fn mw_emit_fires_declared_topic() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static HITS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn cb(
+            _topic: *const std::ffi::c_char,
+            _payload: *const std::ffi::c_char,
+            _ud: *mut std::ffi::c_void,
+        ) {
+            HITS.fetch_add(1, Ordering::SeqCst);
+        }
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("emit"));
+        let filter = std::ffi::CString::new("history/").unwrap();
+        HITS.store(0, Ordering::SeqCst);
+        let id = unsafe {
+            facade::ac_events_subscribe(core.0, filter.as_ptr(), Some(cb), ptr::null_mut())
+        };
+        assert_ne!(id, 0);
+
+        let r = call(
+            core.0,
+            &command(1, 0, 0x0004, r#"{"topic":"history/changed","fields":{"op":"visit"}}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        assert_eq!(HITS.load(Ordering::SeqCst), 1);
+
+        // An undeclared topic is a bad payload, and emits nothing.
+        let r = call(
+            core.0,
+            &command(2, 0, 0x0004, r#"{"topic":"bogus/thing"}"#),
+        );
+        assert_eq!(r.err().0, "bad_payload");
+        assert_eq!(HITS.load(Ordering::SeqCst), 1);
+
+        assert_eq!(
+            unsafe { facade::ac_events_unsubscribe(core.0, id) },
+            RcStatus::Ok
+        );
     }
 }

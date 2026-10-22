@@ -80,11 +80,510 @@ static void join_path(char *out, size_t n, const char *a, const char *b,
     snprintf(out, n, "%s/%s/%s", a, b, c);
 }
 
+/* ---- MB05 bridge leg --------------------------------------------------
+ *
+ * The --bridge mode: exercises the middleware end-to-end — the MB02
+ * envelope (one query + one command dispatched per domain), the MB03
+ * namespaced event lane (subscribe, provoke, verify, unsubscribe),
+ * and the MB04 capability matrix.  Envelope framing is MW-ARCH §3 v1:
+ * a 20-byte little-endian header + UTF-8 JSON payload.
+ */
+
+#define MW_TY_QUERY   1
+#define MW_TY_COMMAND 2
+#define MW_TY_OK      3
+#define MW_TY_ERROR   4
+#define MW_HEADER     20
+
+static size_t mw_frame(unsigned char *buf, unsigned char type,
+                       unsigned long long corr, unsigned char domain,
+                       unsigned short op, const char *payload)
+{
+    const size_t plen = payload ? strlen(payload) : 0;
+    int i;
+    memcpy(buf, "AM", 2);
+    buf[2] = 1; /* envelope schema version */
+    buf[3] = type;
+    for (i = 0; i < 8; ++i)
+        buf[4 + i] = (unsigned char)((corr >> (8 * i)) & 0xff);
+    buf[12] = domain;
+    buf[13] = 0; /* flags */
+    buf[14] = (unsigned char)(op & 0xff);
+    buf[15] = (unsigned char)((op >> 8) & 0xff);
+    for (i = 0; i < 4; ++i)
+        buf[16 + i] = (unsigned char)((plen >> (8 * i)) & 0xff);
+    if (plen)
+        memcpy(buf + MW_HEADER, payload, plen);
+    return MW_HEADER + plen;
+}
+
+typedef struct MwResp {
+    int type;              /* MW_TY_OK / MW_TY_ERROR */
+    unsigned long long corr;
+    int domain;
+    int op;
+    AcBuffer body;         /* JSON; free via ac_buffer_free */
+} MwResp;
+
+/* One dispatch round-trip: builds the request frame, calls
+ * ac_mw_dispatch, parses the response header.  Returns 0 on a parsed
+ * envelope (either type), -1 on a bare transport failure. */
+static int mw_call(AcCore *core, unsigned char type,
+                   unsigned long long corr, unsigned char domain,
+                   unsigned short op, const char *payload, MwResp *r)
+{
+    unsigned char req[8192];
+    size_t n = mw_frame(req, type, corr, domain, op, payload);
+    AcBuffer out = {NULL, 0};
+    memset(r, 0, sizeof(*r));
+    if (ac_mw_dispatch(core, req, n, &out) != AC_OK)
+        return -1;
+    CHECK(out.len >= MW_HEADER && memcmp(out.data, "AM", 2) == 0,
+          "response is not an envelope");
+    r->type = out.data[3];
+    r->corr = 0;
+    {
+        int i;
+        for (i = 0; i < 8; ++i)
+            r->corr |= (unsigned long long)out.data[4 + i] << (8 * i);
+    }
+    r->domain = out.data[12];
+    r->op = out.data[14] | (out.data[15] << 8);
+    /* Move the payload span into its own buffer. */
+    r->body.len = out.len - MW_HEADER;
+    r->body.data = malloc(r->body.len ? r->body.len : 1);
+    if (r->body.len)
+        memcpy(r->body.data, (const unsigned char *)out.data + MW_HEADER,
+               r->body.len);
+    ac_buffer_free(out);
+    return 0;
+}
+
+static void mw_resp_free(MwResp *r)
+{
+    free(r->body.data);
+    r->body.data = NULL;
+    r->body.len = 0;
+}
+
+static int resp_ok(const MwResp *r)
+{
+    return r->type == MW_TY_OK;
+}
+
+static int resp_err_code_is(const MwResp *r, const char *code)
+{
+    char needle[80];
+    snprintf(needle, sizeof(needle), "\"code\":\"%s\"", code);
+    return r->type == MW_TY_ERROR &&
+           buf_contains(r->body.data, r->body.len, needle);
+}
+
+/* Namespaced-event callback accounting (ac_events_subscribe lane). */
+static int ev_hits;
+static char ev_last_topic[64];
+static char ev_last_payload[512];
+
+static void on_event(const char *topic, const char *payload_json,
+                     void *userdata)
+{
+    (void)userdata;
+    ev_hits++;
+    snprintf(ev_last_topic, sizeof(ev_last_topic), "%s",
+             topic ? topic : "");
+    snprintf(ev_last_payload, sizeof(ev_last_payload), "%s",
+             payload_json ? payload_json : "");
+}
+
+/* One table row per dispatched op — MB05's "at least one query +
+ * one command per domain" spelled out, with the payload substring the
+ * ok response must carry.  opname feeds the describe-advertised check. */
+struct bridge_step {
+    int domain;
+    int op;
+    int ty;
+    const char *domain_name;
+    const char *op_name;
+    const char *payload;
+    const char *expect;      /* substring in an ok body; NULL = just ok */
+    const char *err_code;    /* expected error code; NULL = expect ok */
+};
+
+#define MAX_PAYLOAD 2048
+
+static int run_bridge(const char *root)
+{
+    AcCore *core;
+    AcConfig cfg;
+    MwResp r;
+    AcBuffer caps = {NULL, 0};
+    unsigned long long corr = 0x1000;
+    size_t i;
+
+    /* Vault needs a staged source dir under the scratch root. */
+    char vault_src[600], vault_out[600], vault_file[640];
+    char payload[MAX_PAYLOAD];
+    snprintf(vault_src, sizeof(vault_src), "%s/vault-src", root);
+    snprintf(vault_out, sizeof(vault_out), "%s/vault.rv", root);
+    snprintf(vault_file, sizeof(vault_file), "%s/f.txt", vault_src);
+    mkdir(vault_src, 0700);
+    {
+        FILE *f = fopen(vault_file, "wb");
+        if (f) {
+            fputs("payload", f);
+            fclose(f);
+        }
+    }
+    snprintf(payload, sizeof(payload),
+             "{\"dir\":\"%s\",\"out\":\"%s\","
+             "\"pass_b64\":\"cHJvYmUtdmF1bHQtcGFzcw==\",\"algo\":1}",
+             vault_src, vault_out);
+    char vault_seal[MAX_PAYLOAD];
+    snprintf(vault_seal, sizeof(vault_seal), "%s", payload);
+    snprintf(payload, sizeof(payload),
+             "{\"path\":\"%s\"}", vault_out);
+    char vault_inspect[MAX_PAYLOAD];
+    snprintf(vault_inspect, sizeof(vault_inspect), "%s", payload);
+    snprintf(payload, sizeof(payload),
+             "{\"path\":\"%s\",\"pass_b64\":\"cHJvYmUtdmF1bHQtcGFzcw==\"}",
+             vault_out);
+    char vault_verify[MAX_PAYLOAD];
+    snprintf(vault_verify, sizeof(vault_verify), "%s", payload);
+
+    /* One query + one command per domain.  Domains with no envelope
+     * surface BY DESIGN (tor, bidi — MW-ARCH §2.3 keeps the control
+     * link and the BiDi client flat) get probe ops that must answer
+     * unknown_op envelopes, not crashes or Ok.  Query-only extverify
+     * gets its command demand as a class-mismatch check. */
+    const struct bridge_step steps[] = {
+        /* mw — the meta domain itself. */
+        {0, 0x0001, MW_TY_QUERY, "mw", "describe", "",
+         "\"envelope_version\":1", NULL},
+        {0, 0x0002, MW_TY_QUERY, "mw", "version", "",
+         "\"api_version\":", NULL},
+        {0, 0x0003, MW_TY_QUERY, "mw", "ping", "{\"x\":1}",
+         "\"pong\":true", NULL},
+        /* emit is also the second event provoke (history/ filter). */
+        {0, 0x0004, MW_TY_COMMAND, "mw", "emit",
+         "{\"topic\":\"history/changed\",\"fields\":{\"op\":\"visit\"}}",
+         "\"ok\":true", NULL},
+        /* settings — the proving-slice domain. */
+        {1, 0x0004, MW_TY_COMMAND, "settings", "set",
+         "{\"key\":\"MWBridge/probe\",\"value\":{\"t\":\"s\",\"v\":\"x\"}}",
+         "\"ok\":true", NULL},
+        {1, 0x0001, MW_TY_QUERY, "settings", "get",
+         "{\"key\":\"MWBridge/probe\"}", "\"v\":\"x\"", NULL},
+        /* profiles — the persona registry. */
+        {2, 0x0001, MW_TY_QUERY, "profiles", "list", "",
+         "\"default\"", NULL},
+        {2, 0x0002, MW_TY_COMMAND, "profiles", "reload", "",
+         "\"ok\":true", NULL},
+        /* history — the add also provokes history/changed. */
+        {3, 0x0001, MW_TY_QUERY, "history", "count",
+         "{\"profile\":\"probe\"}", "\"count\":0", NULL},
+        {3, 0x0002, MW_TY_COMMAND, "history", "add",
+         "{\"profile\":\"probe\",\"url\":\"https://probe/\","
+         "\"title\":\"P\",\"ts_ms\":1}",
+         "\"ok\":true", NULL},
+        {3, 0x0003, MW_TY_QUERY, "history", "query",
+         "{\"profile\":\"probe\",\"spec\":{\"limit\":10}}",
+         "https://probe/", NULL},
+        /* bookmarks. */
+        {4, 0x0001, MW_TY_QUERY, "bookmarks", "get",
+         "{\"profile\":\"probe\"}", "\"root\":", NULL},
+        {4, 0x0002, MW_TY_COMMAND, "bookmarks", "create",
+         "{\"profile\":\"probe\",\"node\":{\"type\":2,"
+         "\"title\":\"P\",\"url\":\"https://p/\"}}",
+         "\"id\":", NULL},
+        /* policy — the sitedecisions slice. */
+        {5, 0x0002, MW_TY_COMMAND, "policy", "sitedec_set",
+         "{\"profile\":\"probe\",\"kind\":\"zoom\","
+         "\"key\":\"example.com\",\"value\":\"125\"}",
+         "\"changed\":true", NULL},
+        {5, 0x0001, MW_TY_QUERY, "policy", "sitedec_get",
+         "{\"profile\":\"probe\",\"kind\":\"zoom\","
+         "\"key\":\"example.com\"}",
+         "\"value\":\"125\"", NULL},
+        /* session. */
+        {6, 0x0003, MW_TY_COMMAND, "session", "save",
+         "{\"profile\":\"probe\",\"session\":{\"version\":1,"
+         "\"windows\":[{\"shell\":\"\",\"current\":-1,"
+         "\"engine\":\"webengine\",\"tabs\":[]}]}}",
+         "\"ok\":true", NULL},
+        {6, 0x0001, MW_TY_QUERY, "session", "exists",
+         "{\"profile\":\"probe\"}", "\"exists\":true", NULL},
+        /* cookies. */
+        {7, 0x0003, MW_TY_COMMAND, "cookies", "set",
+         "{\"profile\":\"probe\",\"record\":{\"name\":\"s\","
+         "\"value\":\"v\",\"domain\":\"example.com\",\"path\":\"/\"}}",
+         "\"stored\"", NULL},
+        {7, 0x0001, MW_TY_QUERY, "cookies", "count",
+         "{\"profile\":\"probe\"}", "\"count\":1", NULL},
+        /* icons — bytes cross the envelope base64'd. */
+        {8, 0x0002, MW_TY_COMMAND, "icons", "put",
+         "{\"profile\":\"probe\",\"url\":\"https://a/\","
+         "\"png_b64\":\"iVBORy1mYWtl\"}",
+         "\"changed\":true", NULL},
+        {8, 0x0001, MW_TY_QUERY, "icons", "count",
+         "{\"profile\":\"probe\"}", "\"count\":1", NULL},
+        /* containers. */
+        {9, 0x0002, MW_TY_COMMAND, "containers", "create",
+         "{\"profile\":\"probe\",\"name\":\"Work\",\"color\":\"blue\"}",
+         "\"id\":", NULL},
+        {9, 0x0001, MW_TY_QUERY, "containers", "list",
+         "{\"profile\":\"probe\"}", "\"Work\"", NULL},
+        /* notes. */
+        {10, 0x0003, MW_TY_COMMAND, "notes", "insert",
+         "{\"profile\":\"probe\",\"row\":-1,\"title\":\"T\",\"body\":\"B\"}",
+         "\"ok\":true", NULL},
+        {10, 0x0001, MW_TY_QUERY, "notes", "count",
+         "{\"profile\":\"probe\"}", "\"count\":1", NULL},
+        /* custody — file-key credential map, no passphrase needed. */
+        {11, 0x0001, MW_TY_QUERY, "custody", "state",
+         "{\"profile\":\"probe\"}", "\"available\":", NULL},
+        {11, 0x0003, MW_TY_COMMAND, "custody", "cred_put",
+         "{\"profile\":\"probe\",\"name\":\"net/pw\","
+         "\"value_b64\":\"c2Vrcml0\"}",
+         "\"changed\":true", NULL},
+        /* opensearch — the data-root-global engine registry. */
+        {12, 0x0002, MW_TY_COMMAND, "opensearch", "put",
+         "{\"engine\":{\"name\":\"ProbeSE\",\"search\":"
+         "{\"template\":\"https://se/?q={searchTerms}\"}}}",
+         "\"changed\":true", NULL},
+        {12, 0x0001, MW_TY_QUERY, "opensearch", "list", "",
+         "\"ProbeSE\"", NULL},
+        /* updates — global-scope policy state. */
+        {13, 0x0002, MW_TY_COMMAND, "updates", "record_check",
+         "{\"now_ms\":1234}", "\"ok\":true", NULL},
+        {13, 0x0001, MW_TY_QUERY, "updates", "state", "",
+         "\"last_check_ms\":1234", NULL},
+        /* services — classify (query) + the live-channel tls_probe
+         * (command; a refused port still answers an Ok verdict). */
+        {14, 0x0001, MW_TY_QUERY, "services", "classify_input",
+         "{\"input\":\"https://x/\"}", "\"navigate\"", NULL},
+        {14, 0x0002, MW_TY_COMMAND, "services", "tls_probe",
+         "{\"host\":\"127.0.0.1\",\"port\":1}", NULL, NULL},
+        /* extverify — query-only by design; the command demand must
+         * come back as a class-mismatch envelope. */
+        {15, 0x0001, MW_TY_QUERY, "extverify", "manifest_check",
+         "{\"data_b64\":"
+         "\"eyJtYW5pZmVzdF92ZXJzaW9uIjozLCJuYW1lIjoicHJvYmUiLCJ2ZXJzaW9uIjoiMS4wIn0=\"}",
+         "\"manifest_version\":3", NULL},
+        {15, 0x0001, MW_TY_COMMAND, "extverify", "manifest_check",
+         "{\"data_b64\":\"AA==\"}", NULL, "malformed"},
+        /* vault — explicit paths, sealed under the probe passphrase. */
+        {16, 0x0002, MW_TY_COMMAND, "vault", "seal", NULL,
+         "\"ok\":true", NULL},
+        {16, 0x0001, MW_TY_QUERY, "vault", "inspect", NULL,
+         "\"format\":\"ARV1\"", NULL},
+        {16, 0x0003, MW_TY_QUERY, "vault", "verify", NULL,
+         "\"ok\":true", NULL},
+        /* tor + bidi — keep-flat domains: probes must answer
+         * unknown_op envelopes (the registered-name boundary). */
+        {17, 0x0001, MW_TY_QUERY, "tor", "", "", NULL, "unknown_op"},
+        {17, 0x0001, MW_TY_COMMAND, "tor", "", "", NULL, "unknown_op"},
+        {18, 0x0001, MW_TY_QUERY, "bidi", "", "", NULL, "unknown_op"},
+        {18, 0x0001, MW_TY_COMMAND, "bidi", "", "", NULL, "unknown_op"},
+    };
+    const char *step_payloads[3] = {vault_seal, vault_inspect,
+                                    vault_verify};
+    int vault_step = 0;
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.struct_size = sizeof(cfg);
+    cfg.api_version = AC_API_VERSION;
+    cfg.data_root = root;
+    core = ac_init(&cfg);
+    CHECK(core != NULL, "ac_init for bridge leg");
+    if (!core)
+        return ++failures;
+
+    CHECK(ac_mw_version() == 1, "ac_mw_version == 1");
+
+    /* MB03: subscribe on the namespaced lane BEFORE the sweep — the
+     * mw.emit and history.add steps below are the provokes. */
+    {
+        uint64_t sub = ac_events_subscribe(core, "history/", on_event,
+                                           NULL);
+        CHECK(sub != 0, "ac_events_subscribe history/");
+
+        ev_hits = 0;
+        ev_last_topic[0] = 0;
+        ev_last_payload[0] = 0;
+
+        for (i = 0; i < sizeof(steps) / sizeof(steps[0]); ++i) {
+            const struct bridge_step *s = &steps[i];
+            const char *pl = s->payload;
+            char tag[96];
+            ++corr;
+            if (!pl && vault_step < 3)
+                pl = step_payloads[vault_step++];
+            snprintf(tag, sizeof(tag), "%s.%s", s->domain_name,
+                     s->op_name);
+            if (mw_call(core, (unsigned char)s->ty, corr,
+                        (unsigned char)s->domain,
+                        (unsigned short)s->op, pl, &r) != 0) {
+                fprintf(stderr, "FAIL: %s transport failure\n", tag);
+                failures++;
+                continue;
+            }
+            CHECK(r.corr == corr, "correlation id not echoed");
+            CHECK(r.domain == s->domain && r.op == s->op,
+                  "response domain/op not echoed");
+            if (s->err_code) {
+                CHECK(resp_err_code_is(&r, s->err_code),
+                      tag);
+            } else {
+                if (!resp_ok(&r)) {
+                    fprintf(stderr,
+                            "FAIL: %s answered error: %.*s\n", tag,
+                            (int)r.body.len, (const char *)r.body.data);
+                    failures++;
+                }
+                if (s->expect &&
+                    !buf_contains(r.body.data, r.body.len, s->expect)) {
+                    fprintf(stderr,
+                            "FAIL: %s missing %s in %.*s\n", tag,
+                            s->expect, (int)r.body.len,
+                            (const char *)r.body.data);
+                    failures++;
+                }
+            }
+            /* The describe response is also the advertised-ops
+             * cross-check, captured when the mw.describe step runs. */
+            if (s->domain == 0 && s->op == 0x0001 && resp_ok(&r)) {
+                size_t k;
+                for (k = 0;
+                     k < sizeof(steps) / sizeof(steps[0]); ++k) {
+                    char needle[96];
+                    if (!steps[k].op_name[0])
+                        continue;
+                    snprintf(needle, sizeof(needle),
+                             "\"name\":\"%s\"", steps[k].op_name);
+                    if (!buf_contains(r.body.data, r.body.len, needle)) {
+                        fprintf(stderr,
+                                "FAIL: describe omits %s.%s\n",
+                                steps[k].domain_name,
+                                steps[k].op_name);
+                        failures++;
+                    }
+                }
+            }
+            mw_resp_free(&r);
+        }
+
+        /* The two provokes landed: mw.emit then history.add — both
+         * under the "history/" namespace filter. */
+        CHECK(ev_hits == 2, "expected 2 namespaced events");
+        CHECK(strcmp(ev_last_topic, "history/changed") == 0,
+              "event topic is history/changed");
+        CHECK(strstr(ev_last_payload, "\"topic\":\"history/changed\"") &&
+                  strstr(ev_last_payload, "\"profile\":\"probe\"") &&
+                  strstr(ev_last_payload, "\"op\":\"visit\""),
+              "history/changed payload carries v+topic+profile+op");
+
+        /* The topic registry reports produced+seen honestly. */
+        {
+            char *topics = ac_events_topics();
+            CHECK(topics != NULL, "ac_events_topics");
+            if (topics) {
+                CHECK(strstr(topics, "\"topic\":\"history/changed\"") &&
+                          strstr(topics, "\"produced\":true") &&
+                          strstr(topics, "\"seen\":true"),
+                      "topic registry marks history/changed seen");
+                ac_string_free(topics);
+            }
+        }
+
+        /* Unsubscribe, then re-provoke — the lane must go quiet. */
+        CHECK(ac_events_unsubscribe(core, sub) == AC_OK,
+              "ac_events_unsubscribe");
+        CHECK(ac_events_unsubscribe(core, sub) == AC_ERR_NOT_FOUND,
+              "double unsubscribe is NotFound");
+        {
+            int hits_before = ev_hits;
+            if (mw_call(core, MW_TY_COMMAND, ++corr, 0, 0x0004,
+                        "{\"topic\":\"history/changed\",\"fields\":{\"op\":\"visit\"}}",
+                        &r) == 0) {
+                CHECK(resp_ok(&r), "post-unsubscribe emit ok");
+                mw_resp_free(&r);
+            }
+            CHECK(ev_hits == hits_before,
+                  "no events after unsubscribe");
+        }
+    }
+
+    /* Envelope fault lanes — a malformed frame and an unregistered
+     * domain still answer in-band envelopes with corr echoes. */
+    {
+        unsigned char bad[32];
+        memset(bad, 0, sizeof(bad));
+        memcpy(bad, "XX", 2); /* bad magic */
+        {
+            AcBuffer out = {NULL, 0};
+            CHECK(ac_mw_dispatch(core, bad, sizeof(bad), &out) == AC_OK,
+                  "bad-magic frame still returns an envelope");
+            if (out.data) {
+                CHECK(out.data[3] == MW_TY_ERROR &&
+                          buf_contains(out.data, out.len, "\"malformed\""),
+                      "bad magic is a malformed envelope");
+                ac_buffer_free(out);
+            }
+        }
+        if (mw_call(core, MW_TY_QUERY, ++corr, 99, 0x0001, "", &r) == 0) {
+            CHECK(r.corr == corr, "unknown_domain echoes corr");
+            CHECK(resp_err_code_is(&r, "unknown_domain"),
+                  "domain 99 is unknown_domain");
+            mw_resp_free(&r);
+        }
+    }
+
+    /* MB04: the capability matrix, the alias, and a refused id. */
+    CHECK(ac_engine_caps(NULL, &caps) == AC_OK, "caps matrix");
+    CHECK(buf_contains(caps.data, caps.len, "\"qtwebengine\"") &&
+              buf_contains(caps.data, caps.len, "\"servo\"") &&
+              buf_contains(caps.data, caps.len, "\"webkit\"") &&
+              buf_contains(caps.data, caps.len, "\"features\"") &&
+              buf_contains(caps.data, caps.len, "\"state\""),
+          "matrix covers all three engines");
+    ac_buffer_free(caps);
+    caps.data = NULL;
+    caps.len = 0;
+    /* The Qt backend spelling resolves as the qtwebengine alias. */
+    CHECK(ac_engine_caps("webengine", &caps) == AC_OK &&
+              buf_contains(caps.data, caps.len, "\"qtwebengine\""),
+          "webengine alias resolves");
+    ac_buffer_free(caps);
+    caps.data = NULL;
+    caps.len = 0;
+    CHECK(ac_engine_caps("nonexistent", &caps) == AC_ERR_INVALID,
+          "unknown engine id refused");
+
+    ac_shutdown(core);
+    return failures;
+}
+
 int main(int argc, char **argv)
 {
     char root[512];
-    if (argc > 1) {
-        snprintf(root, sizeof(root), "%s", argv[1]);
+#ifdef ACPROBE_BRIDGE_DEFAULT
+    /* The autotest build runs the bridge leg without a flag — its
+     * runner only passes Qt-test args like -silent. */
+    int bridge = 1;
+#else
+    int bridge = 0;
+#endif
+    const char *arg_root = NULL;
+    int i;
+    for (i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--bridge") == 0)
+            bridge = 1;
+        else if (argv[i][0] != '-' && !arg_root)
+            arg_root = argv[i];
+        /* Unknown -flags are ignored: test runners pass their own. */
+    }
+    if (arg_root) {
+        snprintf(root, sizeof(root), "%s", arg_root);
         mkdir(root, 0700);
     } else {
         snprintf(root, sizeof(root), "/tmp/acprobe-XXXXXX");
@@ -94,6 +593,17 @@ int main(int argc, char **argv)
         }
     }
     fprintf(stderr, "acprobe: data root %s\n", root);
+
+    /* --bridge runs only the middleware leg — the flat-facade sweep
+     * below stays the default mode. */
+    if (bridge) {
+        int f = run_bridge(root);
+        if (f == 0)
+            fprintf(stderr, "acprobe --bridge: OK\n");
+        else
+            fprintf(stderr, "acprobe --bridge: %d FAILURES\n", f);
+        return f ? 1 : 0;
+    }
 
     /* ---- housekeeping -------------------------------------------- */
     CHECK(ac_api_version() == AC_API_VERSION, "api version mismatch");

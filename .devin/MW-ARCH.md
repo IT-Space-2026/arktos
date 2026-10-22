@@ -298,7 +298,7 @@ code; `mw.describe` reports the live table):
 
 | id | domain | covers |
 |----|--------|--------|
-| 0 | `mw` | `describe`, `version`, `ping` — the meta ops |
+| 0 | `mw` | `describe`, `version`, `ping`, `emit` — the meta ops |
 | 1 | `settings` | typed KV, both scopes |
 | 2 | `profiles` | persona registry |
 | 3 | `history` | visits + embedded icon lane |
@@ -526,8 +526,9 @@ where a hot loop justifies it (none known today).
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `rv_verify` `rv_inspect` | Q | en route |
-| `rv_seal` `rv_unseal` `rv_rewrap` | C | flat for now — long-running ops with a progress callback don't fit a synchronous envelope; the `RvProgressCallback` lane is the event channel (§5) |
+| `rv_verify` `rv_inspect` | Q | landed (MB05) |
+| `rv_seal` | C | landed (MB05) — synchronous with a null progress callback; unseal/rewrap stay flat until a progress lane exists |
+| `rv_unseal` `rv_rewrap` | C | flat for now — long-running ops with a progress callback don't fit a synchronous envelope; the `RvProgressCallback` lane is the event channel (§5) |
 
 ### 8.17 tor control (RC14)
 
