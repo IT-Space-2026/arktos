@@ -47,5 +47,5 @@ rustcore:!no-rust {
     win32: LIBS += -ladvapi32 -lbcrypt -lntdll -luserenv -lws2_32
     macx: LIBS += -framework Security -framework CoreFoundation
 } else {
-    SOURCES += tst_acprobe_norust.c
+    SOURCES += acprobe_norust.c
 }
