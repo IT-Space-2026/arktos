@@ -99,6 +99,9 @@ class AutoSaver;
 class HistoryModel;
 class HistoryFilterModel;
 class HistoryTreeModel;
+#ifdef ARKTOS_RUSTCORE
+struct AcHistory;
+#endif
 // QtWebKit's QWebHistoryInterface pushed visited urls into the
 // application; QtWebEngine keeps Chromium's own internal history, so
 // this remains a purely app-side store that WebPage feeds from its
@@ -196,15 +199,25 @@ private:
     QString atomicString(const QString &string);
     void startFrecencyTimer();
 #ifdef ARKTOS_RUSTCORE
-    // Re-binds the process-global rust history connection to this
-    // profile's history.db — required before EVERY rc_hist_* call:
-    // another profile's manager may own the open database.
+    // This manager's profile-bound facade handle — minted lazily
+    // through the shared AcCore (RC08).  Its per-op re-assert is the
+    // binding ensureRustStore() used to hand the global store, so a
+    // stale manager can never write into another profile's
+    // history.db.  NULL when the bridge cannot serve — the legacy
+    // rc_* spelling over ensureRustStore() stays the fallback then.
+    AcHistory *rustStore() const;
+    // Legacy-path anchor: re-binds the process-global rust history
+    // connection to this profile's history.db.  rustStore() calls it
+    // only when no facade handle exists.
     void ensureRustStore() const;
     void importLegacyHistory();
     void rustReplaceAll();
 #endif
 
     QString m_profileId;
+#ifdef ARKTOS_RUSTCORE
+    mutable AcHistory *m_hist = nullptr;
+#endif
     AutoSaver *m_saveTimer;
     int m_daysToExpire;
     QTimer m_expiredTimer;

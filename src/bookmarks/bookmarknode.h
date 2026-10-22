@@ -70,6 +70,8 @@
 #ifdef ARKTOS_RUSTCORE
 #include <stdint.h>
 #include <qbytearray.h>
+
+struct AcBookmarks;
 #endif
 
 class BookmarkNode
@@ -107,6 +109,12 @@ public:
     // marshal, so model work stays O(touched rows).
     uint64_t handle() const { return m_handle; }
     void setHandle(uint64_t h) { m_handle = h; m_childrenLoaded = false; }
+    // RC08: the facade handle that bound this node's file — every
+    // store op re-asserts it inside the core before touching the
+    // process-global tree.  nullptr on nodes minted through the
+    // legacy rc_* path (no bridge) — the rc_* spelling stays theirs.
+    AcBookmarks *store() const { return m_store; }
+    void setStore(AcBookmarks *s) { m_store = s; }
     // False while the Rust children sit unmaterialized — the save
     // path's expanded-flag sync only walks loaded subtrees.
     bool childrenLoaded() const { return m_childrenLoaded; }
@@ -129,9 +137,10 @@ public:
 private:
 #ifdef ARKTOS_RUSTCORE
     void materializeChildren();
-    void rustUpload(uint64_t parent, int64_t row);
+    void rustUpload(AcBookmarks *store, uint64_t parent, int64_t row);
     void pushNodeFields() const;
     QByteArray rustJson() const;
+    AcBookmarks *m_store = nullptr;
     uint64_t m_handle = 0;
     bool m_childrenLoaded = true;
 #endif

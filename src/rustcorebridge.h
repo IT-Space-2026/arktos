@@ -60,6 +60,25 @@ public:
     // Leaky app-lifetime singleton, created on demand — call only when
     // a QCoreApplication exists.
     static RustCoreBridge *instance();
+    // True once instance() has minted the singleton — the check a
+    // non-GUI caller makes before deciding instance() is safe (the
+    // QObject's thread affinity was already pinned on the GUI
+    // thread).  Call only when a QCoreApplication exists.
+    static bool exists();
+    // The bridge when this thread may use it: an existing singleton
+    // from any thread, or a first mint on the GUI thread only (a
+    // worker's first mint would pin the QObject's affinity wrong).
+    // NULL when there is no QCoreApplication or ac_init failed —
+    // callers fall back to the legacy rc_* spelling then.  Also NULL
+    // when the app's data root moved after the core was minted
+    // (test-mode renames, QStandardPaths toggles) — a minted handle's
+    // per-op re-assert would keep writing the OLD root, while the
+    // legacy lane re-anchors to the current one.
+    static RustCoreBridge *serving();
+    // True when dataRoot() no longer matches the root the core was
+    // minted against — holders of cached facade handles (m_hist,
+    // m_bm, the ProfileSettings store map) drop and remint on this.
+    static bool rootDrifted();
 
     // RC07: the facade root — NULL only if ac_init itself failed (a
     // warning with ac_last_error() is logged at construction).
@@ -88,6 +107,7 @@ private:
     static void coreTrampoline(const char *module, const char *profileId,
                                void *userdata);
     AcCore *m_core = nullptr;
+    QString m_root;
 };
 
 // Points the crate at the application data dir — the same
@@ -111,6 +131,14 @@ void rustCoreEnsureDataDirFor(const QString &profileId);
 // a profile slug opens <data root>/profiles/<id>/settings.json and
 // auto-imports the legacy settings.ini on first open; an empty id
 // opens the global scope (<data root>/settings.json).
+//
+// RC08: the handle is minted through the shared AcCore (ac_settings)
+// whenever the bridge can serve — same rc_settings_open inside, but
+// tracked against the app-lifetime root so a facade-minted handle
+// stays bound when a test-mode root switch would strand an
+// rc_opened one.  The rc_settings_open spelling remains the fallback
+// for contexts the bridge cannot reach (no app instance yet, a
+// non-GUI first touch, ac_init failure).
 //
 // Mirrors the C ABI 1:1: value() reconstructs a QVariant from the
 // store's typed JSON (string/bool/int/double/bytes/string-list),
@@ -136,6 +164,8 @@ public:
     // Keys under prefix (boundary match: prefix and prefix/…; an
     // empty prefix lists everything).
     QStringList allKeys(const QString &prefix = QString()) const;
+    // QSettings::clear() — drop every key in the scope.
+    void clear();
     void sync();
 
     // One-shot merge of a legacy QSettings ini at an explicit path —
@@ -159,6 +189,12 @@ struct RcProfiles;
 // construction (empty → BrowserPaths::dataRoot(); tests pass a
 // QTemporaryDir); profiles.json under it stays byte-compatible with
 // the MPROF01 writer both ways.
+//
+// RC08: an empty dataRoot mints through the shared AcCore
+// (ac_profiles — same rc_profiles_open inside, tracked against the
+// app-lifetime root); an explicit root keeps the rc_profiles_open
+// spelling so test fixtures can bind a QTemporaryDir the core never
+// saw.
 //
 // Scope honesty: this is the STORE primitive layer.  The Qt-owned
 // half of ProfileStore::deleteProfile — BrowserProfile::releasePersona

@@ -30,13 +30,55 @@
 #include <qjsonobject.h>
 #include <qjsonvalue.h>
 #include <qsettings.h>
+#include <qthread.h>
 
 #include <arktos_core.h>
+
+namespace {
+
+// Set once the leaky singleton exists — exists() reads it so a
+// non-GUI caller can tell minting is already done (instance() would
+// otherwise pin the QObject's affinity to the wrong thread).
+bool s_bridgeCreated = false;
+
+} // namespace
 
 RustCoreBridge *RustCoreBridge::instance()
 {
     static RustCoreBridge *self = new RustCoreBridge;
+    s_bridgeCreated = true;
     return self;
+}
+
+bool RustCoreBridge::exists()
+{
+    return s_bridgeCreated;
+}
+
+RustCoreBridge *RustCoreBridge::serving()
+{
+    QCoreApplication *app = QCoreApplication::instance();
+    if (!app)
+        return nullptr;
+    if (!exists() && QThread::currentThread() != app->thread())
+        return nullptr;
+    RustCoreBridge *bridge = instance();
+    if (!bridge->core())
+        return nullptr;
+    // A late root move (the test harness renames the application
+    // after BrowserApplication already ran) strands every handle the
+    // core minted — they re-assert the OLD root per op.  Refuse so
+    // callers take the rc_* lane, which re-anchors per call.
+    if (bridge->m_root != BrowserPaths::dataRoot())
+        return nullptr;
+    return bridge;
+}
+
+bool RustCoreBridge::rootDrifted()
+{
+    if (!exists())
+        return false;
+    return instance()->m_root != BrowserPaths::dataRoot();
 }
 
 RustCoreBridge::RustCoreBridge(QObject *parent)
@@ -47,8 +89,11 @@ RustCoreBridge::RustCoreBridge(QObject *parent)
     // RC07: the app-lifetime facade root.  Bound once to the app
     // data root — the accessors re-assert profile bindings per call,
     // so the handle stays correct across profile switches without
-    // the rustCoreEnsureDataDirFor dance.
-    const QByteArray root = BrowserPaths::dataRoot().toUtf8();
+    // the rustCoreEnsureDataDirFor dance.  m_root records the binding
+    // so serving() can tell a late root move (test-mode renames)
+    // from a stable one.
+    m_root = BrowserPaths::dataRoot();
+    const QByteArray root = m_root.toUtf8();
     // Same default-name seeding as RustCoreProfiles: the PROF01-era
     // QSettings key first, the localized fallback after.
     QByteArray seed = QSettings()
@@ -179,15 +224,24 @@ RustCoreSettings::RustCoreSettings(const QString &profileId)
     : m_h(nullptr)
     , m_profileId(profileId)
 {
-    const QByteArray root = BrowserPaths::dataRoot().toUtf8();
-    const QByteArray id = profileId.toUtf8();
-    m_h = rc_settings_open(root.constData(),
-                           id.isEmpty() ? nullptr : id.constData());
+    // Facade-first (RC08): the shared AcCore mints the same
+    // RcSettings but tracks it against the app-lifetime root.  The
+    // legacy spelling remains for contexts serving() refuses.
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        m_h = bridge->settings(profileId);
+    if (m_h == nullptr) {
+        const QByteArray root = BrowserPaths::dataRoot().toUtf8();
+        const QByteArray id = profileId.toUtf8();
+        m_h = rc_settings_open(root.constData(),
+                               id.isEmpty() ? nullptr : id.constData());
+    }
 }
 
 RustCoreSettings::~RustCoreSettings()
 {
-    rc_settings_close(m_h);
+    // ac_settings_close is NULL-tolerant and also legal on an
+    // rc_settings_open handle (its core-untrack lookup just misses).
+    ac_settings_close(m_h);
 }
 
 bool RustCoreSettings::isValid() const
@@ -310,6 +364,17 @@ QStringList RustCoreSettings::allKeys(const QString &prefix) const
     return out;
 }
 
+void RustCoreSettings::clear()
+{
+    if (m_h == nullptr)
+        return;
+    // The store has no bulk clear; removing each listed key keeps the
+    // same remove-and-persist lane one key at a time.
+    const QStringList keys = allKeys();
+    for (const QString &key : keys)
+        rc_settings_remove(m_h, key.toUtf8().constData());
+}
+
 void RustCoreSettings::sync()
 {
     if (m_h == nullptr)
@@ -354,23 +419,33 @@ ProfileContext contextFromJson(const QJsonObject &row)
 RustCoreProfiles::RustCoreProfiles(const QString &dataRoot)
     : m_h(nullptr)
 {
-    const QString resolved =
-        dataRoot.isEmpty() ? BrowserPaths::dataRoot() : dataRoot;
-    // The synthesized default row's name seeds exactly like
-    // ProfileRegistry::load: the PROF01-era QSettings key first, the
-    // localized fallback after.
-    QByteArray seed = QSettings()
-        .value(QLatin1String("profile/name")).toString().toUtf8();
-    if (seed.isEmpty())
-        seed = QCoreApplication::translate("ProfileRegistry", "Profile")
-            .toUtf8();
-    const QByteArray root = resolved.toUtf8();
-    m_h = rc_profiles_open(root.constData(), seed.constData());
+    // Facade-first (RC08): the default root binds through the shared
+    // AcCore; an explicit root is a fixture scope the core never saw,
+    // so it keeps the direct rc_profiles_open spelling.
+    if (dataRoot.isEmpty()) {
+        if (RustCoreBridge *bridge = RustCoreBridge::serving())
+            m_h = bridge->profiles();
+    }
+    if (m_h == nullptr) {
+        const QString resolved =
+            dataRoot.isEmpty() ? BrowserPaths::dataRoot() : dataRoot;
+        // The synthesized default row's name seeds exactly like
+        // ProfileRegistry::load: the PROF01-era QSettings key first,
+        // the localized fallback after.
+        QByteArray seed = QSettings()
+            .value(QLatin1String("profile/name")).toString().toUtf8();
+        if (seed.isEmpty())
+            seed = QCoreApplication::translate("ProfileRegistry",
+                                               "Profile").toUtf8();
+        const QByteArray root = resolved.toUtf8();
+        m_h = rc_profiles_open(root.constData(), seed.constData());
+    }
 }
 
 RustCoreProfiles::~RustCoreProfiles()
 {
-    rc_profiles_close(m_h);
+    // ac_profiles_close accepts rc_profiles_open handles too.
+    ac_profiles_close(m_h);
 }
 
 bool RustCoreProfiles::isValid() const

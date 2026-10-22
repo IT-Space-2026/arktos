@@ -179,9 +179,14 @@ fn bound_profile(p: *const c_char) -> String {
 
 /// <root>/profiles/<id> — the layout profiles.rs mirrors from
 /// BrowserPaths, computed here so bound handles don't need a
-/// registry open.
+/// registry open.  BrowserPaths::profileDataDir mkpaths; bound
+/// handles need the same guarantee or first-touch writes under a
+/// fresh data root fail ENOENT, so the dir is created on the way
+/// out (best-effort — a real failure surfaces at the first write).
 fn profile_dir(root: &Path, id: &str) -> PathBuf {
-    root.join("profiles").join(id)
+    let dir = root.join("profiles").join(id);
+    let _ = std::fs::create_dir_all(&dir);
+    dir
 }
 
 fn track(core: &AcCore, live: Live) {

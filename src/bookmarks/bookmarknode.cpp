@@ -67,7 +67,46 @@
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 
-#include <rustcore.h>
+#include <arktos_core.h>
+
+// RC08 facade dispatch — a node minted through the facade carries
+// the AcBookmarks that bound its file; every op re-asserts that
+// binding inside the core before touching the process-global tree.
+// A null store is the legacy path (a node minted before the bridge
+// existed): the rc_* spelling over whatever file is currently bound.
+static RcStatus bmDestroy(AcBookmarks *s, uint64_t node)
+{
+    return s ? ac_bm_destroy(s, node) : rc_bm_destroy(node);
+}
+static RcStatus bmAttach(AcBookmarks *s, uint64_t parent,
+                         int64_t row, uint64_t node)
+{
+    return s ? ac_bm_attach(s, parent, row, node)
+             : rc_bm_attach(parent, row, node);
+}
+static RcStatus bmDetach(AcBookmarks *s, uint64_t node)
+{
+    return s ? ac_bm_detach(s, node) : rc_bm_detach(node);
+}
+static int64_t bmChildCount(AcBookmarks *s, uint64_t node)
+{
+    return s ? ac_bm_child_count(s, node) : rc_bm_child_count(node);
+}
+static uint64_t bmChildAt(AcBookmarks *s, uint64_t node, int64_t row)
+{
+    return s ? ac_bm_child_at(s, node, row)
+             : rc_bm_child_at(node, row);
+}
+static char *bmGet(AcBookmarks *s, uint64_t node)
+{
+    return s ? ac_bm_get(s, node) : rc_bm_get(node);
+}
+static uint64_t bmCreate(AcBookmarks *s, uint64_t parent,
+                         int64_t row, const char *json)
+{
+    return s ? ac_bm_create(s, parent, row, json)
+             : rc_bm_create(parent, row, json);
+}
 #endif
 
 BookmarkNode::BookmarkNode(BookmarkNode::Type type, BookmarkNode *parent) :
@@ -86,9 +125,9 @@ BookmarkNode::~BookmarkNode()
 #ifdef ARKTOS_RUSTCORE
     // Whatever subtree this node owns in the store — detached by the
     // remove() above or still attached at tree teardown — goes with
-    // it; a fresh rc_bm_load hands out new handles anyway.
+    // it; a fresh load hands out new handles anyway.
     if (m_handle) {
-        rc_bm_destroy(m_handle);
+        bmDestroy(m_store, m_handle);
         m_handle = 0;
     }
 #endif
@@ -102,6 +141,7 @@ BookmarkNode::~BookmarkNode()
 void BookmarkNode::dropRustHandles()
 {
     m_handle = 0;
+    m_store = nullptr;
     // Only recurse into children already materialized — touching the
     // lazy path would resolve dead handles against the live tree.
     if (!m_childrenLoaded)
@@ -175,13 +215,14 @@ void BookmarkNode::add(BookmarkNode *child, int offset)
     m_children.insert(offset, child);
 #ifdef ARKTOS_RUSTCORE
     if (m_handle && child->m_type != Root) {
+        child->m_store = m_store;
         if (child->m_handle) {
             // Re-link a detached subtree (undo, drag-move) and resync
             // fields that may have been edited while it was out.
-            if (rc_bm_attach(m_handle, offset, child->m_handle) == RC_OK)
+            if (bmAttach(m_store, m_handle, offset, child->m_handle) == RC_OK)
                 child->pushNodeFields();
         } else {
-            child->rustUpload(m_handle, offset);
+            child->rustUpload(m_store, m_handle, offset);
         }
     }
 #endif
@@ -195,9 +236,9 @@ void BookmarkNode::remove(BookmarkNode *child)
     m_children.removeAll(child);
 #ifdef ARKTOS_RUSTCORE
     // detach() keeps the subtree addressable — the undo stack
-    // re-links it via add() -> rc_bm_attach().
+    // re-links it via add() -> attach.
     if (child->m_handle)
-        rc_bm_detach(child->m_handle);
+        bmDetach(child->m_store, child->m_handle);
 #endif
 }
 
@@ -208,12 +249,12 @@ void BookmarkNode::materializeChildren()
     if (m_childrenLoaded)
         return;
     m_childrenLoaded = true;
-    const int64_t count = rc_bm_child_count(m_handle);
+    const int64_t count = bmChildCount(m_store, m_handle);
     for (int64_t i = 0; i < count; ++i) {
-        const uint64_t h = rc_bm_child_at(m_handle, i);
+        const uint64_t h = bmChildAt(m_store, m_handle, i);
         if (!h)
             continue;
-        char *json = rc_bm_get(h);
+        char *json = bmGet(m_store, h);
         if (!json)
             continue;
         const QJsonObject o =
@@ -224,6 +265,7 @@ void BookmarkNode::materializeChildren()
             kind = Folder;
         BookmarkNode *node = new BookmarkNode(Type(kind));
         node->m_handle = h;
+        node->m_store = m_store;
         node->m_childrenLoaded = false;
         node->title = o.value(QLatin1String("title")).toString();
         node->url = o.value(QLatin1String("url")).toString();
@@ -254,24 +296,33 @@ void BookmarkNode::pushNodeFields() const
 {
     if (!m_handle)
         return;
-    rc_bm_set_title(m_handle, title.toUtf8().constData());
-    rc_bm_set_url(m_handle, url.toUtf8().constData());
-    rc_bm_set_desc(m_handle, desc.toUtf8().constData());
-    rc_bm_set_expanded(m_handle, expanded ? 1 : 0);
+    if (m_store) {
+        ac_bm_set_title(m_store, m_handle, title.toUtf8().constData());
+        ac_bm_set_url(m_store, m_handle, url.toUtf8().constData());
+        ac_bm_set_desc(m_store, m_handle, desc.toUtf8().constData());
+        ac_bm_set_expanded(m_store, m_handle, expanded ? 1 : 0);
+    } else {
+        rc_bm_set_title(m_handle, title.toUtf8().constData());
+        rc_bm_set_url(m_handle, url.toUtf8().constData());
+        rc_bm_set_desc(m_handle, desc.toUtf8().constData());
+        rc_bm_set_expanded(m_handle, expanded ? 1 : 0);
+    }
 }
 
 // Recursive insert for C++-only subtrees (XBEL imports, drops): every
 // node is created under the Rust parent and stamped with its handle
 // so later edits address the store directly.
-void BookmarkNode::rustUpload(uint64_t parent, int64_t row)
+void BookmarkNode::rustUpload(AcBookmarks *store, uint64_t parent,
+                              int64_t row)
 {
+    m_store = store;
     const QByteArray json = rustJson();
-    m_handle = rc_bm_create(parent, row, json.constData());
+    m_handle = bmCreate(store, parent, row, json.constData());
     if (!m_handle)
         return;
     m_childrenLoaded = true;
     for (BookmarkNode *child : m_children)
-        child->rustUpload(m_handle, -1);
+        child->rustUpload(store, m_handle, -1);
 }
 
 #endif // ARKTOS_RUSTCORE

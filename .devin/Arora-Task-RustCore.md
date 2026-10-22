@@ -35,7 +35,7 @@ Rules for the agent working this file:
 | RC05 | rustcore `bookmarks` module — tree ops + XBEL import/export compat | done | 0 | bookmarks store verified + XBEL export fixed: <desc> now emitted as child element on folders+bookmarks (XbelWriter shape; was bookmark-only attr C++ reader ignores, folder desc dropped); legacy attr form still parses; new tst_xbel rustStoreInterchange proves C++-write->rust-edit->rust-save->C++-read identical tree; cargo 296/296, xbel 16/16 + bookmark node/model/html/dialog tests all pass offscreen, rust+no-rust make -j2 clean |
 | RC06 | rustcore `policy` module — cookie/storage/site-decision/trust data + FFI | done | 0 | audit: policy surface already landed end to end (sitedecisions + per-profile façade + legacy imports, blocklist/tranco/majestic read-path, sitetrust, policy verdicts); added FFI-parity legs — verified cargo 296/296, sitedecisions 9/9, trancolist 9/9, domainblock 14/14 + 6 consumer suites green offscreen, rust+no-rust compile clean |
 | RC07 | Stable `arktos_core.h` C ABI facade v1 + RustCoreBridge v2 | done | 0 | arktos_core.h facade: AcCore + profile-bound ac_* handles over shared rc_* stores, (module,profile) cb lane, bridge v2 + ABI doc — cargo 299+1preexisting, acprobe OK, make clean, autotests green |
-| RC08 | QtWebEngine adoption — services read/write through facade, parity proof | pending | 0 | needs:task:RC07 |
+| RC08 | QtWebEngine adoption — services read/write through facade, parity proof | done | 0 | facade adoption across settings/profiles/history/bookmarks/policy consumers w/ rc_* fallback; fixed root-drift, bm UAF + stale-tree remint, profile_dir mkpath — 19 parity binaries 0-fail, rust+no-rust clean, cargo 299+1preexisting |
 | RC09 | Servo/WebKit backends consume the same facade + capability reporting | pending | 0 | needs:task:RC08 |
 | RC10 | Packaging: new crates linked + staged in deb/rpm/flatpak/dmg/exe legs | pending | 0 | needs:task:RC07 |
 | RC11 | CEF spike — bounded adapter design + QWebEngine touchpoint audit + go/no-go | pending | 0 | needs:task:RC08 |
@@ -420,6 +420,54 @@ shared).
 
 Any parity failure blocks done — this is the gate everything else
 stands on.
+
+
+DONE (2026-10-22): all facade-covered consumers now dispatch ac_*-first
+with rc_* fallback when RustCoreBridge::serving() can't serve (no
+QCoreApplication, non-GUI first touch, ac_init failure).
+
+- rustcorebridge: exists()/serving()/rootDrifted() — serving() refuses
+  to first-mint the QObject singleton off the app thread and refuses
+  once BrowserPaths::dataRoot() moved under a pinned AcCore root
+  (test-mode renames); RustCoreSettings/RustCoreProfiles get
+  facade-first ctors + RustCoreSettings::clear().
+- sitedecisionstore: per-op PolicyAccess RAII mints a profile-bound
+  AcPolicy (empty id -> default, persona-independent kinds); legacy
+  path keeps rustCoreEnsureDataDirFor anchoring.
+- historymanager + historycompleter: AcHistory member/suggest handles;
+  all hist ops dispatch ac_hist_* else rc_* with ensureRustStore().
+- bookmarksmanager + bookmarknode: manager owns AcBookmarks; every
+  node carries the store that minted its handle.  Two real fixes from
+  parity runs: (a) ~BookmarksManager must clear the undo stack BEFORE
+  ac_bm_close — commands' stray nodes destroyed subtrees through a
+  freed handle (UAF caught by valgrind); (b) ac_bookmarks ensure_path
+  skips reload on same-path rebind, so a re-entering manager inherits
+  a tree emptied by the previous one's teardown — load() now forces
+  ac_bm_reload when the file exists (rc_bm_load semantics).
+- facade.rs profile_dir now create_dir_all's the profile dir at mint —
+  BrowserPaths::profileDataDir mkpaths; without it first-touch writes
+  under a fresh root failed ENOENT (sitedecisions set() FALSE).
+- profilesettings: Rust JSON is canonical (profile + global scopes via
+  cached shared handles — separate handles decode stale docs), ini
+  mirrors stay byte-compatible; read order json->profile-ini->global
+  ini preserves copy-not-move; arrays flatten to path/1/key.
+- sitepanel/trancolist/domainblocklist: sitetrust lookup + tranco
+  entries/reload + blocklist reload through AcPolicy when serving.
+
+Intentionally still rc_* (outside this slice): navigationpolicy.cpp
+policy-eval engine calls, browserapplication session encode/decode,
+tabwidget rc_classify_input, and autotests that probe the legacy ABI
+directly — the rc_* surface stays compiled by design until later rows.
+
+Verified: rust build clean; CONFIG+=no-rust clean-tree build links
+(shadow builds can't share OBJECTS_DIR — stale-object link trap).
+19 parity binaries green offscreen: profilesettings 12, rustprofiles 6,
+historymanager 49, sitedecisions 9, xbel 16, bookmarknode 20,
+bookmarksmodel 12, omnibox 87, trancolist 9, domainblock 14,
+sitepanel 26, historyfiltermodel 37, historyui 8, htmlbookmarks 6,
+navigationpolicy 16, cookiejar 51, cookiemodel 11, networkcookiejar
+33, httponly 25. cargo test 299/300 (1 pre-existing profilevault
+release-mode zeroize-probe failure, untouched file).
 
 ### RC09
 

@@ -34,7 +34,7 @@
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 
-#include <rustcore.h>
+#include <arktos_core.h>
 #endif
 
 #include <qevent.h>
@@ -221,17 +221,28 @@ void RustHistorySuggestModel::refresh()
 {
     beginResetModel();
     m_rows.clear();
-    // Anchor the process-global rust history store to the active
-    // profile's database — per-profile HistoryManager instances
-    // re-bind it as they run (MPROF02); the window's completer follows
-    // the window profile — the ambient persona (MPROF03).
-    const QByteArray dbPath = BrowserPaths::profileDataFilePath(
-        BrowserPaths::activeProfileId(),
-        QLatin1String("history.db")).toUtf8();
-    rc_hist_open(dbPath.constData());
+    // RC08: a facade handle binds the active profile's database for
+    // this query — per-profile HistoryManager instances re-bind the
+    // global store as they run (MPROF02), and the window's completer
+    // follows the ambient persona (MPROF03).  The legacy spelling
+    // anchors the same path by hand when the bridge cannot serve.
+    AcHistory *store = nullptr;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        store = bridge->history(BrowserPaths::activeProfileId());
     // The cap bounds the FFI marshal; the dropdown never shows more.
     const QByteArray t = m_term.toUtf8();
-    if (char *json = rc_history_suggest(t.constData(), 500)) {
+    char *json;
+    if (store) {
+        json = ac_hist_suggest(store, t.constData(), 500);
+        ac_hist_close(store);
+    } else {
+        const QByteArray dbPath = BrowserPaths::profileDataFilePath(
+            BrowserPaths::activeProfileId(),
+            QLatin1String("history.db")).toUtf8();
+        rc_hist_open(dbPath.constData());
+        json = rc_history_suggest(t.constData(), 500);
+    }
+    if (json) {
         const QJsonArray rows =
             QJsonDocument::fromJson(QByteArray(json)).array();
         rc_string_free(json);

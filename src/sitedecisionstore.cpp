@@ -8,8 +8,8 @@
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
@@ -19,37 +19,53 @@
 
 #include "sitedecisionstore.h"
 
-#include "browserpaths.h"
-#include "rustcore.h"
 #include "rustcorebridge.h"
+
+#include <arktos_core.h>
 
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 
+#include <string.h>
+
 namespace SiteDecisionStore {
 
-static void ensureDir()
+// RC08: one call's facade access.  When the shared AcCore serves, a
+// profile-bound AcPolicy minted per operation re-asserts the
+// profile's dir inside the core — the job rustCoreEnsureDataDirFor
+// did on the legacy path.  An empty profileId pins "default": the
+// persona-independent kinds (permissions, trust, http-allow,
+// adblock sites) must not split across profiles (MPROF02).  When the
+// bridge cannot serve (no app instance yet, a non-GUI first touch,
+// ac_init failure) the legacy rc_* spelling stays, anchored by the
+// same explicit dir call.
+class PolicyAccess
 {
-    // Cheap and idempotent — the Qt shim calls it before every op so
-    // test-mode path switches keep working.  The global kinds pin the
-    // default profile's store file: persona-independent decisions
-    // (permissions, trust, http-allow, adblock sites) must not split
-    // across profiles (MPROF02 recommendation).
-    rustCoreEnsureDataDirFor(QLatin1String("default"));
-}
+public:
+    explicit PolicyAccess(const QString &profileId = QString())
+        : h(nullptr)
+    {
+        if (RustCoreBridge *bridge = RustCoreBridge::serving())
+            h = bridge->policy(profileId);
+        if (!h) {
+            rustCoreEnsureDataDirFor(
+                profileId.isEmpty() ? QLatin1String("default")
+                                    : profileId);
+        }
+    }
+    ~PolicyAccess() { ac_policy_close(h); }
 
-static void ensureDirFor(const QString &profileId)
-{
-    rustCoreEnsureDataDirFor(profileId);
-}
+    AcPolicy *h;
+};
 
 bool get(const char *kind, const QString &key, QString *value)
 {
-    ensureDir();
+    const PolicyAccess access;
     RcBuffer out{nullptr, 0};
     const QByteArray keyUtf8 = key.toUtf8();
-    const RcStatus status =
-        rc_sitedec_get(kind, keyUtf8.constData(), &out);
+    const RcStatus status = access.h
+        ? ac_sitedec_get(access.h, kind, keyUtf8.constData(), &out)
+        : rc_sitedec_get(kind, keyUtf8.constData(), &out);
     if (status != RC_OK || !out.data) {
         if (out.data)
             rc_buffer_free(out);
@@ -64,28 +80,34 @@ bool get(const char *kind, const QString &key, QString *value)
 
 bool set(const char *kind, const QString &key, const QString &value)
 {
-    ensureDir();
+    const PolicyAccess access;
     const QByteArray keyUtf8 = key.toUtf8();
     const QByteArray valueUtf8 = value.toUtf8();
-    return rc_sitedec_set(kind, keyUtf8.constData(), valueUtf8.constData())
-        == RC_OK;
+    return (access.h
+        ? ac_sitedec_set(access.h, kind, keyUtf8.constData(),
+                         valueUtf8.constData())
+        : rc_sitedec_set(kind, keyUtf8.constData(),
+                         valueUtf8.constData())) == RC_OK;
 }
 
 bool remove(const char *kind, const QString &key)
 {
-    ensureDir();
+    const PolicyAccess access;
     const QByteArray keyUtf8 = key.toUtf8();
-    return rc_sitedec_remove(kind, keyUtf8.constData()) == RC_OK;
+    return (access.h
+        ? ac_sitedec_remove(access.h, kind, keyUtf8.constData())
+        : rc_sitedec_remove(kind, keyUtf8.constData())) == RC_OK;
 }
 
 bool get(const QString &profileId, const char *kind,
          const QString &key, QString *value)
 {
-    ensureDirFor(profileId);
+    const PolicyAccess access(profileId);
     RcBuffer out{nullptr, 0};
     const QByteArray keyUtf8 = key.toUtf8();
-    const RcStatus status =
-        rc_sitedec_get(kind, keyUtf8.constData(), &out);
+    const RcStatus status = access.h
+        ? ac_sitedec_get(access.h, kind, keyUtf8.constData(), &out)
+        : rc_sitedec_get(kind, keyUtf8.constData(), &out);
     if (status != RC_OK || !out.data) {
         if (out.data)
             rc_buffer_free(out);
@@ -101,59 +123,68 @@ bool get(const QString &profileId, const char *kind,
 bool set(const QString &profileId, const char *kind,
          const QString &key, const QString &value)
 {
-    ensureDirFor(profileId);
+    const PolicyAccess access(profileId);
     const QByteArray keyUtf8 = key.toUtf8();
     const QByteArray valueUtf8 = value.toUtf8();
-    return rc_sitedec_set(kind, keyUtf8.constData(), valueUtf8.constData())
-        == RC_OK;
+    return (access.h
+        ? ac_sitedec_set(access.h, kind, keyUtf8.constData(),
+                         valueUtf8.constData())
+        : rc_sitedec_set(kind, keyUtf8.constData(),
+                         valueUtf8.constData())) == RC_OK;
 }
 
 bool remove(const QString &profileId, const char *kind,
             const QString &key)
 {
-    ensureDirFor(profileId);
+    const PolicyAccess access(profileId);
     const QByteArray keyUtf8 = key.toUtf8();
-    return rc_sitedec_remove(kind, keyUtf8.constData()) == RC_OK;
+    return (access.h
+        ? ac_sitedec_remove(access.h, kind, keyUtf8.constData())
+        : rc_sitedec_remove(kind, keyUtf8.constData())) == RC_OK;
 }
 
 bool clear(const char *kind)
 {
-    ensureDir();
-    return rc_sitedec_clear(kind) == RC_OK;
+    const PolicyAccess access;
+    return (access.h ? ac_sitedec_clear(access.h, kind)
+                     : rc_sitedec_clear(kind)) == RC_OK;
 }
 
 bool replace(const char *kind, const QHash<QString, QString> &entries)
 {
-    ensureDir();
+    const PolicyAccess access;
     QJsonObject obj;
     for (auto it = entries.constBegin(); it != entries.constEnd(); ++it)
         obj.insert(it.key(), it.value());
     const QByteArray json = QJsonDocument(obj).toJson(QJsonDocument::Compact);
-    return rc_sitedec_replace(
-               kind, reinterpret_cast<const uint8_t *>(json.constData()),
-               size_t(json.size()))
-        == RC_OK;
+    const uint8_t *data = reinterpret_cast<const uint8_t *>(json.constData());
+    return (access.h ? ac_sitedec_replace(access.h, kind, data,
+                                          size_t(json.size()))
+                     : rc_sitedec_replace(kind, data,
+                                          size_t(json.size()))) == RC_OK;
 }
 
 bool replace(const QString &profileId, const char *kind,
              const QHash<QString, QString> &entries)
 {
-    ensureDirFor(profileId);
+    const PolicyAccess access(profileId);
     QJsonObject obj;
     for (auto it = entries.constBegin(); it != entries.constEnd(); ++it)
         obj.insert(it.key(), it.value());
     const QByteArray json = QJsonDocument(obj).toJson(QJsonDocument::Compact);
-    return rc_sitedec_replace(
-               kind, reinterpret_cast<const uint8_t *>(json.constData()),
-               size_t(json.size()))
-        == RC_OK;
+    const uint8_t *data = reinterpret_cast<const uint8_t *>(json.constData());
+    return (access.h ? ac_sitedec_replace(access.h, kind, data,
+                                          size_t(json.size()))
+                     : rc_sitedec_replace(kind, data,
+                                          size_t(json.size()))) == RC_OK;
 }
 
 QHash<QString, QString> entries(const char *kind)
 {
     QHash<QString, QString> map;
-    ensureDir();
-    char *raw = rc_sitedec_list(kind);
+    const PolicyAccess access;
+    char *raw = access.h ? ac_sitedec_list(access.h, kind)
+                         : rc_sitedec_list(kind);
     if (!raw)
         return map;
     const QByteArray json = QByteArray::fromRawData(raw, int(strlen(raw)));
@@ -171,8 +202,9 @@ QHash<QString, QString> entries(const QString &profileId,
                                 const char *kind)
 {
     QHash<QString, QString> map;
-    ensureDirFor(profileId);
-    char *raw = rc_sitedec_list(kind);
+    const PolicyAccess access(profileId);
+    char *raw = access.h ? ac_sitedec_list(access.h, kind)
+                         : rc_sitedec_list(kind);
     if (!raw)
         return map;
     const QByteArray json = QByteArray::fromRawData(raw, int(strlen(raw)));
@@ -188,8 +220,9 @@ QHash<QString, QString> entries(const QString &profileId,
 
 QByteArray snapshot()
 {
-    ensureDir();
-    char *raw = rc_sitedec_snapshot();
+    const PolicyAccess access;
+    char *raw = access.h ? ac_sitedec_snapshot(access.h)
+                         : rc_sitedec_snapshot();
     if (!raw)
         return QByteArray();
     QByteArray json = QByteArray::fromRawData(raw, int(strlen(raw)));
@@ -200,8 +233,9 @@ QByteArray snapshot()
 
 QByteArray snapshot(const QString &profileId)
 {
-    ensureDirFor(profileId);
-    char *raw = rc_sitedec_snapshot();
+    const PolicyAccess access(profileId);
+    char *raw = access.h ? ac_sitedec_snapshot(access.h)
+                         : rc_sitedec_snapshot();
     if (!raw)
         return QByteArray();
     QByteArray json = QByteArray::fromRawData(raw, int(strlen(raw)));
@@ -213,9 +247,11 @@ QByteArray snapshot(const QString &profileId)
 bool lookup(const char *kind, const QString &host, QString *value,
             QString *matchedKey)
 {
-    ensureDir();
+    const PolicyAccess access;
     const QByteArray hostUtf8 = host.toUtf8();
-    char *raw = rc_sitedec_lookup(kind, hostUtf8.constData());
+    char *raw = access.h
+        ? ac_sitedec_lookup(access.h, kind, hostUtf8.constData())
+        : rc_sitedec_lookup(kind, hostUtf8.constData());
     if (!raw)
         return false;
     const QJsonObject obj = QJsonDocument::fromJson(
@@ -235,9 +271,11 @@ bool lookup(const QString &profileId, const char *kind,
             const QString &host, QString *value,
             QString *matchedKey)
 {
-    ensureDirFor(profileId);
+    const PolicyAccess access(profileId);
     const QByteArray hostUtf8 = host.toUtf8();
-    char *raw = rc_sitedec_lookup(kind, hostUtf8.constData());
+    char *raw = access.h
+        ? ac_sitedec_lookup(access.h, kind, hostUtf8.constData())
+        : rc_sitedec_lookup(kind, hostUtf8.constData());
     if (!raw)
         return false;
     const QJsonObject obj = QJsonDocument::fromJson(
@@ -255,20 +293,23 @@ bool lookup(const QString &profileId, const char *kind,
 
 bool storePresent()
 {
-    ensureDir();
-    return rc_sitedec_store_present() != 0;
+    const PolicyAccess access;
+    return access.h ? ac_sitedec_store_present(access.h) != 0
+                    : rc_sitedec_store_present() != 0;
 }
 
 bool reload()
 {
-    ensureDir();
-    return rc_sitedec_reload() == RC_OK;
+    const PolicyAccess access;
+    return (access.h ? ac_sitedec_reload(access.h)
+                     : rc_sitedec_reload()) == RC_OK;
 }
 
 bool reset()
 {
-    ensureDir();
-    return rc_sitedec_reset() == RC_OK;
+    const PolicyAccess access;
+    return (access.h ? ac_sitedec_reset(access.h)
+                     : rc_sitedec_reset()) == RC_OK;
 }
 
 } // namespace SiteDecisionStore

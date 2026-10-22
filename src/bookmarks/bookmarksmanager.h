@@ -31,6 +31,9 @@ class AutoSaver;
 class BookmarkNode;
 class BookmarksModel;
 class QJsonObject;
+#ifdef ARKTOS_RUSTCORE
+struct AcBookmarks;
+#endif
 class BookmarksManager : public QObject
 {
     Q_OBJECT
@@ -117,13 +120,22 @@ private:
     void load();
 #ifdef ARKTOS_RUSTCORE
     // Re-binds the process-global rust tree to this profile when the
-    // last rc_bm_load targeted another manager's file (m_stale).  All
+    // last load targeted another manager's file (m_stale).  All
     // node-touching entry points funnel here first.
     void ensureBound();
+    // This manager's profile-bound facade handle (RC08) — minted
+    // through the shared AcCore; the mint binds+loads the file and
+    // every ac_bm_* op re-asserts the binding, so a re-bound stale
+    // manager needs no re-mint.  NULL when the bridge cannot serve —
+    // the legacy rc_* spelling stays the fallback then.
+    AcBookmarks *rustStore();
     void importHtmlDocument(const QByteArray &html);
 #endif
 
     QString m_profileId;
+#ifdef ARKTOS_RUSTCORE
+    AcBookmarks *m_bm = nullptr;
+#endif
     bool m_loaded;
     bool m_stale;
     AutoSaver *m_saveTimer;

@@ -34,7 +34,9 @@
 #include <qsettings.h>
 
 #if defined(ARKTOS_RUSTCORE)
-#include <rustcore.h>
+#include "rustcorebridge.h"
+
+#include <arktos_core.h>
 #endif
 
 // Same ceiling the adblock subscriptions apply — a feed larger than
@@ -203,10 +205,21 @@ void DomainBlocklist::maybeCommit()
             && file.commit()) {
             // Point the core at the data dir (the SecureStore shim
             // may not have run yet) and re-merge seed ∪ override.
-            const QByteArray dir =
-                QFileInfo(path).absolutePath().toUtf8();
-            rc_set_data_dir(dir.constData());
-            rc_blocklist_reload();
+            // RC08: the facade handle re-asserts the ambient
+            // persona's dir per op — the rc_set_data_dir anchor is
+            // the legacy fallback.
+            AcPolicy *policy = nullptr;
+            if (RustCoreBridge *bridge = RustCoreBridge::serving())
+                policy = bridge->policy(BrowserPaths::activeProfileId());
+            if (policy) {
+                ac_blocklist_reload(policy);
+                ac_policy_close(policy);
+            } else {
+                const QByteArray dir =
+                    QFileInfo(path).absolutePath().toUtf8();
+                rc_set_data_dir(dir.constData());
+                rc_blocklist_reload();
+            }
             QSettings().setValue(
                 QLatin1String("privacy/domainBlocklistUpdated"),
                 QDateTime::currentDateTime());

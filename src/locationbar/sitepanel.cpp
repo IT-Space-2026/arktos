@@ -53,8 +53,9 @@
 #include <qwebengineprofile.h>
 
 #if defined(ARKTOS_RUSTCORE)
+#include "browserpaths.h"
 #include "rustcorebridge.h"
-#include <rustcore.h>
+#include <arktos_core.h>
 #endif
 
 static QLabel *plainLabel(const QString &text, QWidget *parent)
@@ -941,10 +942,24 @@ static QJsonObject siteTrustVerdict(const QString &host, bool isHttps)
         probes |= RC_SITETRUST_PROBE_THREATLIST;
     if (BrowserApplication::siteTrustLookalikeEnabled())
         probes |= RC_SITETRUST_PROBE_LOOKALIKE;
-    rustCoreEnsureDataDir();
+    // RC08: a facade handle binds the ambient persona's dir and
+    // history.db for this lookup — the composite's first-seen rollup
+    // can never read another profile's store.  The legacy spelling
+    // anchors the same dir by hand when the bridge cannot serve.
+    AcPolicy *policy = nullptr;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        policy = bridge->policy(BrowserPaths::activeProfileId());
     const QByteArray hostUtf8 = host.toUtf8();
-    char *json = rc_sitetrust_lookup_opts(hostUtf8.constData(),
-                                          isHttps ? 1 : 0, probes);
+    char *json;
+    if (policy) {
+        json = ac_sitetrust_lookup_opts(policy, hostUtf8.constData(),
+                                        isHttps ? 1 : 0, probes);
+        ac_policy_close(policy);
+    } else {
+        rustCoreEnsureDataDir();
+        json = rc_sitetrust_lookup_opts(hostUtf8.constData(),
+                                        isHttps ? 1 : 0, probes);
+    }
     if (!json)
         return QJsonObject();
     const QJsonDocument doc = QJsonDocument::fromJson(QByteArray(json));
