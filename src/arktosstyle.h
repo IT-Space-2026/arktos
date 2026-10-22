@@ -103,10 +103,14 @@ QColor onAccentColor(const QPalette &palette);
 // --- palette variants -----------------------------------------------
 // One home for the chrome variants: the platform palette is the
 // "normal" one, darkPalette() is the variant BrowserTheme forces
-// when the platform has no dark scheme of its own, and the tor
-// family below is the tor variant.
+// when the platform has no dark scheme of its own, lightPalette()
+// is the symmetric override for a Light pick over a dark platform
+// (macOS hands out a dark palette when the system theme is dark —
+// an explicit Light choice has to override it the same way), and
+// the tor family below is the tor variant.
 
 QPalette darkPalette();
+QPalette lightPalette();
 
 // --- fixed color families -------------------------------------------
 // Fixed by design, like the tor set: identity and cue colors that

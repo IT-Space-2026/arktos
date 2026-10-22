@@ -25,6 +25,7 @@
 #include "extensionbackgroundhost.h"
 #include "extensionmanager.h"
 
+#include <qaction.h>
 #include <qevent.h>
 #include <qfile.h>
 #include <qframe.h>
@@ -33,7 +34,7 @@
 #include <qjsonobject.h>
 #include <qlabel.h>
 #include <qlayout.h>
-#include <qscreen.h>
+#include <qtimer.h>
 #include <qtoolbutton.h>
 #include <qvariant.h>
 
@@ -130,6 +131,19 @@ QIcon extensionIcon(const ExtensionManager::ExtensionInfo &info, int edge)
     return icon;
 }
 
+// Top-left of a `size` rect placed at (x, y), pulled back inside
+// `bounds` — the child-overlay version of the old screen-geometry
+// clamp; the bubble never leaves the host window.
+QPoint clampToRect(int x, int y, const QSize &size, const QRect &bounds)
+{
+    return QPoint(qBound(bounds.left(), x,
+                         qMax(bounds.left(),
+                              bounds.right() - size.width() + 1)),
+                  qBound(bounds.top(), y,
+                         qMax(bounds.top(),
+                              bounds.bottom() - size.height() + 1)));
+}
+
 } // namespace
 
 ExtensionActionBar::ExtensionActionBar(QWidget *parent)
@@ -140,6 +154,10 @@ ExtensionActionBar::ExtensionActionBar(QWidget *parent)
     m_layout->setContentsMargins(0, 0, 0, 0);
     m_layout->setSpacing(ArktosStyle::Spacing::Small);
     m_iconSize = QSize(18, 18);
+
+    // App-wide: the overlaid bubble is dismissed by any press outside
+    // it — the popup installs its own filter only for Escape.
+    qApp->installEventFilter(this);
 
     ExtensionManager *extensions = ExtensionManager::instance();
     // changed() rides along with every finished signal and is also
@@ -157,6 +175,34 @@ ExtensionActionBar::ExtensionActionBar(QWidget *parent)
             this, &ExtensionActionBar::rebuild);
 
     rebuild();
+}
+
+void ExtensionActionBar::setToolbarAction(QAction *action)
+{
+    m_toolbarAction = action;
+    // Late wiring — the strip is inserted empty on every cold start,
+    // so the first state to push to the action is the current one.
+    if (m_toolbarAction)
+        m_toolbarAction->setVisible(actionCount() > 0);
+    if (qEnvironmentVariableIsSet("ARKTOS_DEBUG_POPUP")) {
+        QTimer::singleShot(8000, this, [this]() {
+            for (const ExtensionManager::ExtensionInfo &i
+                 : ExtensionManager::instance()->extensions())
+                if (i.enabled && !i.actionPopupUrl.isEmpty()) {
+                    openPopup(i.id, i.actionPopupUrl, this);
+                    return;
+                }
+        });
+        for (int t : {14000, 20000, 27000})
+            QTimer::singleShot(t, this, [this, t]() {
+                if (m_popup) {
+                    m_popup->grab().save(
+                        QStringLiteral("/tmp/popup_%1.png").arg(t));
+                    qInfo() << "EXTDBG grab" << t << m_popup->size()
+                            << m_popup->pos();
+                }
+            });
+    }
 }
 
 void ExtensionActionBar::setIconSize(const QSize &size)
@@ -244,6 +290,12 @@ void ExtensionActionBar::rebuild()
 
     // No popup-bearing extensions => no strip and no splitter gap.
     setVisible(!actions.isEmpty());
+    // EXT22: the widget flag alone is not enough — a strip hidden at
+    // insertWidget time leaves its bar action permanently invisible
+    // under Qt's one-way tracking, so the toolbar slot is driven
+    // explicitly too.
+    if (m_toolbarAction)
+        m_toolbarAction->setVisible(!actions.isEmpty());
 }
 
 bool ExtensionActionBar::triggerAction(const QString &id,
@@ -275,13 +327,21 @@ bool ExtensionActionBar::eventFilter(QObject *watched, QEvent *event)
             return true;
         }
     }
-#if defined(Q_OS_MACOS)
-    // The macOS popup is a frameless Qt::Tool (see openPopup), so it
-    // lacks Qt::Popup's built-in click-outside dismissal — reproduce
-    // it by closing when the bubble deactivates.
-    if (watched == m_popup && event->type() == QEvent::WindowDeactivate)
-        m_popup->close();
-#endif
+    // The bubble is an overlaid child of the browser window (see
+    // openPopup) — not a Qt::Popup — so it gets no built-in
+    // click-outside dismissal.  Filter app-wide instead: any press
+    // outside the bubble or its button closes it, matching Chrome.
+    if (event->type() == QEvent::MouseButtonPress && m_popup
+            && m_popup->isVisible()) {
+        QWidget *target = qobject_cast<QWidget *>(watched);
+        const bool onPopup = target
+                && (target == m_popup || m_popup->isAncestorOf(target));
+        const bool onAnchor = target && m_popupAnchor
+                && (target == m_popupAnchor
+                    || m_popupAnchor->isAncestorOf(target));
+        if (!onPopup && !onAnchor)
+            m_popup->close();
+    }
     return QWidget::eventFilter(watched, event);
 }
 
@@ -309,7 +369,10 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
         }
     }
     if (info.health == ExtensionManager::ExtensionHealth::NotSupported) {
-        QFrame *note = new QFrame(this, Qt::Popup);
+        QWidget *hostWindow = anchor ? anchor->window() : nullptr;
+        if (!hostWindow)
+            hostWindow = window();
+        QFrame *note = new QFrame(hostWindow);
         note->setAttribute(Qt::WA_DeleteOnClose);
         note->setObjectName(QLatin1String("extensionActionPopup"));
         note->setFrameShape(QFrame::StyledPanel);
@@ -324,13 +387,17 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
                                                     : info.name,
                                 info.healthReason));
         noteLayout->addWidget(label);
-        note->installEventFilter(this);
         note->adjustSize();
-        const QPoint topRight = anchor->mapToGlobal(
-            QPoint(anchor->width() + 1, anchor->height() + 1));
-        note->move(topRight.x() - note->width(), topRight.y() + 2);
+        const QPoint topRight = anchor
+                ? anchor->mapTo(hostWindow, anchor->rect().bottomRight())
+                : QPoint(hostWindow->width() - note->width() - 8, 40);
+        const QRect bounds(QPoint(0, 0), hostWindow->size());
+        note->move(clampToRect(topRight.x() - note->width(),
+                               topRight.y() + 2, note->size(), bounds));
         note->show();
+        note->raise();
         m_popup = note;
+        m_popupAnchor = anchor;
         m_popupExtensionId = id;
         return;
     }
@@ -344,19 +411,22 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     // deleted rather than hidden on close — a live WebEngine page is
     // too heavy to keep around after the bubble dismisses, and an
     // orphaned page outlives the profile at teardown.
-    QFrame *popup = new QFrame(this,
-#if defined(Q_OS_MACOS)
-        // QWebEngineView never composites into a Qt::Popup window on
-        // macOS — Chromium's renderer has no usable surface and the
-        // bubble shows dead (Bitwarden's popup was exactly this).
-        // A frameless Tool window paints and takes focus correctly;
-        // click-outside dismissal moves to the WindowDeactivate
-        // watch in eventFilter().
-        Qt::Tool | Qt::FramelessWindowHint
-#else
-        Qt::Popup
-#endif
-    );
+    //
+    // The bubble is an overlaid child of the browser window, not a
+    // top-level window at all.  QWebEngineView never composites into a
+    // Qt::Popup window — Chromium's renderer has no usable surface
+    // there (on macOS the bubble shows dead, on Linux the
+    // chrome-extension:// main frame never even commits).  A frameless
+    // Tool window renders, but on Wayland top-level geometry requests
+    // go through compositor placement — every move/resize landed the
+    // bubble somewhere new (the "popup jumps everywhere" report).  A
+    // child overlay is positioned in widget coordinates on every
+    // platform and composites like any tab page — no surface handshake,
+    // no placement negotiation, no jumping.
+    QWidget *hostWindow = anchor ? anchor->window() : nullptr;
+    if (!hostWindow)
+        hostWindow = window();
+    QFrame *popup = new QFrame(hostWindow);
     popup->setAttribute(Qt::WA_DeleteOnClose);
     popup->setObjectName(QLatin1String("extensionActionPopup"));
     popup->setFrameShape(QFrame::StyledPanel);
@@ -365,6 +435,13 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     layout->setSpacing(0);
 
     QWebEngineView *view = new QWebEngineView(popup);
+#ifdef Q_OS_MACOS
+    // macOS: a RWHV inside a non-native child overlay may never gain a
+    // layer-backed NSView and paints white forever — the classic
+    // QWebEngineView-in-overlay failure there.  A native window handle
+    // on the view forces the compositor path Qt's own docs require.
+    view->setAttribute(Qt::WA_NativeWindow);
+#endif
     // An extension-chrome page on the extension's own profile —
     // deliberately not the app's WebPage subclass, so no arktos
     // QWebChannel objects or app page policy leak into extension
@@ -377,65 +454,97 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     // even when the user has scripts off (Chrome parity).
     page->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled,
                                    true);
-    view->setPage(page);
+    // The page loads viewless first and is attached to the view only
+    // after its navigation commits: a RWHV created mid-navigation can
+    // stall the commit entirely (the Qt::Popup/Linux stall) or never
+    // composite (the macOS white bubble).  The page is parented to the
+    // view so lifetime needs no extra handling.
     layout->addWidget(view);
     popup->resize(360, 500);
 
     // Chrome resizes the bubble to the document — WebEngine cannot
     // report a preferred size up front, so after each load the doc's
     // scroll size re-fits the popup within the usual bubble bounds.
-    // The deferred callback must survive neither object: the popup is
+    // SPA popups (Bitwarden) are still laying out at loadFinished —
+    // the first measure catches the spinner and truncates the real UI —
+    // so re-measure on a bounded schedule while the app settles.
+    // The deferred callbacks must survive neither object: the popup is
     // delete-on-close and rebuild() can replace the anchor button
-    // while an eval is still in flight — QPointer both, or the
+    // while an eval is still in flight — QPointer all, or the
     // resize/move lands on freed widgets.
     const QPointer<QFrame> popupGuard(popup);
     const QPointer<QWidget> anchorGuard(anchor);
+    const QPointer<QWidget> hostGuard(hostWindow);
     const QPointer<QWebEnginePage> pageGuard(page);
-    connect(view, &QWebEngineView::loadFinished, popup,
-            [popupGuard, pageGuard, anchorGuard]() {
+    const auto measure = [popupGuard, pageGuard,
+                          anchorGuard, hostGuard]() {
         if (!pageGuard)
             return;
         pageGuard->runJavaScript(
             QStringLiteral("[document.documentElement.scrollWidth,"
                            "document.documentElement.scrollHeight]"),
-            [popupGuard, anchorGuard](const QVariant &result) {
-                if (!popupGuard || !anchorGuard)
+            [popupGuard, anchorGuard, hostGuard](const QVariant &result) {
+                if (!popupGuard || !hostGuard)
                     return;
                 const QVariantList size = result.toList();
                 if (size.size() != 2)
                     return;
+                // Chrome caps the bubble at 800x600 — our overlay may
+                // grow to 800 tall when the host window has room, so a
+                // footer's pop-out/settings row isn't truncated merely
+                // because the document outgrows Chrome's bubble (beyond
+                // that it scrolls, as in Chrome).
+                const QRect bounds(QPoint(0, 0), hostGuard->size());
+                const int maxW = qBound(280, bounds.width() - 24, 800);
+                const int maxH = qBound(120, bounds.height() - 24, 800);
                 popupGuard->resize(
-                    qBound(280, size.at(0).toInt() + 24, 800),
-                    qBound(120, size.at(1).toInt() + 24, 600));
-                const QPoint topRight = anchorGuard->mapToGlobal(
-                    QPoint(anchorGuard->width() + 1,
-                           anchorGuard->height() + 1));
-                popupGuard->move(topRight.x() - popupGuard->width(),
-                                 topRight.y() + 2);
+                    qBound(280, size.at(0).toInt() + 24, maxW),
+                    qBound(120, size.at(1).toInt() + 24, maxH));
+                const QPoint topRight =
+                        anchorGuard
+                        ? anchorGuard->mapTo(
+                              hostGuard,
+                              anchorGuard->rect().bottomRight())
+                        : QPoint(bounds.width() - popupGuard->width() - 8,
+                                 40);
+                popupGuard->move(clampToRect(
+                    topRight.x() - popupGuard->width(), topRight.y() + 2,
+                    popupGuard->size(), bounds));
             });
+    };
+    connect(page, &QWebEnginePage::loadFinished, popup,
+            [popupGuard, pageGuard, measure](bool ok) {
+        if (!ok || !popupGuard || !pageGuard)
+            return;
+        // Commit landed — the view can safely take the page now.
+        QWebEngineView *v =
+            qobject_cast<QWebEngineView *>(pageGuard->parent());
+        if (v && v->page() != pageGuard)
+            v->setPage(pageGuard.data());
+        measure();
     });
+    // Retries ride the popup's own lifetime — timers die with it.
+    for (int delay : {600, 2000, 5000})
+        QTimer::singleShot(delay, popup, measure);
 
     popup->installEventFilter(this);
-    view->load(popupUrl);
 
-    const QPoint topRight = anchor->mapToGlobal(
-        QPoint(anchor->width() + 1, anchor->height() + 1));
-    popup->move(topRight.x() - popup->width(), topRight.y() + 2);
-    QScreen *screen = QGuiApplication::screenAt(anchor->mapToGlobal(
-        anchor->rect().center()));
-    if (screen) {
-        const QRect available = screen->availableGeometry();
-        popup->move(
-            qBound(available.left(), popup->x(),
-                   qMax(available.left(),
-                        available.right() - popup->width() + 1)),
-            qBound(available.top(), popup->y(),
-                   qMax(available.top(),
-                        available.bottom() - popup->height() + 1)));
-    }
+    const QRect bounds(QPoint(0, 0), hostWindow->size());
+    const QPoint topRight =
+            anchor
+            ? anchor->mapTo(hostWindow, anchor->rect().bottomRight())
+            : QPoint(bounds.width() - popup->width() - 8, 40);
+    popup->move(clampToRect(topRight.x() - popup->width(),
+                            topRight.y() + 2, popup->size(), bounds));
+    // Show before loading: a view whose RWHV never gained a surface
+    // can stall or paint white (macOS shows this worst) — the bubble
+    // must be visible when the extension navigation begins.
     popup->show();
+    popup->raise();
+    page->load(popupUrl);
     view->setFocus();
 
     m_popup = popup;
+    m_popupAnchor = anchor;
     m_popupExtensionId = id;
 }

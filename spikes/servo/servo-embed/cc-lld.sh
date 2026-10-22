@@ -16,5 +16,10 @@ SYSROOT="$(rustc --print sysroot)"
 LLD_DIR="$SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/bin"
 CACHE="$HOME/.cache/arora-spike-lld"
 mkdir -p "$CACHE"
-ln -sf "$LLD_DIR/rust-lld" "$CACHE/ld.lld"
+# Parallel cargo links invoke this wrapper at once — plain ln -sf
+# races (unlink+symlink interleave → "File exists", seen on the
+# ubuntu-26.04 leg).  Point a unique temp link at rust-lld then
+# rename(2) it over the target atomically.
+ln -sf "$LLD_DIR/rust-lld" "$CACHE/ld.lld.$$"
+mv -T "$CACHE/ld.lld.$$" "$CACHE/ld.lld"
 exec gcc -B"$CACHE" -fuse-ld=lld "$@"

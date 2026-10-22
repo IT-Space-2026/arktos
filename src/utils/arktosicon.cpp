@@ -166,11 +166,14 @@ public:
     {
         // Always Normal art from the theme — a set's own Disabled
         // rendering would double-dim under our disabled tint.
-        QPixmap base = ArktosIcon::get(m_name).pixmap(size * scale,
-                                                   QIcon::Normal, state);
+        // Request the logical size with `scale` as the target dpr —
+        // QIcon::pixmap() already multiplies by the device ratio
+        // internally, so asking for size*scale double-scales the
+        // glyph on Retina/2x displays.
+        QPixmap base = ArktosIcon::get(m_name).pixmap(size, scale,
+                                                    QIcon::Normal, state);
         if (base.isNull())
             return base;
-        base.setDevicePixelRatio(scale);
         const QPalette palette = m_hasPalette
             ? m_palette
             : (qApp ? qApp->palette() : QPalette());

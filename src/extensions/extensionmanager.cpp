@@ -121,6 +121,13 @@ static QWebEngineExtensionInfo findById(
 
 #endif // QT_CONFIG(webengine_extensions)
 
+// EXTEXIT01: quitting once an extension was enabled in-session traps
+// inside the engine's teardown (~ProfileAdapter on macOS, a Chromium
+// assert on Linux) — ~BrowserApplication quick_exits instead of
+// unwinding when this flag is set.  Set at every engine enable site.
+static bool s_extensionEnabledThisSession = false;
+
+
 namespace {
 // A real reply (or picked package) buffers whatever the peer sends;
 // cap rather than letting a hostile endpoint grow memory unbounded.
@@ -397,8 +404,11 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
             BrowserProfile::profileIdFor(profile)).value(
                 enabledSettingsKey(profile->storageName(), info.id()));
         if (wanted.isValid() && info.isLoaded()
-                && info.isEnabled() != wanted.toBool())
+                && info.isEnabled() != wanted.toBool()) {
+            if (wanted.toBool())
+                s_extensionEnabledThisSession = true;
             extensions->setExtensionEnabled(info, wanted.toBool());
+        }
         relay(&ExtensionManager::extensionLoaded)(info);
     });
     connect(extensions, &QWebEngineExtensionManager::installFinished,
@@ -507,8 +517,11 @@ void ExtensionManager::reapplyEnabledFlags(QWebEngineProfile *profile)
         const QVariant wanted = settings.value(
             enabledSettingsKey(profile->storageName(), info.id()));
         if (wanted.isValid() && info.isLoaded()
-                && info.isEnabled() != wanted.toBool())
+                && info.isEnabled() != wanted.toBool()) {
+            if (wanted.toBool())
+                s_extensionEnabledThisSession = true;
             extensions->setExtensionEnabled(info, wanted.toBool());
+        }
     }
 #else
     Q_UNUSED(profile);
@@ -680,6 +693,11 @@ void ExtensionManager::removeExtension(const QString &id)
     emit errorOccurred(tr("Extension support is not available in this build of Qt WebEngine."));
 }
 
+bool ExtensionManager::sessionSawEnabledExtension()
+{
+    return s_extensionEnabledThisSession;
+}
+
 void ExtensionManager::setExtensionEnabled(const QString &id, bool enabled)
 {
 #if QT_CONFIG(webengine_extensions)
@@ -698,6 +716,8 @@ void ExtensionManager::setExtensionEnabled(const QString &id, bool enabled)
                     .setValue(enabledSettingsKey(
                         profile->storageName(), id), enabled);
             }
+            if (enabled)
+                s_extensionEnabledThisSession = true;
             extensions->setExtensionEnabled(info, enabled);
             // Qt exposes no enabledChanged signal — poll briefly until
             // the engine reports the new state (or the extension
@@ -896,6 +916,7 @@ void ExtensionManager::finishBundledInstall(const ExtensionInfo &info)
             const QWebEngineExtensionInfo ext =
                 findById(pending.engine, info.id);
             if (!ext.id().isEmpty()) {
+                s_extensionEnabledThisSession = true;
                 pending.engine->setExtensionEnabled(ext, true);
                 // EXT20: record the bundled enable so it survives
                 // restarts — the engine does not persist it.

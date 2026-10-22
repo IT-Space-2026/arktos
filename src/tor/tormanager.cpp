@@ -690,7 +690,11 @@ void TorManager::start()
                 retryOrFail(QStringLiteral("tor exited before bootstrap "
                                            "(exit code %1)")
                                 .arg(exitCode));
-            } else if (m_state != Stopping) {
+            } else if (m_state != Stopping && m_state != Failed) {
+                // A late finished() after a declared failure must not
+                // clobber Failed — the banner would fall back to the
+                // generic "daemon is not running" text and hide the
+                // real error the Retry button is anchored on.
                 setState(Stopped);
                 emit stopped();
             }

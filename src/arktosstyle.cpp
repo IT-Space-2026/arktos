@@ -496,10 +496,60 @@ QPalette ArktosStyle::darkPalette()
     palette.setColor(QPalette::Highlight, QColor(42, 130, 218));
     palette.setColor(QPalette::Disabled, QPalette::Highlight,
                      QColor(80, 80, 80));
+    // Accent drives the reader button's suggested/active marks —
+    // left unset it resolves to whatever the platform theme happens
+    // to carry (or nothing), which reads as a stray color next to
+    // the pinned Highlight.
+    palette.setColor(QPalette::Accent, QColor(42, 130, 218));
+    palette.setColor(QPalette::Disabled, QPalette::Accent,
+                     QColor(80, 80, 80));
     palette.setColor(QPalette::HighlightedText, Qt::black);
     palette.setColor(QPalette::Disabled, QPalette::HighlightedText,
                      QColor(127, 127, 127));
     palette.setColor(QPalette::PlaceholderText, QColor(160, 160, 160));
+    return palette;
+}
+
+QPalette ArktosStyle::lightPalette()
+{
+    // The classic Qt light palette — darkPalette()'s mirror.  Used
+    // when the user picks Light while the platform palette is dark
+    // (macOS system-dark), where restoring "the platform palette"
+    // would just hand the dark one back.
+    QPalette palette;
+    palette.setColor(QPalette::Window, QColor(240, 240, 240));
+    palette.setColor(QPalette::WindowText, Qt::black);
+    palette.setColor(QPalette::Disabled, QPalette::WindowText,
+                     QColor(120, 120, 120));
+    palette.setColor(QPalette::Base, Qt::white);
+    palette.setColor(QPalette::AlternateBase, QColor(246, 246, 246));
+    palette.setColor(QPalette::ToolTipBase, Qt::white);
+    palette.setColor(QPalette::ToolTipText, Qt::black);
+    palette.setColor(QPalette::Text, Qt::black);
+    palette.setColor(QPalette::Disabled, QPalette::Text,
+                     QColor(120, 120, 120));
+    palette.setColor(QPalette::Dark, QColor(160, 160, 160));
+    palette.setColor(QPalette::Light, Qt::white);
+    palette.setColor(QPalette::Midlight, QColor(227, 227, 227));
+    palette.setColor(QPalette::Mid, QColor(160, 160, 160));
+    palette.setColor(QPalette::Shadow, QColor(105, 105, 105));
+    palette.setColor(QPalette::Button, QColor(240, 240, 240));
+    palette.setColor(QPalette::ButtonText, Qt::black);
+    palette.setColor(QPalette::Disabled, QPalette::ButtonText,
+                     QColor(120, 120, 120));
+    palette.setColor(QPalette::BrightText, Qt::red);
+    palette.setColor(QPalette::Link, QColor(0, 0, 238));
+    palette.setColor(QPalette::LinkVisited, QColor(82, 24, 139));
+    palette.setColor(QPalette::Highlight, QColor(48, 140, 198));
+    palette.setColor(QPalette::Disabled, QPalette::Highlight,
+                     QColor(145, 145, 145));
+    palette.setColor(QPalette::Accent, QColor(48, 140, 198));
+    palette.setColor(QPalette::Disabled, QPalette::Accent,
+                     QColor(145, 145, 145));
+    palette.setColor(QPalette::HighlightedText, Qt::white);
+    palette.setColor(QPalette::Disabled, QPalette::HighlightedText,
+                     QColor(230, 230, 230));
+    palette.setColor(QPalette::PlaceholderText, QColor(0, 0, 0, 128));
     return palette;
 }
 
@@ -696,6 +746,18 @@ QString ArktosStyle::chromeStyleSheet()
         " margin: %2px %2px; }"
         "QComboBox QAbstractItemView { border: 1px solid %1;"
         " padding: %2px; }"
+        // Group boxes get pinned geometry: the base style owns the
+        // title/contents math by default, and those metrics differ
+        // per platform — macOS in particular can place contents over
+        // the title strip, so sections visually collapse onto each
+        // other.  In stylesheet space the recipe is identical on
+        // every platform: the title straddles the top hairline and
+        // the margin always reserves its full height.
+        "QGroupBox { border: 1px solid %1; border-radius: 4px;"
+        " margin-top: %4px; padding-top: %2px; }"
+        "QGroupBox::title { subcontrol-origin: margin;"
+        " subcontrol-position: top left; left: %4px;"
+        " padding: 0 %2px; }"
         // THEM03 §b — sidebar panel surfaces keep a flat hairline
         // instead of the styled field frame.
         "#sidebarTabs QAbstractItemView { border: 1px solid %1; }"

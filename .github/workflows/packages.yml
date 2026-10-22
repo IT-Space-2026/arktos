@@ -425,6 +425,12 @@ jobs:
           mkdir -p Arktos.app/Contents/lib
           cp -a torpayload/tor Arktos.app/Contents/lib/tor
           cp -a torpayload/data Arktos.app/Contents/lib/data
+          # Adhoc-sign the tor helper + its bundled dylibs — an
+          # unsigned Mach-O inside a quarantined app gets exec-killed
+          # by Gatekeeper on modern macOS ("Failed to launch tor").
+          codesign -s - --force Arktos.app/Contents/lib/tor/tor
+          find Arktos.app/Contents/lib/tor -name '*.dylib' \
+               -exec codesign -s - --force {} +
           # servo-embed dylib — ServoBackend::artifactPath() resolves
           # <bindir>/../lib/ (= Contents/lib, beside bundled tor).
           # dlopen'd, so macdeployqt never learns about it; adhoc-sign

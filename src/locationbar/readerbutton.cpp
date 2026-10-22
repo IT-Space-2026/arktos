@@ -99,6 +99,9 @@ public:
         // Dog-eared document: outline with a folded top-right corner
         // and three round-cap text lines — reads as "article" at
         // 16px where a plain rounded rect just looks like a square.
+        // Stroke weight follows the themed siblings (~1.35px on the
+        // 16px grid): the first pass drew noticeably thinner than
+        // every neighboring glyph, which read as a faint/wrong icon.
         QPainterPath page;
         page.moveTo(3.0, 1.5);
         page.lineTo(10.0, 1.5);
@@ -115,7 +118,7 @@ public:
             painter.setBrush(ArktosStyle::accentFillColor(m_palette));
             painter.drawPath(page);
         }
-        QPen pen(fg, m_suggested ? 1.4 : 1.15);
+        QPen pen(fg, m_suggested ? 1.5 : 1.35);
         pen.setCapStyle(Qt::RoundCap);
         pen.setJoinStyle(Qt::RoundJoin);
         painter.setPen(pen);
