@@ -1126,6 +1126,69 @@ char *rc_settings_list(RcSettings *h, const char *prefix_or_null);
 RcStatus rc_settings_sync(RcSettings *h);
 
 /* ------------------------------------------------------------------ */
+/* RC19: container registry + storage-namespace map                    */
+/*                                                                     */
+/* Firefox-style containers — the registry ContainerManager persists  */
+/* inside profile settings (the "containers" group), so this module   */
+/* is a typed specialization over the settings store: every registry  */
+/* op runs on an RcSettings handle bound to the OWNING persona's      */
+/* scope (the group is a classified persona key — a global-scope      */
+/* handle sees no containers).  The on-disk keys match the C++        */
+/* layout exactly — containers/order (id list in creation order),     */
+/* containers/<id>/name, containers/<id>/color (QColor name() text),  */
+/* containers/<id>/icon (optional — the C++ ignores the key).  A      */
+/* registry written here is what ContainerManager::loadRegistry       */
+/* reads on the next scope open; "order" is authoritative and stale   */
+/* groups are pruned on read, mirroring its hygiene pass.             */
+/*                                                                     */
+/* rc_containers_namespace is the storage-namespace map — the pure   */
+/* derivation ContainerManager::storagePath/cachePathFor/             */
+/* defaultDataPathFor/storageNameFor implement, plus the              */
+/* cookie-partition key the RC15 cookie db partitions rows on.        */
+/* "Always open in <container>" host rules are not here — they live   */
+/* in sitedecisions.json's "container" kind.                          */
+/*                                                                     */
+/* Mutations persist atomically and emit the "containers" change      */
+/* topic.                                                             */
+
+/* The registry as a JSON array of {"id","name","color","icon"} in
+ * creation order — NULL + stashed error on a bad handle.
+ * rc_string_free the result. */
+char *rc_containers_list(RcSettings *h);
+
+/* One row, same shape — NULL when the id is unregistered (a miss is
+ * not an error).  rc_string_free the result. */
+char *rc_containers_get(RcSettings *h, const char *id);
+
+/* Create from JSON {"name","color","icon"?} — the id is minted
+ * library-side (v4 uuid, the C++ hex-with-dashes shape).  Returns the
+ * row JSON or NULL + stashed error.  rc_string_free the result. */
+char *rc_containers_create(RcSettings *h, const uint8_t *json,
+                           size_t len);
+
+/* Patch from JSON {"name"?,"color"?,"icon"?} — absent keys keep
+ * their stored value; "icon":"" or null clears it.  RC_NOT_FOUND on
+ * an unregistered id. */
+RcStatus rc_containers_update(RcSettings *h, const char *id,
+                              const uint8_t *json, size_t len);
+
+/* The store half of deleteContainer — the <id>/ group and its
+ * "order" entry.  RC_NOT_FOUND on an unregistered id.  The on-disk
+ * storage trees are the caller's job — rc_containers_namespace
+ * derives their paths. */
+RcStatus rc_containers_remove(RcSettings *h, const char *id);
+
+/* The storage namespace for a registered id — JSON
+ * {"storage_name","storage_path","cache_path","default_data_path",
+ * "cookie_partition"}.  data_root is the APP data root
+ * (BrowserPaths::dataRoot).  NULL + stashed error on a bad id — the
+ * default ("") container has no namespace of its own.
+ * rc_string_free the result. */
+char *rc_containers_namespace(const char *data_root,
+                              const char *profile_id,
+                              const char *container_id);
+
+/* ------------------------------------------------------------------ */
 /* RC03: profile registry                                              */
 /*                                                                     */
 /* The persona list — <data root>/profiles.json, byte-compatible with */

@@ -63,6 +63,7 @@ SUBDIRS  = \
     vaultengine \
     qrcode \
     readersanitizer \
+    rustcontainers \
     rustdownload \
     rustprofiles \
     safetext \

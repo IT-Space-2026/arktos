@@ -1896,6 +1896,167 @@ fn settings_surface() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+// RC19: the container registry + namespace map over the C ABI —
+// CRUD on a profile-bound settings handle, the C++ layout's keys
+// landing byte-for-byte, and the derivation entry points.
+#[test]
+fn containers_surface() {
+    let _g = guard();
+    let root = tmpdir("containers");
+    let croot = cs(&root);
+    let pid = cs("work");
+
+    // Bad handles/args degrade, never crash.
+    assert!(unsafe { crate::rc_containers_list(ptr::null_mut()) }.is_null());
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!h.is_null());
+    assert!(unsafe { crate::rc_containers_get(h, ptr::null()) }.is_null());
+    assert!(unsafe {
+        crate::rc_containers_create(h, ptr::null(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_containers_create(h, b"nope".as_ptr(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_containers_create(ptr::null_mut(), b"{}".as_ptr(), 2)
+    }
+    .is_null());
+    // An empty registry reads as [].
+    let list = take_str(unsafe { crate::rc_containers_list(h) }).unwrap();
+    assert_eq!(list, "[]");
+
+    // create -> the row JSON carries the minted uuid-shape id.
+    let spec = b"{\"name\":\"Work\",\"color\":\"#ff8800\",\"icon\":\"w\"}";
+    let made = take_str(unsafe {
+        crate::rc_containers_create(h, spec.as_ptr(), spec.len())
+    })
+    .unwrap();
+    let row: serde_json::Value = serde_json::from_str(&made).unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    assert_eq!(id.len(), 36);
+    assert!(id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
+    assert_eq!(row["name"], "Work");
+    assert_eq!(row["icon"], "w");
+    // Blank names refuse.
+    let blank = b"{\"name\":\" \"}";
+    assert!(unsafe {
+        crate::rc_containers_create(h, blank.as_ptr(), blank.len())
+    }
+    .is_null());
+
+    // The C++ layout's keys landed: order list + per-id fields.
+    let ok = cs("containers/order");
+    let mut buf = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_settings_get_list(h, ok.as_ptr(), &mut buf) },
+        RcStatus::Ok
+    );
+    let order: Vec<String> =
+        serde_json::from_slice(&take_buf(&mut buf)).unwrap();
+    assert_eq!(order, vec![id.clone()]);
+    let cid = cs(&id);
+    let got = take_str(unsafe { crate::rc_containers_get(h, cid.as_ptr()) });
+    let row: serde_json::Value =
+        serde_json::from_str(&got.unwrap()).unwrap();
+    assert_eq!(row["color"], "#ff8800");
+
+    // update: rename + recolor + clear the icon; unknown ids 404.
+    let patch = b"{\"name\":\"Vault\",\"icon\":null}";
+    assert_eq!(
+        unsafe {
+            crate::rc_containers_update(h, cid.as_ptr(), patch.as_ptr(), patch.len())
+        },
+        RcStatus::Ok
+    );
+    let row: serde_json::Value = serde_json::from_str(
+        &take_str(unsafe { crate::rc_containers_get(h, cid.as_ptr()) })
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(row["name"], "Vault");
+    assert_eq!(row["color"], "#ff8800");
+    assert_eq!(row["icon"], "");
+    assert_eq!(
+        unsafe {
+            crate::rc_containers_update(
+                h,
+                cs("ghost").as_ptr(),
+                patch.as_ptr(),
+                patch.len(),
+            )
+        },
+        RcStatus::NotFound
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_containers_update(h, cid.as_ptr(), b"nope".as_ptr(), 4)
+        },
+        RcStatus::InvalidArgument
+    );
+    // An unregistered id reads as NULL without an error.
+    assert!(unsafe { crate::rc_containers_get(h, cs("ghost").as_ptr()) }
+        .is_null());
+
+    // The namespace derivation — the ContainerManager path contract
+    // verbatim plus the cookie-partition key.
+    let ns = take_str(unsafe {
+        crate::rc_containers_namespace(croot.as_ptr(), pid.as_ptr(), cid.as_ptr())
+    })
+    .unwrap();
+    let ns: serde_json::Value = serde_json::from_str(&ns).unwrap();
+    assert_eq!(
+        ns["storage_name"],
+        format!("arktos-container-work-{id}")
+    );
+    assert_eq!(
+        ns["storage_path"],
+        format!("{root}/profiles/work/containers/{id}")
+    );
+    assert_eq!(
+        ns["cache_path"],
+        format!("{root}/profiles/work/cache/containers/{id}")
+    );
+    assert_eq!(
+        ns["default_data_path"],
+        format!("{root}/QtWebEngine/arktos-container-work-{id}")
+    );
+    assert_eq!(ns["cookie_partition"], id);
+    // The default container and bad ids have no namespace.
+    assert!(unsafe {
+        crate::rc_containers_namespace(croot.as_ptr(), pid.as_ptr(), cs("").as_ptr())
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_containers_namespace(
+            ptr::null(),
+            pid.as_ptr(),
+            cid.as_ptr(),
+        )
+    }
+    .is_null());
+
+    // remove -> group + order entry gone; second remove 404s.
+    assert_eq!(
+        unsafe { crate::rc_containers_remove(h, cid.as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_containers_remove(h, cid.as_ptr()) },
+        RcStatus::NotFound
+    );
+    assert_eq!(
+        unsafe { crate::rc_containers_remove(h, ptr::null()) },
+        RcStatus::InvalidArgument
+    );
+    let list = take_str(unsafe { crate::rc_containers_list(h) }).unwrap();
+    assert_eq!(list, "[]");
+
+    unsafe { crate::rc_settings_close(h) };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 // RC03: the profile registry — handle lifecycle, CRUD, the ambient
 // id and the BrowserPaths-mirroring path accessors, all over the C
 // ABI.
@@ -2427,7 +2588,7 @@ fn facade_init_and_accessors() {
     let croot = cs(&root);
 
     // housekeeping
-    assert_eq!(crate::facade::ac_api_version(), 4);
+    assert_eq!(crate::facade::ac_api_version(), 5);
     assert_ne!(crate::facade::ac_capabilities(), 0);
 
     // rejected configs fail clean with a stashed error
@@ -2833,9 +2994,64 @@ fn facade_init_and_accessors() {
         RcStatus::Ok
     );
 
+    // RC19: the containers handle binds the persona's settings
+    // scope — registry ops land in profiles/<id>/settings.json's
+    // "containers" group, the namespace derives its paths.
+    let ct = unsafe { crate::facade::ac_containers(core, cs("work").as_ptr()) };
+    assert!(!ct.is_null());
+    let spec = b"{\"name\":\"Side\",\"color\":\"#00aa88\"}";
+    let made = take_str(unsafe {
+        crate::facade::ac_containers_create(ct, spec.as_ptr(), spec.len())
+    })
+    .unwrap();
+    let row: serde_json::Value = serde_json::from_str(&made).unwrap();
+    let cid_s = row["id"].as_str().unwrap().to_string();
+    let cid = cs(&cid_s);
+    let listed = take_str(unsafe { crate::facade::ac_containers_list(ct) }).unwrap();
+    assert!(listed.contains(&cid_s));
+    let ns = take_str(unsafe {
+        crate::facade::ac_containers_namespace(ct, cid.as_ptr())
+    })
+    .unwrap();
+    let ns: serde_json::Value = serde_json::from_str(&ns).unwrap();
+    assert_eq!(
+        ns["storage_path"],
+        format!("{root}/profiles/work/containers/{cid_s}")
+    );
+    assert_eq!(ns["cookie_partition"], cid_s);
+    let patch = b"{\"color\":\"#112233\"}";
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_containers_update(
+                ct,
+                cid.as_ptr(),
+                patch.as_ptr(),
+                patch.len(),
+            )
+        },
+        RcStatus::Ok
+    );
+    let row: serde_json::Value = serde_json::from_str(
+        &take_str(unsafe {
+            crate::facade::ac_containers_get(ct, cid.as_ptr())
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(row["color"], "#112233");
+    assert_eq!(
+        unsafe { crate::facade::ac_containers_remove(ct, cid.as_ptr()) },
+        RcStatus::Ok
+    );
+    assert!(unsafe {
+        crate::facade::ac_containers_get(ct, cid.as_ptr())
+    }
+    .is_null());
+
     // explicit closes, then shutdown reclaims the rest — both
     // NULL-tolerant.
     unsafe {
+        crate::facade::ac_containers_close(ct);
         crate::facade::ac_icons_close(ic);
         crate::facade::ac_cookies_close(ck);
         crate::facade::ac_hist_close(h);

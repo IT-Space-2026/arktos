@@ -121,6 +121,12 @@
 //!     import/export and an authoritative/mirror role flag that
 //!     honestly reports whether the file IS the jar (Servo/WPE) or a
 //!     durable copy behind an engine-owned one (Chromium).
+//!   * containers (RC19): the Firefox-style container registry —
+//!     a typed specialization over the profile scope's settings
+//!     store (the same "containers" group ContainerManager
+//!     persists), plus the storage-namespace map engines partition
+//!     cookies/cache/site data by (storage root, VSEC02 cache tree,
+//!     Qt residue dir, storage name, cookie-partition key).
 //!
 mod autofill;
 mod bidi;
@@ -129,6 +135,7 @@ mod bookmarkhtml;
 mod bookmarks;
 mod clearplan;
 mod confusables_table;
+mod containers;
 mod cookies;
 mod cred;
 mod error;
@@ -4634,6 +4641,293 @@ pub unsafe extern "C" fn rc_settings_sync(
     h: *mut settings::RcSettings,
 ) -> RcStatus {
     status_of(|| settings_ref(h)?.sync())
+}
+
+// ---- RC19: container registry + storage-namespace map ----
+//
+// ContainerManager's registry is a typed specialization over the
+// settings store — the "containers" group of the PROFILE scope, so
+// every op here runs on an RcSettings handle bound to the owning
+// persona (global-scope handles see no containers; the group is a
+// classified persona key).  The id list ("order") plus per-id
+// name/color/icon keys match the C++ layout byte-for-byte — a
+// registry written here is what loadRegistry reads on the next
+// scope open, and the C++ ProfileSettings mirror keeps the
+// settings.ini compat bytes flowing when C++ authors the change.
+// The namespace map is a pure derivation: the same storage root /
+// VSEC02 cache tree / Qt residue dir / storage name ContainerManager
+// computes, plus the cookie-partition key the cookies db (RC15)
+// partitions rows on.  Mutations emit the "containers" topic.
+
+fn containers_cstr<'a>(p: *const c_char, what: &str) -> error::RcResult<&'a str> {
+    unsafe { util::cstr(p) }.ok_or_else(|| error::Fail {
+        status: RcStatus::InvalidArgument,
+        msg: format!("bad {what} pointer"),
+    })
+}
+
+fn containers_json_out(v: serde_json::Value) -> *mut c_char {
+    util::to_c_string(v.to_string())
+}
+
+/// The bound profile's container registry as a JSON array of
+/// {"id","name","color","icon"} in creation order — NULL + stashed
+/// error on a bad handle.  Free with rc_string_free().
+///
+/// # Safety
+/// `h` must come from rc_settings_open/ac_settings.
+#[no_mangle]
+pub unsafe extern "C" fn rc_containers_list(
+    h: *const settings::RcSettings,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match containers::list(h) {
+            Ok(rows) => containers_json_out(serde_json::Value::Array(
+                rows.iter().map(containers::to_json).collect(),
+            )),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// One registry row {"id","name","color","icon"} — NULL when the id
+/// is unregistered (a miss is not an error).  Free with
+/// rc_string_free().
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_containers_get(
+    h: *const settings::RcSettings,
+    id: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let id = match containers_cstr(id, "container id") {
+            Ok(i) => i,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match containers::get(h, id) {
+            Ok(c) => containers_json_out(containers::to_json(&c)),
+            Err(e) if e.status == RcStatus::NotFound => ptr::null_mut(),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Creates a container from JSON {"name","color","icon"?} — the id
+/// is minted here (v4 uuid, the C++ hex-with-dashes shape) and
+/// appended to "order".  Returns the row {"id",...}; NULL + stashed
+/// error on failure.  Free with rc_string_free().
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_containers_create(
+    h: *mut settings::RcSettings,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let made = catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let raw = match unsafe { util::bytes(json, len) } {
+            Some(r) => r,
+            None => {
+                error::set_error("bad container json pointer");
+                return ptr::null_mut();
+            }
+        };
+        let spec: serde_json::Value = match serde_json::from_slice(raw) {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&format!("container spec: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        let name = spec.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let color = spec.get("color").and_then(|v| v.as_str()).unwrap_or("");
+        let icon = spec.get("icon").and_then(|v| v.as_str());
+        match containers::create(h, name, color, icon) {
+            Ok(c) => containers_json_out(containers::to_json(&c)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut());
+    if !made.is_null() {
+        notify::emit("containers");
+    }
+    made
+}
+
+/// Patches one registry row — JSON {"name"?,"color"?,"icon"?}; an
+/// "icon" of "" (or null) clears it.  RC_NOT_FOUND on an
+/// unregistered id.
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8; `json` points to `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_containers_update(
+    h: *mut settings::RcSettings,
+    id: *const c_char,
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let id = containers_cstr(id, "container id")?;
+        let raw = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad container patch pointer".into(),
+        })?;
+        let spec: serde_json::Value =
+            serde_json::from_slice(raw).map_err(|e| error::Fail {
+                status: RcStatus::InvalidArgument,
+                msg: format!("container patch: {e}"),
+            })?;
+        let mut patch = containers::Patch::default();
+        if let Some(v) = spec.get("name") {
+            patch.name =
+                Some(v.as_str().ok_or_else(|| error::Fail {
+                    status: RcStatus::InvalidArgument,
+                    msg: "container patch: name must be a string".into(),
+                })?);
+        }
+        if let Some(v) = spec.get("color") {
+            patch.color =
+                Some(v.as_str().ok_or_else(|| error::Fail {
+                    status: RcStatus::InvalidArgument,
+                    msg: "container patch: color must be a string".into(),
+                })?);
+        }
+        if let Some(v) = spec.get("icon") {
+            patch.icon =
+                Some(if v.is_null() { "" } else {
+                    v.as_str().ok_or_else(|| error::Fail {
+                        status: RcStatus::InvalidArgument,
+                        msg: "container patch: icon must be a string or null"
+                            .into(),
+                    })?
+                });
+        }
+        containers::update(h, id, &patch)?;
+        Ok(())
+    });
+    if status == RcStatus::Ok {
+        notify::emit("containers");
+    }
+    status
+}
+
+/// removeRegistry()'s store half — the <id>/ group plus its "order"
+/// entry.  RC_NOT_FOUND on an unregistered id; the on-disk storage
+/// trees are the caller's job (rc_containers_namespace gives their
+/// paths) — same split as deleteContainer.
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_containers_remove(
+    h: *mut settings::RcSettings,
+    id: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let id = containers_cstr(id, "container id")?;
+        match containers::remove(h, id)? {
+            true => Ok(()),
+            false => Err(error::Fail {
+                status: RcStatus::NotFound,
+                msg: "no such container".into(),
+            }),
+        }
+    });
+    if status == RcStatus::Ok {
+        notify::emit("containers");
+    }
+    status
+}
+
+/// The storage namespace for a registered container id — JSON
+/// {"storage_name","storage_path","cache_path","default_data_path",
+/// "cookie_partition"} matching ContainerManager's storagePath /
+/// cachePathFor / defaultDataPathFor / storageNameFor, plus the
+/// RC15 cookie-partition key.  `data_root` is the APP data root
+/// (BrowserPaths::dataRoot).  NULL + stashed error on a bad id —
+/// the default ("") container has no namespace of its own.
+///
+/// # Safety
+/// All pointers must be NUL-terminated UTF-8; free the result with
+/// rc_string_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_containers_namespace(
+    data_root: *const c_char,
+    profile_id: *const c_char,
+    container_id: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let root = match containers_cstr(data_root, "data root") {
+            Ok(r) => r,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let pid = match containers_cstr(profile_id, "profile id") {
+            Ok(p) => p,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let cid = match containers_cstr(container_id, "container id") {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match containers::namespace(root, pid, cid) {
+            Ok(n) => containers_json_out(containers::namespace_json(&n)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 // ---- RC03: profile registry ----

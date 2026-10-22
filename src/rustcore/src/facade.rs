@@ -40,8 +40,8 @@ use crate::{bookmarks, icons, notify, profiles, settings, util};
 /// The facade ABI version — AC_API_VERSION in arktos_core.h.  Bump
 /// on every ABI-affecting addition; never renumber existing symbols
 /// or enum values.  v3 added AcCookies (RC15).  v4 added AcIcons
-/// (RC16).
-pub const AC_API_VERSION: u32 = 4;
+/// (RC16).  v5 added AcContainers (RC19).
+pub const AC_API_VERSION: u32 = 5;
 
 const AC_CAP_SETTINGS: u64 = 0x01;
 const AC_CAP_PROFILES: u64 = 0x02;
@@ -51,6 +51,7 @@ const AC_CAP_POLICY: u64 = 0x10;
 const AC_CAP_SESSION: u64 = 0x20;
 const AC_CAP_COOKIES: u64 = 0x40;
 const AC_CAP_ICONS: u64 = 0x80;
+const AC_CAP_CONTAINERS: u64 = 0x100;
 const AC_CAP_ALL: u64 = AC_CAP_SETTINGS
     | AC_CAP_PROFILES
     | AC_CAP_HISTORY
@@ -58,7 +59,8 @@ const AC_CAP_ALL: u64 = AC_CAP_SETTINGS
     | AC_CAP_POLICY
     | AC_CAP_SESSION
     | AC_CAP_COOKIES
-    | AC_CAP_ICONS;
+    | AC_CAP_ICONS
+    | AC_CAP_CONTAINERS;
 
 const DEFAULT_PROFILE: &str = "default";
 
@@ -100,6 +102,7 @@ enum Live {
     Session(usize),
     Cookies(usize),
     Icons(usize),
+    Containers(usize),
 }
 
 impl Live {
@@ -112,7 +115,8 @@ impl Live {
             | Live::Policy(p)
             | Live::Session(p)
             | Live::Cookies(p)
-            | Live::Icons(p) => p,
+            | Live::Icons(p)
+            | Live::Containers(p) => p,
         }
     }
 }
@@ -188,6 +192,24 @@ pub struct AcIcons {
     /// (and reads the legacy siblings, icons/ + history.db, for the
     /// one-shot import).
     dir: CString,
+}
+
+/// RC19: the container registry lives in the profile scope's
+/// settings.json — a typed specialization over the settings store,
+/// so the handle carries only the binding (profile + data root).
+/// Every op opens a SHORT-LIVED RcSettings on the bound scope,
+/// forwards to the rc_containers_* entry point and closes it: a
+/// long-lived second handle on the same settings.json would hold a
+/// stale decoded document (the "unshared conf file" caveat the
+/// bridge notes) — a fresh open per op reads the file as committed,
+/// so a registry the C++ ProfileSettings mirror wrote mid-process
+/// is honored, and ours reach it the same way.
+pub struct AcContainers {
+    /// The effective profile id — stamped on "containers"
+    /// notifications.
+    profile: String,
+    /// The core's data root — the rc_settings_open root argument.
+    root: CString,
 }
 
 // ---- shared plumbing ---------------------------------------------------
@@ -287,6 +309,9 @@ unsafe fn free_live(live: Live) {
             drop(unsafe { Box::from_raw(p as *mut AcCookies) })
         }
         Live::Icons(p) => drop(unsafe { Box::from_raw(p as *mut AcIcons) }),
+        Live::Containers(p) => {
+            drop(unsafe { Box::from_raw(p as *mut AcContainers) })
+        }
     }
 }
 
@@ -826,6 +851,39 @@ pub unsafe extern "C" fn ac_icons(
     .unwrap_or(ptr::null_mut())
 }
 
+/// Binds the container registry + namespace map of `profile_id`
+/// (RC19) — the persona whose "containers" settings group the ops
+/// read and write.  No open step (registry ops open the scope's
+/// settings store per call), so the handle is always minted on a
+/// valid core.
+///
+/// # Safety
+/// `profile_id` must be NUL-terminated UTF-8 or NULL.  Free with
+/// ac_containers_close; the handle dies with its core.
+#[no_mangle]
+pub unsafe extern "C" fn ac_containers(
+    core: *mut AcCore,
+    profile_id: *const c_char,
+) -> *mut AcContainers {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let core = match core_ref(core) {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let eff = bound_profile(profile_id);
+        let h = Box::into_raw(Box::new(AcContainers {
+            profile: eff,
+            root: core.root.clone(),
+        }));
+        track(core, Live::Containers(h as usize));
+        h
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 // ---- handle closes ---------------------------------------------------------
 
 /// Releases a settings handle — NULL-tolerant; also legal on a
@@ -886,6 +944,7 @@ ac_close!(ac_policy_close, AcPolicy);
 ac_close!(ac_session_close, AcSession);
 ac_close!(ac_cookies_close, AcCookies);
 ac_close!(ac_icons_close, AcIcons);
+ac_close!(ac_containers_close, AcContainers);
 
 // ---- re-assert helpers ------------------------------------------------------
 
@@ -1940,5 +1999,193 @@ pub unsafe extern "C" fn ac_icons_list(h: *const AcIcons) -> *mut c_char {
             error::set_error(&e.msg);
             ptr::null_mut()
         }
+    }
+}
+
+// ---- containers (RC19) ------------------------------------------------
+//
+// The registry is a typed specialization over the profile scope's
+// settings store — every op opens a short-lived RcSettings on the
+// bound scope, forwards to the rc_containers_* entry point and
+// closes it (fresh decode per op, the AcContainers doc comment).
+// Mutations emit "containers" stamped with the bound profile via
+// the forwarded rc_* call.
+
+fn containers_ref<'a>(
+    h: *const AcContainers,
+) -> Result<&'a AcContainers, RcStatus> {
+    match unsafe { h.as_ref() } {
+        Some(h) => Ok(h),
+        None => fail(RcStatus::InvalidArgument, "bad containers handle"),
+    }
+}
+
+/// The bound scope's settings store, opened for one op — NULL from
+/// rc_settings_open already carries a stashed error.
+fn containers_open(h: &AcContainers) -> Result<*mut settings::RcSettings, RcStatus> {
+    let pid = match CString::new(h.profile.as_str()) {
+        Ok(p) => p,
+        Err(_) => return fail(RcStatus::InvalidArgument, "bad profile id"),
+    };
+    let s = unsafe { crate::rc_settings_open(h.root.as_ptr(), pid.as_ptr()) };
+    if s.is_null() {
+        return Err(RcStatus::Io);
+    }
+    Ok(s)
+}
+
+fn containers_close(s: *mut settings::RcSettings) {
+    unsafe { crate::rc_settings_close(s) }
+}
+
+/// The bound profile's container registry — a JSON array of
+/// {"id","name","color","icon"} in creation order.  Caller frees
+/// with ac_string_free.
+///
+/// # Safety
+/// `h` must come from ac_containers.
+#[no_mangle]
+pub unsafe extern "C" fn ac_containers_list(
+    h: *const AcContainers,
+) -> *mut c_char {
+    let h = match containers_ref(h) {
+        Ok(h) => h,
+        Err(_) => return ptr::null_mut(),
+    };
+    let s = match containers_open(h) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let out = unsafe { crate::rc_containers_list(s) };
+    containers_close(s);
+    out
+}
+
+/// One registry row {"id","name","color","icon"} — NULL when the id
+/// is unregistered (a miss is not an error).  Caller frees with
+/// ac_string_free.
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn ac_containers_get(
+    h: *const AcContainers,
+    id: *const c_char,
+) -> *mut c_char {
+    let h = match containers_ref(h) {
+        Ok(h) => h,
+        Err(_) => return ptr::null_mut(),
+    };
+    let s = match containers_open(h) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let out = unsafe { crate::rc_containers_get(s, id) };
+    containers_close(s);
+    out
+}
+
+/// Creates a container from JSON {"name","color","icon"?} — the id
+/// is minted library-side.  Returns the row JSON; NULL + stashed
+/// error on failure.  Caller frees with ac_string_free.
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn ac_containers_create(
+    h: *const AcContainers,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let h = match containers_ref(h) {
+        Ok(h) => h,
+        Err(_) => return ptr::null_mut(),
+    };
+    let _hint = notify::profile_hint(&h.profile);
+    let s = match containers_open(h) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let out = unsafe { crate::rc_containers_create(s, json, len) };
+    containers_close(s);
+    out
+}
+
+/// Patches one registry row — JSON {"name"?,"color"?,"icon"?}; an
+/// "icon" of "" or null clears it.  AC_ERR_NOT_FOUND on an
+/// unregistered id.
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8; `json` points to `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ac_containers_update(
+    h: *const AcContainers,
+    id: *const c_char,
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    let h = match containers_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    let _hint = notify::profile_hint(&h.profile);
+    let s = match containers_open(h) {
+        Ok(s) => s,
+        Err(st) => return st,
+    };
+    let st = unsafe { crate::rc_containers_update(s, id, json, len) };
+    containers_close(s);
+    st
+}
+
+/// The store half of deleteContainer — the registry group and the
+/// "order" entry.  AC_ERR_NOT_FOUND on an unregistered id; the
+/// on-disk storage trees are the caller's job
+/// (ac_containers_namespace derives their paths).
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn ac_containers_remove(
+    h: *const AcContainers,
+    id: *const c_char,
+) -> RcStatus {
+    let h = match containers_ref(h) {
+        Ok(h) => h,
+        Err(s) => return s,
+    };
+    let _hint = notify::profile_hint(&h.profile);
+    let s = match containers_open(h) {
+        Ok(s) => s,
+        Err(st) => return st,
+    };
+    let st = unsafe { crate::rc_containers_remove(s, id) };
+    containers_close(s);
+    st
+}
+
+/// The bound profile's storage namespace for a registered id —
+/// JSON {"storage_name","storage_path","cache_path",
+/// "default_data_path","cookie_partition"}: the same paths
+/// ContainerManager derives, plus the RC15 cookie-partition key.
+/// Caller frees with ac_string_free.
+///
+/// # Safety
+/// `container_id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn ac_containers_namespace(
+    h: *const AcContainers,
+    container_id: *const c_char,
+) -> *mut c_char {
+    let h = match containers_ref(h) {
+        Ok(h) => h,
+        Err(_) => return ptr::null_mut(),
+    };
+    let pid = match CString::new(h.profile.as_str()) {
+        Ok(p) => p,
+        Err(_) => return ptr::null_mut(),
+    };
+    unsafe {
+        crate::rc_containers_namespace(h.root.as_ptr(), pid.as_ptr(), container_id)
     }
 }

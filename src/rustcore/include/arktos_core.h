@@ -54,18 +54,20 @@ extern "C" {
 /* The facade ABI version this header was written for.
  * v2 adds the AcSession module (RC13).
  * v3 adds the AcCookies module (RC15).
- * v4 adds the AcIcons module (RC16). */
-#define AC_API_VERSION 4u
+ * v4 adds the AcIcons module (RC16).
+ * v5 adds the AcContainers module (RC19). */
+#define AC_API_VERSION 5u
 
 /* ac_capabilities() bits — one per module. */
-#define AC_CAP_SETTINGS  0x01ull
-#define AC_CAP_PROFILES  0x02ull
-#define AC_CAP_HISTORY   0x04ull
-#define AC_CAP_BOOKMARKS 0x08ull
-#define AC_CAP_POLICY    0x10ull
-#define AC_CAP_SESSION   0x20ull
-#define AC_CAP_COOKIES   0x40ull
-#define AC_CAP_ICONS     0x80ull
+#define AC_CAP_SETTINGS   0x01ull
+#define AC_CAP_PROFILES   0x02ull
+#define AC_CAP_HISTORY    0x04ull
+#define AC_CAP_BOOKMARKS  0x08ull
+#define AC_CAP_POLICY     0x10ull
+#define AC_CAP_SESSION    0x20ull
+#define AC_CAP_COOKIES    0x40ull
+#define AC_CAP_ICONS      0x80ull
+#define AC_CAP_CONTAINERS 0x100ull
 
 /* AcStatus and AcBuffer are the RC02–RC06 types verbatim — the
  * facade shares their spelling so mixed ac_/rc_ code compiles
@@ -94,12 +96,14 @@ typedef struct AcPolicy     AcPolicy;
 typedef struct AcSession    AcSession;
 typedef struct AcCookies    AcCookies;
 typedef struct AcIcons      AcIcons;
+typedef struct AcContainers AcContainers;
 typedef RcSettings AcSettings;
 typedef RcProfiles AcProfiles;
 
 /* Change notification, one per AcCore.  `module` is a stable topic
  * ("settings", "profiles", "history", "bookmarks", "sitedec",
- * "policy", "uaspoof", "cookies", "icons"); `profile_id` is the bound
+ * "policy", "uaspoof", "cookies", "icons", "containers");
+ * `profile_id` is the bound
  * profile that
  * changed or NULL for global/unscoped mutations.  Both pointers are
  * borrowed — valid only for the duration of the call.  Fires
@@ -150,6 +154,7 @@ AcPolicy    *ac_policy(AcCore *core, const char *profile_id);
 AcSession   *ac_session(AcCore *core, const char *profile_id);
 AcCookies   *ac_cookies(AcCore *core, const char *profile_id);
 AcIcons     *ac_icons(AcCore *core, const char *profile_id);
+AcContainers *ac_containers(AcCore *core, const char *profile_id);
 
 void ac_settings_close(AcSettings *h);
 void ac_profiles_close(AcProfiles *h);
@@ -159,6 +164,7 @@ void ac_policy_close(AcPolicy *h);
 void ac_session_close(AcSession *h);
 void ac_cookies_close(AcCookies *h);
 void ac_icons_close(AcIcons *h);
+void ac_containers_close(AcContainers *h);
 
 /* ---- settings (RC02) --------------------------------------------------- */
 
@@ -454,6 +460,51 @@ int64_t  ac_icons_count(const AcIcons *h);               /* -1 on err */
 char    *ac_icons_key(const AcIcons *h, const char *url);
 /* The index rows as a JSON array — caller frees. */
 char    *ac_icons_list(const AcIcons *h);
+
+/* ---- containers: registry + storage-namespace map (RC19) ----------
+ *
+ * The bound profile's container registry — the "containers" group of
+ * its settings.json, so this module is a typed specialization over
+ * the settings store (rc_containers_* in rustcore.h is the same
+ * surface on a caller-held AcSettings; ac_containers_* keeps the
+ * profile binding inside the handle — every op opens the bound
+ * scope's store fresh, so a registry the C++ mirror wrote mid-process
+ * is honored).  Rows are {"id","name","color","icon"}; ids are
+ * library-minted v4 uuids in the C++ hex-with-dashes shape.
+ *
+ * ac_containers_namespace is the storage-namespace map engines
+ * partition by: the same storage root / VSEC02 cache tree / Qt
+ * residue dir / storage name ContainerManager computes for a
+ * QWebEngineProfile, plus the cookie-partition key the ac_cookies_*
+ * lane takes as `container`.  The default ("") container has no
+ * namespace — its storage is the persona profile itself.  "Always
+ * open in <container>" host rules live in ac_sitedec_*'s "container"
+ * kind, not here.  Mutations emit "containers" stamped with the
+ * bound profile.
+ */
+
+/* The registry as a JSON array in creation order — caller frees. */
+char    *ac_containers_list(const AcContainers *h);
+/* One row — NULL when the id is unregistered (a miss is not an
+ * error).  Caller frees. */
+char    *ac_containers_get(const AcContainers *h, const char *id);
+/* Create from JSON {"name","color","icon"?} — returns the row JSON
+ * (caller frees) or NULL + stashed error. */
+char    *ac_containers_create(const AcContainers *h,
+                              const uint8_t *json, size_t len);
+/* Patch from JSON {"name"?,"color"?,"icon"?} — "icon":"" or null
+ * clears it; AC_ERR_NOT_FOUND on an unregistered id. */
+AcStatus ac_containers_update(const AcContainers *h, const char *id,
+                              const uint8_t *json, size_t len);
+/* The store half of deleteContainer — group + "order" entry;
+ * AC_ERR_NOT_FOUND on an unregistered id.  The on-disk storage trees
+ * are the caller's job — ac_containers_namespace derives them. */
+AcStatus ac_containers_remove(const AcContainers *h, const char *id);
+/* The storage namespace JSON {"storage_name","storage_path",
+ * "cache_path","default_data_path","cookie_partition"} — caller
+ * frees; NULL + stashed error on a bad id. */
+char    *ac_containers_namespace(const AcContainers *h,
+                                 const char *container_id);
 
 #ifdef __cplusplus
 }

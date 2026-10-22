@@ -46,7 +46,7 @@ Rules for the agent working this file:
 | RC16 | rustcore `icons` module — per-profile favicon/site-icon cache | done | 0 | icons module: cache/icons index+PNG store, host dedup, expiry sweep, legacy icons/+history.db fold-once; AcIcons at ABI v4; HistoryManager dispatched; cargo 347/348 (pre-existing vault flake), acprobe OK, qmake+make clean, tst_historymanager 52/52 |
 | RC17 | rustcore `autofill` module — address/contact profiles under secure custody | done | 0 | autofill audited complete: ARSEC1 custody shared w/ rc_cred_* (preferred option), fields match AutoFillManager contract; closed verify gaps — store::ensure_private_dir 0700 + 0600/0700 legs + ffiStoreReachesDialog; cargo 349/349, tst_autofill 11p/0f/1s offscreen, make clean, no-rust TU clean |
 | RC18 | rustcore `opensearch` module — engine XML parse/validate + registry CRUD | done | 0 | audit: OSE01 module+adoption complete vs spec — parse/validate (rc_opensearch_parse+rc_suggest_parse), per-profile searchengines.json CRUD rc_ose_*, legacy xml+QSettings once-migration, Qt-parity URL expansion; verified cargo 349/349, 4 ose autotests 99/99 offscreen temp-XDG, make clean, no-rust TU clean |
-| RC19 | rustcore `containers` module — container registry + storage namespace map | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC19 | rustcore `containers` module — container registry + storage namespace map | done | 0 | containers registry as typed RC02-settings specialization (C++ containers/ keys), rc_containers_* + AcContainers facade at ABI v5, namespace parity w/ ContainerManager; verified cargo 354/354, tst_rustcontainers 3/3 + tst_containermanager 37/37 offscreen, make clean, no-rust TU clean |
 | RC20 | rustcore `updates` module — update-check state + manifest/semver policy | pending | 0 | needs:task:RC07 needs:tool:cargo |
 | RC21 | rustcore `notes` module — side-panel notes persistence | pending | 0 | needs:task:RC07 needs:tool:cargo |
 
@@ -916,6 +916,47 @@ rules feed RC15's cookie partitioning.
 Verify: cargo test — registry CRUD + namespace derivation matches
 ContainerManager's paths; a registry written via FFI is honored by the
 C++ side on next launch.
+
+
+RC19 outcome: containers registry landed as a typed specialization
+over RC02's settings store, matching the audit — ContainerManager
+already persists metadata in the profile-scoped "containers" group,
+so no new file format.
+
+- containers.rs: registry CRUD over RcSettings using the exact C++
+  key layout (containers/order creation order, containers/<id>/
+  name|color|icon). create mints QUuid-shaped 36-char ids, blank
+  names rejected, get returns NULL for missing ids (not an error),
+  update treats icon:null/"" as clear. Legacy-load prunes order
+  entries with no group, matching loadRegistry's hygiene.
+- Namespace derivation matches ContainerManager byte-for-byte:
+  storage_name arktos-container-<pid>-<cid>, storage_path
+  <profile>/containers/<id>, cache_path <profile>/cache/
+  containers/<id>, default_data_path <root>/QtWebEngine/
+  <storage_name>, cookie_partition = <id> (RC15's key). Empty/
+  default ids and invalid roots return NULL — the default persona
+  profile carries no separate namespace.
+- FFI: rc_containers_* (settings-bound) + stable facade at ABI v5 —
+  AcContainers profile-bound handle, ac_containers[_close],
+  AC_CAP_CONTAINERS 0x100, "containers" notify topic stamped with
+  the bound profile. Each facade op opens a fresh settings scope so
+  C++ writes made after handle-open are observed (handles own a
+  decoded doc; the bridge documents this).
+- Interop probe autotests/rustcontainers: FFI-authored registry is
+  honored by a ContainerManager constructed after the write (the
+  "next launch" contract — first C++ scope-open decodes the shared
+  settings.json), namespace legs assert storagePath/cachePathFor/
+  defaultDataPathFor parity, C++ create/rename/delete round-trip
+  through the same file both directions. no-rust lane keeps a
+  ContainerManager-only leg under #else.
+- Site rules deliberately untouched: "always open in" rules already
+  live in SiteDecisionStore (KindContainer); the registry owns only
+  id/name/color/icon.
+
+Verified: cargo test (5 container legs + ffi_surface), qmake && make
+-j2 clean, tst_rustcontainers 3/3 offscreen temp-XDG,
+tst_containermanager 37/0f/2skip offscreen, no-rust TU syntax check
+of tst_rustcontainers.cpp clean with rust defines stripped.
 
 ### RC20
 
