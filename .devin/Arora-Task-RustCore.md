@@ -50,7 +50,7 @@ Rules for the agent working this file:
 | RC20 | rustcore `updates` module — update-check state + manifest/semver policy | done | 0 | updates module: semver/manifest/trusted-URL/platform-pick/channel gate ported + adopted by UpdateChecker, global-scope last-check/snooze/skip/channel state over RC02 settings; verified cargo 362/362, tst_updatechecker 17/17 offscreen, make clean, no-rust TU clean |
 | RC21 | rustcore `notes` module — side-panel notes persistence | done | 0 | notes module + facade v6 + NotesModel adoption; read-compat, C++<->FFI verified both directions |
 
-| CEF01 | CEF gate + bootstrap — honor RC11 go/no-go; fetch cef_binary, build libcef_dll_wrapper, Qt-widget host proof | in_progress | 0 | needs:task:RC11 needs:task:RC08 needs:tool:cargo |
+| CEF01 | CEF gate + bootstrap — honor RC11 go/no-go; fetch cef_binary, build libcef_dll_wrapper, Qt-widget host proof | done | 0 | GO — chrome-runtime MV3 verified (fixture 6/6 probes + real Bitwarden SW/popup); windowed chrome-style SetAsChild + OSR render proofs PASS on CEF 152.0.15; open-codecs-only; report .devin/CEF-EXT-SPIKE.md |
 | CEF02 | CefBackend skeleton — EngineInterface impl, CefBrowserHost on a widget, nav/title/progress wiring | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
 | CEF03 | Embedding correctness — windowed X11/Windows, OSR on Wayland, HiDPI/focus/resize/input | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
 | CEF04 | Profile integration — CefRequestContext per persona, cache dirs under BrowserPaths roots, facade handles | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
@@ -1171,6 +1171,33 @@ Outcome report goes into .devin/CEF-EXT-SPIKE.md + the row note.
 CEF02-CEF15 are `blocked: parked` regardless of the findings — any
 port decision is a user decision after reading the report; do not
 unblock them yourself.
+
+
+OUTCOME (2026-10-22) — full report in `.devin/CEF-EXT-SPIKE.md`:
+
+- GATE ANSWER: YES. CEF `152.0.15+gb3d72fb` / Chromium 152.0.7977.169
+  chrome runtime hosted a fixture MV3 extension (SW + chrome.storage +
+  chrome.action + content-script messaging + chrome.scripting — all
+  beacons verified over a local probe server) AND real Bitwarden
+  2026.10.0 (live background service_worker target, WASM SDK up,
+  onboarding tab self-opened, popup/index.html + main.js ran). RC11
+  no-go is overridden on the extension-fidelity driver.
+- Runtime constraint (verified in headers + runs): OSR/windowless is
+  always Alloy style => extension-less; windowed SetAsChild with
+  CEF_RUNTIME_STYLE_CHROME is the extension-capable shape.
+- Bootstrap (built ahead of AMENDMENT 2's descope; kept as spike
+  evidence under spikes/cef/qcefprobe/, not in SUBDIRS):
+  libcef_dll_wrapper built (user-local cmake 3.31.8); QWidget proof
+  PASS on all legs — OSR offscreen (480000/480000 px, witness-miss
+  none), windowed SetAsChild chrome-style under xvfb (witness-miss
+  none), alloy advisory leg PASS. Fresh-profile CefInitialize hangs
+  unless --no-first-run/--no-default-browser-check — recorded in the
+  report with the other CEF02 embedding notes.
+- Codecs (runtime-verified via canPlayType): h264/hevc/aac absent,
+  vp9/av1/mp3/opus/vorbis present => open-codecs-only baseline, matches
+  QtWebEngine default builds; custom-codec build parked for CEF14.
+- CEF02-CEF15 stay `blocked: parked` per AMENDMENT 2 — port decision
+  is the user's after reading the report.
 
 ### CEF02
 
