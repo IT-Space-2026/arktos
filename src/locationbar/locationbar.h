@@ -27,6 +27,7 @@
 #include <qurl.h>
 
 class WebView;
+class ClearButton;
 class LocationBarSiteIcon;
 class PrivacyIndicator;
 class SitePadlockButton;
@@ -60,6 +61,7 @@ public:
 protected:
     bool event(QEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
+    void focusInEvent(QFocusEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
@@ -81,6 +83,7 @@ private:
     SitePadlockButton *m_padlock;
     PopupBlockerButton *m_popupBlockerButton;
     PrivacyIndicator *m_privacyIndicator;
+    ClearButton *m_clearButton;
 };
 
 #endif // LOCATIONBAR_H

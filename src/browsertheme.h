@@ -60,6 +60,10 @@ bool isDarkPalette(const QPalette &palette);
 // Palette for forced dark mode (Fusion-style dark chrome).
 QPalette darkPalette();
 
+// Palette for forced light mode — the mirror override for an
+// explicit Light pick while the platform theme is dark.
+QPalette lightPalette();
+
 // Apply preferredColorScheme() to the application: installs the dark
 // palette (+Fusion if the current style cannot take palettes) when the
 // desktop wants dark but the palette is still light; restores the

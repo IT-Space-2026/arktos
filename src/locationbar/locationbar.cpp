@@ -85,12 +85,16 @@ LocationBar::LocationBar(QWidget *parent)
     m_privacyIndicator = new PrivacyIndicator(this);
     addWidget(m_privacyIndicator, RightSide);
 
-    // clear button on the right
-    ClearButton *m_clearButton = new ClearButton(this);
+    // clear button on the right — shown only while the user is
+    // editing (focus + non-empty text), not as permanent chrome over
+    // a loaded url, matching Chrome/Firefox behavior.
+    m_clearButton = new ClearButton(this);
     connect(m_clearButton, &ClearButton::clicked,
             this, &QLineEdit::clear);
-    connect(this, &QLineEdit::textChanged,
-            m_clearButton, &ClearButton::textChanged);
+    connect(this, &QLineEdit::textChanged, this,
+            [this](const QString &t) {
+        m_clearButton->setVisible(hasFocus() && !t.isEmpty());
+    });
     addWidget(m_clearButton, RightSide);
 
     updateTextMargins();
@@ -355,8 +359,15 @@ void LocationBar::paintEvent(QPaintEvent *event)
     painter.drawText(domainX, baseline, shown.mid(start, length));
 }
 
+void LocationBar::focusInEvent(QFocusEvent *event)
+{
+    m_clearButton->setVisible(!text().isEmpty());
+    QLineEdit::focusInEvent(event);
+}
+
 void LocationBar::focusOutEvent(QFocusEvent *event)
 {
+    m_clearButton->setVisible(false);
     if (text().isEmpty() && m_webView)
         webViewUrlChanged(m_webView->url());
     // Home the scroll so the SAFE03 domain-emphasis repaint (which

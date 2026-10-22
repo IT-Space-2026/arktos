@@ -32,9 +32,12 @@
 #include <qstylehints.h>
 
 // State needed to undo a palette we forced ourselves — on a flip back
-// to light we restore exactly what the platform gave us instead of
-// inventing a "light" palette.
-static bool s_forced = false;
+// to the platform's own scheme we restore exactly what it gave us.
+// s_forcedScheme records *which* scheme we forced (Light or Dark):
+// the platform palette can disagree with the pick in both directions
+// (a Light pick under a dark macOS desktop needs a light palette
+// forced just as much as Dark under a light one).
+static Qt::ColorScheme s_forcedScheme = Qt::ColorScheme::Unknown;
 static QPalette s_savedPalette;
 static QString s_savedStyleName;
 
@@ -46,7 +49,7 @@ static void restoreSavedPalette()
         s_savedStyleName.clear();
     }
     QApplication::setPalette(s_savedPalette);
-    s_forced = false;
+    s_forcedScheme = Qt::ColorScheme::Unknown;
 }
 
 Qt::ColorScheme BrowserTheme::systemColorScheme()
@@ -88,6 +91,11 @@ QPalette BrowserTheme::darkPalette()
     return ArktosStyle::darkPalette();
 }
 
+QPalette BrowserTheme::lightPalette()
+{
+    return ArktosStyle::lightPalette();
+}
+
 static void applyScheme(Qt::ColorScheme scheme)
 {
     if (scheme == Qt::ColorScheme::Unknown) {
@@ -95,7 +103,7 @@ static void applyScheme(Qt::ColorScheme scheme)
         // one we forced: reverting the pick to "System default" on a
         // platform that reports Unknown (the offscreen QPA included)
         // still has to take our palette back off.
-        if (s_forced) {
+        if (s_forcedScheme != Qt::ColorScheme::Unknown) {
             restoreSavedPalette();
             emit BrowserTheme::themeNotifier()->chromeSchemeChanged();
         }
@@ -106,37 +114,46 @@ static void applyScheme(Qt::ColorScheme scheme)
     const bool darkActive =
         BrowserTheme::isDarkPalette(QApplication::palette());
 
-    if (darkWanted == darkActive) {
-        // Matches already — either the platform theme handled it or we
-        // forced it earlier.  Only clear our flag when the platform's
-        // own palette agrees with the (non-dark) preference.
-        if (!darkWanted)
-            s_forced = false;
+    // Already showing what's wanted — either the platform theme
+    // provides it outright, or the palette we forced earlier is it.
+    if (s_forcedScheme != Qt::ColorScheme::Unknown) {
+        if (s_forcedScheme == scheme)
+            return;
+        // Forced state no longer matches the pick — restore the
+        // platform palette/style first, then re-evaluate: the
+        // platform may satisfy the new pick on its own (e.g. pick
+        // Dark while a dark desktop was under our forced light).
+        restoreSavedPalette();
+        if (darkWanted == BrowserTheme::isDarkPalette(
+                QApplication::palette())) {
+            emit BrowserTheme::themeNotifier()->chromeSchemeChanged();
+            return;
+        }
+    } else if (darkWanted == darkActive) {
         return;
     }
 
-    if (darkWanted) {
-        if (!s_forced) {
-            s_savedPalette = QApplication::palette();
-            // THEME01: the app style may be ArktosStyle's polish proxy
-            // — capture the name of the real style underneath so the
-            // restore path recreates something QStyleFactory knows.
-            s_savedStyleName = ArktosStyle::baseStyleName();
-        }
-        // windowsvista/macos ignore palettes; a stylesheet style has no
-        // name and already owns the look — leave those alone style-wise
-        // and just swap the palette, which still recolors everything
-        // the style does not hardcode.
-        if (!s_savedStyleName.isEmpty()
-                && s_savedStyleName != QLatin1String("fusion")) {
-            if (QStyle *fusion = QStyleFactory::create(QLatin1String("fusion")))
-                QApplication::setStyle(fusion);
-        }
-        QApplication::setPalette(BrowserTheme::darkPalette());
-        s_forced = true;
-    } else if (s_forced) {
-        restoreSavedPalette();
+    // Reaching here means the platform palette disagrees with the
+    // pick in whichever direction — force it.
+    if (s_forcedScheme == Qt::ColorScheme::Unknown) {
+        s_savedPalette = QApplication::palette();
+        // THEME01: the app style may be ArktosStyle's polish proxy
+        // — capture the name of the real style underneath so the
+        // restore path recreates something QStyleFactory knows.
+        s_savedStyleName = ArktosStyle::baseStyleName();
     }
+    // windowsvista/macos ignore palettes; a stylesheet style has no
+    // name and already owns the look — leave those alone style-wise
+    // and just swap the palette, which still recolors everything
+    // the style does not hardcode.
+    if (!s_savedStyleName.isEmpty()
+            && s_savedStyleName != QLatin1String("fusion")) {
+        if (QStyle *fusion = QStyleFactory::create(QLatin1String("fusion")))
+            QApplication::setStyle(fusion);
+    }
+    QApplication::setPalette(darkWanted
+        ? BrowserTheme::darkPalette() : BrowserTheme::lightPalette());
+    s_forcedScheme = scheme;
     emit BrowserTheme::themeNotifier()->chromeSchemeChanged();
 }
 
@@ -152,7 +169,7 @@ void BrowserTheme::previewColorScheme(Qt::ColorScheme scheme)
 
 bool BrowserTheme::paletteIsForced()
 {
-    return s_forced;
+    return s_forcedScheme != Qt::ColorScheme::Unknown;
 }
 
 BrowserTheme::BrowserThemeNotifier *BrowserTheme::themeNotifier()
