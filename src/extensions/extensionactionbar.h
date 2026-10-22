@@ -92,10 +92,12 @@ private:
 
     QHBoxLayout *m_layout;
     QSize m_iconSize;
-    // The one open action popup and the extension it serves — a
-    // second click on the same button toggles it closed.
+    // The one open action popup, the extension it serves, and the
+    // widget it anchors to — a second click on the same button
+    // toggles it closed; outside presses (filtered app-wide) end it.
     QPointer<QAction> m_toolbarAction;
     QPointer<QFrame> m_popup;
+    QPointer<QWidget> m_popupAnchor;
     QString m_popupExtensionId;
 };
 
