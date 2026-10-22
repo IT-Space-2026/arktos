@@ -283,6 +283,10 @@ public:
     void removeExtension(const QString &id);     // unload or uninstall, per state
     void setExtensionEnabled(const QString &id, bool enabled);
 
+    // EXTEXIT01: true once any extension was enabled in this session —
+    // engine teardown traps afterwards, so exit must quick_exit.
+    static bool sessionSawEnabledExtension();
+
     // EXT07 default-installed bundle: every *.zip package (and every
     // unpacked subdir carrying manifest.json) in
     // bundledExtensionsPath() is installed onto each prepared

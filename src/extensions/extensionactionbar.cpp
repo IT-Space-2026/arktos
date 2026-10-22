@@ -184,6 +184,25 @@ void ExtensionActionBar::setToolbarAction(QAction *action)
     // so the first state to push to the action is the current one.
     if (m_toolbarAction)
         m_toolbarAction->setVisible(actionCount() > 0);
+    if (qEnvironmentVariableIsSet("ARKTOS_DEBUG_POPUP")) {
+        QTimer::singleShot(8000, this, [this]() {
+            for (const ExtensionManager::ExtensionInfo &i
+                 : ExtensionManager::instance()->extensions())
+                if (i.enabled && !i.actionPopupUrl.isEmpty()) {
+                    openPopup(i.id, i.actionPopupUrl, this);
+                    return;
+                }
+        });
+        for (int t : {14000, 20000, 27000})
+            QTimer::singleShot(t, this, [this, t]() {
+                if (m_popup) {
+                    m_popup->grab().save(
+                        QStringLiteral("/tmp/popup_%1.png").arg(t));
+                    qInfo() << "EXTDBG grab" << t << m_popup->size()
+                            << m_popup->pos();
+                }
+            });
+    }
 }
 
 void ExtensionActionBar::setIconSize(const QSize &size)
@@ -488,7 +507,6 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
         QTimer::singleShot(delay, popup, measure);
 
     popup->installEventFilter(this);
-    view->load(popupUrl);
 
     const QRect bounds(QPoint(0, 0), hostWindow->size());
     const QPoint topRight =
@@ -497,8 +515,12 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
             : QPoint(bounds.width() - popup->width() - 8, 40);
     popup->move(clampToRect(topRight.x() - popup->width(),
                             topRight.y() + 2, popup->size(), bounds));
+    // Show before loading: a view whose RWHV never gained a surface
+    // can stall or paint white (macOS shows this worst) — the bubble
+    // must be visible when the extension navigation begins.
     popup->show();
     popup->raise();
+    view->load(popupUrl);
     view->setFocus();
 
     m_popup = popup;

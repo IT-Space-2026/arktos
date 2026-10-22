@@ -471,6 +471,14 @@ BrowserApplication::~BrowserApplication()
     // PVAULT02: last — the auto-lock re-seal must run after every
     // store flushed; a seal earlier would orphan late plaintext.
     ProfileVault::instance()->sealUnlockedProfilesAtShutdown();
+    // EXTEXIT01 backstop: whatever lane ended the run, never unwind
+    // into ~QApplication's post-routine engine teardown once an
+    // extension was enabled — ~ProfileAdapter traps there (SIGSEGV on
+    // macOS, SIGTRAP on Linux).  Untainted lanes unwind normally so
+    // their exit codes reach the caller; lanes that enabled an
+    // extension all exit through quick_exit sites anyway.
+    if (ExtensionManager::sessionSawEnabledExtension())
+        std::quick_exit(0);
 }
 
 void BrowserApplication::shutdownAndQuickExit(int exitCode)
