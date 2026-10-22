@@ -29,7 +29,7 @@ Rules for the agent working this file:
 
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
-| MS01 | Shell audit — business logic inside widgets + keep/thin table | pending | 0 | .devin/MW-SHELL.md: LocationBar/WebView/TabBar/dialogs decision sites classified thin-now vs keep (paint/input/engine-object); sizes MS02+ work |
+| MS01 | Shell audit — business logic inside widgets + keep/thin table | done | 0 | audit: .devin/MW-SHELL.md — method-level thin/keep/thin-blocked:MDnn map for locationbar/webview/browsermainwindow/tabbar/tabwidget/settings/history/bookmarks; verified vs facade handles in arktos_core.h |
 | MS02 | EngineAdapter contract doc — formalize EngineInterface surface + caps path | pending | 0 | .devin/ENGINE-ADAPTER.md: what every backend must implement, how caps (bridge MB04) map to adapter methods, honest per-engine matrix |
 | MS03 | LocationBar thinning — suggestion/accept/navigate policy via facade | pending | 0 | widget keeps painting+input; suggestion sources + accept decisions (search-vs-url, urlclean hook) move behind facade queries |
 | MS04 | WebView thinning slice 1 — context-menu + link-hover policy to controller | pending | 0 | menu action availability/enabledness + hover-status policy via facade decisions, not inline widget code |
@@ -49,6 +49,13 @@ restore policy, suggestion source pick, permission default) record
 file:line + verdict `thin` (move behind facade — domains lane provides
 the modules; if the module doesn't exist yet mark `thin-blocked:MDnn`)
 or `keep`. Output `.devin/MW-SHELL.md`.
+
+
+AMENDMENT (slicing): if the audit finds thin-able decision sites not
+covered by MS03-MS08, append one new pending row per widget cluster
+(MS10+) via taskfile.sh with-lock/append-detail — one widget/method
+group per row. Sites blocked on a pending domains module get
+`needs:task:MDnn` in Notes.
 
 ### MS02
 Document the adapter contract every engine backend must satisfy:
@@ -84,6 +91,12 @@ button hidden where unsupported.
 settings.cpp: every section's load/apply flows through Ac* facade
 handles — hunt remaining QSettings / direct-store writes and route
 them. Parity: --settings-smoke passes, round-trip unchanged.
+
+
+AMENDMENT (slicing): if remaining direct-store pokes span more than ~6
+preference sections, route only the first half this run and leave the
+row in_progress — the loop will resume it next run; do not force
+partial work into done.
 
 ### MS08
 Tab restore order/pinned/per-tab fields sourced from AcSession; the
