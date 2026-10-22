@@ -73,7 +73,8 @@ typedef struct RcBuffer {
 
 /* Change topics emitted so far: "credentials" (rc_cred_* map),
  * "autofill" (rc_autofill_* record set), "settings" (rc_settings_*
- * mutations), "profiles" (rc_profiles_* registry mutations). */
+ * mutations), "profiles" (rc_profiles_* registry mutations),
+ * "torctl" (RC14: a control reply/event/link-state push is pending). */
 typedef void (*RcChangeCallback)(const char *topicUtf8, void *userdata);
 
 /* --- housekeeping ------------------------------------------------- */
@@ -1297,6 +1298,65 @@ char *rv_inspect(const char *blobPathUtf8);
 RcStatus rv_rewrap(const char *blobPathUtf8,
                    const uint8_t *oldPass, size_t oldLen,
                    const uint8_t *newPass, size_t newLen);
+
+/* ------------------------------------------------------------------ */
+/* RC14: Tor control-protocol client                                   */
+/*                                                                     */
+/* The Rust port of torcontrol.cpp — the control-spec line protocol    */
+/* over a loopback TCP connection.  Commands are serialized (one in    */
+/* flight at most); every submitted command completes exactly once in  */
+/* take_reply order with the final status code, or -1 when the link    */
+/* died first.  Async 650 event lines and protocol complaints queue    */
+/* separately; every push emits the "torctl" change topic so the Qt    */
+/* side can queue a drain on the GUI thread.                           */
+/*                                                                     */
+/* No-leak contract: rc_tor_open accepts loopback addresses and        */
+/* "localhost" (resolved + re-verified) only, and AUTHENTICATE         */
+/* payloads are held in zeroizing buffers.                             */
+
+#define RC_TOR_CONNECTED 1
+#define RC_TOR_CLOSED    2
+
+typedef struct RcTorCtl RcTorCtl;
+
+/* Synchronous connect with a bounded timeout — a returned handle is
+ * always RC_TOR_CONNECTED.  NULL + rc_last_error_message on refusal
+ * or a non-loopback host. */
+RcTorCtl *rc_tor_open(const char *host, uint16_t port);
+/* Sever the link but keep the handle valid — pending commands flush
+ * as -1 replies and the drain lanes still read.  rc_tor_close frees. */
+void rc_tor_disconnect(RcTorCtl *h);
+void rc_tor_close(RcTorCtl *h);            /* NULL-tolerant */
+int rc_tor_state(RcTorCtl *h);             /* 0 bad handle */
+char *rc_tor_error(RcTorCtl *h);           /* "" when clean; rc_string_free */
+
+/* Queue one command; returns the reply sequence number or -1.
+ * `command` must be a single line (a CRLF payload is rejected, never
+ * split — the injection boundary). */
+int64_t rc_tor_send(RcTorCtl *h, const char *command);
+
+/* AUTHENTICATE lanes: 32-byte cookie as hex token, cookie read from a
+ * file in-library, or a password sent as an escaped QuotedString. */
+int64_t rc_tor_auth_cookie(RcTorCtl *h, const uint8_t *cookie,
+                           size_t len);
+int64_t rc_tor_auth_cookie_file(RcTorCtl *h, const char *path);
+int64_t rc_tor_auth_password(RcTorCtl *h, const uint8_t *pass,
+                             size_t len);
+
+/* GETINFO key ("a b" key lists legal), SETEVENTS space-separated
+ * list, TAKEOWNERSHIP, SIGNAL name (NEWNYM/SHUTDOWN/…). */
+int64_t rc_tor_getinfo(RcTorCtl *h, const char *key);
+int64_t rc_tor_setevents(RcTorCtl *h, const char *list);
+int64_t rc_tor_takeownership(RcTorCtl *h);
+int64_t rc_tor_signal(RcTorCtl *h, const char *name);
+
+/* Drain lanes — call on every "torctl" change topic until empty:
+ * take_reply returns RC_OK with {"seq","code","lines":[...]} JSON in
+ * out (rc_buffer_free), RC_NOT_FOUND when drained; take_event /
+ * take_error return a line (rc_string_free) or NULL when empty. */
+RcStatus rc_tor_take_reply(RcTorCtl *h, RcBuffer *out);
+char *rc_tor_take_event(RcTorCtl *h);
+char *rc_tor_take_error(RcTorCtl *h);
 
 #ifdef __cplusplus
 }

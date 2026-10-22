@@ -42,7 +42,9 @@ struct RcProfiles;
 //
 // Topics so far: "credentials" (the rc_cred_* map changed),
 // "bookmarks" and "history" (the RCORE02 stores), "autofill" (the
-// RCORE05 record set), "settings" (RC02), "profiles" (RC03).
+// RCORE05 record set), "settings" (RC02), "profiles" (RC03),
+// "torctl" (RC14 — a control reply/event is queued for drain; the
+// TorControl shell pulls them off the handle).
 // Compiled only under CONFIG+=rustcore (ARKTOS_RUSTCORE).
 //
 // RC07: the same object is also the app's AcCore — the facade root

@@ -108,6 +108,12 @@
 //!     ac_* thin forwards to the rc_* entry points, and the
 //!     (module, profile_id) change-callback lane.  The rc_* surface
 //!     stays live for legacy callers until RC08 migrates them.
+//!   * torctl (RC14): the Tor control-protocol client — loopback-only
+//!     connect, COOKIE + password AUTHENTICATE (secrets zeroized),
+//!     serialized commands with exactly-once reply completion, async
+//!     650-event capture and a pull-drain FFI announced through the
+//!     "torctl" change topic.  Deliberately not a facade module: it
+//!     binds no profile and owns no store.
 //!
 mod autofill;
 mod bidi;
@@ -141,6 +147,7 @@ mod sitedecisions;
 mod sitetrust;
 mod store;
 mod tlsprobe;
+mod torctl;
 mod tranco;
 mod urlstrip;
 mod useragent;
@@ -5215,6 +5222,356 @@ pub unsafe extern "C" fn rv_rewrap(
         let new = zeroize::Zeroizing::new(new.to_vec());
         profilevault::rewrap_file(std::path::Path::new(blob), &old, &new)
     })
+}
+
+// ---- tor control client (RC14) --------------------------------------
+//
+// Tor control-protocol port of torcontrol.cpp: loopback-only connect,
+// AUTHENTICATE (32-byte cookie hex token or quoted password), and the
+// serialized command queue — one command in flight, every submission
+// completing exactly once via take_reply (final code, or -1 when the
+// link dies first).  Async 650 events and protocol complaints drain
+// through take_event/take_error; each push emits "torctl" so the Qt
+// bridge can queue a drain.  rc_tor_open connects synchronously with
+// a bounded timeout — a returned handle is always live; a refused or
+// non-loopback target is NULL + rc_last_error_message().
+//
+// No-leak contract: the host must be a loopback literal or
+// "localhost" (resolved and re-verified), and AUTHENTICATE payloads
+// are assembled in zeroizing buffers that wipe on queue flush/drop.
+
+fn tor_ref<'a>(
+    h: *const torctl::RcTorCtl,
+) -> error::RcResult<&'a torctl::RcTorCtl> {
+    unsafe { h.as_ref() }.ok_or_else(|| error::Fail {
+        status: RcStatus::InvalidArgument,
+        msg: "bad tor handle".into(),
+    })
+}
+
+/// Sends `command` (no CRLF — must be a single line) and returns the
+/// sequence number take_reply reports it under, or -1 with
+/// rc_last_error_message() set.  Shared tail for every typed helper.
+unsafe fn tor_send_seq(
+    h: *const torctl::RcTorCtl,
+    f: impl FnOnce(&torctl::RcTorCtl) -> error::RcResult<u64>,
+) -> i64 {
+    match catch_unwind(AssertUnwindSafe(|| match tor_ref(h) {
+        Ok(h) => f(h),
+        Err(e) => Err(e),
+    })) {
+        Ok(Ok(seq)) => {
+            error::clear_error();
+            seq as i64
+        }
+        Ok(Err(e)) => {
+            error::set_error(&e.msg);
+            -1
+        }
+        Err(_) => {
+            error::set_error("panic inside rustcore");
+            -1
+        }
+    }
+}
+
+/// Connects to a tor control port at host:port — loopback only.
+/// Returns an opaque handle (rc_tor_close to release) or NULL with
+/// rc_last_error_message() set.
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8 (an IP literal or "localhost").
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_open(
+    host: *const c_char,
+    port: u16,
+) -> *mut torctl::RcTorCtl {
+    catch_unwind(AssertUnwindSafe(|| {
+        let host = match unsafe { util::cstr(host) } {
+            Some(h) => h,
+            None => {
+                error::set_error("bad host pointer");
+                return ptr::null_mut();
+            }
+        };
+        match torctl::RcTorCtl::open(host, port) {
+            Ok(h) => Box::into_raw(Box::new(h)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Severs the link but keeps the handle valid for draining: the
+/// in-flight/queued commands complete with code -1 and the state
+/// reads RC_TOR_CLOSED — the disconnectFromHost() spelling.
+///
+/// # Safety
+/// `h` must be a live rc_tor_open handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_disconnect(h: *mut torctl::RcTorCtl) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if let Ok(h) = tor_ref(h) {
+            h.close();
+        }
+    }));
+}
+
+/// Severs the link and releases the handle.  Outstanding commands
+/// complete with code -1 before the close lands; NULL-tolerant.
+///
+/// # Safety
+/// `h` must come from rc_tor_open and not be used afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_close(h: *mut torctl::RcTorCtl) {
+    if !h.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            drop(unsafe { Box::from_raw(h) });
+        }));
+    }
+}
+
+/// Link state: 1 connected, 2 closed, 0 for a bad handle.
+///
+/// # Safety
+/// `h` must be a live rc_tor_open handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_state(h: *const torctl::RcTorCtl) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        tor_ref(h).map(|h| h.state()).unwrap_or(0)
+    }))
+    .unwrap_or(0)
+}
+
+/// Connection error text ("" for a clean close or open link).
+/// Free with rc_string_free().
+///
+/// # Safety
+/// `h` must be a live rc_tor_open handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_error(h: *const torctl::RcTorCtl) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match tor_ref(h) {
+            Ok(h) => util::to_c_string(h.error_string()),
+            Err(_) => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Queues one control-protocol command line (no CRLF — a payload with
+/// a newline is rejected, never split).  Returns the reply's sequence
+/// number or -1.
+///
+/// # Safety
+/// `h` live handle; `command` NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_send(
+    h: *const torctl::RcTorCtl,
+    command: *const c_char,
+) -> i64 {
+    let cmd = match unsafe { util::cstr(command) } {
+        Some(c) => c.to_owned(),
+        None => {
+            error::set_error("bad command pointer");
+            return -1;
+        }
+    };
+    unsafe { tor_send_seq(h, move |h| h.send(&cmd)) }
+}
+
+/// AUTHENTICATE with the 32-byte control_auth_cookie (sent as hex).
+/// Bad length is an error before anything hits the wire.
+///
+/// # Safety
+/// `cookie` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_auth_cookie(
+    h: *const torctl::RcTorCtl,
+    cookie: *const u8,
+    len: usize,
+) -> i64 {
+    let bytes = unsafe { util::bytes(cookie, len) }.map(|b| b.to_vec());
+    match bytes {
+        Some(c) => unsafe { tor_send_seq(h, move |h| h.auth_cookie(&c)) },
+        None => {
+            error::set_error("bad cookie pointer");
+            -1
+        }
+    }
+}
+
+/// AUTHENTICATE with the cookie file at `path` — the secret is read
+/// inside the library and never crosses the ABI as a buffer.
+///
+/// # Safety
+/// `h` live handle; `path` NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_auth_cookie_file(
+    h: *const torctl::RcTorCtl,
+    path: *const c_char,
+) -> i64 {
+    let path = match unsafe { util::cstr(path) } {
+        Some(p) => p.to_owned(),
+        None => {
+            error::set_error("bad cookie path pointer");
+            return -1;
+        }
+    };
+    unsafe { tor_send_seq(h, move |h| h.auth_cookie_file(&path)) }
+}
+
+/// AUTHENTICATE with a password (HashedControlPassword mode), sent as
+/// an escaped QuotedString.
+///
+/// # Safety
+/// `pass` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_auth_password(
+    h: *const torctl::RcTorCtl,
+    pass: *const u8,
+    len: usize,
+) -> i64 {
+    let bytes = unsafe { util::bytes(pass, len) }.map(|b| b.to_vec());
+    match bytes {
+        Some(p) => unsafe { tor_send_seq(h, move |h| h.auth_password(&p)) },
+        None => {
+            error::set_error("bad password pointer");
+            -1
+        }
+    }
+}
+
+/// GETINFO <key> (a space-separated key list is legal per spec).
+///
+/// # Safety
+/// `h` live handle; `key` NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_getinfo(
+    h: *const torctl::RcTorCtl,
+    key: *const c_char,
+) -> i64 {
+    let key = match unsafe { util::cstr(key) } {
+        Some(k) => k.to_owned(),
+        None => {
+            error::set_error("bad getinfo key pointer");
+            return -1;
+        }
+    };
+    unsafe { tor_send_seq(h, move |h| h.getinfo(&key)) }
+}
+
+/// SETEVENTS <list> — space-separated names ("CIRC STREAM").
+///
+/// # Safety
+/// `h` live handle; `list` NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_setevents(
+    h: *const torctl::RcTorCtl,
+    list: *const c_char,
+) -> i64 {
+    let list = match unsafe { util::cstr(list) } {
+        Some(l) => l.to_owned(),
+        None => {
+            error::set_error("bad event list pointer");
+            return -1;
+        }
+    };
+    unsafe { tor_send_seq(h, move |h| h.setevents(&list)) }
+}
+
+/// TAKEOWNERSHIP — tor exits when this connection closes.
+///
+/// # Safety
+/// `h` must be a live rc_tor_open handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_takeownership(h: *const torctl::RcTorCtl) -> i64 {
+    unsafe { tor_send_seq(h, |h| h.takeownership()) }
+}
+
+/// SIGNAL <name> — NEWNYM, SHUTDOWN, RELOAD, …
+///
+/// # Safety
+/// `h` live handle; `name` NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_signal(
+    h: *const torctl::RcTorCtl,
+    name: *const c_char,
+) -> i64 {
+    let name = match unsafe { util::cstr(name) } {
+        Some(n) => n.to_owned(),
+        None => {
+            error::set_error("bad signal name pointer");
+            return -1;
+        }
+    };
+    unsafe { tor_send_seq(h, move |h| h.signal(&name)) }
+}
+
+/// Pops the oldest completed reply as
+/// {"seq":N,"code":C,"lines":[...]} into `out` (rc_buffer_free).
+/// RC_NOT_FOUND when nothing is pending.
+///
+/// # Safety
+/// `h` live handle; `out` writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_take_reply(
+    h: *const torctl::RcTorCtl,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let h = tor_ref(h)?;
+        let reply = h.take_reply().ok_or_else(|| error::Fail {
+            status: RcStatus::NotFound,
+            msg: "no completed reply".into(),
+        })?;
+        let json = serde_json::json!({
+            "seq": reply.seq,
+            "code": reply.code,
+            "lines": reply.lines,
+        });
+        buffer_out(out, json.to_string().into_bytes());
+        Ok(())
+    })
+}
+
+/// Pops the oldest async event line (code 650 stripped), NULL when
+/// the queue is empty.  Free with rc_string_free().
+///
+/// # Safety
+/// `h` must be a live rc_tor_open handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_take_event(
+    h: *const torctl::RcTorCtl,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match tor_ref(h).ok().and_then(|h| h.take_event()) {
+            Some(e) => util::to_c_string(e),
+            None => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Pops the oldest protocol complaint (unparsable line etc.), NULL
+/// when empty.  Free with rc_string_free().
+///
+/// # Safety
+/// `h` must be a live rc_tor_open handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_take_error(
+    h: *const torctl::RcTorCtl,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match tor_ref(h).ok().and_then(|h| h.take_error()) {
+            Some(e) => util::to_c_string(e),
+            None => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 #[cfg(test)]

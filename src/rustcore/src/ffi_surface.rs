@@ -2648,3 +2648,182 @@ fn facade_bad_handles_fail_clean() {
     unsafe { crate::facade::ac_shutdown(core) };
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ---- RC14 torctl surface ------------------------------------------------
+
+/// Scripted control-port mock for the FFI legs: answers GETINFO with a
+/// data-block reply plus one interleaved 650 event, everything else OK.
+fn tor_mock() -> (u16, std::thread::JoinHandle<()>) {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{IpAddr, TcpListener};
+    let listener =
+        TcpListener::bind((IpAddr::from([127, 0, 0, 1]), 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let join = std::thread::spawn(move || {
+        if let Ok((conn, _)) = listener.accept() {
+            let _ = conn.set_read_timeout(Some(
+                std::time::Duration::from_secs(10),
+            ));
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => {}
+                }
+                let cmd = line.trim_end();
+                let reply = if cmd.starts_with("GETINFO circ") {
+                    "250+circuit-status=\r\n3 BUILT $AA~G\r\n.\r\n250 OK\r\n"
+                } else if cmd.starts_with("GETINFO ev") {
+                    "650 CIRC 4 BUILT $BB~M\r\n250-ev=1\r\n250 OK\r\n"
+                } else {
+                    "250 OK\r\n"
+                };
+                if writer.write_all(reply.as_bytes()).is_err() {
+                    return;
+                }
+            }
+        }
+    });
+    (port, join)
+}
+
+#[test]
+fn torctl_surface() {
+    // Bad-argument legs first — NULL handles/pointers degrade to the
+    // failure spelling, never a crash.
+    assert!(unsafe { crate::rc_tor_open(ptr::null(), 9051) }.is_null());
+    assert!(unsafe { crate::rc_tor_open(cs("8.8.8.8").as_ptr(), 9051) }
+        .is_null());
+    assert!(unsafe { crate::rc_tor_open(cs("example.org").as_ptr(), 9051) }
+        .is_null());
+    unsafe { crate::rc_tor_close(ptr::null_mut()) };
+    assert_eq!(unsafe { crate::rc_tor_state(ptr::null()) }, 0);
+    assert!(unsafe { crate::rc_tor_error(ptr::null()) }.is_null());
+    assert!(unsafe { crate::rc_tor_take_event(ptr::null()) }.is_null());
+    assert!(unsafe { crate::rc_tor_take_error(ptr::null()) }.is_null());
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_tor_take_reply(ptr::null(), &mut out) },
+        RcStatus::InvalidArgument
+    );
+    for seq in [
+        unsafe { crate::rc_tor_send(ptr::null(), cs("X").as_ptr()) },
+        unsafe { crate::rc_tor_getinfo(ptr::null(), cs("k").as_ptr()) },
+        unsafe { crate::rc_tor_setevents(ptr::null(), cs("CIRC").as_ptr()) },
+        unsafe { crate::rc_tor_takeownership(ptr::null()) },
+        unsafe { crate::rc_tor_signal(ptr::null(), cs("NEWNYM").as_ptr()) },
+        unsafe {
+            crate::rc_tor_auth_cookie(ptr::null(), b"c".as_ptr(), 32)
+        },
+        unsafe {
+            crate::rc_tor_auth_cookie_file(ptr::null(), cs("/x").as_ptr())
+        },
+        unsafe {
+            crate::rc_tor_auth_password(ptr::null(), b"p".as_ptr(), 1)
+        },
+    ] {
+        assert_eq!(seq, -1);
+    }
+
+    // Live leg over the C ABI against the scripted mock.
+    let (port, _join) = tor_mock();
+    let h = unsafe { crate::rc_tor_open(cs("127.0.0.1").as_ptr(), port) };
+    assert!(!h.is_null());
+    assert_eq!(unsafe { crate::rc_tor_state(h) }, 1 /* CONNECTED */);
+    assert_eq!(
+        take_str(unsafe { crate::rc_tor_error(h) }).as_deref(),
+        Some("")
+    );
+
+    // Bad-argument legs on a live handle.
+    assert_eq!(unsafe { crate::rc_tor_send(h, ptr::null()) }, -1);
+    assert_eq!(
+        unsafe { crate::rc_tor_send(h, cs("a\rb").as_ptr()) },
+        -1
+    );
+    assert_eq!(unsafe { crate::rc_tor_getinfo(h, ptr::null()) }, -1);
+    assert_eq!(
+        unsafe { crate::rc_tor_auth_cookie(h, ptr::null(), 32) },
+        -1
+    );
+    assert_eq!(
+        unsafe { crate::rc_tor_auth_cookie(h, b"x".as_ptr(), 31) },
+        -1
+    );
+    assert_eq!(
+        unsafe { crate::rc_tor_auth_password(h, ptr::null(), 0) },
+        -1
+    );
+
+    let seq = unsafe { crate::rc_tor_getinfo(h, cs("circ").as_ptr()) };
+    assert!(seq > 0);
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut reply: Option<serde_json::Value> = None;
+    while std::time::Instant::now() < deadline {
+        let mut out = out_buf();
+        if unsafe { crate::rc_tor_take_reply(h, &mut out) } == RcStatus::Ok {
+            let raw = take_buf(&mut out);
+            reply = Some(serde_json::from_slice(&raw).unwrap());
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let reply = reply.expect("no reply landed");
+    assert_eq!(reply["seq"].as_u64().unwrap(), seq as u64);
+    assert_eq!(reply["code"].as_i64().unwrap(), 250);
+    let lines: Vec<&str> = reply["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(lines, vec!["circuit-status=", "3 BUILT $AA~G", "OK"]);
+
+    // The 650 line queues as an async event, not into the reply.
+    let seq = unsafe { crate::rc_tor_getinfo(h, cs("ev").as_ptr()) };
+    assert!(seq > 0);
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut event: Option<String> = None;
+    while std::time::Instant::now() < deadline {
+        if let Some(e) = take_str(unsafe { crate::rc_tor_take_event(h) }) {
+            event = Some(e);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(event.as_deref(), Some("CIRC 4 BUILT $BB~M"));
+    // ...and its reply still completes.
+    while std::time::Instant::now() < deadline {
+        let mut out = out_buf();
+        if unsafe { crate::rc_tor_take_reply(h, &mut out) } == RcStatus::Ok {
+            take_buf(&mut out);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    // Drained queues report the empty spelling.
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_tor_take_reply(h, &mut out) },
+        RcStatus::NotFound
+    );
+    assert!(unsafe { crate::rc_tor_take_event(h) }.is_null());
+    assert!(unsafe { crate::rc_tor_take_error(h) }.is_null());
+
+    unsafe { crate::rc_tor_close(h) };
+
+    // A second open/close cycle proves a freed handle left nothing
+    // behind — "localhost" exercises the name-resolution gate (any
+    // resolved answer must still be loopback).
+    let (port2, _j2) = tor_mock();
+    let h2 = unsafe { crate::rc_tor_open(cs("localhost").as_ptr(), port2) };
+    if !h2.is_null() {
+        assert_eq!(unsafe { crate::rc_tor_state(h2) }, 1);
+        unsafe { crate::rc_tor_close(h2) };
+    }
+}
