@@ -1,5 +1,5 @@
 /*
- * tst_acprobe_norust.c — the no-rust leg of the acprobe autotest.
+ * acprobe_norust.c — the no-rust leg of the acprobe autotest.
  *
  * The --bridge harness dispatches real envelopes through the
  * rustcore static library; with CONFIG+=no-rust there is no library
