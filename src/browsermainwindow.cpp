@@ -639,8 +639,12 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
             this, &BrowserMainWindow::updateWindowTitle);
     connect(m_tabWidget, &TabWidget::showStatusBarMessage,
             statusBar(), [this](const QString &message) { statusBar()->showMessage(message); });
+    // MS04: the engine-adapter hover feed shows the controller's
+    // status-text verdict — same policy as WebView's own hover path.
     connect(m_tabWidget, &TabWidget::linkHovered,
-            statusBar(), [this](const QString &link) { statusBar()->showMessage(link); });
+            statusBar(), [this](const QString &link) {
+        statusBar()->showMessage(WebViewController::hoverStatusText(link));
+    });
     connect(m_tabWidget, &TabWidget::loadProgress,
             this, &BrowserMainWindow::loadProgress);
     connect(m_tabWidget, &TabWidget::loadStarted,

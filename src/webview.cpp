@@ -161,8 +161,13 @@ Engine::Page *WebView::enginePage() const
 void WebView::init()
 {
     setPage(m_page);
+    // MS04: what a hovered link shows on the status bar is the
+    // controller's verdict — today verbatim (the pass-through this
+    // replaces); display rules would consult the facade here.
     connect(m_page, &QWebEnginePage::linkHovered,
-            this, &WebView::setStatusBarText);
+            this, [this](const QString &link) {
+        setStatusBarText(WebViewController::hoverStatusText(link));
+    });
     connect(m_page, &QWebEnginePage::loadStarted,
             this, [this]() { setStatusBarText(QString()); });
     connect(this, &QWebEngineView::loadProgress,
@@ -302,6 +307,254 @@ static Engine::ContextMenuInfo contextMenuInfo(
     return info;
 }
 
+// MS04: renders one row of the controller's context-menu model —
+// the ids map to the existing slots/lambdas and the strings are
+// produced here (paint); which rows exist and their enabled/tooltip
+// state was decided by WebViewController::contextMenuModel.
+void WebView::addContextMenuEntry(QMenu *menu,
+        const WebViewController::MenuEntry &entry)
+{
+    using Id = WebViewController::MenuEntry::Id;
+    QAction *action = nullptr;
+    switch (entry.id) {
+    case Id::Separator:
+        menu->addSeparator();
+        return;
+    case Id::OpenLinkNewTab:
+        action = menu->addAction(tr("Open in New &Tab"), this, &WebView::openLinkInNewTab);
+        action->setData(entry.url);
+        break;
+    case Id::OpenLinkNewWindow:
+        action = menu->addAction(tr("Open in New &Window"), this, &WebView::openLinkInNewWindow);
+        action->setData(entry.url);
+        break;
+    case Id::OpenLinkNewPrivateTab:
+        action = menu->addAction(tr("Open in New &Private Tab"), this, &WebView::openUrlInNewPrivateTab);
+        action->setData(entry.url);
+        break;
+    case Id::OpenLinkNewPrivateWindow:
+        action = menu->addAction(tr("Open in New Pri&vate Window"), this, &WebView::openUrlInNewPrivateWindow);
+        action->setData(entry.url);
+        break;
+    case Id::OpenLinkNewTorWindow:
+        action = menu->addAction(tr("Open in New T&or Window"), this, &WebView::openUrlInNewTorWindow);
+        action->setData(entry.url);
+        break;
+    case Id::SaveLink:
+        action = menu->addAction(tr("Save Lin&k"), this, &WebView::downloadLinkToDisk);
+        action->setData(entry.url);
+        break;
+    case Id::BookmarkLink:
+        action = menu->addAction(tr("&Bookmark This Link"), this, &WebView::bookmarkLink);
+        action->setData(entry.url);
+        break;
+    case Id::InsertStandardCopy:
+        menu->addAction(enginePage()->action(Engine::StandardAction::Copy));
+        return;
+    case Id::CopyLinkLocation:
+        action = menu->addAction(tr("&Copy Link Location"), this, &WebView::copyLinkToClipboard);
+        action->setData(entry.url);
+        break;
+    case Id::CopyCleanLink:
+        action = menu->addAction(tr("Copy &Clean Link"), this, &WebView::copyCleanLinkToClipboard);
+        action->setData(entry.url);
+        break;
+    case Id::OpenImageNewTab:
+        action = menu->addAction(tr("Open Image in New &Tab"), this, &WebView::openActionUrlInNewTab);
+        action->setData(entry.url);
+        break;
+    case Id::OpenImageNewWindow:
+        action = menu->addAction(tr("Open Image in New &Window"), this, &WebView::openActionUrlInNewWindow);
+        action->setData(entry.url);
+        break;
+    case Id::OpenImageNewPrivateTab:
+        action = menu->addAction(tr("Open Image in New &Private Tab"), this, &WebView::openUrlInNewPrivateTab);
+        action->setData(entry.url);
+        break;
+    case Id::OpenImageNewPrivateWindow:
+        action = menu->addAction(tr("Open Image in New Pri&vate Window"), this, &WebView::openUrlInNewPrivateWindow);
+        action->setData(entry.url);
+        break;
+    case Id::OpenImageNewTorWindow:
+        action = menu->addAction(tr("Open Image in New T&or Window"), this, &WebView::openUrlInNewTorWindow);
+        action->setData(entry.url);
+        break;
+    case Id::SaveImage:
+        action = menu->addAction(tr("&Save Image"), this, &WebView::downloadImageToDisk);
+        action->setData(entry.url);
+        break;
+    case Id::CopyImage:
+        // The renderer still holds the pixels even when mediaUrl came
+        // through empty — the stock copy action reaches them.
+        action = menu->addAction(tr("&Copy Image"), this, &WebView::copyImageToClipboard);
+        break;
+    case Id::CopyImageLocation:
+        action = menu->addAction(tr("C&opy Image Location"), this, &WebView::copyImageLocationToClipboard);
+        action->setData(entry.text);
+        break;
+    case Id::BlockImage:
+        action = menu->addAction(tr("Block Image"), this, &WebView::blockImage);
+        action->setData(entry.text);
+        break;
+    case Id::ImageSearch:
+        action = menu->addAction(
+            tr("Search Image with %1").arg(SafeText::menu(entry.text)),
+            this, &WebView::imageSearchRequested);
+        action->setData(entry.url);
+        break;
+    case Id::GrabOpenImageWindow:
+        action = menu->addAction(tr("Open Image in New &Window"), this,
+                [this, entry]() {
+            grabContextImage(entry.position, entry.canvas,
+                    [this](const QUrl &resolved) {
+                openUrlInTarget(resolved, TabWidget::NewWindow);
+            });
+        });
+        break;
+    case Id::GrabOpenImageTab:
+        action = menu->addAction(tr("Open Image in New &Tab"), this,
+                [this, entry]() {
+            grabContextImage(entry.position, entry.canvas,
+                    [this](const QUrl &resolved) {
+                openUrlInTarget(resolved, TabWidget::NewNotSelectedTab);
+            });
+        });
+        break;
+    case Id::GrabSaveImage:
+        action = menu->addAction(tr("&Save Image"), this,
+                [this, entry]() {
+            grabContextImage(entry.position, entry.canvas,
+                    [this](const QUrl &resolved) {
+                if (!resolved.isEmpty())
+                    m_page->download(resolved);
+            });
+        });
+        break;
+    case Id::GrabCopyCanvasImage:
+        // The pixels serialize to a png data url — decode it into the
+        // clipboard image rather than the page's copy action (Chromium
+        // offers no canvas copy equivalent).
+        action = menu->addAction(tr("&Copy Image"), this,
+                [this, entry]() {
+            grabContextImage(entry.position, true,
+                    [this](const QUrl &resolved) {
+                const QString data = resolved.toString();
+                const int comma = data.indexOf(QLatin1Char(','));
+                const QImage image = QImage::fromData(
+                    QByteArray::fromBase64(
+                        data.mid(comma + 1).toLatin1()));
+                if (!image.isNull()) {
+                    QApplication::clipboard()->setImage(image);
+                } else {
+                    setStatusBarText(tr(
+                        "Could not decode the canvas image."));
+                }
+            });
+        });
+        break;
+    case Id::GrabCopyImageLocation:
+        action = menu->addAction(tr("C&opy Image Location"), this,
+                [this, entry]() {
+            grabContextImage(entry.position, false,
+                    [](const QUrl &resolved) {
+                QApplication::clipboard()->setText(
+                    resolved.toString());
+            });
+        });
+        break;
+    case Id::GrabBlockImage:
+        action = menu->addAction(tr("Block Image"), this,
+                [this, entry]() {
+            grabContextImage(entry.position, false,
+                    [this](const QUrl &resolved) {
+                AdBlockManager::instanceFor(
+                    BrowserProfile::profileIdFor(
+                        m_page ? m_page->profile() : nullptr))
+                        ->showDialog()
+                    ->addCustomRule(resolved.toString());
+            });
+        });
+        break;
+    case Id::PictureInPicture:
+        action = menu->addAction(tr("Picture-in-Picture"), this,
+                [this, entry]() {
+            m_pip->popOutContext(entry.url, entry.position);
+        });
+        break;
+    case Id::OpenPosterNewWindow:
+        action = menu->addAction(tr("Open &Poster in New Window"), this,
+                [this, entry]() {
+            openContextPosterInTarget(entry.position,
+                                      TabWidget::NewWindow);
+        });
+        break;
+    case Id::OpenPosterNewTab:
+        action = menu->addAction(tr("Open Poster in New &Tab"), this,
+                [this, entry]() {
+            openContextPosterInTarget(entry.position,
+                                      TabWidget::NewNotSelectedTab);
+        });
+        break;
+    case Id::SearchWithSubmenu: {
+        QMenu *searchMenu = menu->addMenu(tr("Search with"));
+        for (const WebViewController::MenuEntry &child : entry.children) {
+            // Engine names come from opensearch XML; keep '&'/'\t'
+            // out of the menu text and carry the real name in data.
+            QAction *engineAction =
+                searchMenu->addAction(SafeText::menu(child.text));
+            engineAction->setData(child.text);
+            connect(engineAction, &QAction::triggered,
+                    this, [this, engineAction]() {
+                searchRequested(engineAction);
+            });
+        }
+        return;
+    }
+    case Id::SearchEngineItem:
+        return; // only meaningful inside SearchWithSubmenu's children
+    case Id::AddSelectionToNotes:
+        action = menu->addAction(tr("Add Selection to &Notes"),
+                        this, &WebView::addSelectionToNote);
+        break;
+    case Id::InsertStandardActions: {
+        // Chromium's editing commands / the stock fallback — the
+        // context menu carries no inspect path (DEVT04), so the stock
+        // menu's own "Inspect element" (a no-op bare page action) is
+        // stripped here too.
+        if (QMenu *standard = createStandardContextMenu()) {
+            standard->removeAction(enginePage()->action(
+                Engine::StandardAction::InspectElement));
+            menu->addActions(standard->actions());
+            delete standard;
+        }
+        return;
+    }
+    case Id::AddToolbarSearch:
+        action = menu->addAction(tr("Add to the toolbar search"), this,
+                [this, entry]() { addSearchEngine(entry.position); });
+        break;
+    case Id::CopyCleanPageLink:
+        action = menu->addAction(tr("Copy &Clean Link"), this, [this]() {
+            QApplication::clipboard()->setText(
+                UrlCleaner::cleanedUrl(url()).toString());
+        });
+        break;
+    case Id::ShowQrCode:
+        action = menu->addAction(tr("Show &QR Code for This Page"), this,
+            [this]() { QrCodeDialog::showForUrl(url(), this); });
+        break;
+    }
+    if (action) {
+        action->setEnabled(entry.enabled);
+        if (entry.disabledReason ==
+                WebViewController::MenuEntry::DisabledReason::NoTorBinary) {
+            action->setToolTip(
+                tr("No tor binary found — install tor or run "
+                   "BuildProcess/fetch-tor.sh"));
+        }
+    }
+}
+
 void WebView::contextMenuEvent(QContextMenuEvent *event)
 {
     QWebEngineContextMenuRequest *request = lastContextMenuRequest();
@@ -311,287 +564,28 @@ void WebView::contextMenuEvent(QContextMenuEvent *event)
     }
     const Engine::ContextMenuInfo info = contextMenuInfo(request);
 
+    // MS04: the entry set + enabled state is the controller's model —
+    // this method only gathers the environment inputs and renders it.
+    // Facade-bound where a surface exists today (the opensearch reads
+    // ride the rc_ose-backed OpenSearchManager); the CONT07 scheme
+    // gate keeps its Qt leg until MD02 navpolicy lands, and tor
+    // availability probes the binary until MB04's caps table.
+    WebViewController::ContextMenuEnv env;
+    env.privateMode = BrowserApplication::isPrivate();
+    env.linkUrlAllowed = isUrlAllowedFromPageLink(info.linkUrl);
+    env.mediaUrlAllowed = isUrlAllowedFromPageLink(info.mediaUrl);
+    env.torAvailable = !TorManager::resolveBinary().isEmpty();
+    if (OpenSearchEngine *imageEngine =
+            ToolbarSearch::openSearchManager()->imageSearchEngine())
+        env.imageSearchEngineName = imageEngine->name();
+    env.searchEngineNames =
+        ToolbarSearch::openSearchManager()->allEnginesNames();
+
     QMenu *menu = new QMenu(this);
-
-    if (!info.linkUrl.isEmpty()) {
-        // CONT07: every entry hands an attacker-influenced page url to
-        // a new browsing context — the slots gate the scheme through
-        // isUrlAllowedFromPageLink, and entries that can never succeed
-        // are disabled at build time rather than refused on trigger.
-        const bool allowed = isUrlAllowedFromPageLink(info.linkUrl);
-        QAction *newTabAction = menu->addAction(tr("Open in New &Tab"), this, &WebView::openLinkInNewTab);
-        newTabAction->setData(info.linkUrl);
-        newTabAction->setEnabled(allowed);
-        QAction *newWindowAction = menu->addAction(tr("Open in New &Window"), this, &WebView::openLinkInNewWindow);
-        newWindowAction->setData(info.linkUrl);
-        newWindowAction->setEnabled(allowed);
-        // The private entries are hidden wherever they could not
-        // honestly deliver a new isolated context: a fully private
-        // window already routes every new tab/window through the OTR
-        // profile, and inside a tor window they would have to land on
-        // the CLEARNET OTR profile — a leak (isPrivate() covers tor
-        // mode).  'Open in New Tor Window' always works — it spawns a
-        // real --tor process.
-        if (!BrowserApplication::isPrivate()) {
-            QAction *privateTabAction = menu->addAction(tr("Open in New &Private Tab"), this, &WebView::openUrlInNewPrivateTab);
-            privateTabAction->setData(info.linkUrl);
-            privateTabAction->setEnabled(allowed);
-            QAction *privateWindowAction = menu->addAction(tr("Open in New Pri&vate Window"), this, &WebView::openUrlInNewPrivateWindow);
-            privateWindowAction->setData(info.linkUrl);
-            privateWindowAction->setEnabled(allowed);
-        }
-        QAction *torWindowAction = menu->addAction(tr("Open in New T&or Window"), this, &WebView::openUrlInNewTorWindow);
-        torWindowAction->setData(info.linkUrl);
-        torWindowAction->setEnabled(allowed);
-        if (TorManager::resolveBinary().isEmpty()) {
-            torWindowAction->setEnabled(false);
-            torWindowAction->setToolTip(
-                tr("No tor binary found — install tor or run "
-                   "BuildProcess/fetch-tor.sh"));
-        }
-        menu->addSeparator();
-        QAction *saveLinkAction = menu->addAction(tr("Save Lin&k"), this, &WebView::downloadLinkToDisk);
-        saveLinkAction->setData(info.linkUrl);
-        QAction *bookmarkAction = menu->addAction(tr("&Bookmark This Link"), this, &WebView::bookmarkLink);
-        bookmarkAction->setData(info.linkUrl);
-        menu->addSeparator();
-        if (!info.selectedText.isEmpty())
-            menu->addAction(enginePage()->action(Engine::StandardAction::Copy));
-        QAction *copyLinkAction = menu->addAction(tr("&Copy Link Location"), this, &WebView::copyLinkToClipboard);
-        copyLinkAction->setData(info.linkUrl);
-        // POL01: same copy but with tracking query parameters removed.
-        QAction *cleanLinkAction = menu->addAction(tr("Copy &Clean Link"), this, &WebView::copyCleanLinkToClipboard);
-        cleanLinkAction->setData(info.linkUrl);
-    }
-
-    const bool isImage = info.hasImage;
-    const bool isCanvas = info.isCanvas;
-
-    if (isImage && !info.mediaUrl.isEmpty()) {
-        if (!menu->isEmpty())
-            menu->addSeparator();
-        // The same-profile opens keep the permissive base gate — a
-        // blob: media url is only resolvable inside this profile.  The
-        // private/tor entries hand the page-supplied url to another
-        // context and take the strict page-link gate (CONT07).
-        QAction *newTabAction = menu->addAction(tr("Open Image in New &Tab"), this, &WebView::openActionUrlInNewTab);
-        newTabAction->setData(info.mediaUrl);
-        QAction *newWindowAction = menu->addAction(tr("Open Image in New &Window"), this, &WebView::openActionUrlInNewWindow);
-        newWindowAction->setData(info.mediaUrl);
-        const bool allowed = isUrlAllowedFromPageLink(info.mediaUrl);
-        if (!BrowserApplication::isPrivate()) {
-            QAction *privateTabAction = menu->addAction(tr("Open Image in New &Private Tab"), this, &WebView::openUrlInNewPrivateTab);
-            privateTabAction->setData(info.mediaUrl);
-            privateTabAction->setEnabled(allowed);
-            QAction *privateWindowAction = menu->addAction(tr("Open Image in New Pri&vate Window"), this, &WebView::openUrlInNewPrivateWindow);
-            privateWindowAction->setData(info.mediaUrl);
-            privateWindowAction->setEnabled(allowed);
-        }
-        QAction *torWindowAction = menu->addAction(tr("Open Image in New T&or Window"), this, &WebView::openUrlInNewTorWindow);
-        torWindowAction->setData(info.mediaUrl);
-        torWindowAction->setEnabled(allowed);
-        if (TorManager::resolveBinary().isEmpty()) {
-            torWindowAction->setEnabled(false);
-            torWindowAction->setToolTip(
-                tr("No tor binary found — install tor or run "
-                   "BuildProcess/fetch-tor.sh"));
-        }
-        menu->addSeparator();
-        QAction *saveImageAction = menu->addAction(tr("&Save Image"), this, &WebView::downloadImageToDisk);
-        saveImageAction->setData(info.mediaUrl);
-        menu->addAction(tr("&Copy Image"), this, &WebView::copyImageToClipboard);
-        menu->addAction(tr("C&opy Image Location"), this, &WebView::copyImageLocationToClipboard)->setData(info.mediaUrl.toString());
-        menu->addSeparator();
-        menu->addAction(tr("Block Image"), this, &WebView::blockImage)->setData(info.mediaUrl.toString());
-
-        // SRCH04: reverse-image search through the configured image
-        // engine — only offered when an engine actually advertises an
-        // image-search endpoint.
-        if (OpenSearchEngine *imageEngine =
-                ToolbarSearch::openSearchManager()->imageSearchEngine()) {
-            QAction *imageSearchAction = menu->addAction(
-                tr("Search Image with %1")
-                    .arg(SafeText::menu(imageEngine->name())),
-                this, &WebView::imageSearchRequested);
-            imageSearchAction->setData(info.mediaUrl);
-        }
-    } else if (isImage || isCanvas) {
-        // CTX01: a <canvas> reports no mediaUrl (its pixels only exist
-        // in page memory) and an <img> occasionally arrives with an
-        // empty one — resolve the content under the click point
-        // in-page via contextimage.js.  Canvas grabs hand back a png
-        // data: url, so open/save can share the url-based paths; a
-        // canvas has no location to copy or block rule to write.
-        if (!menu->isEmpty())
-            menu->addSeparator();
-        const QPoint position = info.position;
-        menu->addAction(tr("Open Image in New &Window"), this,
-                [this, position, isCanvas]() {
-            grabContextImage(position, isCanvas,
-                    [this](const QUrl &resolved) {
-                openUrlInTarget(resolved, TabWidget::NewWindow);
-            });
-        });
-        menu->addAction(tr("Open Image in New &Tab"), this,
-                [this, position, isCanvas]() {
-            grabContextImage(position, isCanvas,
-                    [this](const QUrl &resolved) {
-                openUrlInTarget(resolved, TabWidget::NewNotSelectedTab);
-            });
-        });
-        menu->addSeparator();
-        menu->addAction(tr("&Save Image"), this,
-                [this, position, isCanvas]() {
-            grabContextImage(position, isCanvas,
-                    [this](const QUrl &resolved) {
-                if (!resolved.isEmpty())
-                    m_page->download(resolved);
-            });
-        });
-        if (isCanvas) {
-            // The pixels serialize to a png data url — decode it into
-            // the clipboard image rather than the page's copy action
-            // (Chromium offers no canvas copy equivalent).
-            menu->addAction(tr("&Copy Image"), this,
-                    [this, position]() {
-                grabContextImage(position, true,
-                        [this](const QUrl &resolved) {
-                    const QString data = resolved.toString();
-                    const int comma = data.indexOf(QLatin1Char(','));
-                    const QImage image = QImage::fromData(
-                        QByteArray::fromBase64(
-                            data.mid(comma + 1).toLatin1()));
-                    if (!image.isNull()) {
-                        QApplication::clipboard()->setImage(image);
-                    } else {
-                        setStatusBarText(tr(
-                            "Could not decode the canvas image."));
-                    }
-                });
-            });
-        } else {
-            // The renderer still holds the pixels even when mediaUrl
-            // came through empty — the stock copy action reaches them.
-            menu->addAction(tr("&Copy Image"), this,
-                    &WebView::copyImageToClipboard);
-            menu->addAction(tr("C&opy Image Location"), this,
-                    [this, position]() {
-                grabContextImage(position, false,
-                        [](const QUrl &resolved) {
-                    QApplication::clipboard()->setText(
-                        resolved.toString());
-                });
-            });
-            menu->addSeparator();
-            menu->addAction(tr("Block Image"), this,
-                    [this, position]() {
-                grabContextImage(position, false,
-                        [this](const QUrl &resolved) {
-                    AdBlockManager::instanceFor(
-                        BrowserProfile::profileIdFor(
-                            m_page ? m_page->profile() : nullptr))
-                            ->showDialog()
-                        ->addCustomRule(resolved.toString());
-                });
-            });
-        }
-    }
-
-    // PIP01: right-click on a <video> offers the pop-out.  The
-    // element itself is resolved in-page (click point + media url).
-    if (info.hasVideo) {
-        if (!menu->isEmpty())
-            menu->addSeparator();
-        const QUrl mediaUrl = info.mediaUrl;
-        const QPoint position = info.position;
-        menu->addAction(tr("Picture-in-Picture"), this,
-                [this, mediaUrl, position]() {
-            m_pip->popOutContext(mediaUrl, position);
-        });
-        // CTX01: the poster frame is the video's image — the request
-        // carries only the stream url, so the poster attribute is
-        // resolved in-page (contextimage.js).
-        menu->addAction(tr("Open &Poster in New Window"), this,
-                [this, position]() {
-            openContextPosterInTarget(position, TabWidget::NewWindow);
-        });
-        menu->addAction(tr("Open Poster in New &Tab"), this,
-                [this, position]() {
-            openContextPosterInTarget(position, TabWidget::NewNotSelectedTab);
-        });
-    }
-
-    if (!info.selectedText.isEmpty()) {
-        if (menu->isEmpty()) {
-            menu->addAction(enginePage()->action(Engine::StandardAction::Copy));
-        } else {
-            menu->addSeparator();
-        }
-        QMenu *searchMenu = menu->addMenu(tr("Search with"));
-        const QStringList engineNames = ToolbarSearch::openSearchManager()->allEnginesNames();
-        for (const QString &name : engineNames) {
-            // Engine names come from opensearch XML; keep '&'/'\t'
-            // out of the menu text and carry the real name in data.
-            QAction *action = searchMenu->addAction(SafeText::menu(name));
-            action->setData(name);
-            connect(action, &QAction::triggered,
-                    this, [this, action]() { searchRequested(action); });
-        }
-        // NOTE03: the reference's explicit flow — the selection lands
-        // as a new note in this window's Notes panel.
-        menu->addSeparator();
-        menu->addAction(tr("Add Selection to &Notes"),
-                        this, &WebView::addSelectionToNote);
-    }
-
-    // SRCH01: 'Add to the toolbar search' — the WebKit hit-test knew
-    // the clicked element synchronously; under WebEngine the editable
-    // flag is all the request carries, so the entry shows for any
-    // editable spot and the contextsearch.js probe decides on trigger
-    // whether a GET form actually sits there (failures land on the
-    // status bar, never silently).
-    if (info.isContentEditable) {
-        if (menu->isEmpty()) {
-            // A bare editable click used to land on the standard-menu
-            // fallback below — keep Chromium's editing commands
-            // (Cut/Copy/Paste/Select All...) so the provider entry
-            // doesn't cost the user those.
-            if (QMenu *editing = createStandardContextMenu()) {
-                editing->removeAction(enginePage()->action(
-                    Engine::StandardAction::InspectElement));
-                menu->addActions(editing->actions());
-                delete editing;
-            }
-        }
-        if (!menu->isEmpty())
-            menu->addSeparator();
-        const QPoint position = info.position;
-        menu->addAction(tr("Add to the toolbar search"), this,
-                [this, position]() { addSearchEngine(position); });
-    }
-
-    if (menu->isEmpty()) {
-        delete menu;
-        menu = createStandardContextMenu();
-        // The stock menu's own "Inspect element" is a no-op bare page
-        // action — the context menu carries no inspect path (DEVT04),
-        // so strip it here too.
-        menu->removeAction(enginePage()->action(Engine::StandardAction::InspectElement));
-    }
-    if (!menu->isEmpty())
-        menu->addSeparator();
-    // POL01: page-level share helpers.  On a link menu 'Copy Clean
-    // Link' was already added against the link URL above; here it
-    // cleans the page address itself.  The QR action is always for
-    // the current page.
-    if (info.linkUrl.isEmpty()) {
-        menu->addAction(tr("Copy &Clean Link"), this, [this]() {
-            QApplication::clipboard()->setText(
-                UrlCleaner::cleanedUrl(url()).toString());
-        });
-    }
-    menu->addAction(tr("Show &QR Code for This Page"), this,
-            [this]() { QrCodeDialog::showForUrl(url(), this); });
+    const QList<WebViewController::MenuEntry> model =
+        WebViewController::contextMenuModel(info, env);
+    for (const WebViewController::MenuEntry &entry : model)
+        addContextMenuEntry(menu, entry);
 
     // EXT16: extension chrome.contextMenus contributions — items
     // registered through the hosted shim render here (grouped per

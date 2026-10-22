@@ -31,7 +31,7 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 
 | Site | Verdict | Notes / Needs |
 |------|---------|---------------|
-| `keyPressEvent` :387 (Ctrl/Shift+Enter → .com/.net/.org append) | thin | MS03 — typed-input→URL policy; belongs to the classify-input verdict surface (rc_classify_input exists, extend or keep as reference). |
+| `keyPressEvent` :387 (Ctrl/Shift+Enter → .com/.net/.org append) | keep | MS03 resolved: MD01 verdicts the ctrl/shift TLD append chrome UX (modifier gesture), not a store/policy decision — stays Qt. |
 | `dragEnterEvent`/`dropEvent` :417/:432 | keep + thin-blocked:MD02 | drop plumbing stays; the `isUrlAllowedOnUntrustedInput` scheme verdict → navpolicy. |
 | `registrableDomainRange` :144 | keep | pure-URL paint helper (SAFE03 domain emphasis); optional facade url-util later, no MD row. |
 | `unicodeUrlHint` :247 | keep | pure-URL tooltip helper. |
@@ -41,8 +41,8 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 
 | Site | Verdict | Notes / Needs |
 |------|---------|---------------|
-| `enabled()` :67 (tor gate + `suggestionsInAddressField`) | thin | MS03 — suggestion-availability verdict via facade (mode + ac_settings). |
-| `currentEngineChanged` :80 / `requestSuggestions` :125 | thin | MS03 — engine pick (private-context engine, keyword engine, `suggestionsOnlyWithKeyword`, per-engine opt-in) = suggestion-source selection. |
+| `enabled()` :67 (tor gate + `suggestionsInAddressField`) | thin-blocked | MS03: availability verdict needs a facade fn (tor-mode + ac_settings inputs) — none exists and no MD row covers it; flag for domains lane. Toggle read already ac_settings. |
+| `currentEngineChanged` :80 / `requestSuggestions` :125 | thin-blocked | MS03: suggestion-source pick (context/keyword engine, `suggestionsOnlyWithKeyword`, per-engine opt-in) — no facade verdict fn, no MD row; flag. Inputs already ac_settings/rc_ose (engineForContext/engineForKeyword/opt-ins). |
 | `scheduleSuggestions` :111 (debounce + delete-burst) | keep | input pacing; the enable/suppress verdict inside rides `enabled()` above. |
 | `newSuggestions` :187 | keep | completer repopulation. |
 
@@ -94,7 +94,7 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 
 | Site | Verdict | Notes / Needs |
 |------|---------|---------------|
-| `contextMenuEvent` :305 | thin | MS04 — menu *model*: scheme gate per entry (MD02), private-entry hide (context via facade), tor-binary availability (caps), image-search presence (opensearch), canvas/media payload shape (keep).  Widget still builds/execs the QMenu. |
+| `contextMenuEvent` :305 | done | MS04: entry set/order/enabled is `WebViewController::contextMenuModel(info, env)` — the widget gathers env + renders.  env legs still Qt (thin-blocked): CONT07 scheme gate → MD02, private-mode + tor probe → context/caps facade (MB04); opensearch reads already rc_ose-bound. |
 | `contextMenuInfo` :273 | keep | engine request→neutral struct translation. |
 | `isUrlAllowedOnUntrustedInput` :1160 / `isUrlAllowedFromPageLink` :1165 | thin-blocked:MD02 | scheme allowlist verdict (callers: drops, middle-click, context menu, tor hand-off). |
 | `loadUrlInView` :811 | thin-blocked:MD02 | referer-header + same-profile decision on hand-off. |
@@ -114,7 +114,7 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 | `showPdfDocument`/`pdfView` :1501/:1543 | keep | PdfView/engine-object ownership. |
 | `mousePressEvent`/`mouseReleaseEvent` :1553/:1635 | keep + thin-blocked:MD02 | XButton nav, middle-click PRIMARY load (input); scheme verdict inside → shared MD02 gate. |
 | `dragEnterEvent`/`dragMoveEvent`/`dropEvent` :1575-1633 | keep + thin-blocked:MD02 | drop accept is input; url verdict → MD02 gate. |
-| `init` linkHovered→setStatusBarText :164 | keep + thin | pass-through today; MS04 hover-status *policy* (what text to show) may consult facade later. |
+| `init` linkHovered→setStatusBarText :164 | done | MS04: hover text now routes through `WebViewController::hoverStatusText` (verbatim = parity); display rules consult the facade at that seam when one lands.  Engine-adapter hover sink in browsermainwindow applies the same verdict. |
 | `setStatusBarText` :1653 | keep | status propagation. |
 | `updateScriptBlockBar` :1667 | keep | infobar show/hide. |
 | `allowScriptsOnThisSite` :1686 | thin | JS allow-rule write → ac_sitedec (+OTR session-only via context). |
@@ -177,14 +177,14 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 
 | Site | Verdict | Notes / Needs |
 |------|---------|---------------|
-| `lineEditReturnPressed` :3281 | thin | MS03 — Alt→NewTab placement + typed-text accept chain entry. |
-| `loadString` :4411 / `loadStringFromUntrustedSource` :4425 | thin / thin-blocked:MD02 | private-context pick + classify call → MS03; untrusted-source scheme gate → navpolicy. |
-| `looksLikeAddress` :4447 | thin | superseded by rc_classify_input on rust builds; remains the no-rust reference leg. |
-| `searchInAddressFieldEnabled` :4473 | thin | ac_settings + legacy-key migration (move migration into rust settings). |
-| `guessUrlFromStringRust` :4488 | thin | MS03 — verdict consumption done; engine resolution still Qt (→ opensearch registry handles). |
-| `guessUrlFromStringCpp` :4585 | thin | no-rust reference leg — MS03 keeps it as parity oracle only. |
-| `modifyWithUserBehavior` :4774 | thin | modifier→placement policy + `selectNewTabs` → ac_settings (MS03; nav-placement is MD02-adjacent). |
-| `loadUrl` :4807 | thin | decisions: branded-start-page re-pick, widget-tab→new-tab fallback, invalid refusal → facade; placement mechanics keep. |
+| `lineEditReturnPressed` :3281 | keep | MS03 resolved: Alt→NewTab is chrome placement (MD01: post-accept modifier divert = keep); the accept chain it enters is rc_classify_input. |
+| `loadString` :4411 / `loadStringFromUntrustedSource` :4425 | done / thin-blocked:MD02 | MS03: private-context pick is engine-object state (keep), classify verdict consumed via rc_classify_input; :4425 scheme gate still → navpolicy. |
+| `looksLikeAddress` :4447 | keep | no-rust reference oracle — rc_classify_input supersedes under rust (MD01 lists it as the reference leg). |
+| `searchInAddressFieldEnabled` :4473 | done | key read + legacy-key drop already route ac_settings via ProfileSettings; the ini-mirror parity forces the remove to stay Qt-side (RcSettings cannot drop the ini copy). |
+| `guessUrlFromStringRust` :4488 | done | verdict = rc_classify_input; engine resolution rc_ose_* (keyword → rc_ose_engine_for_keyword, template expand → rc_ose_expand, context picks → ac_settings). about:home re-pick consumes startPageUrl — engine-object/mode inputs, no facade verdict (flag). |
+| `guessUrlFromStringCpp` :4585 | keep | no-rust parity oracle. |
+| `modifyWithUserBehavior` :4774 | keep | MS03 resolved: modifier→placement is chrome policy (MD01 keep); `selectNewTabs` already read via ac_settings. |
+| `loadUrl` :4807 | keep + thin-blocked | invalid refusal = defensive guard (keep); widget-tab→new-tab = chrome placement (MD01 keep); branded-start-page re-pick has no facade verdict fn (no MD row — flag). |
 | `getView` :4868 | keep + thin | construction keep; per-target profile pick (private/container) → ac_profiles/ac_containers. |
 | `newTabPage`/`loadNewTabPageUrl`/`newPrivateTab`/`makeNewTab`/`makeNewTabLike`/`makeNewPrivateTab`/`makeNewTabInContainer`/`makeNewTabOnProfile` :582-1141 | thin | home-url pick (ac_settings), private/container profile routing (ac_profiles/ac_containers); construction keep. |
 | `loadSettings` :4667 | thin | tab-strip prefs block → ac_settings. |
@@ -256,10 +256,10 @@ instances and manager-owned stores that haven't been facade-bound.
 | `HistoryPeriodFilterModel` :1035-1081 | keep | date-partitioning view filter (could become ac_hist_query specs later — optional). |
 | `HistoryFilterModel::frecencyScore` :721 | thin | rc_frecency_score exists — consume instead of the Qt copy. |
 | `HistoryFilterModel::startFrecencyTimer`/`refreshFrecencies` :501-512 | keep | daily timer. |
-| `HistoryCompletionModel::filterAcceptsRow`/`lessThan` :150/:169 | thin | MS03 — match + word-boundary rank via facade (RustHistorySuggestModel supersedes under rust; this is the fallback leg). |
+| `HistoryCompletionModel::filterAcceptsRow`/`lessThan` :150/:169 | done | MS03: pass-through under rust — RustHistorySuggestModel serves store-filtered + store-ranked rows (rc_history_suggest derives the identical predicate/key), so the proxy accepts all and orders by source position; Qt legs remain the no-rust fallback. |
 | `RustHistorySuggestModel::*` :194-319 | done | ac_hist_suggest. |
-| `OmniboxCompletionModel::setSearchText` :471 | thin | MS03 — scope-parse → which source rows. |
-| `OmniboxCompletionModel::rebuildScopedRows`/`collectBookmarkRows` :531/:502 | thin | MS03 — bookmarks rows via ac_bm; tab rows via session/tab provider. |
+| `OmniboxCompletionModel::setSearchText` :471 | thin-blocked | MS03: scope→provider pick verdict has no facade fn (no MD row — flag); scope tokens + engine-keyword precedence already read ac_settings/rc_ose via ScopeShortcuts. |
+| `OmniboxCompletionModel::rebuildScopedRows`/`collectBookmarkRows` :531/:502 | done | bookmark rows walk the ac_bm-bound BookmarkNode tree (facade-bound load/writes); tab rows come from the live tab-entry provider (engine objects). |
 | `OmniboxCompletionModel::setSuggestions`/`historyVisible`/`data` :414-660 | keep | merge-model presentation; source pick above moves. |
 | `HistoryCompleter`/`HistoryCompletionView` :671-812 | keep | completer widget + popup sizing. |
 
@@ -281,15 +281,27 @@ instances and manager-owned stores that haven't been facade-bound.
 
 ## Sizing for MS02+
 
-- **MS03 LocationBar** (~10 sites): locationbar.cpp:387,
-  omniboxsuggestions.cpp:67/80/111/125,
-  tabwidget.cpp:3281/4411/4447/4473/4488/4585/4774/4807,
-  historycompleter.cpp:150/169/471/502/531.  `rc_classify_input` already
-  lands the verdict; remaining work = engine-table resolution + settings
-  reads via facade + the no-rust leg as parity oracle.
-- **MS04 WebView ctx menu + hover** (~8 sites): webview.cpp:305-616
-  (entry set + per-entry enabled), hover-status policy (init:164);
-  tabbar.cpp:538 menu model same shape.
+- **MS03 LocationBar** — RESOLVED: typed-input verdict was already
+  rc_classify_input, engine resolution already rc_ose_*/ac_settings,
+  history rows already ac_hist_suggest, bookmark rows the ac_bm-bound
+  node tree, urlclean already consumed at the request interceptor
+  (rc_urlstrip).  Code moved: historycompleter.cpp:150/169 pass
+  through to the store-filtered/ranked rust source.  thin-blocked
+  flags (no facade verdict fn, no MD row): suggestion-source pick +
+  availability (omniboxsuggestions.cpp:67/80/125), scope→provider
+  pick (historycompleter.cpp:471), branded-start-page re-pick
+  (tabwidget.cpp:4807/:4526).  keep per MD01 contract: TLD append
+  (:387), Alt/modifier placement (:3281/:4774), widget-tab fallback +
+  invalid guard (:4807), no-rust oracle legs (:4447/:4585).
+- **MS04 WebView ctx menu + hover** — DONE: webviewcontroller.{h,cpp}
+  owns the menu model (`contextMenuModel` — entry set/order/enabled/
+  disabled-reason) + `hoverStatusText`; webview.cpp:558 renders it and
+  keeps menu build/exec/strings; engine-adapter hover sink
+  (browsermainwindow.cpp:642) consumes the same verdict.  env inputs
+  still Qt-legged (thin-blocked): CONT07 gate → MD02, private/tor
+  availability → context + MB04 caps.  tabbar.cpp:538 menu model is
+  the same shape (still open — no MS row yet covers it; the tab-bar
+  context menu verdicts map to MS08 session/ac_containers inputs).
 - **MS05 zoom/find/print/devtools caps** (~5 sites): browsermainwindow.cpp
   :1733, :3521-3581, webview zoom :1062-1149 — all `needs:task:MB04`.
 - **MS06 capability chrome** (~6 sites): browsermainwindow.cpp:2510,

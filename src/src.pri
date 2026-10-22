@@ -167,6 +167,7 @@ HEADERS += \
     $$PWD/webpage.h \
     $$PWD/webpermissionmanager.h \
     $$PWD/webview.h \
+    $$PWD/webviewcontroller.h \
     $$PWD/webviewsearch.h \
     $$PWD/utils/arktosicon.h \
     $$PWD/utils/crashreporter.h \
@@ -260,6 +261,7 @@ SOURCES += \
     $$PWD/webpage.cpp \
     $$PWD/webpermissionmanager.cpp \
     $$PWD/webview.cpp \
+    $$PWD/webviewcontroller.cpp \
     $$PWD/webviewsearch.cpp \
     $$PWD/utils/arktosicon.cpp \
     $$PWD/utils/crashreporter.cpp \

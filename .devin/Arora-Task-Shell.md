@@ -31,13 +31,14 @@ Rules for the agent working this file:
 |----|------|--------|----------|-------|
 | MS01 | Shell audit — business logic inside widgets + keep/thin table | done | 0 | audit: .devin/MW-SHELL.md — method-level thin/keep/thin-blocked:MDnn map for locationbar/webview/browsermainwindow/tabbar/tabwidget/settings/history/bookmarks; verified vs facade handles in arktos_core.h |
 | MS02 | EngineAdapter contract doc — formalize EngineInterface surface + caps path | done | 0 | .devin/ENGINE-ADAPTER.md: 13-area contract mapped to EngineInterface/EngineTab surface, MB04 feature→adapter mapping table (MB04 pending in mw-bridge), measured 3-engine caps matrix + new-backend checklist; doc-only |
-| MS03 | LocationBar thinning — suggestion/accept/navigate policy via facade | pending | 0 | widget keeps painting+input; suggestion sources + accept decisions (search-vs-url, urlclean hook) move behind facade queries |
-| MS04 | WebView thinning slice 1 — context-menu + link-hover policy to controller | pending | 0 | menu action availability/enabledness + hover-status policy via facade decisions, not inline widget code |
+| MS03 | LocationBar thinning — suggestion/accept/navigate policy via facade | blocked | 5 | blocked:exceeded 5 restarts |
+| MS04 | WebView thinning slice 1 — context-menu + link-hover policy to controller | done | 3 | webviewcontroller.{h,cpp}: contextMenuModel owns ctx-menu entry set/order/enabled+disabled-reason, hoverStatusText the status verdict; webview.cpp renders the model (menu build/exec/strings stay widget), engine-adapter hover sink consumes same fn; env legs thin-blocked MD02/MB04 documented; verify: full rust build + --browser-smoke PASS + tst_webview 29/29 incl 11 ctx-menu cases |
 | MS05 | WebView thinning slice 2 — zoom/find/print/devtools gating by capability | pending | 0 | needs:task:MB04 (mw-bridge lane); actions gated by ac_engine_caps not #ifdef/hardcode |
 | MS06 | Capability-driven chrome — toolbar/menu/prefs items per engine caps | pending | 0 | needs:task:MB04; reader/devtools/extensions/tor/containers items enable-disable from caps; honest tooltips for unsupported |
 | MS07 | Settings dialog thinning — sections read/write via facade handles only | pending | 0 | no direct QSettings/store pokes left in settings.cpp; each section's apply/load goes through Ac* handles |
 | MS08 | Tab/session UI thinning — restore + per-tab state decisions via AcSession | pending | 0 | tab strip keeps painting; restore-order, pinned-state, per-tab zoom/session fields sourced via sessions facade |
 | MS09 | Boundary doc + smoke parity — final thin-shell map + --*-smoke harness check | pending | 0 | .devin/MW-SHELL.md finalized: what stays Qt (paint/input/engine objects) vs moved; every --*-smoke leg still passes |
+| MS10 | TabBar context-menu model — entry set/enabled to controller | pending | 0 | MS04-shaped: tabbar.cpp contextMenuRequested :538 entry set+enabled (reopen-enable, pin label, container rows, sleep/wake, group rows) decided by a model; inputs AcSession+ac_containers, widget keeps build/exec |
 
 ## Task details
 
@@ -105,3 +106,14 @@ tab widget keeps paint/drag/close-button logic only.
 ### MS09
 Finalize MW-SHELL.md boundary map. Verify every --*-smoke leg that
 ran before still runs (list them, run each, record rc).
+
+### MS10
+TabBar `contextMenuRequested` (tabbar.cpp:538): same shape as MS04 —
+extract the entry set + enabled/label decisions into a menu model fed
+by facade inputs (closed-stack reopen enable → AcSession, pin toggle
+label → session state, container submenu rows + private/tor gate →
+ac_containers, sleep/wake + free-memory enable → engine state,
+group rows → session).  The widget keeps building/execing the QMenu
+and owning the strings; MS04's WebViewController is the pattern to
+mirror (WebViewController was intentionally WebView-scoped — add a
+sibling controller rather than widening it).

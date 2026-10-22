@@ -149,6 +149,14 @@ void HistoryCompletionModel::setValid(bool b)
 
 bool HistoryCompletionModel::filterAcceptsRow(int source_row, const QModelIndex &source_parent) const
 {
+#ifdef ARKTOS_RUSTCORE
+    // MS03: the rust suggest model serves rows the store already
+    // term-filtered (rc_history_suggest applies this same substring
+    // predicate to url + title) — the match rule lives behind the
+    // facade there; the predicate below is the no-rust fallback leg.
+    if (qobject_cast<RustHistorySuggestModel*>(sourceModel()))
+        return true;
+#endif
     // do a case-insensitive substring match against both the url and title;
     // we have also made sure that the user doesn't accidentally use regexp
     // metacharacters
@@ -168,6 +176,15 @@ bool HistoryCompletionModel::filterAcceptsRow(int source_row, const QModelIndex 
 
 bool HistoryCompletionModel::lessThan(const QModelIndex &left, const QModelIndex &right) const
 {
+#ifdef ARKTOS_RUSTCORE
+    // MS03: the store's row order IS the ranking — rc_history_suggest
+    // already derives the same frecency + word-boundary key this
+    // comparator computes and sorts score-descending on it, so the
+    // source position decides.  The comparator below remains the
+    // no-rust reference leg.
+    if (qobject_cast<RustHistorySuggestModel*>(sourceModel()))
+        return left.row() < right.row();
+#endif
     // We give a bonus to hits that match on a word boundary so that e.g. "dot.kde.org"
     // is a better result for typing "dot" than "slashdot.org". However, we only look
     // for the string in the host name, not the entire url, since while it makes sense
@@ -301,9 +318,9 @@ QVariant RustHistorySuggestModel::data(const QModelIndex &index,
     case HistoryModel::TitleRole:
         return userTitle;
     case HistoryFilterModel::FrecencyRole:
-        // The raw sum — the completion proxy's lessThan applies the
-        // word-boundary doubling itself, so the derived score matches
-        // the store's ordering key.
+        // The raw per-visit sum — the store already scored and ranked
+        // on it (word-boundary doubling included), so the proxy just
+        // preserves source order.
         return row.frecency;
     case Qt::DisplayRole:
     case Qt::EditRole:
