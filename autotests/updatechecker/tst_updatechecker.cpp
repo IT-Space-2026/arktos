@@ -26,6 +26,7 @@
 #include <QtGui/QtGui>
 #include <qapplication.h>
 #include <qcombobox.h>
+#include <qdatetime.h>
 #include <qlabel.h>
 #include <qmenu.h>
 #include <qmenubar.h>
@@ -35,6 +36,7 @@
 
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "profilesettings.h"
 #include "updatechecker.h"
 #include "updatedialog.h"
 #include "qtest_arktos.h"
@@ -156,6 +158,8 @@ private slots:
     void oversizedBody();
     void httpError();
     void untrustedAssetUrls();
+    void channelGate();
+    void lastCheckState();
     void torRefusesCheck();
     void torDialogSinks();
     void helpMenuEntry();
@@ -485,6 +489,72 @@ void tst_UpdateChecker::untrustedAssetUrls()
     QVERIFY(!result.releasePageUrl.isValid()
             || result.releasePageUrl.scheme()
                 != QLatin1String("javascript"));
+}
+
+void tst_UpdateChecker::channelGate()
+{
+    // RC20: the stable channel never offers a draft or prerelease
+    // manifest — even one claiming a huge version.  The verdict is
+    // UpToDate (there is nothing TO offer), not an error.
+    for (const QByteArray &flag :
+            {QByteArrayLiteral("\"prerelease\":true,"),
+             QByteArrayLiteral("\"draft\":true,"),
+             QByteArrayLiteral("\"draft\":true,\"prerelease\":true,")}) {
+        ReleaseServer server;
+        QVERIFY(server.start());
+        QByteArray payload = releaseJson(QLatin1String("v999.0.0"),
+            QString::fromUtf8(allPlatformAssets()));
+        payload.replace("{\"tag_name\":",
+                        QByteArrayLiteral("{") + flag
+                            + QByteArrayLiteral("\"tag_name\":"));
+        server.body = payload;
+
+        UpdateChecker checker;
+        checker.setApiUrl(server.url(QLatin1String("/releases/latest")));
+        QSignalSpy spy(&checker, &UpdateChecker::finished);
+        checker.check();
+        QVERIFY(spy.wait(10000) || !spy.isEmpty());
+        QCOMPARE(spy.count(), 1);
+        const UpdateChecker::Result result =
+            qvariant_cast<UpdateChecker::Result>(spy.first().first());
+        QCOMPARE(result.status, UpdateChecker::Status::UpToDate);
+    }
+
+    // A normal published release on the same shape still offers.
+    ReleaseServer server;
+    QVERIFY(server.start());
+    server.body = releaseJson(QLatin1String("v999.0.0"), QString());
+    UpdateChecker checker;
+    checker.setApiUrl(server.url(QLatin1String("/releases/latest")));
+    QSignalSpy spy(&checker, &UpdateChecker::finished);
+    checker.check();
+    QVERIFY(spy.wait(10000) || !spy.isEmpty());
+    const UpdateChecker::Result result =
+        qvariant_cast<UpdateChecker::Result>(spy.first().first());
+    QCOMPARE(result.status, UpdateChecker::Status::UpdateAvailable);
+}
+
+void tst_UpdateChecker::lastCheckState()
+{
+    // RC20: a fired check stamps updates/lastCheckMs in the global
+    // settings scope — the state the rustcore module's typed helpers
+    // own (the key is app-level, not a persona group).
+    ProfileSettings().remove(QLatin1String("updates/lastCheckMs"));
+    const qint64 before = QDateTime::currentMSecsSinceEpoch();
+
+    ReleaseServer server;
+    QVERIFY(server.start());
+    server.body = releaseJson(QLatin1String("v999.0.0"), QString());
+    UpdateChecker checker;
+    checker.setApiUrl(server.url(QLatin1String("/releases/latest")));
+    QSignalSpy spy(&checker, &UpdateChecker::finished);
+    checker.check();
+    QVERIFY(spy.wait(10000) || !spy.isEmpty());
+
+    const qint64 stamp = ProfileSettings()
+        .value(QLatin1String("updates/lastCheckMs")).toLongLong();
+    QVERIFY(stamp >= before);
+    QVERIFY(stamp <= QDateTime::currentMSecsSinceEpoch());
 }
 
 void tst_UpdateChecker::torRefusesCheck()

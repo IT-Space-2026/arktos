@@ -64,6 +64,11 @@ public:
         QString releaseTitle;       // release 'name' field
         QUrl releasePageUrl;        // html_url of the release
         QList<ReleaseAsset> assets;
+        // RC20: the manifest's draft/prerelease flags — the channel
+        // gate consults them (a stable-channel check never offers
+        // either, whether the parse ran in rustcore or Qt).
+        bool draft = false;
+        bool prerelease = false;
         QString errorString;
     };
 

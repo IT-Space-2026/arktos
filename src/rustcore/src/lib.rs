@@ -127,6 +127,12 @@
 //!     persists), plus the storage-namespace map engines partition
 //!     cookies/cache/site data by (storage root, VSEC02 cache tree,
 //!     Qt residue dir, storage name, cookie-partition key).
+//!   * updates (RC20): the update-check's policy + parse half —
+//!     GitHub-release manifest parse behind the trusted-download-URL
+//!     gate, normalize/compare, the platform asset pick, channel
+//!     rules (stable/beta vs draft/prerelease), and the
+//!     last-check/snooze/skipped state as typed helpers over the
+//!     GLOBAL settings scope.  The network fetch stays Qt-side.
 //!
 mod autofill;
 mod bidi;
@@ -165,6 +171,7 @@ mod store;
 mod tlsprobe;
 mod torctl;
 mod tranco;
+mod updates;
 mod urlstrip;
 mod useragent;
 mod util;
@@ -4928,6 +4935,415 @@ pub unsafe extern "C" fn rc_containers_namespace(
         }
     }))
     .unwrap_or(ptr::null_mut())
+}
+
+// ---- RC20: update-check policy + manifest parse ----
+//
+// UpdateChecker's non-network half.  The pure ops (normalize/
+// compare, trusted-URL gate, manifest parse, platform pick, channel
+// rule) are stateless; the check state (lastCheckMs, snoozeUntilMs,
+// skippedVersion, channel) is a typed specialization over the
+// settings store — GLOBAL scope by design (the check is
+// application-level; "updates" is not an MPROF04 profile group), so
+// callers pass a global-bound RcSettings handle (ac_settings(core,
+// NULL) reaches the same store).  A profile-bound handle still
+// works — it would scope the keys to that persona, which nothing
+// else reads.  Mutations emit the "updates" topic.
+
+fn updates_cstr<'a>(p: *const c_char, what: &str) -> error::RcResult<&'a str> {
+    unsafe { util::cstr(p) }.ok_or_else(|| error::Fail {
+        status: RcStatus::InvalidArgument,
+        msg: format!("bad {what} pointer"),
+    })
+}
+
+/// UpdateChecker::normalizedVersion — the normalized tag as a fresh
+/// string (rc_string_free), NULL + stashed error on a bad pointer.
+///
+/// # Safety
+/// `version` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_normalize_version(
+    version: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match updates_cstr(version, "version") {
+            Ok(v) => util::to_c_string(updates::normalize_version(v)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// UpdateChecker::compareVersions — -1/0/+1 on the normalized forms
+/// (numeric elementwise when both sides parse, string compare else).
+/// -2 with a stashed error on a bad pointer — never a verdict.
+///
+/// # Safety
+/// Both pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_compare_versions(
+    a: *const c_char,
+    b: *const c_char,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let a = match updates_cstr(a, "version a") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -2;
+            }
+        };
+        let b = match updates_cstr(b, "version b") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -2;
+            }
+        };
+        updates::compare_versions(a, b)
+    }))
+    .unwrap_or(-2)
+}
+
+/// The AUDIT04 download-URL gate — 1 trusted / 0 refused, -1 with a
+/// stashed error on a bad pointer.
+///
+/// # Safety
+/// Both pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_is_trusted_url(
+    url: *const c_char,
+    api_url: *const c_char,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let u = match updates_cstr(url, "url") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        let a = match updates_cstr(api_url, "api url") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        updates::is_trusted_download_url(u, a) as i32
+    }))
+    .unwrap_or(-1)
+}
+
+/// The channel rule — 1 when a manifest with `draft`/`prerelease`
+/// flags is an offer on `channel` ("stable"/"beta", "" = stable),
+/// 0 when it is not, -1 on an unknown channel or bad pointer.
+///
+/// # Safety
+/// `channel` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_channel_accepts(
+    channel: *const c_char,
+    draft: i32,
+    prerelease: i32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let c = match updates_cstr(channel, "channel") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        match updates::channel_from_str(c) {
+            Ok(c) => {
+                updates::channel_accepts(c, draft != 0, prerelease != 0) as i32
+            }
+            Err(e) => {
+                error::set_error(&e.msg);
+                -1
+            }
+        }
+    }))
+    .unwrap_or(-1)
+}
+
+/// UpdateChecker::parseReleaseJson — a GitHub release manifest
+/// (`payload`/`len`) gated against `api_url`.  Returns JSON
+/// {"version","title","page_url","draft","prerelease",
+/// "assets":[{"name","url","size"}]} — caller frees with
+/// rc_string_free; NULL + stashed error on malformed input.
+///
+/// # Safety
+/// `payload` must point to `len` readable bytes; `api_url` must be
+/// NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_parse_manifest(
+    payload: *const u8,
+    len: usize,
+    api_url: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let raw = match unsafe { util::bytes(payload, len) } {
+            Some(r) => r,
+            None => {
+                error::set_error("bad manifest pointer");
+                return ptr::null_mut();
+            }
+        };
+        let api = match updates_cstr(api_url, "api url") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match updates::parse_release(raw, api) {
+            Ok(r) => containers_json_out(serde_json::json!({
+                "version": r.version,
+                "title": r.title,
+                "page_url": r.page_url,
+                "draft": r.draft,
+                "prerelease": r.prerelease,
+                "assets": r.assets.iter().map(|a| serde_json::json!({
+                    "name": a.name,
+                    "url": a.url,
+                    "size": a.size,
+                })).collect::<Vec<_>>(),
+            })),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// UpdateChecker::platformAssetsFor — `assets_json` is the
+/// "assets" array parse_manifest emits (or any [{"name","url",
+/// "size"}] list).  Returns {"candidates":[{...}],"ambiguous":bool}
+/// preference-ordered; free with rc_string_free.  NULL + stashed
+/// error on bad input.
+///
+/// # Safety
+/// `os` and `os_release_id_like` must be NUL-terminated UTF-8
+/// ("" is legal for the id-like); `assets_json` points to `len`
+/// bytes of UTF-8 JSON.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_platform_pick(
+    os: *const c_char,
+    os_release_id_like: *const c_char,
+    assets_json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let os = match updates_cstr(os, "os") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let id_like = match updates_cstr(os_release_id_like, "os-release") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let raw = match unsafe { util::bytes(assets_json, len) } {
+            Some(r) => r,
+            None => {
+                error::set_error("bad assets pointer");
+                return ptr::null_mut();
+            }
+        };
+        let spec: serde_json::Value = match serde_json::from_slice(raw) {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&format!("assets json: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        let mut assets = Vec::new();
+        for row in spec.as_array().cloned().unwrap_or_default() {
+            assets.push(updates::ReleaseAsset {
+                name: row.get("name").and_then(|x| x.as_str()).unwrap_or("").into(),
+                url: row.get("url").and_then(|x| x.as_str()).unwrap_or("").into(),
+                size: row.get("size").and_then(|x| x.as_f64()).map(|f| f as i64).unwrap_or(0),
+            });
+        }
+        let pick = updates::platform_pick(os, id_like, &assets);
+        containers_json_out(serde_json::json!({
+            "candidates": pick.candidates.iter().map(|&i| serde_json::json!({
+                "name": assets[i].name,
+                "url": assets[i].url,
+                "size": assets[i].size,
+            })).collect::<Vec<_>>(),
+            "ambiguous": pick.ambiguous,
+        }))
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The persisted check state as JSON {"last_check_ms",
+/// "snooze_until_ms","skipped_version","channel"} — the GLOBAL
+/// scope's "updates/" keys.  NULL + stashed error on a bad handle;
+/// free with rc_string_free.
+///
+/// # Safety
+/// `h` must come from rc_settings_open/ac_settings.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_state(
+    h: *const settings::RcSettings,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match updates::read_state(h) {
+            Ok(s) => containers_json_out(s.to_json()),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Stamps the last-check time (ms since epoch).
+///
+/// # Safety
+/// `h` must come from rc_settings_open/ac_settings.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_record_check(
+    h: *mut settings::RcSettings,
+    now_ms: i64,
+) -> RcStatus {
+    let status = status_of(|| updates::record_check(settings_ref(h)?, now_ms));
+    if status == RcStatus::Ok {
+        notify::emit("updates");
+    }
+    status
+}
+
+/// Snoozes update notifications until `until_ms` (<= 0 clears).
+///
+/// # Safety
+/// `h` must come from rc_settings_open/ac_settings.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_snooze(
+    h: *mut settings::RcSettings,
+    until_ms: i64,
+) -> RcStatus {
+    let status = status_of(|| updates::snooze(settings_ref(h)?, until_ms));
+    if status == RcStatus::Ok {
+        notify::emit("updates");
+    }
+    status
+}
+
+/// The tag the user dismissed — NULL clears the filter.
+///
+/// # Safety
+/// `version` must be NUL-terminated UTF-8 or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_set_skipped(
+    h: *mut settings::RcSettings,
+    version: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let v = if version.is_null() {
+            None
+        } else {
+            Some(updates_cstr(version, "version")?)
+        };
+        updates::set_skipped(h, v)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("updates");
+    }
+    status
+}
+
+/// Persists the channel — "stable"/"beta" only; an unknown name is
+/// RC_ERR_INVALID and changes nothing.
+///
+/// # Safety
+/// `channel` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_set_channel(
+    h: *mut settings::RcSettings,
+    channel: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        updates::set_channel(
+            settings_ref(h)?,
+            updates_cstr(channel, "channel")?,
+        )
+    });
+    if status == RcStatus::Ok {
+        notify::emit("updates");
+    }
+    status
+}
+
+/// The notify verdict for a remote tag vs the local version at
+/// `now_ms`: newer, unskipped, unsnoozed — 1 notify / 0 don't, -1 on
+/// bad input.
+///
+/// # Safety
+/// `h` must come from rc_settings_open/ac_settings; the versions
+/// must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_should_notify(
+    h: *const settings::RcSettings,
+    remote_version: *const c_char,
+    local_version: *const c_char,
+    now_ms: i64,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        let remote = match containers_cstr(remote_version, "remote version") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        let local = match containers_cstr(local_version, "local version") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        match updates::read_state(h) {
+            Ok(s) => updates::should_notify(&s, remote, local, now_ms) as i32,
+            Err(e) => {
+                error::set_error(&e.msg);
+                -1
+            }
+        }
+    }))
+    .unwrap_or(-1)
 }
 
 // ---- RC03: profile registry ----

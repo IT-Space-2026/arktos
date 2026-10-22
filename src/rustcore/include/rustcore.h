@@ -1189,6 +1189,88 @@ char *rc_containers_namespace(const char *data_root,
                               const char *container_id);
 
 /* ------------------------------------------------------------------ */
+/* RC20: update-check policy + manifest parse                          */
+/*                                                                     */
+/* UpdateChecker's non-network half — the fetch stays Qt-side        */
+/* (UPD01's manual Help > Check for Updates); everything the reply's */
+/* bytes steer lives here: the GitHub release-manifest parse behind  */
+/* the AUDIT04 trusted-download-URL gate, version normalize/compare, */
+/* the platform asset pick, and the channel rule.                    */
+/*                                                                     */
+/* The check state (lastCheckMs, snoozeUntilMs, skippedVersion,      */
+/* channel) is a typed specialization over the settings store — the  */
+/* GLOBAL scope by design (the check is application-level;           */
+/* "updates" is not an MPROF04 profile group), so state ops take a   */
+/* global-bound RcSettings handle — ac_settings(core, NULL) reaches  */
+/* the same store.  The keys: updates/lastCheckMs (int),             */
+/* updates/snoozeUntilMs (int), updates/skippedVersion (string),     */
+/* updates/channel (string).  Mutations emit the "updates" change    */
+/* topic.                                                            */
+/*                                                                     */
+/* Like torctl this binds no profile, so there is no AcUpdates       */
+/* facade handle — rc_* is the whole surface.                        */
+
+/* UpdateChecker::normalizedVersion — rc_string_free the result;
+ * NULL + stashed error on a bad pointer. */
+char *rc_updates_normalize_version(const char *version);
+
+/* UpdateChecker::compareVersions — -1/0/+1 on the normalized forms
+ * (numeric elementwise when both sides parse, string compare else);
+ * -2 with a stashed error on a bad pointer — never a verdict. */
+int rc_updates_compare_versions(const char *a, const char *b);
+
+/* The AUDIT04 download-URL gate — github.com / *.github.com /
+ * *.githubusercontent.com over https, or the api url's own host with
+ * no scheme downgrade.  1 trusted / 0 refused, -1 on bad input. */
+int rc_updates_is_trusted_url(const char *url, const char *api_url);
+
+/* The channel rule — 1 when a manifest with draft/prerelease flags
+ * is an offer on `channel` ("stable"/"beta", "" = stable), 0 when
+ * not, -1 on an unknown channel or bad pointer. */
+int rc_updates_channel_accepts(const char *channel,
+                               int draft, int prerelease);
+
+/* UpdateChecker::parseReleaseJson — returns JSON {"version",
+ * "title","page_url","draft","prerelease","assets":[{"name","url",
+ * "size"}]} with untrusted asset URLs already dropped, or NULL +
+ * stashed error on malformed input.  rc_string_free the result. */
+char *rc_updates_parse_manifest(const uint8_t *payload, size_t len,
+                                const char *api_url);
+
+/* UpdateChecker::platformAssetsFor — assets_json is the "assets"
+ * array parse_manifest emits (or any [{"name","url","size"}] list).
+ * Returns {"candidates":[{...}],"ambiguous":bool} preference-ordered
+ * — rc_string_free; NULL + stashed error on bad input. */
+char *rc_updates_platform_pick(const char *os,
+                               const char *os_release_id_like,
+                               const uint8_t *assets_json, size_t len);
+
+/* The GLOBAL scope's check state as JSON {"last_check_ms",
+ * "snooze_until_ms","skipped_version","channel"} — rc_string_free;
+ * NULL + stashed error on a bad handle. */
+char *rc_updates_state(RcSettings *h);
+
+/* Stamp the last-check time (ms since epoch). */
+RcStatus rc_updates_record_check(RcSettings *h, int64_t now_ms);
+
+/* Snooze notifications until `until_ms` (<= 0 clears). */
+RcStatus rc_updates_snooze(RcSettings *h, int64_t until_ms);
+
+/* The tag the user dismissed — NULL clears the filter. */
+RcStatus rc_updates_set_skipped(RcSettings *h,
+                                const char *version_or_null);
+
+/* Persist the channel — "stable"/"beta" only; an unknown name is
+ * RC_ERR_INVALID and changes nothing. */
+RcStatus rc_updates_set_channel(RcSettings *h, const char *channel);
+
+/* The notify verdict for a remote tag vs the local version at
+ * now_ms: newer, unskipped, unsnoozed — 1 notify / 0 don't, -1 on
+ * bad input. */
+int rc_updates_should_notify(RcSettings *h, const char *remote_version,
+                             const char *local_version, int64_t now_ms);
+
+/* ------------------------------------------------------------------ */
 /* RC03: profile registry                                              */
 /*                                                                     */
 /* The persona list — <data root>/profiles.json, byte-compatible with */

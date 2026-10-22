@@ -47,7 +47,7 @@ Rules for the agent working this file:
 | RC17 | rustcore `autofill` module — address/contact profiles under secure custody | done | 0 | autofill audited complete: ARSEC1 custody shared w/ rc_cred_* (preferred option), fields match AutoFillManager contract; closed verify gaps — store::ensure_private_dir 0700 + 0600/0700 legs + ffiStoreReachesDialog; cargo 349/349, tst_autofill 11p/0f/1s offscreen, make clean, no-rust TU clean |
 | RC18 | rustcore `opensearch` module — engine XML parse/validate + registry CRUD | done | 0 | audit: OSE01 module+adoption complete vs spec — parse/validate (rc_opensearch_parse+rc_suggest_parse), per-profile searchengines.json CRUD rc_ose_*, legacy xml+QSettings once-migration, Qt-parity URL expansion; verified cargo 349/349, 4 ose autotests 99/99 offscreen temp-XDG, make clean, no-rust TU clean |
 | RC19 | rustcore `containers` module — container registry + storage namespace map | done | 0 | containers registry as typed RC02-settings specialization (C++ containers/ keys), rc_containers_* + AcContainers facade at ABI v5, namespace parity w/ ContainerManager; verified cargo 354/354, tst_rustcontainers 3/3 + tst_containermanager 37/37 offscreen, make clean, no-rust TU clean |
-| RC20 | rustcore `updates` module — update-check state + manifest/semver policy | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC20 | rustcore `updates` module — update-check state + manifest/semver policy | done | 0 | updates module: semver/manifest/trusted-URL/platform-pick/channel gate ported + adopted by UpdateChecker, global-scope last-check/snooze/skip/channel state over RC02 settings; verified cargo 362/362, tst_updatechecker 17/17 offscreen, make clean, no-rust TU clean |
 | RC21 | rustcore `notes` module — side-panel notes persistence | pending | 0 | needs:task:RC07 needs:tool:cargo |
 
 ## Task details
@@ -969,6 +969,71 @@ RC02 settings; decide in the implementation note and record why.
 
 Verify: cargo test — semver compare matrix + manifest parse fixtures;
 no regression in updatechecker behavior (its existing tests pass).
+
+
+Outcome (2026-10-22): `updates.rs` — the update-check's policy +
+parse half, ported byte-parity from updatechecker.cpp:
+
+- Semver: `normalize_version` (trim, v/V strip, cut at first
+  whitespace-or-'(', then at first '-'/'+' — index-0 cuts refused
+  like the C++ `indexOf > 0` guard) and `compare_versions`
+  (elementwise i64 when every dotted part parses, missing = 0,
+  string compare of normalized forms when either side is
+  non-numeric — sign-identical to QString::compare's contract).
+- Manifest: `parse_release` binds tag_name/name/html_url/assets
+  with QJsonValue::toString-on-non-strings->"" semantics, html_url
+  kept only on http/https, size truncated like QVariant::
+  toLongLong, empty-name and untrusted-URL assets dropped.  Draft
+  and prerelease flags ride out for the channel gate (the C++
+  parser ignored them — latent gap: nothing stopped a self-hosted
+  or future listing endpoint from offering a prerelease).
+- `is_trusted_download_url`: github.com / *.github.com /
+  *.githubusercontent.com over https, or the api url's own host
+  with no scheme downgrade; relative, credential-bearing and
+  opaque (javascript:/data:/file:) URLs refuse.  `split_url` is a
+  deliberately shallow scheme/authority/userinfo split — no `url`
+  crate in the reviewed dep tree, and the gate only consults those
+  three fields.
+- `platform_pick`: installer-first .exe / dmg / deb-rpm-flatpak
+  family table + ambiguous flag, the C++ ranking verbatim.
+- Channel rules: `Channel::Stable` (default, the only lane the app
+  wires — /releases/latest) rejects draft AND prerelease;
+  `Channel::Beta` rejects drafts only.  Unknown channel names are
+  errors, never a silent widening.
+
+State decision (per the spec): the state is 4 keys, so it lives as
+typed helpers over the RC02 settings store — GLOBAL scope
+("updates/" is deliberately NOT an MPROF04 profile group: the check
+is application-level, one binary, one feed).  Keys:
+updates/lastCheckMs, updates/snoozeUntilMs, updates/skippedVersion,
+updates/channel.  `should_notify(state, remote, local, now)` is the
+verdict: newer, unskipped, unsnoozed.  No AcUpdates facade handle —
+like torctl it binds no profile; facade callers reach the state via
+ac_settings(core, NULL) + the rc_updates_* state ops.
+
+FFI: rc_updates_normalize_version / compare_versions (-2 on bad
+args — never a verdict) / is_trusted_url / channel_accepts /
+parse_manifest / platform_pick / state / record_check / snooze /
+set_skipped / set_channel / should_notify; "updates" change topic
+on mutations.
+
+C++ adoption: UpdateChecker's normalizedVersion, compareVersions,
+isTrustedDownloadUrl, parseReleaseJson and platformAssetsFor
+dispatch to rc_updates_* under ARKTOS_RUSTCORE with the Qt impls
+kept as the no-rust lane + FFI-failure fallback.  Result gains
+draft/prerelease fields (both parsers fill them); replyFinished
+applies the stable-channel gate — draft/prerelease manifests read
+as UpToDate, a no-op on the real endpoint and a hardening on
+loopback/self-hosted feeds.  check() stamps updates/lastCheckMs
+through ProfileSettings (the shared per-scope handle — a second
+RcSettings on the same scope would carry a stale decoded document
+and could clobber keys); the tor refusal precedes the write so a
+tor process still leaves no trace.  Verified: cargo 362/362 (+6
+module tests incl. the C++ semver matrix, manifest fixtures with
+hostile URLs, platform-pick matrix, state round-trip; +1
+ffi_surface leg driving all 12 entry points), qmake && make -j2
+0-error/0-warning, tst_updatechecker 17/17 offscreen incl. new
+channelGate + lastCheckState legs, no-rust TU compiles clean.
 
 ### RC21
 

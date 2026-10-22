@@ -3659,3 +3659,218 @@ fn torctl_surface() {
         unsafe { crate::rc_tor_close(h2) };
     }
 }
+
+// RC20: every rc_updates_* entry point — pure ops (bad-argument
+// spellings plus one verdict leg each) and the settings-backed state
+// surface on a global-scope handle.
+#[test]
+fn updates_surface() {
+    let _g = guard();
+
+    // Bad-argument legs first.
+    assert!(unsafe { crate::rc_updates_normalize_version(ptr::null()) }
+        .is_null());
+    assert_eq!(
+        unsafe { crate::rc_updates_compare_versions(ptr::null(), cs("1").as_ptr()) },
+        -2
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_compare_versions(cs("1").as_ptr(), ptr::null()) },
+        -2
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_is_trusted_url(ptr::null(), cs("https://x").as_ptr()) },
+        -1
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_is_trusted_url(cs("https://x").as_ptr(), ptr::null()) },
+        -1
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_channel_accepts(ptr::null(), 0, 0) },
+        -1
+    );
+    assert!(unsafe {
+        crate::rc_updates_parse_manifest(ptr::null(), 4, cs("https://a").as_ptr())
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_updates_parse_manifest(b"{}".as_ptr(), 2, ptr::null())
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_updates_platform_pick(cs("linux").as_ptr(), ptr::null(),
+            b"[]".as_ptr(), 2)
+    }
+    .is_null());
+    assert!(unsafe { crate::rc_updates_state(ptr::null_mut()) }.is_null());
+    assert_eq!(
+        unsafe { crate::rc_updates_record_check(ptr::null_mut(), 1) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_snooze(ptr::null_mut(), 1) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_set_skipped(ptr::null_mut(), cs("v1").as_ptr()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_set_channel(ptr::null_mut(), cs("beta").as_ptr()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_should_notify(ptr::null_mut(),
+                cs("v2").as_ptr(), cs("v1").as_ptr(), 0)
+        },
+        -1
+    );
+
+    // Pure ops over the ABI.
+    let n = take_str(unsafe {
+        crate::rc_updates_normalize_version(cs("v1.2.3-rc1+x").as_ptr())
+    })
+    .unwrap();
+    assert_eq!(n, "1.2.3");
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_compare_versions(cs("v0.13").as_ptr(), cs("0.12").as_ptr())
+        },
+        1
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_compare_versions(cs("1.0").as_ptr(), cs("1.0.0").as_ptr())
+        },
+        0
+    );
+    let api = cs("https://api.github.com/x");
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_is_trusted_url(
+                cs("https://github.com/a/b.deb").as_ptr(), api.as_ptr())
+        },
+        1
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_is_trusted_url(
+                cs("javascript:alert(1)").as_ptr(), api.as_ptr())
+        },
+        0
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_channel_accepts(cs("stable").as_ptr(), 0, 1) },
+        0
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_channel_accepts(cs("beta").as_ptr(), 0, 1) },
+        1
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_channel_accepts(cs("nightly").as_ptr(), 0, 0) },
+        -1
+    );
+
+    // Manifest parse + platform pick over the ABI.
+    let manifest = br#"{"tag_name":"v9.9","name":"Arktos v9.9",
+        "html_url":"https://github.com/o/r/releases/x",
+        "assets":[
+            {"name":"a.deb","browser_download_url":"https://github.com/x/a.deb","size":7},
+            {"name":"b.exe","browser_download_url":"javascript:x","size":1}
+        ]}"#;
+    let parsed = take_str(unsafe {
+        crate::rc_updates_parse_manifest(
+            manifest.as_ptr(), manifest.len(), api.as_ptr())
+    })
+    .unwrap();
+    let pj: serde_json::Value = serde_json::from_str(&parsed).unwrap();
+    assert_eq!(pj["version"], "v9.9");
+    assert_eq!(pj["draft"], false);
+    assert_eq!(pj["assets"].as_array().unwrap().len(), 1);
+    assert_eq!(pj["assets"][0]["name"], "a.deb");
+    assert!(unsafe {
+        crate::rc_updates_parse_manifest(b"nope{".as_ptr(), 5, api.as_ptr())
+    }
+    .is_null());
+
+    let pick = take_str(unsafe {
+        crate::rc_updates_platform_pick(
+            cs("linux").as_ptr(), cs("debian").as_ptr(),
+            pj["assets"].to_string().as_ptr(),
+            pj["assets"].to_string().len())
+    })
+    .unwrap();
+    let pk: serde_json::Value = serde_json::from_str(&pick).unwrap();
+    assert_eq!(pk["candidates"].as_array().unwrap().len(), 1);
+    assert_eq!(pk["ambiguous"], false);
+
+    // The state surface on a global-scope settings handle.
+    let root = tmpdir("updates");
+    let croot = cs(&root);
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), ptr::null()) };
+    assert!(!h.is_null());
+    let st = take_str(unsafe { crate::rc_updates_state(h) }).unwrap();
+    let sj: serde_json::Value = serde_json::from_str(&st).unwrap();
+    assert_eq!(sj["last_check_ms"], 0);
+    assert_eq!(sj["channel"], "stable");
+
+    assert_eq!(
+        unsafe { crate::rc_updates_record_check(h, 1_700_000_000_000) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_snooze(h, 1_800_000_000_000) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_set_skipped(h, cs("v9.9").as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_set_channel(h, cs("beta").as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_set_channel(h, cs("bogus").as_ptr()) },
+        RcStatus::InvalidArgument
+    );
+    let st = take_str(unsafe { crate::rc_updates_state(h) }).unwrap();
+    let sj: serde_json::Value = serde_json::from_str(&st).unwrap();
+    assert_eq!(sj["last_check_ms"], 1_700_000_000_000i64);
+    assert_eq!(sj["snooze_until_ms"], 1_800_000_000_000i64);
+    assert_eq!(sj["skipped_version"], "v9.9");
+    assert_eq!(sj["channel"], "beta");
+
+    // The notify verdict reads the persisted state: snoozed + the
+    // skipped tag both refuse; past the deadline a fresh tag fires.
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_should_notify(h,
+                cs("v9.9").as_ptr(), cs("v1.0").as_ptr(), 0)
+        },
+        0
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_should_notify(h,
+                cs("v10").as_ptr(), cs("v1.0").as_ptr(), 2_000_000_000_000)
+        },
+        1
+    );
+
+    // NULL clears the skipped-version filter; <=0 clears the snooze.
+    assert_eq!(
+        unsafe { crate::rc_updates_set_skipped(h, ptr::null()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_updates_snooze(h, 0) }, RcStatus::Ok);
+    let st = take_str(unsafe { crate::rc_updates_state(h) }).unwrap();
+    let sj: serde_json::Value = serde_json::from_str(&st).unwrap();
+    assert_eq!(sj["skipped_version"], "");
+    assert_eq!(sj["snooze_until_ms"], 0);
+
+    unsafe { crate::rc_settings_close(h) };
+}
