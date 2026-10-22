@@ -9,8 +9,9 @@
 # depending on libqt6* packages. The optional Rust pieces (arktos-rustdl,
 # arktos-rustcore) are STATICALLY linked into the binary via their .a
 # archives (see src/rustdl/rustdl.pri, src/rustcore/rustcore.pri), so
-# there are no rust .so artifacts to ship. Servo (libservo_embed) does
-# not exist in this tree yet — the ENG03 spike gates it.
+# there are no rust .so artifacts to ship. The optional Servo backend
+# (libservo_embed.so) is a dlopen'd cdylib — cmd_stage carries it into
+# $LIBDIR/lib when the build produced one.
 #
 # Subcommands (also the targets debian/rules delegates to):
 #   build    — qmake (rust-crate CONFIG auto-detected from built .a
@@ -259,7 +260,10 @@ cmd_verify() {
     # the unpack is side-effect free; --force-depends completes the
     # configure so we can assert installed-state even when the host lacks
     # a declared dep (libxcb-cursor0 today — apt would pull it on a real
-    # install).
+    # install).  dpkg wants ldconfig + start-stop-daemon, which live in
+    # sbin dirs a non-root user's PATH commonly lacks (this dev host
+    # included — the scratch install still runs unprivileged).
+    PATH="/usr/local/sbin:/usr/sbin:/sbin:$PATH"
     local db="$R/db" root="$R/root"
     mkdir -p "$db/info" "$db/updates" "$db/triggers" "$root"
     cp /var/lib/dpkg/status "$db/status"
@@ -268,7 +272,8 @@ cmd_verify() {
         note "dpkg -i reported dep problems on this host (expected —" \
              "scratch db cannot apt-fetch missing deps); retrying" \
              "with --force-depends"
-        grep "depends on" "$R/dpkg.out" | sed 's/^/pkg-deb:   /' >&2
+        grep "depends on" "$R/dpkg.out" | sed 's/^/pkg-deb:   /' >&2 \
+            || true   # diagnostic only — a no-match must not abort the retry
         dpkg --force-not-root --force-depends --instdir="$root" \
             --admindir="$db" --log="$R/dpkg.log" -i "$deb" \
             >>"$R/dpkg.out" 2>&1 || {
@@ -291,6 +296,32 @@ cmd_verify() {
         || fail "no pixmap icon installed"
     [ -f "$root/usr/share/doc/$PKG/copyright" ] \
         || fail "no copyright installed"
+
+    # -- rust link-proof (RC10) -----------------------------------------
+    # A cargo-less build silently degrades to the no-rust fallback and
+    # still passes every check above — assert the facade actually linked
+    # when the tree was configured for it. src/Makefile records the
+    # qmake intent: it names libarktos_rustcore.a only while
+    # CONFIG+=rustcore is on, so a deliberate no-rust re-qmake skips
+    # this leg instead of failing it.
+    if grep -q 'libarktos_rustcore' "$SRCROOT/src/Makefile" 2>/dev/null; then
+        # Byte-grep, not nm|grep -q: grep -q's early exit SIGPIPEs nm
+        # mid-dump and pipefail reads that as failure.  "ac_init" only
+        # enters the binary via the rustcore objects.
+        grep -q 'ac_init' "$root/$LIBDIR/bin/arktos" \
+            || fail "configured for rustcore but ac_init missing" \
+                    "from the packaged binary"
+        note "facade linked: ac_init present in the packaged binary"
+    fi
+    # servo-embed is the one rust artifact shipped as a file (dlopen'd
+    # by ServoBackend) — when this tree built it, it must be inside.
+    if ls "$SRCROOT"/spikes/servo/servo-embed/target/*/libservo_embed.so \
+            >/dev/null 2>&1; then
+        [ -f "$root/$LIBDIR/lib/libservo_embed.so" ] \
+            || fail "libservo_embed.so built but missing from package"
+        note "servo-embed staged: $LIBDIR/lib/libservo_embed.so"
+    fi
+
     if [ -x "$root/$LIBDIR/lib/tor/tor" ]; then
         # Spawn env mirrors TorManager: the expert bundle's own libs
         # (libevent/libssl/libcrypto) live beside the binary.

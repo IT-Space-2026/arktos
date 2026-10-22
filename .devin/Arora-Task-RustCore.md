@@ -37,7 +37,7 @@ Rules for the agent working this file:
 | RC07 | Stable `arktos_core.h` C ABI facade v1 + RustCoreBridge v2 | done | 0 | arktos_core.h facade: AcCore + profile-bound ac_* handles over shared rc_* stores, (module,profile) cb lane, bridge v2 + ABI doc — cargo 299+1preexisting, acprobe OK, make clean, autotests green |
 | RC08 | QtWebEngine adoption — services read/write through facade, parity proof | done | 0 | facade adoption across settings/profiles/history/bookmarks/policy consumers w/ rc_* fallback; fixed root-drift, bm UAF + stale-tree remint, profile_dir mkpath — 19 parity binaries 0-fail, rust+no-rust clean, cargo 299+1preexisting |
 | RC09 | Servo/WebKit backends consume the same facade + capability reporting | done | 0 | Servo/WebKit profiles bound to window persona: shared profileId() resolver, EngineTab history->instanceFor(persona), servo persona-named profile cache, persona-scoped adblock/downloads; smoke quick_exit on pre-existing teardown segv — verified: --servo-smoke all legs PASS incl history-recorded rc=0, webkit=1 build clean, no-rust TUs clean |
-| RC10 | Packaging: new crates linked + staged in deb/rpm/flatpak/dmg/exe legs | pending | 0 | needs:task:RC07 |
+| RC10 | Packaging: new crates linked + staged in deb/rpm/flatpak/dmg/exe legs | in_progress | 0 | needs:task:RC07 |
 | RC11 | CEF spike — bounded adapter design + QWebEngine touchpoint audit + go/no-go | pending | 0 | needs:task:RC08 |
 | RC12 | rustcore `reader` module — engine-agnostic article extraction (reader mode) | pending | 0 | needs:task:RC01 needs:tool:cargo |
 | RC13 | rustcore `sessions` module — per-profile tab/window session store | pending | 0 | needs:task:RC07 needs:tool:cargo |
@@ -537,6 +537,60 @@ Update BuildProcess/release-notes.md wording if service set changed.
 Verify: CI packages run green on this branch (push + watch the run);
 each artifact's file list contains the rust lib where the platform
 stages one.
+
+
+Audit + outcome (2026-10-22):
+- rustcore is staticlib+cdylib but qmake links ONLY the staticlib into
+  the binary (rustcore.pri LIBS += libarktos_rustcore.a); the cdylib is
+  for out-of-tree consumers, never dlopened — no package leg ships a
+  rust .so for the facade; the binary itself is the carrier. Same for
+  rustdl and adblock/rust.
+- Per-leg audit: deb (both ubuntu tags) relies on .qmake.conf
+  auto-CONFIG when cargo resolves (GH ubuntu images carry rustup) —
+  pkg-deb.sh cmd_build also force-passes CONFIG+= per existing .a;
+  rpm's cmd_build pre-builds missing .a archives via cargo --locked;
+  flatpak passes CONFIG+=rustdl+rustcore explicitly under the
+  rust-stable SDK ext with flatpak/cargo-sources.json vendored deps —
+  regenerated and confirmed IN SYNC with all three Cargo.locks
+  (371 crates); dmg/exe legs get cargo via the servo-embed build step
+  (hard-gated), then .qmake.conf auto-CONFIG; macdeployqt/windeployqt
+  deploy no rust libs because none exist as files — the one dlopen'd
+  rust artifact is libservo_embed, already hand-staged in every leg.
+- Gap closed — silent no-rust fallback: every leg passed ldd + launch
+  without proving the facade linked. New asserts: src/Makefile names
+  libarktos_rustcore only while CONFIG+=rustcore is on (a deliberate
+  no-rust re-qmake drops it, so no-rust packages still verify), and
+  "ac_init" bytes only enter the binary via rustcore objects ->
+  byte-grep the staged binary in pkg-deb verify, pkg-rpm (spec+stage
+  AND extracted-rpm paths), flatpak build-command + pkg-flatpak
+  in-sandbox verify, macOS dmg step. Windows PE has no symtab ->
+  findstr on "panic inside rustcore" (catch_unwind rodata string only
+  linked crate objects provide) + Test-Path arktos_rustcore.lib.
+  servo_embed.* staged-file asserts: conditional when-built on
+  deb/rpm, unconditional on dmg/exe (CI servo step hard-gates it).
+- Fixed two pre-existing pkg-deb verify breakages on this host: a bare
+  `grep "depends on" dpkg.out | sed` diagnostics line killed the
+  script under set -e BEFORE the --force-depends retry whenever the
+  failure text differed, and dpkg's ldconfig/start-stop-daemon lookup
+  needs the sbin dirs a non-root user's PATH lacks.
+- packages.yml push trigger now covers rust-core — the only mechanism
+  for a green run on this branch (no gh CLI for workflow_dispatch) and
+  the right permanent gate for the integration lane (per-ref
+  concurrency, lane bookkeeping already paths-ignored).
+- Wording: stale "libservo_embed does not exist yet (ENG03)" claims
+  corrected in pkg-deb/pkg-rpm/arktos.spec/manifest; debian/control +
+  spec descriptions updated; release-notes "Rust core" bullet now
+  names the facade service set + flatpak added to Packages; README
+  servo-shipped/verify/crate-count lines corrected.
+- Honest gap recorded in the manifest: flatpak does not build/ship
+  servo-embed (its clang/mozjs sysdeps + own vendored crate set are
+  beyond the three locks cargo-sources.json covers); ServoBackend
+  reports the engine unavailable at runtime.
+- Local caveat: this worktree's binary was built webkit=1, so rpm
+  spec+stage verify's Requires-coverage leg drifts on libWPEWebKit/
+  libsoup/libGLESv2 — a local env artifact; CI builds webengine-only.
+  assert_rust_payload's predicates verified directly on the staged
+  tree.
 
 ### RC11
 

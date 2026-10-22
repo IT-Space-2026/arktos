@@ -35,8 +35,11 @@ containers, Tor support and a modernized UI.
 - **Downloads** — parallel-segment accelerated engine (Rust) running
   in a bubblewrap-sandboxed worker on Linux, sidebar panel with
   detail cards, external program handoff.
-- **Rust core** — bookmark/history/session/omnibox stores, credential
-  vault and sealed autofill store, parsers for untrusted input,
+- **Rust core** — an engine-neutral browser core behind one stable C
+  ABI (`arktos_core.h`): settings, profiles/personas, history,
+  bookmarks and per-site policy stores consumed identically by every
+  engine backend, plus session/omnibox stores, credential vault and
+  sealed autofill store, parsers for untrusted input,
   cargo-deny/audit supply-chain gates.
 - **Reader mode, Picture-in-Picture, PDF viewer** — PDFs sanitized
   before view; in-browser PDF tooling.
@@ -49,6 +52,8 @@ containers, Tor support and a modernized UI.
 
 - **arktos_1.0_amd64.deb** — Debian/Ubuntu (`apt install ./arktos_1.0_amd64.deb`)
 - **arktos-1.0-1.x86_64.rpm** — Fedora/openSUSE (`dnf install`/`zypper install`)
+- **com.arktos_browser.Arktos.flatpak** — flatpak bundle (KDE 6.11
+  runtime + QtWebEngine baseapp; Servo backend not included)
 - **Arktos.dmg** — macOS, drag to Applications
 - **Arktos 1.0 Installer.exe** — Windows 11 x64 installer
 

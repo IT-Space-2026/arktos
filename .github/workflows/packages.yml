@@ -24,7 +24,11 @@ name: packages
 on:
   workflow_dispatch:
   push:
-    branches: [master]
+    # rust-core is the live integration lane for the facade the packages
+    # ship — its pushes get the same green-gate coverage as master.
+    # The concurrency group is per-ref, so the lanes never preempt each
+    # other's runs.
+    branches: [master, rust-core]
     tags: ['v*']
     # lane bookkeeping (task tables, worklog, loop logs) must not
     # trigger — or cancel — packaging runs.  .devin/pkg-*.sh stays a
@@ -294,6 +298,22 @@ jobs:
           if (Test-Path spikes\servo\servo-embed\target\release\servo_embed.dll) {
             Copy-Item spikes\servo\servo-embed\target\release\servo_embed.dll deploy\
           }
+          # RC10 link-proof: cargo is guaranteed on this leg (the
+          # servo-embed build above hard-fails without it), so the
+          # rustcore staticlib MUST be inside the exe — a qmake that
+          # silently dropped CONFIG+=rustcore ships the no-rust fallback
+          # and every smoke still passes.  PE images carry no symtab, so
+          # the probe is a rust-side rodata string only linked crate
+          # objects can provide ("panic inside rustcore" is the
+          # catch_unwind error string baked into every rc_*/ac_* entry).
+          if (-not (Test-Path src\rustcore\target\release\arktos_rustcore.lib)) {
+            throw "arktos_rustcore.lib missing — rustcore was not built"
+          }
+          findstr /m /c:"panic inside rustcore" deploy\arktos.exe | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "rustcore marker absent from arktos.exe — staticlib not linked" }
+          # servo_embed.dll is the one rust artifact shipped as a file —
+          # the build step above guarantees it, so it must be staged.
+          if (-not (Test-Path deploy\servo_embed.dll)) { throw "servo_embed.dll missing from deploy payload" }
           # Arktos data payload — installedDataDirectory() resolves to
           # the exe dir on Windows, so stage beside it.
           Copy-Item -Recurse src\.qm\locale deploy\locale
@@ -425,6 +445,19 @@ jobs:
           QT_QPA_PLATFORM=offscreen QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu \
             perl -e 'alarm 120; exec @ARGV' \
             Arktos.app/Contents/MacOS/Arktos --quit-after-load
+          # RC10 link-proof: macdeployqt never sees the statically
+          # linked rustcore — prove the facade is inside the deployed
+          # binary.  Cargo is guaranteed on this leg (the servo-embed
+          # build hard-fails without it), so a missing ac_init means
+          # qmake silently shipped the no-rust fallback.  Byte-grep, not
+          # nm|grep -q: grep -q's early exit SIGPIPEs nm under pipefail.
+          grep -q 'ac_init' Arktos.app/Contents/MacOS/Arktos \
+            || { echo "facade symbol ac_init missing — rustcore not linked" >&2; exit 1; }
+          # libservo_embed.dylib is the one rust artifact shipped as a
+          # file (dlopen'd) — the build step guarantees it, so the bundle
+          # must carry it.
+          test -f Arktos.app/Contents/lib/libservo_embed.dylib \
+            || { echo "libservo_embed.dylib missing from bundle" >&2; exit 1; }
           # macdeployqt's own -dmg output is a bare volume — no
           # /Applications link, no install affordance. Build the
           # classic drag-to-Applications layout ourselves: a staging

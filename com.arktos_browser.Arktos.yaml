@@ -7,14 +7,19 @@
 # also where QtWebEngineProcess and the webengine resources are picked up
 # at runtime.
 #
-# Rust crates (src/rustdl, src/rustcore) are built inside the SDK via the
-# freedesktop rust-stable SDK extension. flatpak/cargo-sources.json vendors
-# every crates.io dependency (sha256-pinned, generated from the committed
-# Cargo.locks by flatpak/gen-cargo-sources.py) and flatpak/cargo-config.toml
-# redirects crates.io to the vendor dir, so the build is offline and
-# lockfile-exact — CARGO_NET_OFFLINE makes cargo enforce it.
-# Servo note: libservo_embed does not exist yet (gated on ENG03), so there
-# is no servo module to ship — same decision as the deb (PKG01).
+# Rust crates (src/rustdl, src/rustcore, src/adblock/rust) are built inside
+# the SDK via the freedesktop rust-stable SDK extension.
+# flatpak/cargo-sources.json vendors every crates.io dependency
+# (sha256-pinned, generated from the committed Cargo.locks by
+# flatpak/gen-cargo-sources.py) and flatpak/cargo-config.toml redirects
+# crates.io to the vendor dir, so the build is offline and lockfile-exact —
+# CARGO_NET_OFFLINE makes cargo enforce it.
+# Servo note: servo-embed exists in-tree (spikes/servo/servo-embed, shipped
+# by the deb/rpm/dmg/exe legs) but this manifest does not build it — its
+# sysdeps (clang/mozjs) and its own vendored crate set are far beyond the
+# three locks cargo-sources.json covers. ServoBackend probes for the
+# cdylib at runtime and honestly reports the engine unavailable inside the
+# flatpak — same as a servo-less desktop build.
 #
 # Sandbox policy (honest, minimal for a browser):
 #   ipc/network          — X/Qt shared memory; this is a web browser, and
@@ -107,6 +112,11 @@ modules:
       - cd src && qmake src.pro PREFIX=/app CONFIG+=rustdl CONFIG+=rustcore
       - make -C src -j${FLATPAK_BUILDER_N_JOBS}
       - make -C src install
+      # RC10 link-proof: the rustcore staticlib must be inside the binary —
+      # a lost rust SDK ext would otherwise ship a silent no-rust fallback
+      # that launches clean. ac_init is the arktos_core.h facade entry;
+      # "ac_init" bytes only enter the binary via the rustcore objects.
+      - grep -q ac_init /app/bin/arktos
       - install -Dm644 flatpak/com.arktos_browser.Arktos.metainfo.xml /app/share/metainfo/com.arktos_browser.Arktos.metainfo.xml
     sources:
       - type: dir
