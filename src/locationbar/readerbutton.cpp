@@ -230,11 +230,15 @@ void ReaderButton::refresh()
                                                : nullptr;
     const bool active = mode && mode->isActive();
     const bool suggested = mode && mode->isAvailable() && !active;
-    // READ04: presence follows the tab — a WebView always offers
-    // reader mode (BrowserMainWindow hides the control where it can
-    // never apply: widget/engine tabs); the heuristic verdict only
-    // changes the "suggested" affordance.
-    setVisible(m_webView != nullptr);
+    // Presence follows eligibility — Safari/Chrome/Firefox show the
+    // reader affordance only on article-like pages.  A permanently
+    // visible glyph that refuses on most pages reads as a broken
+    // button (the "reader button looks wrong" reports); hiding it
+    // until isAvailable() (probed article OR already active) makes
+    // appearance itself the affordance.  BrowserMainWindow still
+    // hides the control outright where it can never apply
+    // (widget/engine tabs) — m_webView stays the base gate.
+    setVisible(m_webView != nullptr && mode && mode->isAvailable());
     setChecked(active);
     setProperty("suggested", suggested);
     setIcon(makeIcon(active, suggested));
