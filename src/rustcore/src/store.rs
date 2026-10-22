@@ -539,6 +539,24 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> RcResult<()> {
     Ok(())
 }
 
+/// The dir half of the SecureStore custody bar: create the store's
+/// parent dir when a consumer did not, and tighten it to owner-only
+/// (0700) so the sealed PII files inside never sit in a group- or
+/// world-readable dir.  An existing dir is only chmod'ed when its
+/// mode differs — same skip-if-clean contract ensureUserOnly-
+/// Permissions uses on the Qt side.
+pub(crate) fn ensure_private_dir(path: &Path) -> RcResult<()> {
+    fs::create_dir_all(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if fs::metadata(path)?.permissions().mode() & 0o777 != 0o700 {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn tighten_perms(path: &Path) {
     #[cfg(unix)]
     {

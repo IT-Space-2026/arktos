@@ -263,7 +263,8 @@ fn custody_and_blob_crypto_surface() {
 #[test]
 fn cred_and_autofill_surface() {
     let _g = guard();
-    init(&tmpdir("credaf"));
+    let dir = tmpdir("credaf");
+    init(&dir);
 
     // Bad-argument forms on the cred family.
     let name = cs("site/login");
@@ -323,6 +324,20 @@ fn cred_and_autofill_surface() {
         unsafe { crate::rc_autofill_set_addresses(b"[42]".as_ptr(), 4) },
         RcStatus::InvalidArgument
     );
+
+    // RC17 custody leg over the real ABI: the sealed payload is
+    // 0600 and the store dir was tightened to 0700 (the tmpdir
+    // starts at the umask default, typically 0755).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &std::path::Path| {
+            std::fs::metadata(p).unwrap().permissions().mode() & 0o777
+        };
+        let store_file = std::path::Path::new(&dir).join("autofill-store.dat");
+        assert_eq!(mode(&store_file), 0o600);
+        assert_eq!(mode(std::path::Path::new(&dir)), 0o700);
+    }
 
     // Reseal under a wrong from-key fails closed — AEAD reject.
     let (k1, k2) = ([1u8; 32], [2u8; 32]);

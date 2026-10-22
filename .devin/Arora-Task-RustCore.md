@@ -44,7 +44,7 @@ Rules for the agent working this file:
 | RC14 | `torctl` client — Tor control protocol in Rust (NEWNYM, circuits, auth) | done | 0 | torctl module: loopback-only control client, cookie+password auth (zeroized), serialized cmds, 650-event drain via "torctl" topic, rc_tor_* FFI + TorControl shell (no-rust keeps QTcpSocket) — cargo 326/326, tst_tormanager 22/0f/1skip both lanes (real daemon skipped, no tor binary), qmake+no-rust builds clean |
 | RC15 | rustcore `cookies` module — per-profile cookie db for Servo/WPE (Chromium stays engine-owned) | done | 0 | per-profile cookies.db w/ container partitioning, Qt-parity match, Set-Cookie+toRawForm io, sitedecisions gate, honest authoritative/mirror role; verified: cargo 338/338, acprobe OK, qmake+make clean |
 | RC16 | rustcore `icons` module — per-profile favicon/site-icon cache | done | 0 | icons module: cache/icons index+PNG store, host dedup, expiry sweep, legacy icons/+history.db fold-once; AcIcons at ABI v4; HistoryManager dispatched; cargo 347/348 (pre-existing vault flake), acprobe OK, qmake+make clean, tst_historymanager 52/52 |
-| RC17 | rustcore `autofill` module — address/contact profiles under secure custody | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC17 | rustcore `autofill` module — address/contact profiles under secure custody | done | 0 | autofill audited complete: ARSEC1 custody shared w/ rc_cred_* (preferred option), fields match AutoFillManager contract; closed verify gaps — store::ensure_private_dir 0700 + 0600/0700 legs + ffiStoreReachesDialog; cargo 349/349, tst_autofill 11p/0f/1s offscreen, make clean, no-rust TU clean |
 | RC18 | rustcore `opensearch` module — engine XML parse/validate + registry CRUD | pending | 0 | needs:task:RC07 needs:tool:cargo |
 | RC19 | rustcore `containers` module — container registry + storage namespace map | pending | 0 | needs:task:RC07 needs:tool:cargo |
 | RC20 | rustcore `updates` module — update-check state + manifest/semver policy | pending | 0 | needs:task:RC07 needs:tool:cargo |
@@ -807,6 +807,53 @@ contract — audit it first.
 
 Verify: cargo test — CRUD round-trip; file permissions 0600/0700;
 a record written via FFI reads back in AutofillDialog.
+
+
+Done 2026-10-22. Audit confirmed RC01's call — the module was already
+landed end to end under RCORE05/ADDR01/02 and meets the custody bar
+via the spec's PREFERRED option, not the JSON fallback:
+
+- Custody decision: records live in <profile>/autofill-store.dat — an
+  ARSEC1 sealed payload (AUT1 schema) under the SAME custody key as
+  rc_cred_*, so one unlock opens both and the same reseal transitions
+  apply (rc_autofill_reseal rides the passphrase-migration hook).  The
+  encrypted map fits structured records fine because it seals an
+  opaque versioned binary payload; no dedicated 0600 JSON store was
+  needed.  The legacy autofill.dat (sealed or Qt4 plaintext) is a
+  read-only import source — replayed once through rc_autofill_set_*,
+  then retired (sealed copy renamed aside, plaintext secure-erased).
+- Field-semantics audit: AddressRecord mirrors AutoFillManager::
+  Address field-for-field (country ISO code, name, organization,
+  street, city, state, zip, phone, email + last_used MRU stamp).
+  The spec's "custom fields" are the Form element list — arbitrary
+  key/value pairs, which FormRecord.elements carries verbatim; the
+  C++ Address contract has no custom-field list, so none was added.
+- Per-profile: profiles/<id>/autofill-store.dat via
+  rustCoreEnsureDataDirFor(m_profileId) — sealed under that profile's
+  SecureStore key.  Not an ac_* handle: the custody singleton binds
+  one data dir at a time by design (one unlock opens creds+autofill),
+  same model rc_cred_* keeps.
+
+Gaps closed this run (the 0600/0700 + dialog verify legs):
+
+- store::ensure_private_dir — the dir half of the custody bar:
+  save_autofill creates a missing parent and tightens it 0700
+  (skip-if-clean), so an FFI-only consumer's store never lands in a
+  group/world-readable dir; the payload itself was already 0600 via
+  atomic_write.
+- New tests: autofill::tests::store_lands_owner_only (missing dir
+  created 0700 + payload/key 0600; loosened 0755 dir tightened);
+  ffi_surface cred_and_autofill_surface now asserts both modes over
+  the real C ABI; tst_autofill::ffiStoreReachesDialog writes a form +
+  address through rc_autofill_set_forms/set_addresses and reads them
+  back in a live AutoFillDialog model + a fresh manager, with
+  owner-only file/dir assertions.
+
+Verified: cargo test 349/349 (incl. the 2 new legs); qmake && make
+-j2 (rust on) 0-error — arktos + all autotests link; tst_autofill
+11 pass / 0 fail / 1 skip (no-rust-only leg) offscreen
+--disable-gpu; no-rust tst_autofill.cpp TU passes -fsyntax-only
+with the rust defines stripped (new code fully ARKTOS_RUSTCORE-gated).
 
 ### RC18
 
