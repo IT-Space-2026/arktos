@@ -38,7 +38,7 @@ Rules for the agent working this file:
 | RC08 | QtWebEngine adoption — services read/write through facade, parity proof | done | 0 | facade adoption across settings/profiles/history/bookmarks/policy consumers w/ rc_* fallback; fixed root-drift, bm UAF + stale-tree remint, profile_dir mkpath — 19 parity binaries 0-fail, rust+no-rust clean, cargo 299+1preexisting |
 | RC09 | Servo/WebKit backends consume the same facade + capability reporting | done | 0 | Servo/WebKit profiles bound to window persona: shared profileId() resolver, EngineTab history->instanceFor(persona), servo persona-named profile cache, persona-scoped adblock/downloads; smoke quick_exit on pre-existing teardown segv — verified: --servo-smoke all legs PASS incl history-recorded rc=0, webkit=1 build clean, no-rust TUs clean |
 | RC10 | Packaging: new crates linked + staged in deb/rpm/flatpak/dmg/exe legs | done | 0 | packaging audit closed the silent no-rust gap: ac_init/servo_embed link-proofs asserted on all 5 legs (deb both tags, rpm, flatpak, dmg, exe) + rust-core added to packages.yml triggers; fixed pre-existing verify abort (set -e grep-to-sed pipe) + sbin PATH; CI run 39703330845 all-green on this branch |
-| RC11 | CEF spike — bounded adapter design + QWebEngine touchpoint audit + go/no-go | pending | 0 | needs:task:RC08 |
+| RC11 | CEF spike — bounded adapter design + QWebEngine touchpoint audit + go/no-go | done | 0 | CEF spike landed .devin/CEF-SPIKE.md — facade engine-complete (ac_* map), 1427-touchpoint/102-file inventory (must-port 74f/1176, facade-absorbed 2f+slice, droppable 26f/247), gaps G1-G6, cefbackend sketch, ~16-27wk, verdict NO-GO; doc-only verify: inventory numbers grep-reproduced |
 | RC12 | rustcore `reader` module — engine-agnostic article extraction (reader mode) | pending | 0 | needs:task:RC01 needs:tool:cargo |
 | RC13 | rustcore `sessions` module — per-profile tab/window session store | pending | 0 | needs:task:RC07 needs:tool:cargo |
 | RC14 | `torctl` client — Tor control protocol in Rust (NEWNYM, circuits, auth) | pending | 0 | needs:tool:cargo |
@@ -624,6 +624,45 @@ does not serve Servo/WebKit.
 
 Verify: doc exists with the numbered inventory; no code changes beyond
 the doc (any exploratory branch work stays out of rust-core).
+
+
+Outcome (2026-10-22): `.devin/CEF-SPIKE.md` written — doc-only, no
+code touched.  Sections delivered per spec:
+
+- (a) Facade consumption: full ac_* -> CEF-handler map — AcCore beside
+  CefInitialize, ac_profiles_engine_storage/cache_dir ->
+  CefRequestContextSettings root_cache_path, ac_hist fed by
+  OnLoadEnd/OnTitleChange, NavigationPolicy verdicts into
+  CefResourceRequestHandler/CefCookieAccessFilter.  Verdict: facade is
+  service-complete; cookies/downloads/navigation stay engine-owned by
+  design (RC15 reality check restated).
+- (b) Inventory measured on branch: 1427 QWebEngine touchpoints / 102
+  files (spec said ~1423; wider QWebEngine|QtWebEngine net 1544/118,
+  autotests 697/52 counted separately).  Buckets: must-port 74
+  files/1176 refs, facade-absorbed 2 files/4 refs plus a ~100-130-line
+  persona/dir plumbing slice inside must-port files, droppable 26
+  files/247 refs (comment-only + webenginebackend internals, which a
+  CEF swap replaces wholesale rather than ports).  ENGINE.md's
+  coupling map corroborates the file-level verdicts.
+- (c) Gaps named G1-G6: declarative script collections + isolated
+  worlds (autofill/fingerprint/reader/channel scripts), QWebChannel
+  bridges (17+ files), extension runtime (~260 refs — CEF Alloy-only,
+  honest extensions=false), OSR/windowed compositor + embedded
+  devtools, permission granularity + lifecycle discard, CEF binary
+  packaging across all five RC10 legs.  Non-gaps verified: session
+  history already Engine::HistoryEntry-neutral (tabwidget.cpp:3412).
+- (d) cefbackend sketch: CefBackend/CefProfileAdapter/CefPageAdapter/
+  CefViewWidget(OSR)/CefDownloadAdapter against the facade, same
+  registry-probe shape as servo/webkit backends, ~4-6k LOC.
+- (e) ~16-27 engineer-weeks bounded (excl. extensions research);
+  recommendation NO-GO — same Chromium minus Qt integration, negative
+  day-one delta; revisit only if Qt drops WebEngine or a CEF-unique
+  driver appears.  Doc repeats the scope rule: CEF replaces the
+  Chromium embed, it does not serve Servo/WebKit.
+
+Verify: doc exists at .devin/CEF-SPIKE.md with the numbered inventory;
+every figure in it is grep-reproducible (commands stated in the doc);
+git status confirms the only change is the new doc + this row.
 
 ### RC12
 
