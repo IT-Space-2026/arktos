@@ -22,6 +22,7 @@
 #include "adblockmanager.h"
 #include "browserpaths.h"
 #include "networkaccessmanager.h"
+#include "profilesettings.h"
 
 #include <qcoreapplication.h>
 #include <qdebug.h>
@@ -32,7 +33,6 @@
 #include <qnetworkrequest.h>
 #include <qpointer.h>
 #include <qsavefile.h>
-#include <qsettings.h>
 
 #if defined(ARKTOS_RUSTCORE)
 #include "rustcorebridge.h"
@@ -99,14 +99,14 @@ QList<TrancoList::Source> TrancoList::defaultSources()
 
 QDateTime TrancoList::trancoLastUpdate() const
 {
-    return QSettings()
+    return ProfileSettings()
         .value(QLatin1String("privacy/trancoListUpdated"))
         .toDateTime();
 }
 
 QDateTime TrancoList::majesticLastUpdate() const
 {
-    return QSettings()
+    return ProfileSettings()
         .value(QLatin1String("privacy/majesticListUpdated"))
         .toDateTime();
 }
@@ -316,7 +316,7 @@ void TrancoList::maybeCommit()
     ac_policy_close(policy);
     if (reloadStatus == RC_OK) {
         const QDateTime now = QDateTime::currentDateTime();
-        QSettings settings;
+        ProfileSettings settings;
         for (const QString &name : written) {
             if (!kept.contains(name))
                 continue;

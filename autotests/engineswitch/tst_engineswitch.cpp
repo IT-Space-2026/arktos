@@ -251,7 +251,7 @@ private:
 void tst_EngineSwitch::initTestCase()
 {
     QCoreApplication::setApplicationName("tst_engineswitch");
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
     // Keep close() free of the multi-tab confirmation prompt — the
     // window legs open several tabs before closing.

@@ -38,6 +38,7 @@
 
 #include "adblockmanager.h"
 #include "domainblocklist.h"
+#include "profilesettings.h"
 #include "privacyrequestinterceptor.h"
 #include "schemeaccesshandler.h"
 #include "webpage.h"
@@ -163,7 +164,7 @@ bool tst_DomainBlock::clickElement(WebView *view, const QString &id)
 void tst_DomainBlock::initTestCase()
 {
     QCoreApplication::setApplicationName("tst_domainblock");
-    QSettings settings;
+    ProfileSettings settings;
     m_savedDomainBlocklist =
         settings.value(QLatin1String("privacy/domainBlocklist"));
     m_savedConsent =
@@ -174,7 +175,7 @@ void tst_DomainBlock::initTestCase()
 
 void tst_DomainBlock::cleanupTestCase()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const auto restore = [&settings](const QString &key,
                                      const QVariant &saved) {
         if (saved.isValid())
@@ -197,7 +198,7 @@ void tst_DomainBlock::cleanupTestCase()
 
 void tst_DomainBlock::init()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("privacy/domainBlocklist"), true);
     PrivacyRequestInterceptor::loadSettings();
 #if defined(ARKTOS_RUSTCORE)
@@ -475,7 +476,7 @@ void tst_DomainBlock::blockedNavRegistry()
 
 void tst_DomainBlock::disabledModeLoadsPlain()
 {
-    QSettings().setValue(QLatin1String("privacy/domainBlocklist"), false);
+    ProfileSettings().setValue(QLatin1String("privacy/domainBlocklist"), false);
     PrivacyRequestInterceptor::loadSettings();
     QVERIFY(!PrivacyRequestInterceptor::domainBlocklistEnabled());
 
@@ -542,7 +543,7 @@ void tst_DomainBlock::updateConsentGate()
 #if defined(ARKTOS_RUSTCORE)
     // Declined consent -> updateIfStale never fetches.
     AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsDeclined);
-    QSettings().remove(QLatin1String("privacy/domainBlocklistUpdated"));
+    ProfileSettings().remove(QLatin1String("privacy/domainBlocklistUpdated"));
     FixtureListServer server;
     QVERIFY(server.start());
     DomainBlocklist *updater = DomainBlocklist::instance();
@@ -562,7 +563,7 @@ void tst_DomainBlock::updateRoundTrip()
     // Granted consent + a stale stamp -> updateIfStale fetches the
     // fixture feed, writes the override file and reloads the core.
     AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsGranted);
-    QSettings().remove(QLatin1String("privacy/domainBlocklistUpdated"));
+    ProfileSettings().remove(QLatin1String("privacy/domainBlocklistUpdated"));
     QFile::remove(DomainBlocklist::listFilePath());
     FixtureListServer server;
     QVERIFY(server.start());

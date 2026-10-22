@@ -19,12 +19,12 @@
 
 #include "engineregistry.h"
 
+#include "profilesettings.h"
 #include "webenginebackend.h"
 
 #include <qpainter.h>
 #include <qpalette.h>
 #include <qpixmap.h>
-#include <qsettings.h>
 
 namespace {
 
@@ -85,14 +85,14 @@ void EngineRegistry::unregisterBackend(Engine::Backend *backend)
 
 QString EngineRegistry::defaultBackendId()
 {
-    QSettings settings;
+    ProfileSettings settings;
     return settings.value(QLatin1String("MainWindow/defaultEngine"),
                           QStringLiteral("webengine")).toString();
 }
 
 void EngineRegistry::setDefaultBackendId(const QString &id)
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("MainWindow/defaultEngine"), id);
 }
 

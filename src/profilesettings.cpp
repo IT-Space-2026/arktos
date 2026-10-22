@@ -107,6 +107,7 @@ const char *const kGlobalExceptions[] = {
     "browser/sessionActiveTor",
     "network/CaCertificates",
     "privacy/trancoListUpdated",
+    "privacy/majesticListUpdated",
     "privacy/domainBlocklistUpdated",
 };
 

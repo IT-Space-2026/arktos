@@ -1199,7 +1199,7 @@ void tst_TabBar::contextMenuGroupEntries()
     // A collapsed multi-member group prompts (the shared multi-close
     // confirm, real count including the hidden member); answering Yes
     // closes them all.
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("tabs/confirmClosingMultipleTabs"),
                       true);
     const QString g3 = widget.createTabGroup(0);

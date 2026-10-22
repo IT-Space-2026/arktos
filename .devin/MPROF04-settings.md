@@ -88,6 +88,7 @@ isProfileKey()` implements — keep the two in sync.
 | `browser/sessionActiveTor` | unclean-exit sentinel (tor) | crash-guard state — app-level |
 | `network/CaCertificates` | user-accepted CA/exception certs | trust decision — shared trust store (MPROF03 recommends global verdicts) |
 | `privacy/trancoListUpdated` | last-fetch stamp | metadata for the machine-global Tranco list |
+| `privacy/majesticListUpdated` | last-fetch stamp | metadata for the machine-global Majestic list (SEC19 added it without the exception — MS07 caught it when routing the writers) |
 | `privacy/domainBlocklistUpdated` | last-fetch stamp | metadata for the machine-global blocklist |
 | `meta/settingsMigrated` | migration marker (profile ini only) | written directly to the profile ini by migrateFromGlobal, never routed |
 
@@ -107,8 +108,11 @@ Every site that touches ≥1 classified key constructs `ProfileSettings`
 instead of `QSettings`; routing happens inside the object, so mixed sites
 (the SettingsDialog writes both `MainWindow/defaultEngine` and
 `MainWindow/home` in one function) need no split. Sites touching only
-global keys keep plain `QSettings` (`engineregistry.cpp`,
-`sandboxmanager.cpp`, `trancolist.cpp`, `domainblocklist.cpp`).
+global keys keep plain `QSettings` (`sandboxmanager.cpp`).  MS07 routed
+the global-key sites that back SettingsDialog sections —
+`engineregistry.cpp`, `trancolist.cpp`, `domainblocklist.cpp` — through
+`ProfileSettings` so the writes reach the rust global scope too (the ini
+bytes stay identical; the keys remain global per the exceptions table).
 
 Read fallback is load-bearing for compatibility: pre-migration installs and
 the ~200 autotest/smoke legs that seed the global file keep working

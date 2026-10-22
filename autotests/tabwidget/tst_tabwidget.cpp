@@ -1757,7 +1757,7 @@ void tst_TabWidget::tabGroups()
 // hidden-inclusive count.
 void tst_TabWidget::closeTabGroup()
 {
-    QSettings settings;
+    ProfileSettings settings;
     settings.setValue(QLatin1String("tabs/confirmClosingMultipleTabs"),
                       false);
 
