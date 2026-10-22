@@ -447,7 +447,11 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     // even when the user has scripts off (Chrome parity).
     page->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled,
                                    true);
-    view->setPage(page);
+    // The page loads viewless first and is attached to the view only
+    // after its navigation commits: a RWHV created mid-navigation can
+    // stall the commit entirely (the Qt::Popup/Linux stall) or never
+    // composite (the macOS white bubble).  The page is parented to the
+    // view so lifetime needs no extra handling.
     layout->addWidget(view);
     popup->resize(360, 500);
 
@@ -501,7 +505,17 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
                     popupGuard->size(), bounds));
             });
     };
-    connect(view, &QWebEngineView::loadFinished, popup, measure);
+    connect(page, &QWebEnginePage::loadFinished, popup,
+            [popupGuard, pageGuard, measure](bool ok) {
+        if (!ok || !popupGuard || !pageGuard)
+            return;
+        // Commit landed — the view can safely take the page now.
+        QWebEngineView *v =
+            qobject_cast<QWebEngineView *>(pageGuard->parent());
+        if (v && v->page() != pageGuard)
+            v->setPage(pageGuard.data());
+        measure();
+    });
     // Retries ride the popup's own lifetime — timers die with it.
     for (int delay : {600, 2000, 5000})
         QTimer::singleShot(delay, popup, measure);
@@ -520,7 +534,7 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     // must be visible when the extension navigation begins.
     popup->show();
     popup->raise();
-    view->load(popupUrl);
+    page->load(popupUrl);
     view->setFocus();
 
     m_popup = popup;
