@@ -58,6 +58,11 @@ Core / Qt 6 port:
   longer travel in one aggregate. Restored tabs also remember their
   scroll position, and private/off-the-record tabs are still
   excluded — a window that is private-only saves nothing at all.
+- Fixed a stray window opening on invocations that are not a real
+  browsing session (option-style runs such as smokes or a
+  second-instance forwarder): the profile-vault bring-up's
+  "unlocked profile needs a window" fallback no longer fires there
+  (MS08).
 - Command-line URL arguments treated as untrusted input (SEC09).
 - GPU crash safe mode: Qt 6.12's WebEngine can trap (SIGTRAP) on a
   display-compositor CHECK on some driver stacks, killing the whole

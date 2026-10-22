@@ -16990,7 +16990,7 @@ int main(int argc, char **argv)
         ProfileSettings().setValue(
             QLatin1String("tabs/confirmClosingMultipleTabs"), false);
         // A leftover crash-loop flag would open a modal prompt.
-        ProfileSettings().setValue(QLatin1String("MainWindow/restoring"), false);
+        BrowserProfile::setSessionRestoring(false);
 
         QStringList fixtureUrls;
         for (int i = 1; i <= 3; ++i) {
@@ -17248,8 +17248,7 @@ int main(int argc, char **argv)
         window.hide();
         ProfileSettings().setValue(
             QLatin1String("tabs/confirmClosingMultipleTabs"), false);
-        ProfileSettings().setValue(
-            QLatin1String("MainWindow/restoring"), false);
+        BrowserProfile::setSessionRestoring(false);
         ProfileSettings().setValue(
             QLatin1String("MainWindow/startupBehavior"), 1);
 
@@ -17442,8 +17441,7 @@ int main(int argc, char **argv)
         window.hide();
         ProfileSettings().setValue(
             QLatin1String("tabs/confirmClosingMultipleTabs"), false);
-        ProfileSettings().setValue(QLatin1String("MainWindow/restoring"),
-                             false);
+        BrowserProfile::setSessionRestoring(false);
         // Pin startup to a no-navigation mode so the queued
         // postLaunch() never moves the fixture windows.
         ProfileSettings().setValue(QLatin1String("MainWindow/startupMode"),

@@ -334,6 +334,16 @@ void markSessionStart();
 void markSessionCleanExit(int exitCode = 0);
 void markSessionTerminated(int signalNumber);
 
+// MS08: the crash-during-restore guard ("a session restore was in
+// flight when this process died — ask before retrying").  Under
+// rustcore the flag lives on the session lifecycle file
+// (profiles/default/session.state "restoring"), the same record the
+// mark* calls above drive; tor and no-rustcore builds keep the
+// MainWindow/restoring settings key — session restore never runs
+// under tor and the session store stays untouched there.
+void setSessionRestoring(bool on);
+bool sessionRestoring();
+
 // DOH01: pushes the privacy/secureDns* settings to
 // QWebEngineGlobalSettings::setDnsMode — the Qt6.6+ API for
 // Chromium's DnsOverHttpsMode/Templates knobs (the "custom endpoint

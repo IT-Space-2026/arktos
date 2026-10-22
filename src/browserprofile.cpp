@@ -1552,6 +1552,42 @@ void markSessionTerminated(int signalNumber)
 #endif
 }
 
+void setSessionRestoring(bool on)
+{
+#if defined(ARKTOS_RUSTCORE)
+    if (!BrowserApplication::isTorMode()) {
+        withDefaultSessionStore(
+            [on](AcSession *s) { ac_session_set_restoring(s, on); },
+            [on] { rc_session_set_restoring(on); });
+        // Retire the pre-MS08 settings key — a flag left armed by an
+        // older build must not re-prompt once the lifecycle file has
+        // taken over.
+        ProfileSettings().remove(QLatin1String("MainWindow/restoring"));
+        return;
+    }
+#endif
+    ProfileSettings().setValue(QLatin1String("MainWindow/restoring"), on);
+}
+
+bool sessionRestoring()
+{
+#if defined(ARKTOS_RUSTCORE)
+    if (!BrowserApplication::isTorMode()) {
+        bool flag = false;
+        withDefaultSessionStore(
+            [&flag](AcSession *s) { flag = ac_session_restoring(s) != 0; },
+            [&flag] { flag = rc_session_restoring() != 0; });
+        // Upgrade parity: a pre-MS08 build could have died with the
+        // settings key armed — the guarded prompt still fires once,
+        // and the next setSessionRestoring() retires the key.
+        return flag || ProfileSettings().value(
+            QLatin1String("MainWindow/restoring"), false).toBool();
+    }
+#endif
+    return ProfileSettings().value(
+        QLatin1String("MainWindow/restoring"), false).toBool();
+}
+
 quint16 bidiDebugPort()
 {
     return s_bidiDebugPort;

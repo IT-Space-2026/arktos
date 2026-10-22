@@ -625,9 +625,10 @@ void tst_ProfileE2E::windowsBindProfiles()
     for (const QString &id : {m_alpha, m_beta}) {
         ProfileSettings(id).setValue(
             QLatin1String("tabs/confirmClosingMultipleTabs"), false);
-        ProfileSettings(id).setValue(
-            QLatin1String("MainWindow/restoring"), false);
     }
+    // The restore crash-guard is global session state — one clear
+    // covers every persona.
+    BrowserProfile::setSessionRestoring(false);
 
     BrowserApplication *app = BrowserApplication::instance();
     BrowserMainWindow *windowA = app->newMainWindow(m_alpha);
