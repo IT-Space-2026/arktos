@@ -48,7 +48,23 @@ Rules for the agent working this file:
 | RC18 | rustcore `opensearch` module — engine XML parse/validate + registry CRUD | done | 0 | audit: OSE01 module+adoption complete vs spec — parse/validate (rc_opensearch_parse+rc_suggest_parse), per-profile searchengines.json CRUD rc_ose_*, legacy xml+QSettings once-migration, Qt-parity URL expansion; verified cargo 349/349, 4 ose autotests 99/99 offscreen temp-XDG, make clean, no-rust TU clean |
 | RC19 | rustcore `containers` module — container registry + storage namespace map | done | 0 | containers registry as typed RC02-settings specialization (C++ containers/ keys), rc_containers_* + AcContainers facade at ABI v5, namespace parity w/ ContainerManager; verified cargo 354/354, tst_rustcontainers 3/3 + tst_containermanager 37/37 offscreen, make clean, no-rust TU clean |
 | RC20 | rustcore `updates` module — update-check state + manifest/semver policy | done | 0 | updates module: semver/manifest/trusted-URL/platform-pick/channel gate ported + adopted by UpdateChecker, global-scope last-check/snooze/skip/channel state over RC02 settings; verified cargo 362/362, tst_updatechecker 17/17 offscreen, make clean, no-rust TU clean |
-| RC21 | rustcore `notes` module — side-panel notes persistence | pending | 0 | needs:task:RC07 needs:tool:cargo |
+| RC21 | rustcore `notes` module — side-panel notes persistence | in_progress | 0 | needs:task:RC07 needs:tool:cargo |
+
+| CEF01 | CEF gate + bootstrap — honor RC11 go/no-go; fetch cef_binary, build libcef_dll_wrapper, Qt-widget host proof | pending | 0 | needs:task:RC11 needs:task:RC08 needs:tool:cargo |
+| CEF02 | CefBackend skeleton — EngineInterface impl, CefBrowserHost on a widget, nav/title/progress wiring | pending | 0 | needs:task:CEF01 |
+| CEF03 | Embedding correctness — windowed X11/Windows, OSR on Wayland, HiDPI/focus/resize/input | pending | 0 | needs:task:CEF02 |
+| CEF04 | Profile integration — CefRequestContext per persona, cache dirs under BrowserPaths roots, facade handles | pending | 0 | needs:task:CEF02 |
+| CEF05 | Request pipeline parity — CefRequestHandler/ResourceRequestHandler reusing interceptor policy | pending | 0 | needs:task:CEF04 |
+| CEF06 | Downloads — CefDownloadHandler onto DownloadManager/rustdl | pending | 0 | needs:task:CEF02 |
+| CEF07 | Schemes — chrome-extension/arktos/view-source via CefSchemeHandlerFactory | pending | 0 | needs:task:CEF02 |
+| CEF08 | Extension surface — alloy-vs-chrome runtime decision + hosted-runtime bridge, honest Bitwarden capability | pending | 0 | needs:task:CEF07 |
+| CEF09 | DevTools — ShowDevTools wiring, inspect entry points | pending | 0 | needs:task:CEF02 |
+| CEF10 | PDF + print — CefPrintHandler / PDF viewer parity | pending | 0 | needs:task:CEF02 |
+| CEF11 | Dialogs + permissions — CefJSDialogHandler/PermissionHandler onto existing chrome | pending | 0 | needs:task:CEF02 |
+| CEF12 | Page surface parity — context menu, find, zoom, history nav items | pending | 0 | needs:task:CEF02 |
+| CEF13 | Subprocess model + sandbox + renderer crash recovery | pending | 0 | needs:task:CEF02 |
+| CEF14 | Packaging — cef binaries + macOS helper .app chain + Win/Linux subprocess exe, codec decision documented | pending | 0 | needs:task:CEF02 |
+| CEF15 | Capability matrix + cef-smoke verification legs, honest feature table | pending | 0 | needs:task:CEF03 needs:task:CEF04 needs:task:CEF05 needs:task:CEF06 needs:task:CEF07 needs:task:CEF09 needs:task:CEF10 needs:task:CEF11 needs:task:CEF12 needs:task:CEF13 needs:task:CEF14 |
 
 ## Task details
 
@@ -1046,3 +1062,220 @@ RC07 lands.
 
 Verify: cargo test — CRUD round-trip; notes written by C++ load via
 FFI and vice versa.
+
+### CEF01
+
+Gate + bootstrap. FIRST read `### RC11`'s appended evidence — if the
+spike concluded NO-GO, do not port: mark CEF02–CEF15 blocked with
+`blocked:RC11 no-go — <reason>` and mark this row done with that
+finding as its note. If GO (or RC11 produced a bounded-adapter design),
+proceed:
+
+- Fetch a Spotify CEF binary build (cef_binary standard distribution,
+  linux64 first) into a local cache dir outside the repo; document the
+  version-pinning scheme (CEF release ↔ Chromium major).
+- Build libcef_dll_wrapper (the C++ shim every consumer needs) with the
+  repo's cmake/qmake conventions; keep it under spikes/cef/ out of the
+  shipped build until gated.
+- Proof: a minimal CefBrowserHost windowed inside a plain QWidget
+  (winId reparent on X11) renders a test URL — screenshot or
+  pixel-sample verification headless is acceptable
+  (QT_QPA_PLATFORM=offscreen + CefSettings.windowless_rendering).
+
+Record in the row notes: CEF version, runtime flavor tested
+(alloy vs chrome — the flag that decides the extension surface),
+and whether windowed/OSF worked on this host. Also record the codec
+verdict: official binaries lack proprietary codecs
+(ffmpeg_branding=chrome) — decide open-codecs-only vs custom CEF
+build and write the decision into the details section.
+
+### CEF02
+
+`src/engine/cefbackend.{h,cpp}` + `cefview.{h,cpp}`: implement
+EngineInterface + EngineTab against CefBrowserHost — load/url/
+stop/reload/back/forward, title/url/icon/progress signals mapped to
+the interface contract, CanGoBack/Forward state. CefClient subclass
+keeping per-handler references segregated (life span + display +
+load handlers only this row). CONFIG+=cef gated in engine.pri +
+.qmake.conf probe of the staged cef artifact, mirroring the servo
+gate. Registration in EngineRegistry so the indicator appears only
+when the cef runtime actually initialized.
+
+Verify: qmake cef=1 build links; a windowed/offscreen CefBackend tab
+loads a fixture page and emits loadFinished; default build without
+cef unchanged.
+
+### CEF03
+
+Embedding correctness per platform. Linux/X11: windowed mode via
+widget winId reparent (CefWindowInfo::parent_window). Wayland:
+forced OSR — CefSettings.windowless_rendering + OnPaint → texture/
+QImage into a painted widget surface; input translated manually
+(CefBrowserHost::SendKeyEvent/SendMouse*). HiDPI: device scale into
+CefWindowInfo/browser zoom. Focus cycles, resize storms (coalesce),
+wheel delta conventions matching the servo backend's pacing work.
+
+Verify: offscreen smoke that loads a page, samples OnPaint bytes
+(non-black, content signature), injects a synthetic click/keypress
+and observes DOM effect. Document which platforms get which mode in
+the details section — windowed must NOT be claimed on Wayland.
+
+### CEF04
+
+Profile integration: one CefRequestContext per Arktos persona —
+CefRequestContextSettings.cache_path under the BrowserPaths profile
+cache root, persisted per profile dir exactly like the WebEngine
+profile layout (never a shared/global context for normal browsing;
+private/off-the-record maps to CefRequestContext::CreateContext with
+in-memory settings). Wire the facade: the backend holds the profile's
+AcCore handles (settings/policy/cookies-mirror) so CEF tabs see the
+same data RC08 moved onto the core.
+
+Verify: two profiles → two contexts with distinct storage paths on
+disk; private context leaves no cache dir; facade handle opens the
+same store the chromium path writes.
+
+### CEF05
+
+Request pipeline parity: CefRequestHandler +
+CefResourceRequestHandler replicating the QtWebEngine interceptor
+pipeline — scheme refusal list, SEC18 domain blocklist, AdBlockNetwork
+match (incl. $redirect/removeParams semantics), SAFE01 https-first/
+https-only upgrade, SEC17 tracking-param strip via rustcore urlstrip,
+referer/first-party rules, public→private redirect refusal, tor
+require_proxy fail-closed semantics. Reuse the same policy objects —
+do NOT fork a second copy of the rules.
+
+Verify: the interceptor test matrix used for WebEngine passes against
+cef fixtures (same request fixtures, same expected outcomes).
+
+### CEF06
+
+Downloads: CefDownloadHandler::OnBeforeDownload/OnDownloadUpdated →
+DownloadManager. Route eligible transfers through rustdl (the Rust
+downloader) where the item qualifies — same gate rules as the
+WebEngine path; blob/data urls and resumable-edge cases stay on CEF's
+built-in fetch. Per-profile download dir honored.
+
+Verify: fixture download lands via rustdl path and via CEF fallback;
+cancel/pause states propagate to the card UI.
+
+### CEF07
+
+Scheme surface: CefSchemeHandlerFactory implementations for the
+internal schemes the WebEngine backend registers — chrome-extension://
+(serving the hosted-runtime extension files), the arktos internal
+scheme(s) (start page, error pages, reader output), view-source.
+Audit `src/*scheme*` + `fileaccesshandler` for the authoritative
+scheme list and semantics (headers, CSP, access rules must match).
+
+Verify: fixture page loads over each registered scheme under the cef
+backend; disallowed scheme navigations refuse identically to
+WebEngine.
+
+### CEF08
+
+Extension surface — the payoff task. Decide the runtime: CEF's
+alloy runtime vs chrome runtime (`--enable-chrome-runtime` /
+ChromeRuntime) — chrome runtime hosts real Chrome extensions at a
+higher fidelity than anything our hosted shim can offer; alloy is the
+traditional CEF surface. Evaluate Bitwarden specifically: MV3 service
+worker, action popup, chrome.storage, content-script messaging,
+chrome.scripting. Two paths: (a) chrome runtime — extensions load as
+real Chrome extensions; bridge browser.action clicks to our chrome;
+(b) alloy — keep the hosted runtime from extensions/* and bridge via
+the CEF equivalents of the current shim (much more work, worse
+fidelity). Choose (a) if the chrome runtime ships in the binary
+distribution; document whichever is picked and the honest capability
+level. NEVER claim Bitwarden works without a real install→unlock→fill
+run against a fixture vault.
+
+Verify: a fixture MV3 extension loads, its action popup renders, a
+content script mutates a test page. Bitwarden leg documented with
+actual result, not aspiration.
+
+### CEF09
+
+DevTools: CefBrowserHost::ShowDevTools — standalone devtools window
+wired to the Inspect/DevTools menu actions and the per-tab
+devtools surface the WebEngine backend exposes today. Remote
+debugging port stays off by default (parity with current security
+posture).
+
+Verify: devtools window opens for a cef tab offscreen (windowed head
+of test) — at minimum ShowDevTools returns without error and the
+window tracks the inspected browser's lifetime.
+
+### CEF10
+
+PDF + print: PDF navigation inside the browser (CEF renders PDFs
+natively — audit whether the feature needs the pdf flag and how the
+current pdfsupport/pdfview surface should present under cef tabs);
+printing via CefPrintHandler onto the existing print preview/dialog
+flow.
+
+Verify: a fixture PDF opens under the cef backend with the same UI
+surface as today; print preview produces a document.
+
+### CEF11
+
+Dialogs + permissions: CefJSDialogHandler (alert/confirm/prompt → the
+existing dialog code), CefPermissionHandler (media/geolocation/
+notifications → WebPermissionManager policy), certificate-error
+handling mapping to the TLS decision flow.
+
+Verify: fixture page triggering alert+permission requests produces
+the same UI/behavior as the WebEngine path; denied-permission states
+match policy store contents.
+
+### CEF12
+
+Page surface parity: context menu (CefContextMenuHandler → the
+existing menu builder incl. open-in-new-tab/private/container,
+save-as, inspect), find-in-page (CefBrowserHost::Find), zoom levels,
+cut/copy/paste/select-all, navigation-entry history (back/forward
+list parity for session restore — RC13 sessions integration), drag&
+drop of links/files.
+
+Verify: offscreen fixtures for find/zoom/context-menu model; nav
+entries round-trip into the session store.
+
+### CEF13
+
+Subprocess model: cef subprocess invocation — separate subprocess
+binary or `--type=` re-exec of the main binary (pick per platform;
+macOS REQUIRES the helper-.app bundle chain — document the layout);
+sandbox levels per CefSettings (no_sandbox only for smokes);
+renderer/GPU/utility process crash → CefRequestHandler::
+OnRenderProcessTerminated → the engine-tab recovery UI (same UX as
+the webengine crash path — no silent tab death).
+
+Verify: kill -9 the renderer during a fixture browse → tab shows the
+recovery surface, reload succeeds; sandbox-level mapping documented
+per platform.
+
+### CEF14
+
+Packaging: stage cef binaries per leg — linux libcef.so + resources
+locales/icudtl/snapshot blobs (+ chrome-sandbox decision), Windows
+libcef.dll + cef subprocess strategy, macOS the helper .app chain
+inside the bundle + signing. Codec decision from CEF01 honored
+(open-codecs-only default unless a custom build exists — license
+notes in release notes either way). Debian Depends, rpm requires,
+NSIS payload, dmg staging all updated; flatpak needs its own
+assessment (documented, may stay webengine-only initially).
+
+Verify: every leg's artifact contains the cef runtime + the browser
+registers the backend at runtime (not just links).
+
+### CEF15
+
+Honesty gate + verification: `.devin/CEF-CAPABILITY.md` — feature
+matrix CEF vs QtWebEngine vs Servo vs WebKit per platform (extensions,
+devtools, pdf, webrtc-ish media, codecs, a11y, IME, print), with each
+cell marked verified|unverified|unsupported. `cef-smoke` runner legs
+parallel to --servo-smoke. EngineIndicator/capability reporting must
+reflect the matrix exactly — no optimistic claims.
+
+Verify: the smoke suite passes where the matrix claims support;
+documented unverified cells are honestly grey in the UI.
