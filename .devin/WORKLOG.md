@@ -1390,3 +1390,4 @@
 - 2026-10-22 RC20: rustcore updates module (semver/manifest/channel/platform pick + global-scope check state) adopted by UpdateChecker — cargo 362/362, tst_updatechecker 17/17 offscreen, no-rust TU clean
 - 2026-10-22 RC21: rustcore notes module — RcNotes store (root+profile/file/volatile), rc_notes_* + facade v6 ac_notes_*, NotesModel mirrors into the store, rustnotes interchange autotest — cargo test 370/370, acprobe OK, tst_notesmodel 10/10, tst_rustnotes 5/5
 - 2026-10-22 CEF01: CEF gate — chrome-runtime MV3 verified (fixture 6/6 + real Bitwarden SW/popup) overriding RC11 no-go; CEF 152.0.15 wrapper + qcefprobe render proof (OSR + windowed chrome/alloy PASS); open-codecs-only; report .devin/CEF-EXT-SPIKE.md
+- 2026-10-22 MD01: MW-DOMAINS audit — move/keep table over webpage/webview/locationbar/downloadmanager/webpermissionmanager/network interceptors/GPC/popup/session/urlclean/scriptcontrol/extension surfaces — verified file:line citations against tree

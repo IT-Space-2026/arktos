@@ -32,7 +32,7 @@ Rules for the agent working this file:
 
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
-| MD01 | Domains audit — inventory Qt-side decision logic + move/keep table | pending | 0 | .devin/MW-DOMAINS.md: every if/switch in WebPage/WebView/LocationBar/DownloadManager/permissions/GPC code paths classified move-to-rustcore vs stays-Qt (render/JS/surface-dependent) |
+| MD01 | Domains audit — inventory Qt-side decision logic + move/keep table | done | 0 | MW-DOMAINS.md: full move/keep audit of webpage/webview/locationbar/downloadmanager/webpermissionmanager/network interceptors/GPC/popup/session/urlclean/scriptcontrol/extension surfaces; verified file:line against tree |
 | MD02 | rustcore `navpolicy` — acceptNavigationRequest decisions + FFI + adoption | pending | 0 | scheme allowlist, blocked-nav, external-protocol handoff, target=_blank/popup gate; WebPage::acceptNavigationRequest becomes decision consumer; parity autotest vs current Qt behavior |
 | MD03 | rustcore `permpolicy` — WebPermissionManager decisions per-profile + FFI | pending | 0 | notification/geo/clipboard/pointerlock/media etc verdict store + defaults; Qt permission dialogs keep UI, decisions via facade; tst_parity green |
 | MD04 | rustcore `dlwpolicy` — download interception policy (auto/save-as/block, mime) | pending | 0 | verdict from request headers+suggested name+mime rules; DownloadManager adopts via facade; per-profile rules store |
@@ -55,6 +55,12 @@ file:line, what it decides, and verdict `move` (pure data/policy ->
 rustcore) or `keep` (needs JS exec, widget, or engine surface). Output
 `.devin/MW-DOMAINS.md`. This table is the contract for MD02-MD09 — be
 exhaustive.
+
+
+AMENDMENT (slicing): if the audit finds decision sites not covered by
+MD02-MD09 rows, append one new pending row per uncovered cluster
+(MD10+) via taskfile.sh with-lock/append-detail — one site-cluster per
+row, never bundle.
 
 ### MD02
 New `navpolicy` module. Inputs: url, navigation type (typed/link/
@@ -96,6 +102,16 @@ For each chrome.* surface marked unimplemented but feasible (storage
 quota ops, alarms edges, tabs.query extras, notifications minimal,
 contextMenus basics): implement in shim dispatch; update the honest
 unsupported list. NO new engine JS APIs — dispatch/state only.
+
+
+AMENDMENT (slicing): MD07 performs the audit ONLY — read
+EXT-RUNTIME-GAPS.md + ExtensionShimBackend dispatch, produce the
+feasible/unsupported classification, then append ONE new pending row per
+feasible surface (IDs MD10, MD11, …) via
+`.devin/taskfile.sh Arora-Task-Domains.md with-lock -- sed -i …` row
+insert + `append-detail` spec, each spec = implement that single
+surface + parity test. MD07 itself implements NO surfaces — it just
+creates the queue. Update the honest unsupported list in the same run.
 
 ### MD08
 AcSession gains policy queries: snapshot interval, dirty-on-what,
