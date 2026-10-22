@@ -25,6 +25,7 @@
 #include "extensionbackgroundhost.h"
 #include "extensionmanager.h"
 
+#include <qaction.h>
 #include <qevent.h>
 #include <qfile.h>
 #include <qframe.h>
@@ -159,6 +160,15 @@ ExtensionActionBar::ExtensionActionBar(QWidget *parent)
     rebuild();
 }
 
+void ExtensionActionBar::setToolbarAction(QAction *action)
+{
+    m_toolbarAction = action;
+    // Late wiring — the strip is inserted empty on every cold start,
+    // so the first state to push to the action is the current one.
+    if (m_toolbarAction)
+        m_toolbarAction->setVisible(actionCount() > 0);
+}
+
 void ExtensionActionBar::setIconSize(const QSize &size)
 {
     if (m_iconSize == size)
@@ -244,6 +254,12 @@ void ExtensionActionBar::rebuild()
 
     // No popup-bearing extensions => no strip and no splitter gap.
     setVisible(!actions.isEmpty());
+    // EXT22: the widget flag alone is not enough — a strip hidden at
+    // insertWidget time leaves its bar action permanently invisible
+    // under Qt's one-way tracking, so the toolbar slot is driven
+    // explicitly too.
+    if (m_toolbarAction)
+        m_toolbarAction->setVisible(!actions.isEmpty());
 }
 
 bool ExtensionActionBar::triggerAction(const QString &id,
@@ -275,13 +291,11 @@ bool ExtensionActionBar::eventFilter(QObject *watched, QEvent *event)
             return true;
         }
     }
-#if defined(Q_OS_MACOS)
-    // The macOS popup is a frameless Qt::Tool (see openPopup), so it
-    // lacks Qt::Popup's built-in click-outside dismissal — reproduce
-    // it by closing when the bubble deactivates.
+    // The popup is a frameless Qt::Tool (see openPopup), so it lacks
+    // Qt::Popup's built-in click-outside dismissal — reproduce it by
+    // closing when the bubble deactivates.
     if (watched == m_popup && event->type() == QEvent::WindowDeactivate)
         m_popup->close();
-#endif
     return QWidget::eventFilter(watched, event);
 }
 
@@ -344,19 +358,14 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     // deleted rather than hidden on close — a live WebEngine page is
     // too heavy to keep around after the bubble dismisses, and an
     // orphaned page outlives the profile at teardown.
-    QFrame *popup = new QFrame(this,
-#if defined(Q_OS_MACOS)
-        // QWebEngineView never composites into a Qt::Popup window on
-        // macOS — Chromium's renderer has no usable surface and the
-        // bubble shows dead (Bitwarden's popup was exactly this).
-        // A frameless Tool window paints and takes focus correctly;
-        // click-outside dismissal moves to the WindowDeactivate
-        // watch in eventFilter().
-        Qt::Tool | Qt::FramelessWindowHint
-#else
-        Qt::Popup
-#endif
-    );
+    // QWebEngineView never composites into a Qt::Popup window —
+    // Chromium's renderer has no usable surface there: on macOS the
+    // bubble shows dead, on Linux the chrome-extension:// main frame
+    // never even commits (Bitwarden's popup was exactly this on
+    // both).  A frameless Tool window paints and takes focus
+    // correctly; click-outside dismissal moves to the
+    // WindowDeactivate watch in eventFilter().
+    QFrame *popup = new QFrame(this, Qt::Tool | Qt::FramelessWindowHint);
     popup->setAttribute(Qt::WA_DeleteOnClose);
     popup->setObjectName(QLatin1String("extensionActionPopup"));
     popup->setFrameShape(QFrame::StyledPanel);

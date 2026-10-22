@@ -70,9 +70,16 @@ bool SingleApplication::sendMessage(const QByteArray &message, int waitMsecsForR
 #endif
         success = false;
     }
-    if (success) {
-        socket.waitForReadyRead(waitMsecsForReply);
-        if (socket.bytesAvailable() > 0)
+    if (success && waitMsecsForReply > 0) {
+        // SI01: a handshake (getwinid) means "someone answered", not
+        // "someone accepted".  An orphaned or wedged process can hold
+        // the listen fd without ever replying — a sandbox wrapper kill
+        // leaves exactly such a zombie behind — and treating
+        // connect+write as success makes the next launch exit silently
+        // as a supposed duplicate.  Only a real reply proves the peer.
+        success = socket.waitForReadyRead(waitMsecsForReply)
+                && socket.bytesAvailable() > 0;
+        if (success)
             emit messageReceived(&socket);
     }
     return success;

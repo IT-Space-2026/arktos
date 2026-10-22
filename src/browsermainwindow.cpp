@@ -2384,6 +2384,10 @@ void BrowserMainWindow::setupToolBar()
                                           m_extensionActionBar);
         extensionAction->setProperty(kNavBarItemIdProperty,
                                      QLatin1String("extensions"));
+        // EXT22: the strip hands rebuild() the bar action so the
+        // empty-at-insert slot can be re-shown once an extension
+        // action appears.
+        m_extensionActionBar->setToolbarAction(extensionAction);
     }
 
     // PROF01: the profile button closes the bar — the LAST widget on

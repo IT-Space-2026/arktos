@@ -27,6 +27,7 @@
 #include <qurl.h>
 #include <qwidget.h>
 
+class QAction;
 class QFrame;
 class QHBoxLayout;
 class QToolButton;
@@ -61,6 +62,13 @@ public:
     // Number of action buttons currently hosted — exposed for tests.
     int actionCount() const;
 
+    // EXT22: the QToolBar::insertWidget action this strip rides on.
+    // Qt hides the widget's action when the widget was hidden AT
+    // insert time and never re-shows it — a strip that starts empty
+    // (every cold start) would then stay invisible forever no matter
+    // what setVisible() says.  rebuild() toggles the action itself.
+    void setToolbarAction(QAction *action);
+
     // ER14: chrome.commands' reserved _execute_action — performs
     // the same open a real button click does on the resolved popup
     // (the manifest's default_popup, or the chrome.action.setPopup
@@ -86,6 +94,7 @@ private:
     QSize m_iconSize;
     // The one open action popup and the extension it serves — a
     // second click on the same button toggles it closed.
+    QPointer<QAction> m_toolbarAction;
     QPointer<QFrame> m_popup;
     QString m_popupExtensionId;
 };
