@@ -50,21 +50,21 @@ Rules for the agent working this file:
 | RC20 | rustcore `updates` module — update-check state + manifest/semver policy | done | 0 | updates module: semver/manifest/trusted-URL/platform-pick/channel gate ported + adopted by UpdateChecker, global-scope last-check/snooze/skip/channel state over RC02 settings; verified cargo 362/362, tst_updatechecker 17/17 offscreen, make clean, no-rust TU clean |
 | RC21 | rustcore `notes` module — side-panel notes persistence | done | 0 | notes module + facade v6 + NotesModel adoption; read-compat, C++<->FFI verified both directions |
 
-| CEF01 | CEF gate + bootstrap — honor RC11 go/no-go; fetch cef_binary, build libcef_dll_wrapper, Qt-widget host proof | pending | 0 | needs:task:RC11 needs:task:RC08 needs:tool:cargo |
-| CEF02 | CefBackend skeleton — EngineInterface impl, CefBrowserHost on a widget, nav/title/progress wiring | pending | 0 | needs:task:CEF01 |
-| CEF03 | Embedding correctness — windowed X11/Windows, OSR on Wayland, HiDPI/focus/resize/input | pending | 0 | needs:task:CEF02 |
-| CEF04 | Profile integration — CefRequestContext per persona, cache dirs under BrowserPaths roots, facade handles | pending | 0 | needs:task:CEF02 |
-| CEF05 | Request pipeline parity — CefRequestHandler/ResourceRequestHandler reusing interceptor policy | pending | 0 | needs:task:CEF04 |
-| CEF06 | Downloads — CefDownloadHandler onto DownloadManager/rustdl | pending | 0 | needs:task:CEF02 |
-| CEF07 | Schemes — chrome-extension/arktos/view-source via CefSchemeHandlerFactory | pending | 0 | needs:task:CEF02 |
-| CEF08 | Extension surface — alloy-vs-chrome runtime decision + hosted-runtime bridge, honest Bitwarden capability | pending | 0 | needs:task:CEF07 |
-| CEF09 | DevTools — ShowDevTools wiring, inspect entry points | pending | 0 | needs:task:CEF02 |
-| CEF10 | PDF + print — CefPrintHandler / PDF viewer parity | pending | 0 | needs:task:CEF02 |
-| CEF11 | Dialogs + permissions — CefJSDialogHandler/PermissionHandler onto existing chrome | pending | 0 | needs:task:CEF02 |
-| CEF12 | Page surface parity — context menu, find, zoom, history nav items | pending | 0 | needs:task:CEF02 |
-| CEF13 | Subprocess model + sandbox + renderer crash recovery | pending | 0 | needs:task:CEF02 |
-| CEF14 | Packaging — cef binaries + macOS helper .app chain + Win/Linux subprocess exe, codec decision documented | pending | 0 | needs:task:CEF02 |
-| CEF15 | Capability matrix + cef-smoke verification legs, honest feature table | pending | 0 | needs:task:CEF03 needs:task:CEF04 needs:task:CEF05 needs:task:CEF06 needs:task:CEF07 needs:task:CEF09 needs:task:CEF10 needs:task:CEF11 needs:task:CEF12 needs:task:CEF13 needs:task:CEF14 |
+| CEF01 | CEF gate + bootstrap — honor RC11 go/no-go; fetch cef_binary, build libcef_dll_wrapper, Qt-widget host proof | in_progress | 0 | needs:task:RC11 needs:task:RC08 needs:tool:cargo |
+| CEF02 | CefBackend skeleton — EngineInterface impl, CefBrowserHost on a widget, nav/title/progress wiring | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF03 | Embedding correctness — windowed X11/Windows, OSR on Wayland, HiDPI/focus/resize/input | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF04 | Profile integration — CefRequestContext per persona, cache dirs under BrowserPaths roots, facade handles | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF05 | Request pipeline parity — CefRequestHandler/ResourceRequestHandler reusing interceptor policy | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF06 | Downloads — CefDownloadHandler onto DownloadManager/rustdl | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF07 | Schemes — chrome-extension/arktos/view-source via CefSchemeHandlerFactory | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF08 | Extension surface — alloy-vs-chrome runtime decision + hosted-runtime bridge, honest Bitwarden capability | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF09 | DevTools — ShowDevTools wiring, inspect entry points | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF10 | PDF + print — CefPrintHandler / PDF viewer parity | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF11 | Dialogs + permissions — CefJSDialogHandler/PermissionHandler onto existing chrome | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF12 | Page surface parity — context menu, find, zoom, history nav items | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF13 | Subprocess model + sandbox + renderer crash recovery | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF14 | Packaging — cef binaries + macOS helper .app chain + Win/Linux subprocess exe, codec decision documented | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
+| CEF15 | Capability matrix + cef-smoke verification legs, honest feature table | blocked | 0 | parked:user-directive — spike-only for now; unblock after CEF01 findings + user decision |
 
 ## Task details
 
@@ -1161,6 +1161,16 @@ Then the verdict:
 - Extensions do not work → RC11's NO-GO stands: block CEF02-CEF15 with
   `blocked:RC11 no-go + no extension driver — <what the spike found>`
   and mark this row done with the spike outcome as its note.
+
+
+AMENDMENT 2 (user directive, 2026-10-22): spike-ONLY delivery.  The
+cef_binary fetch + chrome-runtime MV3/Bitwarden experiment still runs
+(that IS the spike), but the bootstrap half (libcef_dll_wrapper build,
+QWidget render proof) is descoped — write the plan, don't build it.
+Outcome report goes into .devin/CEF-EXT-SPIKE.md + the row note.
+CEF02-CEF15 are `blocked: parked` regardless of the findings — any
+port decision is a user decision after reading the report; do not
+unblock them yourself.
 
 ### CEF02
 
