@@ -4602,3 +4602,12 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   imported under a Rust build now read back identically in no-rust
   builds and in third-party XBEL tools; files written in the interim
   attribute shape still parse.
+- Servo and WebKit tabs now belong to the window's profile (RC09):
+  pages on those engines record visits, titles and icons into the
+  same per-profile history a Chromium tab writes, and they honor that
+  profile's ad-blocking rules and download manager instead of the
+  browser-wide defaults. A Servo or WebKit tab opened in a named
+  profile keeps its history and filters inside that profile, and
+  private windows still record nothing. Engine capabilities stay
+  honest — features a backend cannot deliver remain disabled in the
+  engine menu rather than silently pretending parity.

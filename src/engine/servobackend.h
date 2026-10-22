@@ -423,7 +423,12 @@ public:
     static QString configDir();
 
 private:
-    QPointer<ServoProfile> m_defaultProfile;
+    // RC09: one shared ServoProfile per storage name — libservo has no
+    // profile objects, so these carry only the persona identity the
+    // app-side facade stores (history/settings/decisions) key on.
+    // Engine-side state stays process-global (configDir()); a named
+    // profile never fakes per-persona engine isolation.
+    QHash<QString, QPointer<ServoProfile>> m_profiles;
 };
 
 #endif // SERVOBACKEND_H

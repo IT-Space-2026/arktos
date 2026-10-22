@@ -5308,6 +5308,14 @@ static int servoLifecycleSmoke()
             report(QStringLiteral("recovery-renders"),
                    finished && distinct > 100
                    && !recoveredView->isPoisoned());
+            // RC09: the committed servo visit must land in the shared
+            // app-side history store — EngineTab records page commits
+            // into the persona-bound HistoryManager (the facade's
+            // history.db under the smoke store), the same file a
+            // Chromium tab's WebPage wiring writes.
+            report(QStringLiteral("history-recorded"),
+                   HistoryManager::instance()->historyContains(
+                       probe.toString()));
             // ENG36: a live view no longer refuses a concurrent
             // second — page AND view both mint alongside the
             // recovered one.
@@ -6464,8 +6472,11 @@ int main(int argc, char **argv)
 
     // ENG12: the servo lifecycle guard — swap/reload/refusal matrix
     // over the real backend (skips when the artifact is absent).
+    // quick_exit, not return: even past shutdownEngine() this lane's
+    // static teardown still SIGSEGVs (rust-core facade + linked WPE
+    // teardown ordering) — the verdict is already printed.
     if (args.contains(QLatin1String("--servo-smoke")))
-        return servoLifecycleSmoke();
+        std::quick_exit(servoLifecycleSmoke());
 
     // PROF03: 'Delete Profile' end-to-end — three processes on one
     // isolated smoke store (the children inherit ARKTOS_SMOKE_STORE).

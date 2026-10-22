@@ -1259,8 +1259,20 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
     if (!backend)
         return nullptr;
 
+    // RC09: bind the engine profile to this window's persona — the
+    // same storageName contract BrowserProfile uses for
+    // QWebEngineProfiles ("arktos" for the default persona,
+    // "arktos-<id>" for a named one).  Backends resolve the id through
+    // Engine::Profile::profileId() so profile-bound facade stores
+    // (history, cookie/site policy, settings) land on the persona the
+    // tab belongs to instead of an ambient or engine-global context.
+    Engine::ProfileOptions options;
+    const QString personaId = profileId();
+    options.storageName = personaId == QLatin1String("default")
+        ? QStringLiteral("arktos")
+        : QStringLiteral("arktos-") + personaId;
     Engine::Profile *profile =
-        backend->createProfile(Engine::ProfileOptions(), nullptr);
+        backend->createProfile(options, nullptr);
     // ENG35/WK17: profiles on policy-hooked backends (Servo's load
     // gate, WebKit's decide-policy consult) get the adblock binding
     // the way prepareProfile installs the interceptor on Chromium
@@ -1269,14 +1281,14 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
     // (setRequestPolicy would replace it).
     if (profile && (backend->id() == QLatin1String("servo")
                     || backend->id() == QLatin1String("webkit")))
-        AdBlockManager::instance()->installOnProfile(profile);
+        AdBlockManager::instanceFor(personaId)->installOnProfile(profile);
     // WK19: a backend that streams its own transfers (WebKit's
     // WebKitDownload -> Engine::DownloadRequest) needs the same
     // DownloadManager binding prepareProfile gives Chromium
     // profiles — with no consumer the request's decision point
     // cancels itself.
     if (profile && backend->capabilities().downloads)
-        DownloadManager::instance()->installOnProfile(profile);
+        DownloadManager::instanceFor(personaId)->installOnProfile(profile);
     EngineTab *tab = new EngineTab(backend, profile, this);
     // The profile is the tab's context — give it the tab as owner so
     // tab teardown frees it.  Backends that hand out a shared object

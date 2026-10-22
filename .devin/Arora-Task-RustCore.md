@@ -36,7 +36,7 @@ Rules for the agent working this file:
 | RC06 | rustcore `policy` module — cookie/storage/site-decision/trust data + FFI | done | 0 | audit: policy surface already landed end to end (sitedecisions + per-profile façade + legacy imports, blocklist/tranco/majestic read-path, sitetrust, policy verdicts); added FFI-parity legs — verified cargo 296/296, sitedecisions 9/9, trancolist 9/9, domainblock 14/14 + 6 consumer suites green offscreen, rust+no-rust compile clean |
 | RC07 | Stable `arktos_core.h` C ABI facade v1 + RustCoreBridge v2 | done | 0 | arktos_core.h facade: AcCore + profile-bound ac_* handles over shared rc_* stores, (module,profile) cb lane, bridge v2 + ABI doc — cargo 299+1preexisting, acprobe OK, make clean, autotests green |
 | RC08 | QtWebEngine adoption — services read/write through facade, parity proof | done | 0 | facade adoption across settings/profiles/history/bookmarks/policy consumers w/ rc_* fallback; fixed root-drift, bm UAF + stale-tree remint, profile_dir mkpath — 19 parity binaries 0-fail, rust+no-rust clean, cargo 299+1preexisting |
-| RC09 | Servo/WebKit backends consume the same facade + capability reporting | pending | 0 | needs:task:RC08 |
+| RC09 | Servo/WebKit backends consume the same facade + capability reporting | done | 0 | Servo/WebKit profiles bound to window persona: shared profileId() resolver, EngineTab history->instanceFor(persona), servo persona-named profile cache, persona-scoped adblock/downloads; smoke quick_exit on pre-existing teardown segv — verified: --servo-smoke all legs PASS incl history-recorded rc=0, webkit=1 build clean, no-rust TUs clean |
 | RC10 | Packaging: new crates linked + staged in deb/rpm/flatpak/dmg/exe legs | pending | 0 | needs:task:RC07 |
 | RC11 | CEF spike — bounded adapter design + QWebEngine touchpoint audit + go/no-go | pending | 0 | needs:task:RC08 |
 | RC12 | rustcore `reader` module — engine-agnostic article extraction (reader mode) | pending | 0 | needs:task:RC01 needs:tool:cargo |
@@ -482,6 +482,49 @@ Verify: build with the servo artifact present — `--servo-smoke` legs
 pass and a servo visit appears in the shared history; webkit backend
 compiles the facade path (WPE env per .devin/webkit-env.sh if present,
 otherwise document the build-only verification).
+
+Implementation (2026-10-22):
+- Engine::Profile::profileId() (engineinterface.{h,cpp}): persona
+  resolution shared by all backends — "arktosProfileId" property tag
+  wins (the only channel OTR/container profiles can carry), then the
+  storageName parse ("arktos"->default, "arktos-<id>"-><id>,
+  "arktos-container-*" never parses), ambient fallback for foreign
+  names (Servo's shared context).
+- EngineTab::wirePage: records loadFinished/title/icon into
+  HistoryManager::instanceFor(profile->profileId()) — exact mirror
+  of WebPage's MIG06 wiring incl. OTR gate and
+  arktos-cert-error/-http-warning/-site-block + PdfSupport::isManagedPath
+  exclusions. Facade-backed: lands in profiles/<id>/history.db via
+  ac_history when rustcore is linked, C++ store under no-rust.
+- ServoBackend::createProfile: QHash<QString,QPointer<ServoProfile>>
+  — one shared profile per persona storageName (libservo has no
+  profile objects; named profiles carry persona identity only, never
+  fake engine-side isolation). Empty name keeps legacy "servo"
+  context -> ambient persona.
+- TabWidget::addEngineTab: passes ProfileOptions.storageName =
+  "arktos"/"arktos-<id>" per window persona; installs
+  AdBlockManager::instanceFor(personaId) on servo/webkit profiles
+  (was ambient instance()) and DownloadManager::instanceFor(personaId)
+  when capabilities().downloads (was ambient).
+- main.cpp: new servo-smoke "history-recorded" leg asserts the
+  committed servo probe URL is in HistoryManager::instance() (the
+  smoke store's default-persona history.db); servo-smoke dispatch
+  switched return->std::quick_exit — A/B-verified pre-existing
+  static-teardown SIGSEGV on this lane (base build w/o this diff
+  also rc=139 after PASS verdict; likely rust-core facade + linked
+  WPE teardown ordering past shutdownEngine()). Verdict printed
+  before exit either way; exit code now reflects it (rc=0).
+Verification:
+- Build: qmake servo=1 webkit=1 + WPE env, make -j2 clean;
+  webkitbackend.o compiles the facade path against WPE headers.
+- --servo-smoke (ARKTOS_SERVO_EMBED_LIB=main-lane release artifact,
+  offscreen, isolated ARKTOS_SMOKE_STORE): every leg PASS incl.
+  history-recorded, gate-*/multi-view-*/bidi-*, verdict PASS, rc=0,
+  no crash.
+- --engine-list: Chromium all-true; WebKit 2.54.1 cookieFilter/
+  devtools/extensions=false (honest); servo listed w/ artifact.
+- No-rust: all 5 touched TUs compile 0 warnings under
+  CONFIG+=no-rust servo=1 (shadow build).
 
 ### RC10
 
