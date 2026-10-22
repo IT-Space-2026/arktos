@@ -129,6 +129,77 @@ int main(int argc, char **argv)
         return 2;
     ac_set_change_callback(core, on_change, NULL);
 
+    /* ---- engine capability matrix (MB04) -------------------------
+     * Static registry — needs no core.  Each engine row prints; the
+     * checks pin the schema and the honesty grades that must never
+     * silently upgrade (Bitwarden-class extension support stays
+     * "partial", servo's devtools stay off). */
+    {
+        static const char *ids[] = {
+            "qtwebengine", "servo", "webkit"
+        };
+        size_t i;
+        for (i = 0; i < sizeof(ids) / sizeof(ids[0]); ++i) {
+            AcBuffer out = {0};
+            CHECK(ac_engine_caps(ids[i], &out) == AC_OK,
+                  "ac_engine_caps known id");
+            if (out.data) {
+                fprintf(stderr, "caps %s: %.*s\n", ids[i],
+                        (int)out.len, (const char *)out.data);
+                CHECK(buf_contains(out.data, out.len,
+                                   "\"devtools\"") &&
+                          buf_contains(out.data, out.len,
+                                       "\"autofill\""),
+                      "row carries the required feature keys");
+                ac_buffer_free(out);
+            }
+        }
+        /* backend->id() spelling resolves the same row. */
+        {
+            AcBuffer a = {0}, b = {0};
+            CHECK(ac_engine_caps("webengine", &a) == AC_OK,
+                  "webengine alias");
+            CHECK(ac_engine_caps("qtwebengine", &b) == AC_OK,
+                  "qtwebengine canonical");
+            CHECK(a.len == b.len &&
+                      memcmp(a.data, b.data, a.len) == 0,
+                  "alias resolves the same document");
+            ac_buffer_free(a);
+            ac_buffer_free(b);
+        }
+        /* Honesty pins — these grades must never fake parity.  The
+         * servo devtools note is the fingerprint that the row stays
+         * graded off with the reason attached. */
+        {
+            AcBuffer out = {0};
+            CHECK(ac_engine_caps("servo", &out) == AC_OK &&
+                      buf_contains(out.data, out.len, "devtools") &&
+                      buf_contains(out.data, out.len,
+                                   "Firefox remote protocol"),
+                  "servo devtools honestly unsupported");
+            if (out.data)
+                ac_buffer_free(out);
+        }
+        /* NULL emits the whole matrix; unknown ids fail clean. */
+        {
+            AcBuffer out = {0};
+            CHECK(ac_engine_caps(NULL, &out) == AC_OK &&
+                      buf_contains(out.data, out.len,
+                                   "\"qtwebengine\"") &&
+                      buf_contains(out.data, out.len, "\"servo\"") &&
+                      buf_contains(out.data, out.len, "\"webkit\""),
+                  "matrix covers every engine");
+            if (out.data)
+                ac_buffer_free(out);
+            CHECK(ac_engine_caps("gecko", &out) == AC_ERR_INVALID,
+                  "unknown engine id refused");
+            CHECK(out.data == NULL, "failure leaves no buffer");
+            CHECK(ac_engine_caps("qtwebengine", NULL) ==
+                      AC_ERR_INVALID,
+                  "NULL out refused");
+        }
+    }
+
     /* ---- settings (RC02) ----------------------------------------- */
     AcSettings *gs = ac_settings(core, NULL);
     AcSettings *ps = ac_settings(core, "work");

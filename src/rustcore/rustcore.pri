@@ -46,8 +46,10 @@ rustcore:!no-rust {
     HEADERS += $$PWD/include/rustcore.h \
         $$PWD/include/arktos_core.h \
         $$PWD/../rustcorebridge.h \
+        $$PWD/../aceventnotifier.h \
         $$PWD/../sitedecisionstore.h
     SOURCES += $$PWD/../rustcorebridge.cpp \
+        $$PWD/../aceventnotifier.cpp \
         $$PWD/../sitedecisionstore.cpp
     LIBS += $$RUSTCORE_LIB
     unix: LIBS += -ldl -lpthread -lm

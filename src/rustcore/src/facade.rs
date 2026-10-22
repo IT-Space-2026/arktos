@@ -35,13 +35,16 @@ use std::ptr;
 use std::sync::{LazyLock, Mutex};
 
 use crate::error::{self, RcStatus};
-use crate::{bookmarks, icons, notes, notify, profiles, settings, util};
+use crate::{bookmarks, caps, icons, notes, notify, profiles, settings, util};
 
 /// The facade ABI version — AC_API_VERSION in arktos_core.h.  Bump
 /// on every ABI-affecting addition; never renumber existing symbols
 /// or enum values.  v3 added AcCookies (RC15).  v4 added AcIcons
 /// (RC16).  v5 added AcContainers (RC19).  v6 added AcNotes (RC21).
-pub const AC_API_VERSION: u32 = 6;
+/// v7 added the ac_mw_* envelope dispatch (MB02).  v8 added the
+/// ac_events_* namespaced subscriber lane (MB03).  v9 added
+/// ac_engine_caps (MB04).
+pub const AC_API_VERSION: u32 = 9;
 
 const AC_CAP_SETTINGS: u64 = 0x01;
 const AC_CAP_PROFILES: u64 = 0x02;
@@ -90,6 +93,14 @@ pub struct AcCore {
     root: CString,
     default_name: Option<CString>,
     handles: Mutex<Vec<Live>>,
+}
+
+impl AcCore {
+    /// The data root every bound path derives from — the mw
+    /// envelope's per-call profile binder resolves under it.
+    pub(crate) fn data_root(&self) -> &str {
+        self.root.to_str().unwrap_or("")
+    }
 }
 
 /// A live minted handle, tagged by kind so ac_shutdown frees it
@@ -232,7 +243,7 @@ fn fail<T>(status: RcStatus, msg: &str) -> Result<T, RcStatus> {
 
 /// BrowserPaths::profileDataDir semantics: a non-slug id — NULL,
 /// empty, or not [a-z0-9_-]{1,64} — resolves to "default".
-fn effective_profile(id: &str) -> &str {
+pub(crate) fn effective_profile(id: &str) -> &str {
     if profiles::is_profile_id(id) {
         id
     } else {
@@ -256,7 +267,7 @@ fn bound_profile(p: *const c_char) -> String {
 /// handles need the same guarantee or first-touch writes under a
 /// fresh data root fail ENOENT, so the dir is created on the way
 /// out (best-effort — a real failure surfaces at the first write).
-fn profile_dir(root: &Path, id: &str) -> PathBuf {
+pub(crate) fn profile_dir(root: &Path, id: &str) -> PathBuf {
     let dir = root.join("profiles").join(id);
     let _ = std::fs::create_dir_all(&dir);
     dir
@@ -425,6 +436,7 @@ pub unsafe extern "C" fn ac_shutdown(core: *mut AcCore) {
     }
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         notify::set_core_callback(core as usize, None, ptr::null_mut());
+        notify::clear_event_subs(core as usize);
         let core = unsafe { Box::from_raw(core) };
         let handles: Vec<Live> = std::mem::take(
             &mut *core.handles.lock().unwrap_or_else(|e| e.into_inner()),
@@ -460,6 +472,150 @@ pub unsafe extern "C" fn ac_set_change_callback(
             notify::set_core_callback(core as usize, cb, userdata);
         }
     }));
+}
+
+/// Subscribes `cb` to the namespaced event lane (MB03) under this
+/// core — the opt-in "domain/verb" topics MW-ARCH §5 declares, each
+/// delivered with a v1 JSON payload {"v","topic","profile",…}.  The
+/// filter grammar: NULL/""/"*" takes every event, a trailing '/'
+/// ("history/") takes the namespace, anything else is an exact
+/// topic.  Returns the subscription id for ac_events_unsubscribe;
+/// 0 on failure (stashed error readable via ac_last_error).
+/// ac_shutdown drops the core's subscriptions.  Invoked
+/// synchronously on the mutating thread — the consumer must hop
+/// threads itself (AcEventNotifier queues onto its own thread).
+///
+/// # Safety
+/// `core` must come from ac_init; `topic_filter` must be
+/// NUL-terminated UTF-8 or NULL; `userdata` is passed back verbatim.
+/// `cb` must stay valid until unsubscribe/shutdown.
+#[no_mangle]
+pub unsafe extern "C" fn ac_events_subscribe(
+    core: *mut AcCore,
+    topic_filter: *const c_char,
+    cb: Option<notify::AcEventCallback>,
+    userdata: *mut c_void,
+) -> u64 {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if core.is_null() {
+            error::set_error("bad core handle");
+            return 0;
+        }
+        let Some(cb) = cb else {
+            error::set_error("event callback required");
+            return 0;
+        };
+        let filter = if topic_filter.is_null() {
+            ""
+        } else {
+            match unsafe { util::cstr(topic_filter) } {
+                Some(f) => f,
+                None => {
+                    error::set_error("bad topic filter pointer");
+                    return 0;
+                }
+            }
+        };
+        notify::subscribe_event(core as usize, filter, cb, userdata)
+    }))
+    .unwrap_or(0)
+}
+
+/// Drops one subscription made through ac_events_subscribe.
+/// RC_NOT_FOUND when (core, id) names no live subscription — the
+/// id is checked against the owning core so a caller cannot drop
+/// another core's registration.
+///
+/// # Safety
+/// `core` must come from ac_init.
+#[no_mangle]
+pub unsafe extern "C" fn ac_events_unsubscribe(
+    core: *mut AcCore,
+    subscription_id: u64,
+) -> RcStatus {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if core.is_null() {
+            error::set_error("bad core handle");
+            return RcStatus::InvalidArgument;
+        }
+        if notify::unsubscribe_event(core as usize, subscription_id) {
+            RcStatus::Ok
+        } else {
+            error::set_error("no such event subscription");
+            RcStatus::NotFound
+        }
+    }))
+    .unwrap_or(RcStatus::Crypto)
+}
+
+/// The namespaced topic registry as a JSON array —
+/// [{topic,summary,fields,produced,seen}].  `produced` means an
+/// emit site exists in-tree (declared contract); `seen` means a
+/// producer actually fired the topic this process (runtime truth).
+/// No core needed — the registry is static.  Free with
+/// ac_string_free.
+#[no_mangle]
+pub extern "C" fn ac_events_topics() -> *mut c_char {
+    util::to_c_string(notify::topics_json())
+}
+
+/// The static per-engine capability matrix as JSON (v9; MB04) —
+/// what each engine supports when its backend is present, graded
+/// supported|partial|unsupported with a note wherever the grade
+/// needs the caveat.  `engine_id` selects one row —
+/// "qtwebengine" | "servo" | "webkit", with the Qt backend->id()
+/// spelling "webengine" accepted as the qtwebengine alias;
+/// NULL/"" emits the whole matrix.  The table is static by design:
+/// backend PRESENCE is a runtime question this call does not
+/// answer (the servo artifact probe, WPE linkage).  `*out`
+/// receives the UTF-8 document — caller frees with
+/// ac_buffer_free.  AC_ERR_INVALID on an unknown id or NULL out;
+/// the message is stashed for ac_last_error.
+///
+/// # Safety
+/// `engine_id` must be NUL-terminated UTF-8 or NULL; `out` must
+/// point to writable AcBuffer storage.
+#[no_mangle]
+pub unsafe extern "C" fn ac_engine_caps(
+    engine_id: *const c_char,
+    out: *mut crate::RcBuffer,
+) -> RcStatus {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(out) = (unsafe { out.as_mut() }) else {
+            error::set_error("null out buffer");
+            return RcStatus::InvalidArgument;
+        };
+        out.data = ptr::null_mut();
+        out.len = 0;
+        let id = if engine_id.is_null() {
+            ""
+        } else {
+            match unsafe { util::cstr(engine_id) } {
+                Some(s) => s,
+                None => {
+                    error::set_error("bad engine_id pointer");
+                    return RcStatus::InvalidArgument;
+                }
+            }
+        };
+        let json = if id.is_empty() {
+            Some(caps::matrix_json())
+        } else {
+            caps::engine_json(id)
+        };
+        match json {
+            Some(j) => {
+                error::clear_error();
+                crate::buffer_out(out, j.into_bytes());
+                RcStatus::Ok
+            }
+            None => {
+                error::set_error(&format!("unknown engine id '{id}'"));
+                RcStatus::InvalidArgument
+            }
+        }
+    }))
+    .unwrap_or(RcStatus::Crypto)
 }
 
 // ---- module accessors ----------------------------------------------------

@@ -145,6 +145,7 @@ mod bidi;
 mod blocklist;
 mod bookmarkhtml;
 mod bookmarks;
+mod caps;
 mod clearplan;
 mod confusables_table;
 mod containers;
@@ -157,6 +158,7 @@ mod history;
 mod icons;
 mod inifmt;
 mod lookalike;
+mod mw;
 mod notes;
 mod notify;
 mod omnibox;
@@ -2363,6 +2365,7 @@ pub unsafe extern "C" fn rc_hist_add(
     });
     if st == RcStatus::Ok {
         notify::emit("history");
+        notify::emit_event("history/changed", serde_json::json!({"op": "visit"}));
     }
     st
 }
@@ -2389,6 +2392,7 @@ pub unsafe extern "C" fn rc_hist_update_title(
     });
     if st == RcStatus::Ok {
         notify::emit("history");
+        notify::emit_event("history/changed", serde_json::json!({"op": "title"}));
     }
     st
 }
@@ -2416,6 +2420,7 @@ pub unsafe extern "C" fn rc_hist_remove(
     });
     if st == RcStatus::Ok {
         notify::emit("history");
+        notify::emit_event("history/changed", serde_json::json!({"op": "remove"}));
     }
     st
 }
@@ -2436,6 +2441,7 @@ pub unsafe extern "C" fn rc_hist_clear() -> RcStatus {
     let st = status_of(|| history::with(|h| h.clear()));
     if st == RcStatus::Ok {
         notify::emit("history");
+        notify::emit_event("history/changed", serde_json::json!({"op": "clear"}));
     }
     st
 }
@@ -2518,6 +2524,10 @@ pub unsafe extern "C" fn rc_hist_clear_since(since_ms: i64) -> RcStatus {
     let st = status_of(|| history::with(|s| s.clear_since(since_ms)));
     if st == RcStatus::Ok {
         notify::emit("history");
+        notify::emit_event(
+            "history/changed",
+            serde_json::json!({"op": "clear_since"}),
+        );
     }
     st
 }
@@ -2550,6 +2560,10 @@ pub unsafe extern "C" fn rc_hist_expire_older_than(
     });
     if st == RcStatus::Ok {
         notify::emit("history");
+        notify::emit_event(
+            "history/changed",
+            serde_json::json!({"op": "expire"}),
+        );
     }
     st
 }

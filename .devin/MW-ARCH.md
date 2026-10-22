@@ -177,9 +177,9 @@ list (§8) doing its job.
 Three independent versions, none may be conflated:
 
 1. **`AC_API_VERSION`** (`ac_api_version()`) — the C ABI revision.
-   Bumps to v7 when `ac_mw_dispatch`/`ac_mw_version` land
-   (append-only, per RUSTCORE-ABI §2). A caller learns the mw_*
-   symbols exist from this alone.
+   v7 added `ac_mw_dispatch`/`ac_mw_version`, v8 the `ac_events_*`
+   lane, v9 `ac_engine_caps` (append-only, per RUSTCORE-ABI §2). A
+   caller learns the mw_*/events/caps symbols exist from this alone.
 2. **Envelope schema version** — the frame's `version` byte, starting
    at 1. `ac_mw_version()` reports the max the library accepts. A
    request with `version` newer than the library gets a `bad_version`
@@ -339,6 +339,8 @@ kept on typed FFI per §2's policy. `—` = not applicable.
 | `ac_string_free` | L | flat | destructor |
 | `ac_buffer_free` | L | flat | destructor — frees `ac_mw_dispatch` output |
 | `ac_set_change_callback` | E | flat | event-lane registration |
+| `ac_events_subscribe` `ac_events_unsubscribe` `ac_events_topics` | E | flat | namespaced event lane (MB03) |
+| `ac_engine_caps` | Q | flat | static per-engine capability matrix (MB04) — static registry, no core |
 | `ac_settings` `ac_profiles` `ac_history` `ac_bookmarks` `ac_policy` `ac_session` `ac_cookies` `ac_icons` `ac_containers` `ac_notes` | L | flat | profile-bound handle mints; envelope ops rebind per call instead |
 | `ac_history_exists` | Q | en route | existence probe without minting — `history.exists` |
 | `ac_settings_close` `ac_profiles_close` `ac_hist_close` `ac_bm_close` `ac_policy_close` `ac_session_close` `ac_cookies_close` `ac_icons_close` `ac_containers_close` `ac_notes_close` | L | flat | handle release |

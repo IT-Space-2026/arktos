@@ -65,6 +65,7 @@ SUBDIRS  = \
     readersanitizer \
     rustcontainers \
     rustdownload \
+    rustevents \
     rustnotes \
     rustprofiles \
     safetext \
