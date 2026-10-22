@@ -13,8 +13,11 @@ engine backends consume it.
 CEF SCOPE (user directive): the RC rows run first — after they finish,
 the CEF01–CEF15 rows implement a real CEF backend under the existing Qt
 Widgets chrome (Qt stays; only the Chromium embed changes). CEF01 is a
-GATE row: it honors RC11's go/no-go conclusion — if the spike said
-no-go it blocks the remaining CEF rows instead of porting blindly.
+GATE row: RC11 concluded NO-GO but explicitly excluded extension
+research — CEF01 first evaluates whether CEF's chrome runtime really
+hosts MV3 extensions (Bitwarden shape).  If yes the no-go is
+overridden on the extension-fidelity driver and the port proceeds;
+if no it blocks the remaining CEF rows.  Read the row's AMENDMENT.
 
 Your job in THIS run:
 

@@ -48,7 +48,7 @@ Rules for the agent working this file:
 | RC18 | rustcore `opensearch` module — engine XML parse/validate + registry CRUD | done | 0 | audit: OSE01 module+adoption complete vs spec — parse/validate (rc_opensearch_parse+rc_suggest_parse), per-profile searchengines.json CRUD rc_ose_*, legacy xml+QSettings once-migration, Qt-parity URL expansion; verified cargo 349/349, 4 ose autotests 99/99 offscreen temp-XDG, make clean, no-rust TU clean |
 | RC19 | rustcore `containers` module — container registry + storage namespace map | done | 0 | containers registry as typed RC02-settings specialization (C++ containers/ keys), rc_containers_* + AcContainers facade at ABI v5, namespace parity w/ ContainerManager; verified cargo 354/354, tst_rustcontainers 3/3 + tst_containermanager 37/37 offscreen, make clean, no-rust TU clean |
 | RC20 | rustcore `updates` module — update-check state + manifest/semver policy | done | 0 | updates module: semver/manifest/trusted-URL/platform-pick/channel gate ported + adopted by UpdateChecker, global-scope last-check/snooze/skip/channel state over RC02 settings; verified cargo 362/362, tst_updatechecker 17/17 offscreen, make clean, no-rust TU clean |
-| RC21 | rustcore `notes` module — side-panel notes persistence | in_progress | 0 | needs:task:RC07 needs:tool:cargo |
+| RC21 | rustcore `notes` module — side-panel notes persistence | done | 0 | notes module + facade v6 + NotesModel adoption; read-compat, C++<->FFI verified both directions |
 
 | CEF01 | CEF gate + bootstrap — honor RC11 go/no-go; fetch cef_binary, build libcef_dll_wrapper, Qt-widget host proof | pending | 0 | needs:task:RC11 needs:task:RC08 needs:tool:cargo |
 | CEF02 | CefBackend skeleton — EngineInterface impl, CefBrowserHost on a widget, nav/title/progress wiring | pending | 0 | needs:task:CEF01 |
@@ -1063,6 +1063,51 @@ RC07 lands.
 Verify: cargo test — CRUD round-trip; notes written by C++ load via
 FFI and vice versa.
 
+
+Completed 2026-10-22.
+
+Audit outcome: the existing store was already a plain profile-dir
+file — <data>/profiles/<id>/notes.json, a compact JSON array of
+{"body","markdown","title"} objects in display order — so this
+landed as a read-compat module, not a settings fold-in.  serde_json
+emits the same byte shape the QJsonDocument writer produces
+(sorted keys, compact separators, \uXXXX controls, raw UTF-8) —
+verified byte-identical in the unit tests.
+
+- src/rustcore/src/notes.rs: RcNotes store — root+profile, explicit
+  file, and volatile (off-the-record) bindings; tolerant load
+  matching the C++ reader (absent/unreadable/non-array -> empty,
+  non-object elements -> blank notes, wrong-typed fields ->
+  defaults); dirty tracking + atomic temp+rename+fsync commit with
+  parent-dir mkpath, the AutoSaver debounce carried across the ABI;
+  close flushes a dirty persistent store.
+- Legacy surface: rc_notes_open/_open_file/_close/_count/_get/
+  _list/_insert/_set_title/_set_body/_set_markdown/_remove/_sync/
+  _is_persistent/_is_dirty in rustcore.h + lib.rs.
+- Facade (ABI v6): AC_CAP_NOTES 0x200, AcNotes = RcNotes, ac_notes
+  binds profiles/<id>/notes.json (NULL/non-slug -> "default"),
+  ac_notes_* ops forward with the bound profile stamped on the
+  "notes" notification; ac_shutdown reclaims.
+- C++ adoption: NotesModel mints through RustCoreBridge::notes when
+  the bridge serves (facade handle) else rc_notes_open_file;
+  m_notes stays the Qt read cache, mutations mirror into the store,
+  save() is rc_notes_sync, the dtor closes (ac_/rc_ per mint);
+  CONFIG+=no-rust keeps the Qt file I/O untouched.
+- Drive-by fixes found in the lane: the AC_ERR_* aliases in
+  arktos_core.h referenced a never-shipped RC_ERR_* enum (compile
+  error on first use) — repointed at real RcStatus values and the
+  ABI doc's fictional numbering corrected; acprobe's capability
+  mask was stale since RC19 (AC_CAP_CONTAINERS missing) — mask
+  fixed, containers+notes legs added.
+- autotests/rustnotes: FFI->C++ and C++->FFI interchange on both
+  the explicit-file lane and profiles/<id>/ via instanceFor;
+  no-rust fallback leg asserts the Qt contract alone.
+
+Verification: cargo test 370/370 (7 notes::tests + ffi_surface
+notes legs); acprobe OK (32 callback events); qmake+make clean;
+tst_notesmodel 10/10 and tst_rustnotes 5/5 offscreen; no-rust TU
+compiles warning-free.
+
 ### CEF01
 
 Gate + bootstrap. FIRST read `### RC11`'s appended evidence — if the
@@ -1088,6 +1133,34 @@ and whether windowed/OSF worked on this host. Also record the codec
 verdict: official binaries lack proprietary codecs
 (ffmpeg_branding=chrome) — decide open-codecs-only vs custom CEF
 build and write the decision into the details section.
+
+
+AMENDMENT (user directive, 2026-10-22): the gate is not a binary
+honor-of-RC11 — the spike explicitly excluded extension research, and
+extension fidelity is the only plausible CEF-unique driver.  BEFORE
+applying the no-go, CEF01 spends its run answering one question:
+
+  Does CEF's chrome runtime (--enable-chrome-runtime / ChromeRuntime
+  flavor in the standard binary distribution) actually host MV3
+  extensions — specifically the Bitwarden shape: background service
+  worker, action popup, chrome.storage, content-script messaging?
+
+Method: fetch the cef_binary build first anyway (it is needed for the
+bootstrap either way), enable the chrome runtime, and load a fixture
+MV3 extension + real Bitwarden .zip/.crx in a minimal cefclient-style
+host.  Record what loads, what API surface is present (chrome.scripting,
+service_worker startup, popup render), and whether alloy is the only
+flavor shipped.  Sources: CEF release notes / issue tracker /
+spotify-builds docs — cite them in the outcome.
+
+Then the verdict:
+- Extensions work (or plausibly work with bounded glue) → the
+  no-go is OVERRIDDEN on the extension-fidelity driver: proceed to the
+  rest of CEF01's bootstrap (wrapper build, QWidget render proof) and
+  CEF02+ stays open.
+- Extensions do not work → RC11's NO-GO stands: block CEF02-CEF15 with
+  `blocked:RC11 no-go + no extension driver — <what the spike found>`
+  and mark this row done with the spike outcome as its note.
 
 ### CEF02
 
