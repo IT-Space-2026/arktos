@@ -39,7 +39,7 @@ Rules for the agent working this file:
 | RC09 | Servo/WebKit backends consume the same facade + capability reporting | done | 0 | Servo/WebKit profiles bound to window persona: shared profileId() resolver, EngineTab history->instanceFor(persona), servo persona-named profile cache, persona-scoped adblock/downloads; smoke quick_exit on pre-existing teardown segv — verified: --servo-smoke all legs PASS incl history-recorded rc=0, webkit=1 build clean, no-rust TUs clean |
 | RC10 | Packaging: new crates linked + staged in deb/rpm/flatpak/dmg/exe legs | done | 0 | packaging audit closed the silent no-rust gap: ac_init/servo_embed link-proofs asserted on all 5 legs (deb both tags, rpm, flatpak, dmg, exe) + rust-core added to packages.yml triggers; fixed pre-existing verify abort (set -e grep-to-sed pipe) + sbin PATH; CI run 39703330845 all-green on this branch |
 | RC11 | CEF spike — bounded adapter design + QWebEngine touchpoint audit + go/no-go | done | 0 | CEF spike landed .devin/CEF-SPIKE.md — facade engine-complete (ac_* map), 1427-touchpoint/102-file inventory (must-port 74f/1176, facade-absorbed 2f+slice, droppable 26f/247), gaps G1-G6, cefbackend sketch, ~16-27wk, verdict NO-GO; doc-only verify: inventory numbers grep-reproduced |
-| RC12 | rustcore `reader` module — engine-agnostic article extraction (reader mode) | pending | 0 | needs:task:RC01 needs:tool:cargo |
+| RC12 | rustcore `reader` module — engine-agnostic article extraction (reader mode) | done | 0 | reader module audited (landed RDR01) + spec gaps closed: lang field added to verdict, 7-fixture corpus + determinism + hostile-markup legs, new tst_readersanitizer C++ parity suite — cargo 304/304, tst 13/13 offscreen, make -j2 clean after pruning stale servo=1 objects |
 | RC13 | rustcore `sessions` module — per-profile tab/window session store | pending | 0 | needs:task:RC07 needs:tool:cargo |
 | RC14 | `torctl` client — Tor control protocol in Rust (NEWNYM, circuits, auth) | pending | 0 | needs:tool:cargo |
 | RC15 | rustcore `cookies` module — per-profile cookie db for Servo/WPE (Chromium stays engine-owned) | pending | 0 | needs:task:RC07 needs:tool:cargo |
@@ -679,6 +679,58 @@ Verify: cargo test on a fixture corpus (save real article pages of
 different shapes); extraction parity-or-better vs the current C++
 readersanitizer on the same fixtures; `rc_reader_extract` FFI returns
 identical output on repeat calls.
+
+
+Outcome (2026-10-22): audit confirmed RC01's call — the module landed
+as RDR01 (`readability.rs`: dom_smoothie, the maintained Rust port of
+the same Mozilla Readability.js pipeline the injected-JS path ran;
+`rc_readability_probe` + `rc_readability_extract` — the spec's
+"rc_reader_*" naming resolved to the readability_* spelling the
+landing chose; same surface, same FFI contract).  readermode.cpp
+consumes it under ARKTOS_RUSTCORE (probe + enter paths), the JS
+driver stays as the no-rust fallback, and the overlay re-runs
+ReaderSanitizer on the fragment as the second belt.  Remaining spec
+gaps closed:
+
+- Metadata: the verdict JSON now carries "lang" (the spec's
+  title/byline/lang/excerpt/length set — Article::lang from the
+  <html lang> attribute); field lists in rustcore.h and lib.rs doc
+  comments updated.
+- Fixture corpus: src/rustcore/testdata/reader/*.html — seven saved
+  pages of different real-world shapes (nav/aside/footer-heavy news
+  article, div-shaped blog post, schema.org recipe page, docs page
+  with tables/pre, hydrated SPA <main>-only body with lang="hu",
+  hostile-markup article, non-article search results).  cargo's
+  corpus_fixture_verdicts pins each fixture's probe/ok/lang verdict
+  plus a body marker that must survive and clutter markers that must
+  not; corpus_recipe_extracts_story records the honest parity note —
+  the list-heavy recipe card scores below the candidate threshold and
+  drops, matching the upstream Readability.js weakness this port
+  shares (parity, not a regression).
+- Determinism: readability::extract_is_deterministic + a repeat-call
+  leg in ffi_surface::readability_and_extverify_entry_points assert
+  byte-identical verdicts through both the Rust API and the C ABI.
+- C++ parity leg: new autotests/readersanitizer (registered in
+  autotests.pro) embeds the same corpus via qrc and runs the shipping
+  path end to end — probe agrees with the verdict, extract -> C++
+  ReaderSanitizer keeps the marker above the READ03 textLength/
+  hasMedia floor, hostile markup absent at both sanitizer boundaries;
+  ffiDeterministic/ffiBadInput cover the ABI spellings.  The
+  C++-only policy legs run under no-rust too (FFI legs QSKIP),
+  pinning the contract the JS fallback path relies on.
+
+Verified: cargo test 304/304 (16 readability legs incl. the corpus,
+determinism and hostile-input bounds); qmake && make -j2 (rust on)
+0-error — required deleting 11 stale .obj files minted under the
+RC09-era servo=1 webkit=1 qmake flags (enginetab.o carried ServoView
+refs into a now-servoless link; qmake does not invalidate objects on
+DEFINES changes — pre-existing debris, not a code bug);
+tst_readersanitizer 13/13 offscreen --disable-gpu; no-rust TU syntax
+check on tst_readersanitizer.cpp with the ARKTOS_* defines stripped —
+clean.  Engine note for the honesty rule: the transform is
+engine-agnostic by construction (serialized DOM in, verdict out), but
+the overlay/trigger remains WebView-side — Servo/WebKit tabs gain no
+reader surface this row and none is claimed.
 
 ### RC13
 

@@ -1649,7 +1649,7 @@ pub unsafe extern "C" fn rc_readability_probe(html: *const u8, len: usize) -> i3
 /// Probe + extract in one pass — the ReaderMode::enter() path.  The
 /// JSON verdict (rc_buffer_free) always carries
 /// {"ok","probably","title","byline","siteName","excerpt","dir",
-/// "length","content"} — "content" is the article fragment sanitized
+/// "lang","length","content"} — "content" is the article fragment sanitized
 /// against the reader-view ruleset and is populated only when "ok".
 /// RC_INVALID_ARGUMENT on bad pointers or oversized input.
 ///

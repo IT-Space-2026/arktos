@@ -445,7 +445,7 @@ void rc_pdfdoc_close(uintptr_t doc);
  *
  * rc_readability_extract: JSON verdict to outJson (rc_buffer_free):
  *   {"ok":bool, "probably":bool, "title", "byline", "siteName",
- *    "excerpt", "dir", "length":n, "content":"..."}
+ *    "excerpt", "dir", "lang", "length":n, "content":"..."}
  * "ok" mirrors the JS enter() contract — false when the page is not
  * article-like or the extractor found nothing; "content" is populated
  * only when ok and arrives re-sanitized against the reader-view

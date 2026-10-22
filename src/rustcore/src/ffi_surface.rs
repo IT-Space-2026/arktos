@@ -590,6 +590,22 @@ fn readability_and_extverify_entry_points() {
     );
     let verdict = take_buf(&mut out);
     assert!(String::from_utf8_lossy(&verdict).contains("\"ok\":true"));
+    assert!(String::from_utf8_lossy(&verdict).contains("\"lang\""));
+    // Repeat calls over the same input return byte-identical verdicts —
+    // the reader overlay must never render a different article on retry.
+    let mut out2 = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::rc_readability_extract(
+                article.as_ptr(),
+                article.len(),
+                base.as_ptr(),
+                &mut out2,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(take_buf(&mut out2), verdict);
     assert_eq!(
         unsafe {
             crate::rc_readability_extract(ptr::null(), 4, base.as_ptr(), &mut out)
