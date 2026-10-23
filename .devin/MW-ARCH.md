@@ -1,16 +1,21 @@
-# MW-ARCH — Arktos middleware bridge architecture (MB01)
+# MW-ARCH — Arktos middleware bridge architecture (MB01; finalized MB08)
 
 The typed command/query/event surface between the Qt shell, the Rust
 core (`src/rustcore`), and the engine adapters. This document is the
-design contract the MB02–MB07 rows implement; where it and a code
-comment disagree, this file wins (same rule as RUSTCORE-ABI.md).
+contract the MB02–MB07 rows implemented — §7's registry, §8's route
+column and §9's cutover table now record the LANDED state; where it
+and a code comment disagree, this file wins (same rule as
+RUSTCORE-ABI.md).
 
 Sources of record this doc was written against:
-`src/rustcore/include/arktos_core.h` (facade ABI v6),
+`src/rustcore/include/arktos_core.h` (facade ABI v9),
+`src/rustcore/src/mw/mod.rs` (the frozen domain/op tables — the
+`mw.describe` wire truth), `src/rustcore/src/notify.rs` (both event
+lanes), `src/rustcore/src/caps.rs` (the static engine matrix),
 `src/rustcore/include/rustcore.h` (legacy `rc_*`/`rv_*` surface),
 `.devin/RUSTCORE-ABI.md`, `.devin/RUSTCORE-ARCH.md`,
-`src/rustcore/src/notify.rs` (the event lane as it exists today),
-`src/rustcorebridge.{h,cpp}` (the Qt-side consumer).
+`src/rustcorebridge.{h,cpp}` and `src/aceventnotifier.{h,cpp}`
+(the Qt-side consumers).
 
 ## 1. Op classes
 
@@ -114,7 +119,7 @@ off  size  field
 - Responses echo `domain`/`op`; `type=4` carries the error object.
 
 ```c
-/* Proposed signature (MB02 freezes it in arktos_core.h): */
+/* Landed signature (arktos_core.h, ABI v7): */
 AcStatus ac_mw_dispatch(AcCore *core, const uint8_t *req,
                       size_t req_len, AcBuffer *out);
 uint32_t ac_mw_version(void);
@@ -187,8 +192,11 @@ Three independent versions, none may be conflated:
    stale caller degrades, not dies.
 3. **Per-domain schema** — reported by the `mw.describe` op
    (domain 0): a JSON self-description
-   `{envelope_version, domains:[{id,name,ops:[{id,name,class,
-   profile_scoped,since}]}], events:[topic,...]}`. This is what makes
+   `{envelope_version, header_len, error_codes:[...],
+   domains:[{id,name,ops:[{id,name,class,profile_scoped,since}]}],
+   events:[topic,...]}` (landed shape; `events` is the flat-lane
+   store-topic list — the namespaced registry is
+   `ac_events_topics()`). This is what makes
    the bridge self-describing: `acprobe --bridge` (MB05) walks this
    table instead of hardcoding ops, and the MB04 caps table can
    cross-reference it.
@@ -243,13 +251,39 @@ Two non-notify event lanes also exist and stay as-is:
 - **Vault progress** — `RvProgressCallback`, synchronous on the
   caller's thread.
 
-**MB03's job, as specced here:** namespaced topics
-(`history/changed`, `policy/changed`, `profile/changed`,
-`session/saved`), a payload schema (v1: `{"topic","profile",…}`
-JSON), subscriber registration per topic, and a Qt-side
-`AcEventNotifier` QObject converting the callback into typed
-QSignals. Legacy topics keep firing — subscribers opt into the
-namespaced lane; nothing existing is re-routed.
+**Landed (MB03):** the namespaced lane ships as specced —
+
+- `ac_events_subscribe(core, filter, cb, userdata)` /
+  `ac_events_unsubscribe` / `ac_events_topics` at ABI v8. Filter
+  grammar: NULL/""/"*" = all, trailing '/' = the namespace,
+  otherwise exact. Subscriptions are per-core, id-keyed, and die
+  with `ac_shutdown`; one core cannot unsubscribe another's.
+- Payload schema v1: `{"v":1,"topic":<t>,"profile":<bound id or
+  null>, ...domain fields}` — the envelope keys are reserved
+  (producers cannot overwrite them); `profile` is stamped from the
+  same thread-local hint the flat lane uses.
+- The topic registry (`notify::EVENT_TOPICS`, reported by
+  `ac_events_topics()`; the `mw.describe` `events` array instead
+  lists the 14 flat-lane store topics above) carries
+  honesty bits per topic: `produced` = an emit site exists
+  in-tree, `seen` = one actually fired this process. Declared
+  today: `history/changed` (produced — the history mutation sites
+  in lib.rs emit `op` = visit|title|remove|clear|clear_since|
+  expire on BOTH lanes), `policy/changed`, `profile/changed`,
+  `session/saved` (declared contract, not yet produced — the
+  registry says so, never claims otherwise). `mw.emit` (domain 0)
+  is the test/probe producer: it fires only registry-declared
+  topics, so it cannot mint noise outside the contract.
+- Qt side: `AcEventNotifier` (`src/aceventnotifier.{h,cpp}`) —
+  subscribes with a topic filter and re-emits each delivery as a
+  queued `storeChanged(QString topic, QByteArray payload)` signal
+  on its own thread. Its userdata guard block is deliberately
+  leaked: a Rust thread mid-callback while the destructor runs
+  cannot be waited on, and the dead flag is the only ordering
+  primitive that survives the free.
+
+Legacy topics keep firing — subscribers opt into the namespaced
+lane; nothing existing was re-routed.
 
 ## 6. Keep-out list — Qt-side forever
 
@@ -293,8 +327,9 @@ the task spec, restated as the honest boundary):
 
 ## 7. Domain registry
 
-Proposed domain ids for the envelope header (MB02 freezes them in
-code; `mw.describe` reports the live table):
+Landed domain ids for the envelope header (frozen in
+`src/rustcore/src/mw/mod.rs`'s `DOMAINS` table; `mw.describe`
+reports the live table — this doc mirrors it):
 
 | id | domain | covers |
 |----|--------|--------|
@@ -315,17 +350,25 @@ code; `mw.describe` reports the live table):
 | 14 | `services` | stateless queries: urlstrip, omnibox, palette, qrcode, readability, parsers, tls, ua build, clearplan, pdfdoc sanitize |
 | 15 | `extverify` | extension package/manifest verification |
 | 16 | `vault` | rv_* archive ops |
-| 17 | `tor` | tor control client |
-| 18 | `bidi` | devtools BiDi client |
+| 17 | `tor` | tor control client — id reserved, zero ops registered |
+| 18 | `bidi` | devtools BiDi client — id reserved, zero ops registered |
 
-Domains 11 and 14–18 are rc-only today: the envelope gives them a
-facade spelling without an ABI bump per op.
+Domains 11 and 14–18 cover rc-only surfaces: the envelope gives
+them a facade spelling without an ABI bump per op. Domains 17/18
+landed as reserved-but-empty — the tor control link and the BiDi
+client are live socket handles, exactly the §2.3 keep-flat case;
+the ids exist so `mw.describe` can say "registered, no ops" rather
+than `unknown_domain`.
 
 ## 8. Export classification — the full surface
 
 Legend: **Q**=query, **C**=command, **E**=event, **L**=lifecycle
-(stays flat — §1). "En route" = slated for the envelope; "flat" =
-kept on typed FFI per §2's policy. `—` = not applicable.
+(stays flat — §1). Route is the LANDED state: **envelope** = an op
+is registered in the domain table and reachable through
+`ac_mw_dispatch` today (the parenthetical names it);
+**registered** = the op exists but no Qt caller dispatches it;
+**flat** = typed FFI only, per §2's policy. `—` = not applicable.
+`mw.describe` is the wire truth — these tables mirror it.
 
 ### 8.1 Facade housekeeping (`arktos_core.h`)
 
@@ -334,88 +377,105 @@ kept on typed FFI per §2's policy. `—` = not applicable.
 | `ac_api_version` | Q | flat | ABI discovery — must precede the envelope's existence |
 | `ac_capabilities` | Q | flat | module-presence bits |
 | `ac_init` | L | flat | mints `AcCore`; the envelope's required first arg |
-| `ac_shutdown` | L | flat | frees core + all minted handles |
+| `ac_shutdown` | L | flat | frees core + all minted handles + event subs |
 | `ac_last_error` | Q | flat | TLS error read; envelope errors also arrive in-band |
 | `ac_string_free` | L | flat | destructor |
 | `ac_buffer_free` | L | flat | destructor — frees `ac_mw_dispatch` output |
-| `ac_set_change_callback` | E | flat | event-lane registration |
-| `ac_events_subscribe` `ac_events_unsubscribe` `ac_events_topics` | E | flat | namespaced event lane (MB03) |
+| `ac_set_change_callback` | E | flat | flat-lane event registration |
+| `ac_mw_dispatch` `ac_mw_version` | — | IS the envelope | the transport itself; status is transport-only |
+| `ac_events_subscribe` `ac_events_unsubscribe` `ac_events_topics` | E | flat | namespaced event lane (§5) — registration, never dispatched |
 | `ac_engine_caps` | Q | flat | static per-engine capability matrix (MB04) — static registry, no core |
 | `ac_settings` `ac_profiles` `ac_history` `ac_bookmarks` `ac_policy` `ac_session` `ac_cookies` `ac_icons` `ac_containers` `ac_notes` | L | flat | profile-bound handle mints; envelope ops rebind per call instead |
-| `ac_history_exists` | Q | en route | existence probe without minting — `history.exists` |
+| `ac_history_exists` | Q | envelope | `history.exists` — the probe Qt actually dispatches |
 | `ac_settings_close` `ac_profiles_close` `ac_hist_close` `ac_bm_close` `ac_policy_close` `ac_session_close` `ac_cookies_close` `ac_icons_close` `ac_containers_close` `ac_notes_close` | L | flat | handle release |
 
 ### 8.2 settings (RC02)
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `ac_settings_contains` `ac_settings_get` `ac_settings_get_string` `ac_settings_get_bool` `ac_settings_get_int` `ac_settings_get_double` `ac_settings_get_bytes` `ac_settings_get_list` `ac_settings_list` | Q | en route — batch reads are the envelope win |
-| `ac_settings_set_string` `ac_settings_set_bool` `ac_settings_set_int` `ac_settings_set_double` `ac_settings_set_bytes` `ac_settings_set_list` `ac_settings_remove` `ac_settings_sync` `ac_settings_import_ini` | C | en route |
+| `ac_settings_contains` `ac_settings_get` `ac_settings_get_string` `ac_settings_list` | Q | envelope — settings.contains/get/get_string/list; batch reads are the envelope win |
+| `ac_settings_get_bool` `ac_settings_get_int` `ac_settings_get_double` `ac_settings_get_bytes` `ac_settings_get_list` | Q | envelope via `settings.get` — the `{"t","v"}` typed doc covers every scalar getter; no per-type op registered |
+| `ac_settings_set_string` `ac_settings_set_bool` `ac_settings_set_int` `ac_settings_set_double` `ac_settings_set_bytes` `ac_settings_set_list` | C | envelope via `settings.set` — same typed doc in |
+| `ac_settings_remove` `ac_settings_sync` `ac_settings_import_ini` | C | envelope — settings.remove/sync/import_ini |
 | `rc_settings_open` `rc_settings_close` | L | flat (legacy spelling; `ac_settings_close` is §8.1) |
-| `rc_settings_contains` `rc_settings_get` `rc_settings_get_string` `rc_settings_get_bool` `rc_settings_get_int` `rc_settings_get_double` `rc_settings_get_bytes` `rc_settings_get_list` `rc_settings_list` | Q | en route via same ops |
-| `rc_settings_set_string` `rc_settings_set_bool` `rc_settings_set_int` `rc_settings_set_double` `rc_settings_set_bytes` `rc_settings_set_list` `rc_settings_remove` `rc_settings_sync` `rc_settings_import_ini` | C | en route via same ops |
+| `rc_settings_contains` `rc_settings_get` `rc_settings_get_string` `rc_settings_get_bool` `rc_settings_get_int` `rc_settings_get_double` `rc_settings_get_bytes` `rc_settings_get_list` `rc_settings_list` | Q | envelope via same ops — also RustCoreSettings' no-bridge fallback |
+| `rc_settings_set_string` `rc_settings_set_bool` `rc_settings_set_int` `rc_settings_set_double` `rc_settings_set_bytes` `rc_settings_set_list` `rc_settings_remove` `rc_settings_sync` `rc_settings_import_ini` | C | envelope via same ops |
 
 ### 8.3 profiles (RC03)
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `ac_profiles_list` `ac_profiles_get` `ac_profiles_active` `ac_profiles_dir` `ac_profiles_cache_dir` `ac_profiles_engine_storage_dir` `ac_profiles_engine_cache_dir` `ac_profiles_settings_dir` `ac_profiles_avatar_path` `ac_profiles_file` `ac_profiles_slugify` | Q | en route |
-| `ac_profiles_reload` `ac_profiles_create` `ac_profiles_rename` `ac_profiles_set_avatar` `ac_profiles_delete` `ac_profiles_set_active` | C | en route |
+| `ac_profiles_list` `ac_profiles_get` | Q | envelope — profiles.list/get |
+| `ac_profiles_reload` `ac_profiles_create` `ac_profiles_rename` `ac_profiles_set_avatar` `ac_profiles_delete` | C | envelope — profiles.reload/create/rename/set_avatar/delete |
+| `ac_profiles_active` `ac_profiles_set_active` | Q/C | flat — the ambient persona is per-handle in-memory state; an envelope op would read a fresh handle's "default" and the set would die with the call (§9) |
+| `ac_profiles_dir` `ac_profiles_cache_dir` `ac_profiles_engine_storage_dir` `ac_profiles_engine_cache_dir` `ac_profiles_settings_dir` `ac_profiles_avatar_path` `ac_profiles_file` `ac_profiles_slugify` | Q | flat — pure path math, no store I/O to batch |
 | `rc_profiles_open` `rc_profiles_close` | L | flat |
-| `rc_profiles_list` `rc_profiles_get` `rc_profiles_active` `rc_profiles_dir` `rc_profiles_cache_dir` `rc_profiles_engine_storage_dir` `rc_profiles_engine_cache_dir` `rc_profiles_settings_dir` `rc_profiles_avatar_path` `rc_profiles_file` `rc_profiles_slugify` | Q | en route |
-| `rc_profiles_reload` `rc_profiles_create` `rc_profiles_rename` `rc_profiles_set_avatar` `rc_profiles_delete` `rc_profiles_set_active` | C | en route |
+| `rc_profiles_list` `rc_profiles_get` | Q | envelope via same ops — the explicit-fixture-root fallback |
+| `rc_profiles_active` `rc_profiles_dir` `rc_profiles_cache_dir` `rc_profiles_engine_storage_dir` `rc_profiles_engine_cache_dir` `rc_profiles_settings_dir` `rc_profiles_avatar_path` `rc_profiles_file` `rc_profiles_slugify` | Q | flat |
+| `rc_profiles_reload` `rc_profiles_create` `rc_profiles_rename` `rc_profiles_set_avatar` `rc_profiles_delete` | C | envelope via same ops |
+| `rc_profiles_set_active` | C | flat |
 
 ### 8.4 history (RC04)
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `ac_hist_count` `ac_hist_query` `ac_hist_suggest` `ac_hist_icon_get` | Q | en route |
+| `ac_hist_count` `ac_hist_query` `ac_hist_suggest` | Q | envelope — history.count/query/suggest (query is the batch listing that retired the entry_at loop) |
+| `ac_hist_icon_get` | Q | flat — the legacy history.db icon lane, superseded by domain 8 (`icons.*`); no envelope op |
 | `ac_hist_entry_at` | Q | flat — per-row cursor paging; §2 keep-flat |
-| `ac_hist_add` `ac_hist_update_title` `ac_hist_remove` `ac_hist_clear` `ac_hist_clear_since` `ac_hist_expire_older_than` `ac_hist_icon_set` `ac_hist_icon_clear` | C | en route |
+| `ac_hist_add` `ac_hist_update_title` `ac_hist_remove` `ac_hist_clear` `ac_hist_clear_since` `ac_hist_expire_older_than` | C | envelope — history.add/update_title/remove/clear/clear_since/expire |
+| `ac_hist_icon_set` `ac_hist_icon_clear` | C | flat — same legacy icon lane |
 | `rc_hist_open` | L | flat |
-| `rc_hist_count` `rc_hist_query` `rc_history_suggest` `rc_hist_icon_get` `rc_hist_exists` | Q | en route |
+| `rc_hist_count` `rc_hist_query` `rc_history_suggest` `rc_hist_exists` | Q | envelope via same ops — also the `histAnchor()` no-bridge fallback |
+| `rc_hist_icon_get` | Q | flat |
 | `rc_hist_entry_at` | Q | flat |
-| `rc_hist_add` `rc_hist_update_title` `rc_hist_remove` `rc_hist_clear` `rc_hist_clear_since` `rc_hist_expire_older_than` `rc_hist_icon_set` `rc_hist_icon_clear` | C | en route |
+| `rc_hist_add` `rc_hist_update_title` `rc_hist_remove` `rc_hist_clear` `rc_hist_clear_since` `rc_hist_expire_older_than` | C | envelope via same ops |
+| `rc_hist_icon_set` `rc_hist_icon_clear` | C | flat |
 
 ### 8.5 bookmarks (RC05)
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `ac_bm_root` `ac_bm_get` `ac_bm_find` `ac_bm_parent` `ac_bm_child_count` `ac_bm_child_at` | Q | flat — lazy per-node walk is the tree's hot path; a `bookmarks.subtree` bulk query may be added later, it does not replace these |
-| `ac_bm_reload` `ac_bm_load_mem` `ac_bm_save` `ac_bm_create` `ac_bm_attach` `ac_bm_detach` `ac_bm_destroy` `ac_bm_set_title` `ac_bm_set_url` `ac_bm_set_desc` `ac_bm_set_expanded` `ac_bm_set_tags` `ac_bm_import_html` `ac_bm_export_html` | C | en route except `load_mem`/`import_html` bulk-buffer ops — decide in MB06 |
+| `ac_bm_get` | Q | registered (`bookmarks.get`) — a probe op; Qt's per-node walk stays flat on `m_store` (§9) |
+| `ac_bm_root` `ac_bm_find` `ac_bm_parent` `ac_bm_child_count` `ac_bm_child_at` | Q | flat — lazy per-node walk is the tree's hot path; a `bookmarks.subtree` bulk query may be added later, it does not replace these |
+| `ac_bm_create` | C | registered (`bookmarks.create`) — probe op; the model's call site is one flat call already |
+| `ac_bm_reload` `ac_bm_load_mem` `ac_bm_save` `ac_bm_attach` `ac_bm_detach` `ac_bm_destroy` `ac_bm_set_title` `ac_bm_set_url` `ac_bm_set_desc` `ac_bm_set_expanded` `ac_bm_set_tags` `ac_bm_import_html` `ac_bm_export_html` | C | flat — opaque node handles cannot cross the frame (§2.3), and the bulk ops are one scalar FFI call each with nothing batchable (§9) |
 | `rc_bm_root` `rc_bm_get` `rc_bm_find` `rc_bm_parent` `rc_bm_child_count` `rc_bm_child_at` | Q | flat |
-| `rc_bm_load` `rc_bm_load_mem` `rc_bm_save` `rc_bm_create` `rc_bm_attach` `rc_bm_detach` `rc_bm_destroy` `rc_bm_set_title` `rc_bm_set_url` `rc_bm_set_desc` `rc_bm_set_expanded` `rc_bm_set_tags` `rc_bm_import_html` `rc_bm_export_html` | C | as above |
+| `rc_bm_load` `rc_bm_load_mem` `rc_bm_save` `rc_bm_create` `rc_bm_attach` `rc_bm_detach` `rc_bm_destroy` `rc_bm_set_title` `rc_bm_set_url` `rc_bm_set_desc` `rc_bm_set_expanded` `rc_bm_set_tags` `rc_bm_import_html` `rc_bm_export_html` | C | flat — as above |
 
 ### 8.6 policy (RC06: sitedec + verdicts + lists + trust + spoof)
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `ac_sitedec_get` `ac_sitedec_list` `ac_sitedec_lookup` `ac_sitedec_snapshot` `ac_sitedec_store_present` | Q | en route — decision feeds the Qt-side interceptor (§6) |
-| `ac_sitedec_set` `ac_sitedec_remove` `ac_sitedec_clear` `ac_sitedec_replace` `ac_sitedec_reload` `ac_sitedec_reset` | C | en route |
-| `ac_policy_evaluate` `ac_policy_cookie_filter` `ac_policy_eval_generation` | Q | en route |
-| `ac_policy_call` | Q/C | en route — class inherited from the inner op |
-| `ac_policy_load_snapshot` | C | en route |
-| `ac_blocklist_check` `ac_blocklist_count` | Q | en route |
-| `ac_blocklist_load` `ac_blocklist_reload` | C | en route |
-| `ac_tranco_rank` `ac_tranco_count` `ac_tranco_file_entries` | Q | en route |
-| `ac_tranco_load` `ac_tranco_reload` | C | en route |
-| `ac_sitetrust_lookup` `ac_sitetrust_lookup_opts` `ac_lookalike_check` | Q | en route |
-| `ac_sitetrust_reload` | C | en route |
-| `ac_ua_spoof` `ac_ua_spoof_list` | Q | en route |
-| `ac_ua_spoof_set` `ac_ua_spoof_remove` | C | en route |
-| `rc_sitedec_get` `rc_sitedec_list` `rc_sitedec_lookup` `rc_sitedec_snapshot` `rc_sitedec_store_present` | Q | en route |
-| `rc_sitedec_set` `rc_sitedec_remove` `rc_sitedec_clear` `rc_sitedec_replace` `rc_sitedec_reload` `rc_sitedec_reset` | C | en route |
-| `rc_policy_evaluate` `rc_policy_cookie_filter` `rc_policy_eval_generation` | Q | en route |
-| `rc_policy_call` | Q/C | en route |
-| `rc_policy_load_snapshot` | C | en route |
-| `rc_blocklist_check` `rc_blocklist_count` | Q | en route |
-| `rc_blocklist_load` `rc_blocklist_reload` | C | en route |
-| `rc_tranco_rank` `rc_tranco_count` `rc_tranco_file_entries` | Q | en route |
-| `rc_tranco_load` `rc_tranco_reload` | C | en route |
-| `rc_sitetrust_lookup` `rc_sitetrust_lookup_opts` `rc_lookalike_check` | Q | en route |
-| `rc_sitetrust_reload` | C | en route |
-| `rc_ua_spoof` `rc_ua_spoof_list` | Q | en route |
-| `rc_ua_spoof_set` `rc_ua_spoof_remove` | C | en route |
+| `ac_sitedec_get` `ac_sitedec_list` `ac_sitedec_lookup` `ac_sitedec_snapshot` `ac_sitedec_store_present` | Q | envelope — policy.sitedec_*; the decision still feeds the Qt-side interceptor (§6) |
+| `ac_sitedec_set` `ac_sitedec_remove` `ac_sitedec_clear` `ac_sitedec_replace` `ac_sitedec_reload` `ac_sitedec_reset` | C | envelope — policy.sitedec_* |
+| `ac_policy_evaluate` `ac_policy_cookie_filter` `ac_policy_eval_generation` | Q | flat — per-navigation/per-cookie scalar verdicts are the hot path §1 keeps flat |
+| `ac_policy_call` | Q/C | flat — its own JSON dispatch; no envelope twin needed |
+| `ac_policy_load_snapshot` | C | flat |
+| `ac_blocklist_check` `ac_blocklist_count` | Q | flat — per-request verdict probe |
+| `ac_blocklist_load` | C | flat |
+| `ac_blocklist_reload` | C | envelope — policy.blocklist_reload (the DomainBlocklist commit hook) |
+| `ac_tranco_rank` `ac_tranco_count` | Q | flat — per-request verdict probe |
+| `ac_tranco_file_entries` | Q | envelope — policy.tranco_file_entries (TrancoList validation) |
+| `ac_tranco_load` | C | flat |
+| `ac_tranco_reload` | C | envelope — policy.tranco_reload |
+| `ac_sitetrust_lookup` | Q | envelope — policy.sitetrust_lookup (SitePanel verdict) |
+| `ac_sitetrust_lookup_opts` `ac_lookalike_check` | Q | flat — per-request probes |
+| `ac_sitetrust_reload` | C | flat |
+| `ac_ua_spoof` `ac_ua_spoof_list` | Q | flat — per-request probe |
+| `ac_ua_spoof_set` `ac_ua_spoof_remove` | C | flat |
+| `rc_sitedec_get` `rc_sitedec_list` `rc_sitedec_lookup` `rc_sitedec_snapshot` `rc_sitedec_store_present` | Q | envelope via same ops — also the SiteDecisionStore no-bridge fallback |
+| `rc_sitedec_set` `rc_sitedec_remove` `rc_sitedec_clear` `rc_sitedec_replace` `rc_sitedec_reload` `rc_sitedec_reset` | C | envelope via same ops |
+| `rc_policy_evaluate` `rc_policy_cookie_filter` `rc_policy_eval_generation` | Q | flat |
+| `rc_policy_call` | Q/C | flat |
+| `rc_policy_load_snapshot` | C | flat |
+| `rc_blocklist_check` `rc_blocklist_count` | Q | flat |
+| `rc_blocklist_load` `rc_blocklist_reload` | C | flat (`reload` has an envelope twin; `load` does not) |
+| `rc_tranco_rank` `rc_tranco_count` `rc_tranco_file_entries` | Q | flat / envelope — `file_entries` is registered, the verdict probes stay flat |
+| `rc_tranco_load` `rc_tranco_reload` | C | flat / envelope — `reload` registered, `load` flat |
+| `rc_sitetrust_lookup` `rc_sitetrust_lookup_opts` `rc_lookalike_check` | Q | flat — `sitetrust_lookup`'s envelope twin serves SitePanel; the hot-path probes stay flat |
+| `rc_sitetrust_reload` | C | flat |
+| `rc_ua_spoof` `rc_ua_spoof_list` | Q | flat |
+| `rc_ua_spoof_set` `rc_ua_spoof_remove` | C | flat |
 
 ### 8.7 session (RC13)
 
@@ -424,61 +484,82 @@ event-silent.
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `ac_session_load` `ac_session_exists` `ac_session_dirty` `ac_session_crash_count` `ac_session_last_exit` `ac_session_restoring` | Q | en route |
-| `ac_session_save` `ac_session_clear` `ac_session_mark_start` `ac_session_mark_exit` `ac_session_mark_terminated` `ac_session_set_restoring` | C | en route — `mark_start` returns the prev-dirty flag *and* writes the marker, so command |
-| `rc_session_load` `rc_session_exists` `rc_session_dirty` `rc_session_crash_count` `rc_session_last_exit` `rc_session_restoring` | Q | en route |
-| `rc_session_save` `rc_session_clear` `rc_session_mark_start` `rc_session_mark_exit` `rc_session_mark_terminated` `rc_session_set_restoring` | C | en route |
-| `rc_session_encode` `rc_session_decode` | Q | en route — stateless ARSS codec, no store |
+| `ac_session_load` `ac_session_exists` | Q | envelope — session.load/exists (the manifest crosses as a JSON doc) |
+| `ac_session_dirty` `ac_session_crash_count` `ac_session_last_exit` `ac_session_restoring` | Q | flat — single-scalar marker reads; main.cpp's probe legs keep them |
+| `ac_session_save` `ac_session_clear` `ac_session_mark_start` `ac_session_mark_exit` `ac_session_mark_terminated` | C | envelope — session.save/clear/mark_start/mark_exit/mark_terminated (`mark_start` returns the prev-dirty flag *and* writes the marker, so command) |
+| `ac_session_set_restoring` | C | flat — restore-loop guard; internal to the Qt restore flow |
+| `rc_session_load` `rc_session_exists` `rc_session_dirty` `rc_session_crash_count` `rc_session_last_exit` `rc_session_restoring` | Q | flat — the load/exists twins exist on the envelope; the scalar marker reads stay flat |
+| `rc_session_save` `rc_session_clear` `rc_session_mark_start` `rc_session_mark_exit` `rc_session_mark_terminated` | C | envelope via same ops — also the main.cpp probe-leg flat spelling |
+| `rc_session_set_restoring` | C | flat |
+| `rc_session_encode` `rc_session_decode` | Q | flat — stateless ARSS codec; the self-test legs exercise it directly |
 
 ### 8.8 cookies (RC15)
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `ac_cookies_role` `ac_cookies_get` `ac_cookies_list` `ac_cookies_count` `ac_cookies_gate` | Q | en route |
-| `ac_cookies_for_url` | Q | en route — lazy-expiry eviction footnote, §1 |
-| `ac_cookies_set_role` `ac_cookies_set` `ac_cookies_remove` `ac_cookies_remove_for_host` `ac_cookies_clear` `ac_cookies_purge_expired` `ac_cookies_purge_session` `ac_cookies_store_header` `ac_cookies_import` `ac_cookies_export` | C | en route |
+| `ac_cookies_list` `ac_cookies_count` | Q | registered — cookies.list/count; zero Qt callers exist yet (§9) |
+| `ac_cookies_role` `ac_cookies_get` `ac_cookies_gate` | Q | flat |
+| `ac_cookies_for_url` | Q | flat — the send-match is the per-request hot path (lazy-expiry eviction footnote, §1) |
+| `ac_cookies_set` | C | registered — cookies.set |
+| `ac_cookies_set_role` `ac_cookies_remove` `ac_cookies_remove_for_host` `ac_cookies_clear` `ac_cookies_purge_expired` `ac_cookies_purge_session` `ac_cookies_store_header` `ac_cookies_import` `ac_cookies_export` | C | flat |
 | `rc_cookies_open` | L | flat |
-| `rc_cookies_is_open` `rc_cookies_role` `rc_cookies_get` `rc_cookies_list` `rc_cookies_count` `rc_cookies_gate` `rc_cookies_for_url` | Q | en route |
-| `rc_cookies_set_role` `rc_cookies_set` `rc_cookies_remove` `rc_cookies_remove_for_host` `rc_cookies_clear` `rc_cookies_purge_expired` `rc_cookies_purge_session` `rc_cookies_store_header` `rc_cookies_import` `rc_cookies_export` | C | en route |
+| `rc_cookies_is_open` `rc_cookies_role` `rc_cookies_get` `rc_cookies_gate` `rc_cookies_for_url` | Q | flat |
+| `rc_cookies_list` `rc_cookies_count` | Q | registered via same ops |
+| `rc_cookies_set_role` `rc_cookies_remove` `rc_cookies_remove_for_host` `rc_cookies_clear` `rc_cookies_purge_expired` `rc_cookies_purge_session` `rc_cookies_store_header` `rc_cookies_import` `rc_cookies_export` | C | flat |
+| `rc_cookies_set` | C | registered via `cookies.set` |
 
 ### 8.9 icons (RC16)
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `ac_icons_get` `ac_icons_key` `ac_icons_list` `ac_icons_count` | Q | en route |
-| `ac_icons_put` `ac_icons_remove` `ac_icons_clear` `ac_icons_sweep` | C | en route |
-| `rc_icons_get` `rc_icons_key` `rc_icons_list` `rc_icons_count` | Q | en route |
-| `rc_icons_put` `rc_icons_remove` `rc_icons_clear` `rc_icons_sweep` | C | en route |
+| `ac_icons_get` `ac_icons_count` | Q | envelope — icons.get/count (PNGs cross base64'd) |
+| `ac_icons_key` `ac_icons_list` | Q | flat — key derivation + index dump; no Qt caller needed the batch |
+| `ac_icons_put` `ac_icons_clear` `ac_icons_sweep` | C | envelope — icons.put/clear/sweep (HistoryManager's icon lane) |
+| `ac_icons_remove` | C | flat |
+| `rc_icons_get` `rc_icons_count` | Q | envelope via same ops |
+| `rc_icons_key` `rc_icons_list` | Q | flat |
+| `rc_icons_put` `rc_icons_clear` `rc_icons_sweep` | C | envelope via same ops |
+| `rc_icons_remove` | C | flat |
 
 ### 8.10 containers (RC19)
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `ac_containers_list` `ac_containers_get` `ac_containers_namespace` | Q | en route |
-| `ac_containers_create` `ac_containers_update` `ac_containers_remove` | C | en route |
-| `rc_containers_list` `rc_containers_get` `rc_containers_namespace` | Q | en route |
-| `rc_containers_create` `rc_containers_update` `rc_containers_remove` | C | en route |
+| `ac_containers_list` | Q | registered — containers.list |
+| `ac_containers_get` `ac_containers_namespace` | Q | flat |
+| `ac_containers_create` | C | registered — containers.create |
+| `ac_containers_update` `ac_containers_remove` | C | flat — the storage-tree teardown stays Qt's job regardless |
+| `rc_containers_list` | Q | registered via same op |
+| `rc_containers_get` `rc_containers_namespace` | Q | flat |
+| `rc_containers_create` | C | registered via same op |
+| `rc_containers_update` `rc_containers_remove` | C | flat |
 
 ### 8.11 notes (RC21)
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `ac_notes_count` `ac_notes_get` `ac_notes_list` `ac_notes_is_dirty` `ac_notes_is_persistent` | Q | en route |
-| `ac_notes_insert` `ac_notes_set_title` `ac_notes_set_body` `ac_notes_set_markdown` `ac_notes_remove` `ac_notes_sync` | C | en route |
+| `ac_notes_count` `ac_notes_list` | Q | registered — notes.count/list |
+| `ac_notes_get` `ac_notes_is_dirty` `ac_notes_is_persistent` | Q | flat |
+| `ac_notes_insert` | C | registered — notes.insert |
+| `ac_notes_set_title` `ac_notes_set_body` `ac_notes_set_markdown` `ac_notes_remove` `ac_notes_sync` | C | flat — the sidebar's per-field edit path is already one flat call; the debounce/sync semantics ride the handle |
 | `rc_notes_open` `rc_notes_open_file` `rc_notes_close` | L | flat — incl. the volatile NULL-path OTR bind, which the envelope must never mint (§6) |
-| `rc_notes_count` `rc_notes_get` `rc_notes_list` `rc_notes_is_dirty` `rc_notes_is_persistent` | Q | en route |
-| `rc_notes_insert` `rc_notes_set_title` `rc_notes_set_body` `rc_notes_set_markdown` `rc_notes_remove` `rc_notes_sync` | C | en route |
+| `rc_notes_count` `rc_notes_list` | Q | registered via same ops |
+| `rc_notes_get` `rc_notes_is_dirty` `rc_notes_is_persistent` | Q | flat |
+| `rc_notes_insert` | C | registered via same op |
+| `rc_notes_set_title` `rc_notes_set_body` `rc_notes_set_markdown` `rc_notes_remove` `rc_notes_sync` | C | flat |
 
 ### 8.12 custody + credentials + autofill (rc-only)
 
 | Export | Class | Route |
 |--------|-------|-------|
 | `rc_open` `rc_open_with_key` `rc_seal` `rc_seal_with_key` `rc_unlock` `rc_lock` `rc_kdf_create` `rc_kdf_file_delete` `rc_key_file_create` `rc_key_file_copy` `rc_key_file_delete` `rc_derived_key_copy` | C | flat — custody state is a session resource, not a per-call bind (§2.3); revisit only if a headless consumer needs it |
-| `rc_is_available` `rc_is_sealed` `rc_is_unlocked` `rc_passphrase_enabled` | Q | flat |
-| `rc_cred_get` `rc_cred_list` | Q | en route |
-| `rc_cred_put` `rc_cred_remove` `rc_cred_change_passphrase` `rc_cred_reseal` | C | en route |
-| `rc_autofill_forms` `rc_autofill_addresses` `rc_autofill_store_present` | Q | en route |
-| `rc_autofill_set_forms` `rc_autofill_set_addresses` `rc_autofill_reseal` | C | en route |
+| `rc_is_available` `rc_is_sealed` `rc_is_unlocked` `rc_passphrase_enabled` | Q | flat — `custody.state` answers the first/third/fourth in one doc (sealed isn't carried); the flat calls stay |
+| `rc_cred_list` | Q | registered — `custody.cred_names` returns the names array |
+| `rc_cred_get` | Q | flat |
+| `rc_cred_put` | C | registered — `custody.cred_put` (value crosses as `value_b64`) |
+| `rc_cred_remove` `rc_cred_change_passphrase` `rc_cred_reseal` | C | flat |
+| `rc_autofill_forms` `rc_autofill_addresses` `rc_autofill_store_present` | Q | flat |
+| `rc_autofill_set_forms` `rc_autofill_set_addresses` `rc_autofill_reseal` | C | flat |
 | `rc_set_data_dir` | L | flat — process anchor; envelope binds profiles per call so facade consumers never need it |
 | `rc_set_change_callback` | E | flat — legacy event registration |
 | `rc_last_error_message` | Q | flat |
@@ -488,15 +569,17 @@ event-silent.
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `rc_ose_list` `rc_ose_get` `rc_ose_keywords` `rc_ose_keyword_url` `rc_ose_engine_for_keyword` `rc_ose_expand` `rc_ose_url` `rc_ose_bundled_names` `rc_ose_removed_bundled` `rc_ose_store_present` | Q | en route |
-| `rc_ose_put` `rc_ose_remove` `rc_ose_rename` `rc_ose_reorder` `rc_ose_set_keywords` `rc_ose_block_bundled` `rc_ose_unblock_bundled` `rc_ose_restore_bundled` `rc_ose_reset` `rc_ose_seed_bundled` `rc_ose_import` | C | en route |
+| `rc_ose_list` `rc_ose_get` `rc_ose_keywords` `rc_ose_keyword_url` `rc_ose_engine_for_keyword` `rc_ose_expand` `rc_ose_url` `rc_ose_bundled_names` `rc_ose_removed_bundled` `rc_ose_store_present` | Q | envelope — opensearch.* (all 10 queries landed; OpenSearchManager dispatches them) |
+| `rc_ose_put` `rc_ose_remove` `rc_ose_rename` `rc_ose_reorder` `rc_ose_set_keywords` `rc_ose_block_bundled` `rc_ose_unblock_bundled` `rc_ose_restore_bundled` `rc_ose_reset` `rc_ose_seed_bundled` `rc_ose_import` | C | envelope — opensearch.* (all 11 commands landed; raw XML descriptors cross as `xml_b64`) |
 
 ### 8.14 update-check policy (rc-only, RC20)
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `rc_updates_state` `rc_updates_channel_accepts` `rc_updates_compare_versions` `rc_updates_is_trusted_url` `rc_updates_normalize_version` `rc_updates_parse_manifest` `rc_updates_platform_pick` `rc_updates_should_notify` | Q | en route |
-| `rc_updates_record_check` `rc_updates_set_channel` `rc_updates_set_skipped` `rc_updates_snooze` | C | en route |
+| `rc_updates_state` | Q | registered — updates.state |
+| `rc_updates_channel_accepts` `rc_updates_compare_versions` `rc_updates_is_trusted_url` `rc_updates_normalize_version` `rc_updates_parse_manifest` `rc_updates_platform_pick` `rc_updates_should_notify` | Q | flat — stateless decision helpers; single-call sites don't shrink |
+| `rc_updates_record_check` | C | registered — updates.record_check |
+| `rc_updates_set_channel` `rc_updates_set_skipped` `rc_updates_snooze` | C | flat |
 
 ### 8.15 stateless services (rc-only)
 
@@ -506,21 +589,23 @@ where a hot loop justifies it (none known today).
 
 | Export | Class | Route |
 |--------|-------|-------|
-| `rc_urlstrip` | Q | en route |
-| `rc_urlstrip_load_rules` `rc_urlstrip_reload` | C | en route — swap/reload the ruleset |
-| `rc_opensearch_parse` `rc_updatemanifest_parse` `rc_suggest_parse` `rc_xbel_check` | Q | en route — untrusted-doc gates |
-| `rc_pdf_sanitize` | Q | en route |
+| `rc_classify_input` | Q | registered — services.classify_input (the envelope's omnibox-entry smoke op) |
+| `rc_urlstrip` | Q | flat |
+| `rc_urlstrip_load_rules` `rc_urlstrip_reload` | C | flat — swap/reload the ruleset |
+| `rc_opensearch_parse` `rc_updatemanifest_parse` `rc_suggest_parse` `rc_xbel_check` | Q | flat — untrusted-doc gates |
+| `rc_pdf_sanitize` | Q | flat |
 | `rc_pdfdoc_open` `rc_pdfdoc_close` | L | flat — cursor handle (§2.3) |
 | `rc_pdfdoc_page_count` `rc_pdfdoc_page_size` `rc_pdfdoc_title` `rc_pdfdoc_find` `rc_pdfdoc_render_png` | Q | flat — handle-bound |
-| `rc_readability_extract` `rc_readability_probe` | Q | en route |
-| `rc_ext_manifest_check` `rc_ext_verify_package` | Q | en route |
-| `rc_classify_input` `rc_frecency_score` `rc_history_suggest` | Q | en route — `rc_history_suggest` reaches the history store but takes no handle; its op lands in domain 3 |
-| `rc_pal_match` `rc_pal_score` | Q | en route |
-| `rc_qr_encode` | Q | en route |
-| `rc_clearplan` | Q | en route — returns the plan; Qt executes the wipe |
-| `rc_tls_check` | Q | en route — does network I/O by design (§6 exception) |
-| `rc_tls_add_root` `rc_tls_clear_roots` | C | en route |
-| `rc_ua_build` `rc_ua_presets` `rc_ua_brand_version` | Q | en route — spoof table ops are in §8.6 (they ride sitedecisions) |
+| `rc_readability_extract` `rc_readability_probe` | Q | flat |
+| `rc_ext_manifest_check` | Q | registered — extverify.manifest_check (domain 15) |
+| `rc_ext_verify_package` | Q | flat — signature verification stays a direct call |
+| `rc_frecency_score` `rc_history_suggest` | Q | flat — `history.suggest` covers the suggest path; frecency is a pure scorer with no caller asking for the envelope |
+| `rc_pal_match` `rc_pal_score` | Q | flat |
+| `rc_qr_encode` | Q | flat |
+| `rc_clearplan` | Q | flat — returns the plan; Qt executes the wipe |
+| `rc_tls_check` | Q | registered — services.tls_probe; lands as a *command* (it does network I/O by design, §6 exception — a query must not have observable side effects) |
+| `rc_tls_add_root` `rc_tls_clear_roots` | C | flat |
+| `rc_ua_build` `rc_ua_presets` `rc_ua_brand_version` | Q | flat — spoof table ops are in §8.6 (they ride sitedecisions) |
 
 ### 8.16 profile vault (rv_*)
 
@@ -539,6 +624,10 @@ where a hot loop justifies it (none known today).
 | `rc_tor_state` `rc_tor_error` | Q | flat |
 | `rc_tor_take_reply` `rc_tor_take_event` `rc_tor_take_error` | E | flat — pull-drain after the `torctl` wake-up topic |
 
+Domain 17 (`tor`) is registered with zero ops — the whole surface
+is the §2.3 keep-flat case (a live socket handle that cannot cross
+a self-contained frame).
+
 ### 8.18 devtools BiDi (DEVT03)
 
 | Export | Class | Route |
@@ -548,14 +637,15 @@ where a hot loop justifies it (none known today).
 | `rc_bidi_is_alive` | Q | flat |
 | `RcBidiCallback` | E | flat — `response`/`event`/`state` kinds |
 
-## 9. Cutover decision table (MB06/MB07 fill in)
+Domain 18 (`bidi`) likewise: registered, zero ops.
+
+## 9. Cutover decision table (landed — MB06/MB07)
 
 Rule restated: an `ac_*` caller moves to `ac_mw_dispatch` only where
 the envelope shrinks code — batch reads, list/tree queries, JSON-in/
 JSON-out verdicts. Single scalar reads in hot paths and every §1
-lifecycle op stay flat. Per-call outcomes get recorded here as the
-cutover lands; the verify bar is unchanged behavior + unchanged
-autotest counts.
+lifecycle op stay flat. The verify bar held: unchanged behavior +
+unchanged autotest counts on both slices.
 
 | Caller site | Flat today | Decision (MB06/MB07 landed) |
 |-------------|-----------|------------------------------|
@@ -581,12 +671,20 @@ autotest counts.
 | `HistoryManager` iconPut/iconGet/iconClear/iconSweep | ac_icons_* on a cached AcIcons | **envelope** — icons.put/get/clear/sweep (MB07 landed) — PNGs cross base64'd, `"profile"` binds per call, `m_iconStore` deleted |
 | `OpenSearchManager` registry ops (put/get/remove/rename/reorder/set_keywords/import/seed/restore/block/unblock/list/keywords/bindings) + `OpenSearchEngine::buildUrl` | rc_ose_* | **envelope** — opensearch.* (MB07 landed) — store is bound to `profiles/<active>/` (the flat `rustCoreEnsureDataDir` anchor), not the data root; raw XML descriptors cross as `"xml_b64"` |
 
-## 10. What this doc deliberately did not decide
+## 10. Remaining open questions
 
-- Concrete op ids per domain — MB02 owns the tables; this doc owns
-  the frame, the classes, and the boundary.
-- Payload field names per op — derived mechanically from the flat
-  signatures during MB02; `mw.describe` is where they must agree.
+Decided since MB01: the domain/op id tables (frozen in
+`src/rustcore/src/mw/mod.rs`; `mw.describe` is the wire truth) and
+the per-op payload field names (the mw handlers; `{"profile"}` is
+the one universal field). Still deliberately open:
+
 - Whether a binary (non-JSON) payload lane is ever needed — deferred;
   `flags` byte reserves the space. Session blob passthrough and icon
   PNGs are the candidates if JSON b64 overhead ever measures hot.
+- Whether domains 17/18 ever grow ops — their resources are
+  connection handles; an op would have to be self-contained to fit.
+- Whether the declared-but-unproduced event topics
+  (`policy/changed`, `profile/changed`, `session/saved`) get real
+  producers — the registry reports `produced:false` until the emit
+  sites exist; adding one is appending a topic field's worth of
+  work, not an ABI event.

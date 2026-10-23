@@ -35,7 +35,7 @@ Rules for the agent working this file:
 | MB05 | Bridge harness — extend acprobe to exercise envelope+events+caps end-to-end | done | 0 | acprobe --bridge leg dispatches Q+C per domain via the envelope, exercises the namespaced event round-trip and caps matrix; wired as autotests/acprobe (no-rust stub) — cargo 410/410, probe rc=0, make -j2 clean, tst_acprobe green |
 | MB06 | Cutover slice 1 — settings/profiles/history/bookmarks callers through envelope | done | 0 | envelope for settings/profiles/history callers + new mw ops; bookmarks flat (opaque handles); cargo mw 31/31, make clean, affected autotests all pass offscreen |
 | MB07 | Cutover slice 2 — policy/sessions/cookies/icons/opensearch through envelope | done | 0 | envelope for policy/session/icons/opensearch callers + extended mw ops; cookies registered (zero Qt callers), navigationpolicy+probe legs flat; cargo mw 36/36, qmake+make clean, affected autotests green offscreen, tst_* 102 unchanged (trancolist fixture-fetch + memcycle teardown SIGSEGV reproduce at HEAD) |
-| MB08 | Docs — RUSTCORE-ABI.md v2 + MW-ARCH.md finalize + honest boundary doc | pending | 0 | ABI table of all exports incl mw_*; boundary list: what Rust owns vs what Qt must keep (runJavaScript, QWebEngineProfile, render loop) |
+| MB08 | Docs — RUSTCORE-ABI.md v2 + MW-ARCH.md finalize + honest boundary doc | done | 0 | RUSTCORE-ABI.md v2: all 188 ac_* exports incl mw_*/ac_events_*/ac_engine_caps with verbatim signatures + thread + ownership rules, ABI v9; MW-ARCH finalized: §7 landed registry (17/18 reserved-empty), §8 routes = landed state, §9 landed cutover, honest boundary list kept — verify: script-checked every header export appears in the ABI table, §8 dropped 0 symbols, tables well-formed |
 
 ## Task details
 
