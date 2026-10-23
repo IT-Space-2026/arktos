@@ -20,8 +20,11 @@
 #ifndef EXTENSIONSHIMBACKEND_H
 #define EXTENSIONSHIMBACKEND_H
 
+#include "extensionmanager.h"
+
 #include <qhash.h>
 #include <qimage.h>
+#include <qjsonarray.h>
 #include <qjsonobject.h>
 #include <qlist.h>
 #include <qmap.h>
@@ -70,7 +73,13 @@ class QWebEngineProfile;
 //                  (ER13); 'idle' manifest permission gates it
 //   management.* — getSelf answers the real id/name/version/enabled
 //                  from the manifest + manager records (ER15);
-//                  ungated like Chrome.  Everything else is typed
+//                  ungated like Chrome.  MD16 serves the read ops
+//                  the 'management' grant unlocks: getAll/get
+//                  enumerate ExtensionManager::extensions() through
+//                  the same ExtensionInfo shape, and the
+//                  permissionWarnings pair derive their strings
+//                  from the manifest's grant list (the same wording
+//                  the install review shows).  The rest stays typed
 //                  no-permission/unsupported.
 //   extension.*  — reloadView, the one cross-context capability the
 //                  shim's getViews handles carry (ER15); the
@@ -243,6 +252,19 @@ private:
                            const QJsonObject &args);
     QJsonObject invokeManagement(const QString &method,
                                  const QJsonObject &args);
+    // MD16: the chrome.management ExtensionInfo object shape —
+    // shared by getSelf and the gated getAll/get enumeration.
+    // `record` is the manager's live row (nullptr = a hosted backend
+    // the manager lost track of: still answers enabled like a
+    // running extension, installType 'development').
+    static QJsonObject managementInfoJson(
+            const QString &id, const QString &fallbackName,
+            const QString &extensionPath, const QJsonObject &manifest,
+            const ExtensionManager::ExtensionInfo *record);
+    // Warning strings for a manifest's grant list — the same wording
+    // ExtensionReviewDialog's consent rows show, deduplicated in
+    // declaration order.
+    static QJsonArray managementWarnings(const QJsonObject &manifest);
     QJsonObject invokeExtension(const QString &method,
                                 const QJsonObject &args);
     QJsonObject invokeSidebarAction(const QString &method,

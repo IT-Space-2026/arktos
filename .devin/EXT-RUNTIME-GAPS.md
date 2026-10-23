@@ -123,6 +123,8 @@ chrome.sidebarAction.toggle: unsupported
 # management gates every member but getSelf on the declared
 # 'management' permission — no-permission undeclared (Bitwarden does
 # not declare it), unsupported when declared and still unserved.
+# MD16 serves getAll/get + the permissionWarnings pair when declared;
+# the mutation/launch members stay typed (MD17 queue).
 chrome.management.*: no-permission
 chrome.management.*: unsupported
 # webRequest is observe-only: blocking/requestBody extraInfoSpec and
@@ -142,6 +144,11 @@ chrome.contextMenus.remove: not-found
 chrome.contextMenus.update: not-found
 chrome.idle.queryState: invalid-argument
 chrome.idle.setDetectionInterval: invalid-argument
+chrome.management.get: invalid-argument
+chrome.management.get: not-found
+chrome.management.getPermissionWarningsById: invalid-argument
+chrome.management.getPermissionWarningsById: not-found
+chrome.management.getPermissionWarningsByManifest: invalid-argument
 chrome.notifications.clear: not-found
 chrome.notifications.update: not-found
 chrome.offscreen.closeDocument: not-hosted

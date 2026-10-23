@@ -62,10 +62,12 @@
  *   chrome.contextMenus — create/update/remove* registry host-side;
  *                         onClicked event (rendering is EXT16)
  *   chrome.sidePanel    — options recorded host-side; no panel UI
- *   chrome.management   — ER15: getSelf answers the real ExtensionInfo
- *                         shape (id/name/version/enabled/installType)
- *                         host-side; other members typed no-permission/
- *                         unsupported
+ *   chrome.management   — ER15+MD16: getSelf answers the real
+ *                         ExtensionInfo shape (id/name/version/enabled/
+ *                         installType) host-side; the 'management'
+ *                         grant unlocks getAll/get over the manager's
+ *                         records + the permissionWarnings pair; the
+ *                         rest typed no-permission/unsupported
  *   chrome.sidebarAction— ER15: Firefox-shape sugar when the manifest
  *                         declares sidebar_action — panel/title/icon
  *                         bookkeeping; open/close typed unsupported
@@ -3840,18 +3842,39 @@
                 return p;
             }
         };
-        var mgmtRest = ['get', 'getAll', 'setEnabled', 'uninstall',
-            'uninstallSelf', 'launchApp', 'generateAppForLink',
-            'getPermissionWarningsById',
-            'getPermissionWarningsByManifest'];
-        for (var mm = 0; mm < mgmtRest.length; ++mm) {
-            (function (m) {
+        // MD16: getAll/get + the permissionWarnings pair are served
+        // over the manager's records; the mutation/launch members
+        // still answer the backend's typed errors.  Every member
+        // ships its real arguments so the served calls reach real
+        // data and the typed ones stay honest.
+        var mgmtArgs = {
+            get: function (a) { return { id: a[0] }; },
+            getAll: function () { return {}; },
+            getPermissionWarningsById:
+                function (a) { return { id: a[0] }; },
+            getPermissionWarningsByManifest:
+                function (a) { return { manifest: a[0] }; },
+            setEnabled:
+                function (a) { return { id: a[0], enabled: !!a[1] }; },
+            uninstall:
+                function (a) {
+                    return { id: a[0], options: a[1] || {} };
+                },
+            uninstallSelf:
+                function (a) { return { options: a[0] || {} }; },
+            launchApp: function (a) { return { id: a[0] }; },
+            generateAppForLink:
+                function (a) { return { url: a[0], title: a[1] }; }
+        };
+        for (var mk in mgmtArgs) {
+            (function (m, map) {
                 mgmtNs[m] = function () {
-                    var a = arguments;
-                    var cb = (a.length && typeof a[a.length - 1]
-                              === 'function')
-                        ? a[a.length - 1] : null;
-                    var p = call('management', m, {});
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('management', m, map(a));
                     if (cb)
                         p.then(function (v) { answerCb(cb, v); },
                                function (e) {
@@ -3861,7 +3884,7 @@
                                });
                     return p;
                 };
-            })(mgmtRest[mm]);
+            })(mk, mgmtArgs[mk]);
         }
         installNs('management', mgmtNs);
         mgmtNsRef = mgmtNs;

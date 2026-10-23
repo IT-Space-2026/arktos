@@ -105,6 +105,7 @@ private slots:
     void extensionWindowsFidelity();
     void extensionActionIcon();
     void extensionAllowedAccess();
+    void extensionManagementRead();
     void extensionScripting();
     void extensionScriptCss();
     void extensionContentScriptRegistration();
@@ -7323,6 +7324,225 @@ void tst_ExtensionManager::extensionAllowedAccess()
     QDir(dir).removeRecursively();
 }
 
+// MD16 — chrome.management read ops.  getAll/get enumerate the
+// manager's live ExtensionInfo rows through the same shape getSelf
+// answers; the permissionWarnings pair derive their strings from the
+// manifest's grant list — the same wording the install review shows.
+// Everything rides the 'management' grant except getSelf.
+void tst_ExtensionManager::extensionManagementRead()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extmgmt-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-mgmt\","
+                "\"version\":\"3.1\",\"permissions\":[\"management\","
+                "\"tabs\",\"history\"],\"host_permissions\":"
+                "[\"https://*.example.com/*\"]}");
+        f.close();
+    }
+    ExtensionManager *manager = ExtensionManager::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-mgmt")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+
+    ExtensionShimBackend backend(id, QStringLiteral("tst-mgmt"), dir);
+
+    // getAll enumerates the manager's records — the fixture is there
+    // with the same shape getSelf builds.
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("getAll"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonArray all =
+        reply.value(QLatin1String("result")).toArray();
+    QVERIFY(!all.isEmpty());
+    bool found = false;
+    for (const QJsonValue &v : all) {
+        const QJsonObject info = v.toObject();
+        if (info.value(QLatin1String("id")).toString() != id)
+            continue;
+        found = true;
+        QCOMPARE(info.value(QLatin1String("name")).toString(),
+                 QStringLiteral("tst-mgmt"));
+        QCOMPARE(info.value(QLatin1String("version")).toString(),
+                 QStringLiteral("3.1"));
+        QCOMPARE(info.value(QLatin1String("type")).toString(),
+                 QStringLiteral("extension"));
+        // Freshly loaded, never enabled — the record is the truth.
+        QVERIFY(!info.value(QLatin1String("enabled")).toBool());
+        QVERIFY(info.value(QLatin1String("mayEnable")).toBool());
+        QCOMPARE(info.value(QLatin1String("installType")).toString(),
+                 QStringLiteral("development"));
+        QCOMPARE(info.value(QLatin1String("manifestVersion")).toInt(),
+                 3);
+        QVERIFY(info.value(QLatin1String("permissions")).toArray()
+                .contains(QJsonValue(QStringLiteral("tabs"))));
+        QVERIFY(info.value(QLatin1String("permissions")).toArray()
+                .contains(QJsonValue(QStringLiteral("management"))));
+        QVERIFY(info.value(QLatin1String("hostPermissions")).toArray()
+                .contains(QJsonValue(
+                    QStringLiteral("https://*.example.com/*"))));
+    }
+    QVERIFY2(found, "fixture extension missing from getAll");
+
+    // get answers the same shape for one id; unknown ids are the
+    // typed refusal Chrome's lastError carries.
+    reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), id}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("id")).toString(), id);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("version")).toString(),
+             QStringLiteral("3.1"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"), QStringLiteral("get"),
+                 QJsonObject{{QStringLiteral("id"),
+                              QStringLiteral("nonexistentid000000000"
+                                             "00000000000")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"), QStringLiteral("get"),
+                 QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // getSelf keeps its ungated answer, consistent with the row
+    // getAll enumerated.
+    reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("getSelf"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("id")).toString(), id);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("manifestVersion")).toInt(), 3);
+
+    // Permission warnings derive from the manifest's grant list —
+    // the same strings the install review shows, deduplicated.
+    reply = backend.invoke(
+        QStringLiteral("management"),
+        QStringLiteral("getPermissionWarningsById"),
+        QJsonObject{{QStringLiteral("id"), id}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QStringList warnings;
+    for (const QJsonValue &w :
+         reply.value(QLatin1String("result")).toArray())
+        warnings.append(w.toString());
+    QVERIFY(warnings.contains(
+        ExtensionReviewDialog::describePermission(
+            QStringLiteral("history"))));
+    QVERIFY(warnings.contains(
+        ExtensionReviewDialog::describePermission(
+            QStringLiteral("tabs"))));
+    QVERIFY(warnings.contains(
+        ExtensionReviewDialog::describeHostPermission(
+            QStringLiteral("https://*.example.com/*"))));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("getPermissionWarningsById"),
+                 QJsonObject{{QStringLiteral("id"),
+                              QStringLiteral("nonexistentid000000000"
+                                             "00000000000")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // ByManifest takes Chrome's manifest-string argument (a parsed
+    // object is accepted too); a malformed payload is typed.
+    reply = backend.invoke(
+        QStringLiteral("management"),
+        QStringLiteral("getPermissionWarningsByManifest"),
+        QJsonObject{{QStringLiteral("manifest"),
+                     QStringLiteral(
+                         "{\"permissions\":[\"bookmarks\"],"
+                         "\"host_permissions\":[\"<all_urls>\"]}")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    warnings.clear();
+    for (const QJsonValue &w :
+         reply.value(QLatin1String("result")).toArray())
+        warnings.append(w.toString());
+    QVERIFY(warnings.contains(
+        ExtensionReviewDialog::describePermission(
+            QStringLiteral("bookmarks"))));
+    QVERIFY(warnings.contains(
+        ExtensionReviewDialog::describeHostPermission(
+            QStringLiteral("<all_urls>"))));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("getPermissionWarningsByManifest"),
+                 QJsonObject{{QStringLiteral("manifest"),
+                              QStringLiteral("{bogus")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // The 'management' grant gates every read op — an extension that
+    // never declared it keeps Chrome's no-permission answer while
+    // getSelf stays free.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extmgmt-b-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-mgmt-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0009"),
+        QStringLiteral("tst-mgmt-b"), dirB);
+    QCOMPARE(backendB.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("getAll"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(
+                 QStringLiteral("management"), QStringLiteral("get"),
+                 QJsonObject{{QStringLiteral("id"), id}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("getPermissionWarningsById"),
+                 QJsonObject{{QStringLiteral("id"), id}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QVERIFY(backendB.invoke(
+                QStringLiteral("management"),
+                QStringLiteral("getSelf"), QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    // Declared-but-unserved members keep the typed answer.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("uninstall"),
+                 QJsonObject{{QStringLiteral("id"), id}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+
+    manager->removeExtension(id);
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
+}
+
 // ER07 — chrome.scripting.executeScript.  A fixture extension
 // declaring 'scripting' + <all_urls> drives the real call from its
 // hosted background: func/args/files forms land in the shared agent
@@ -11923,12 +12143,14 @@ void tst_ExtensionManager::extensionOffscreen()
 
 // ER15 — introspection sugar.  chrome.management.getSelf answers
 // the real ExtensionInfo shape from the manifest + manager records
-// (ungated like Chrome); the other members ride Chrome's failure
-// vocabulary (no-permission undeclared, unsupported declared-but-
-// unserved).  chrome.extension.getViews composes from the runtime's
-// pushed context registry — the caller's own Window plus honest
-// capability handles for sibling contexts (true documentUrl, a real
-// location.reload(), focus honestly unmeasured); getBackgroundPage
+// (ungated like Chrome); MD16 serves the declared grant's read ops
+// (getAll/get + permissionWarnings) while the unserved members ride
+// Chrome's failure vocabulary (no-permission undeclared, unsupported
+// declared-but-unserved).  chrome.extension.getViews composes from
+// the runtime's pushed context registry — the caller's own Window
+// plus honest capability handles for sibling contexts (true
+// documentUrl, a real location.reload(), focus honestly
+// unmeasured); getBackgroundPage
 // returns window in the background and the documented MV3 null
 // elsewhere.  chrome.sidebarAction installs only for a manifest-
 // declared sidebar_action and records panel/title while open()
@@ -12095,8 +12317,10 @@ void tst_ExtensionManager::extensionIntrospection()
         20000);
 
     // --- management failure vocabulary ----------------------------
-    // A never declared 'management' -> no-permission; B declared it
-    // and we still cannot enumerate -> unsupported.  Both ledger.
+    // A never declared 'management' -> no-permission.  B declared it
+    // and MD16 serves the read ops — getAll resolves with the real
+    // enumeration (B's own row included), while the still-unserved
+    // mutations keep the unsupported answer.  Both ledger.
     hostA->page()->runJavaScript(QStringLiteral(
         "self.__mErr=undefined;chrome.management.getAll()"
         ".then(function(){self.__mErr='resolved';},function(e){"
@@ -12108,7 +12332,36 @@ void tst_ExtensionManager::extensionIntrospection()
                  .toString(),
              QStringLiteral("no-permission"));
     hostB->page()->runJavaScript(QStringLiteral(
-        "self.__mErr=undefined;chrome.management.getAll()"
+        "self.__mList=undefined;self.__mErr=undefined;"
+        "chrome.management.getAll()"
+        ".then(function(v){self.__mList=v;},function(e){"
+        "self.__mErr=e.code||e.message;});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostB->page(), QStringLiteral(
+            "self.__mList!==undefined||self.__mErr!==undefined"))
+            .toBool(),
+        20000);
+    const QJsonArray mList = QJsonDocument::fromJson(
+        eval(hostB->page(), QStringLiteral(
+            "JSON.stringify(self.__mList||[])")).toString().toUtf8())
+        .array();
+    bool mSelf = false;
+    for (const QJsonValue &v : mList) {
+        const QJsonObject info = v.toObject();
+        if (info.value(QLatin1String("id")).toString() != idB)
+            continue;
+        mSelf = true;
+        QCOMPARE(info.value(QLatin1String("name")).toString(),
+                 QStringLiteral("tst-intro-b"));
+        QCOMPARE(info.value(QLatin1String("version")).toString(),
+                 QStringLiteral("9.9"));
+        QCOMPARE(info.value(QLatin1String("enabled")).toBool(), true);
+        QVERIFY(info.value(QLatin1String("permissions")).toArray()
+                .contains(QJsonValue(QStringLiteral("management"))));
+    }
+    QVERIFY2(mSelf, "getAll omitted the caller's own record");
+    hostB->page()->runJavaScript(QStringLiteral(
+        "self.__mErr=undefined;chrome.management.uninstall('x')"
         ".then(function(){self.__mErr='resolved';},function(e){"
         "self.__mErr=e.code||e.message;});'ok'"));
     QTRY_VERIFY_WITH_TIMEOUT(
@@ -12337,7 +12590,7 @@ void tst_ExtensionManager::extensionIntrospection()
                                "unsupported")),
         20000);
     QVERIFY(hostB->bridge()->backend()->gaps().contains(
-        QStringLiteral("chrome.management.getAll: unsupported")));
+        QStringLiteral("chrome.management.uninstall: unsupported")));
 
     // --- teardown ----------------------------------------------------
     optView->deleteLater();

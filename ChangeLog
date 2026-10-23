@@ -810,6 +810,15 @@ UI:
   instead of a page-side stub — both honestly reply false today,
   since Arktos hosts extensions on the regular profile only and
   never grants file: scheme access (MD15).
+- chrome.management's read side is live for extensions that declare
+  the grant: getAll/get enumerate the real installed-extension
+  records with the same ExtensionInfo shape getSelf answers (enabled
+  state and install provenance included), and
+  getPermissionWarningsById/getPermissionWarningsByManifest derive
+  their warning strings from the manifest's grant list — the same
+  wording the install consent review shows. An undeclaring caller
+  still gets Chrome's no-permission answer, and the mutation members
+  stay honestly unsupported for now (MD16).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

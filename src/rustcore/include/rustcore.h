@@ -1293,7 +1293,7 @@ char *rc_containers_namespace(const char *data_root,
 /* the finished-row removal verdict, the per-profile rule view and  */
 /* the download history records live here.                          */
 /*                                                                     */
-/* The legacy downloadmanager/* keys read from the bound profile's  */
+/* The legacy downloadmanager/ keys read from the bound profile's   */
 /* settings.json (Qt still owns their writes); facade-authored      */
 /* rules (always_save_mimes, blocked_extensions) and the record     */
 /* list live in downloads.json beside it — records_list falls back  */
@@ -1316,7 +1316,7 @@ char *rc_dlw_call(RcSettings *h, const uint8_t *jsonUtf8, size_t len);
 /* ------------------------------------------------------------------ */
 /* MD05: privacy policy store view (privacy)                          */
 /*                                                                     */
-/* The per-persona privacy/* flag reads — a typed specialization    */
+/* The per-persona privacy/ flag reads — a typed specialization     */
 /* over the profile scope's settings store like dlwpolicy, so every */
 /* op runs on an RcSettings bound to the owning persona.  The       */
 /* request interceptors' snapshot reads, the PRIV08 Sec-GPC         */

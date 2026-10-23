@@ -29,6 +29,7 @@
 #include "extensionidlewatcher.h"
 #include "extensionmanager.h"
 #include "extensionnotificationcenter.h"
+#include "extensionreviewdialog.h"
 #include "tabbar.h"
 #include "tabwidget.h"
 #include "webview.h"
@@ -2410,59 +2411,71 @@ QJsonObject ExtensionShimBackend::invokeIdle(
 // chrome.management — ER15.  getSelf is ungated like Chrome (the
 // only member that needs no 'management' permission) and answers the
 // real ExtensionInfo shape from the manifest + the manager's own
-// records.  Every other member rides Chrome's failure vocabulary:
+// records.  MD16 serves the read ops the grant unlocks — getAll/get
+// enumerate the manager's live ExtensionInfo rows through the same
+// shape and the permissionWarnings pair derive their strings from
+// the manifest's grant list (the same wording the install review
+// shows).  Every other member rides Chrome's failure vocabulary:
 // 'management' undeclared -> no-permission, declared-but-unserved ->
 // unsupported.
 // -------------------------------------------------------------------
 
-QJsonObject ExtensionShimBackend::invokeManagement(
-        const QString &method, const QJsonObject &args)
+// manifest.json for an extension other than the caller's own — the
+// read ops shape every enumerated record, and each needs its own
+// bundle's manifest (the same 1MB guard manifestJson() applies).
+static QJsonObject manifestForExtensionPath(const QString &extensionPath)
 {
-    Q_UNUSED(args);
-    if (method != QLatin1String("getSelf")) {
-        return errReply(
-            manifestPermissions().contains(QLatin1String("management"))
-                ? QStringLiteral("unsupported")
-                : QStringLiteral("no-permission"));
-    }
+    if (extensionPath.isEmpty())
+        return QJsonObject();
+    QFile file(extensionPath + QLatin1String("/manifest.json"));
+    if (file.size() > 1024 * 1024 || !file.open(QIODevice::ReadOnly))
+        return QJsonObject();
+    return QJsonDocument::fromJson(file.readAll()).object();
+}
 
-    const QJsonObject manifest = manifestJson();
-    const auto localized = [this](const QString &value) {
+QJsonObject ExtensionShimBackend::managementInfoJson(
+        const QString &id, const QString &fallbackName,
+        const QString &extensionPath, const QJsonObject &manifest,
+        const ExtensionManager::ExtensionInfo *record)
+{
+    bool messagesLoaded = false;
+    QJsonObject messages;
+    const auto localized = [&messages, &messagesLoaded,
+                            &extensionPath](const QString &value) {
         // Manifests localize user-facing strings as __MSG_key__ —
-        // getSelf answers the resolved text like Chrome does.
+        // the management surface answers the resolved text like
+        // Chrome does.
         static const QRegularExpression msgRe(
             QStringLiteral("^__MSG_(.+)__$"));
         const QRegularExpressionMatch m = msgRe.match(value);
         if (!m.hasMatch())
             return value;
-        const QString resolved = i18nMessages(m_extensionPath)
-            .value(m.captured(1)).toString();
+        if (!messagesLoaded) {
+            messagesLoaded = true;
+            messages = i18nMessages(extensionPath);
+        }
+        const QString resolved =
+            messages.value(m.captured(1)).toString();
         return resolved.isEmpty() ? value : resolved;
     };
 
     // The manager's record is the source of truth for enabled and
     // install provenance; a hosted backend that the manager lost
     // track of still answers enabled (it is running).
-    bool enabled = true;
-    QString installType = QStringLiteral("development");
-    if (ExtensionManager *manager = ExtensionManager::instance()) {
-        for (const ExtensionManager::ExtensionInfo &info
-             : manager->extensions()) {
-            if (info.id != m_extensionId)
-                continue;
-            enabled = info.enabled;
-            installType = info.installed
-                ? QStringLiteral("normal")
-                : QStringLiteral("development");
-            break;
-        }
-    }
+    const bool enabled = record ? record->enabled : true;
+    const QString installType = !record
+        ? QStringLiteral("development")
+        : record->builtin
+            ? QStringLiteral("internal")
+        : record->installed
+            ? QStringLiteral("normal")
+            : QStringLiteral("development");
 
     QJsonObject info;
-    info.insert(QStringLiteral("id"), m_extensionId);
+    info.insert(QStringLiteral("id"), id);
     info.insert(QStringLiteral("name"),
                 localized(manifest.value(QStringLiteral("name"))
-                              .toString(m_extensionName)));
+                              .toString(fallbackName)));
     info.insert(QStringLiteral("shortName"),
                 localized(manifest.value(QStringLiteral("short_name"))
                               .toString(info.value(
@@ -2507,7 +2520,7 @@ QJsonObject ExtensionShimBackend::invokeManagement(
                 QStringLiteral("..")))
         info.insert(QStringLiteral("optionsUrl"),
                     QStringLiteral("chrome-extension://")
-                        + m_extensionId + QLatin1Char('/') + options);
+                        + id + QLatin1Char('/') + options);
     QJsonArray icons;
     const QJsonObject iconMap =
         manifest.value(QStringLiteral("icons")).toObject();
@@ -2523,7 +2536,7 @@ QJsonObject ExtensionShimBackend::invokeManagement(
         icon.insert(QStringLiteral("size"), it.key().toInt());
         icon.insert(QStringLiteral("url"),
                     QStringLiteral("chrome-extension://")
-                        + m_extensionId + QLatin1Char('/') + path);
+                        + id + QLatin1Char('/') + path);
         icons.append(icon);
     }
     if (!icons.isEmpty())
@@ -2560,7 +2573,165 @@ QJsonObject ExtensionShimBackend::invokeManagement(
             addHost(p);
     }
     info.insert(QStringLiteral("hostPermissions"), hostPermissions);
-    return okReply(info);
+    return info;
+}
+
+QJsonArray ExtensionShimBackend::managementWarnings(
+        const QJsonObject &manifest)
+{
+    // Honest warning strings for the grant list — the same wording
+    // ExtensionReviewDialog's consent rows show.  API names and host
+    // patterns run through separate tables like Chrome's permission
+    // messages do; declarations keep manifest order, deduplicated.
+    QJsonArray warnings;
+    const auto add = [&warnings](const QString &text) {
+        if (text.isEmpty())
+            return;
+        for (const QJsonValue &v : warnings) {
+            if (v.toString() == text)
+                return;
+        }
+        warnings.append(text);
+    };
+    QStringList apiPerms;
+    QStringList hostPerms;
+    const auto addHost = [&hostPerms](const QString &pattern) {
+        if (!hostPerms.contains(pattern))
+            hostPerms.append(pattern);
+    };
+    for (const QJsonValue &v : manifest.value(
+             QStringLiteral("permissions")).toArray()) {
+        const QString p = v.toString();
+        if (p.contains(QLatin1String("://"))
+                || p == QLatin1String("<all_urls>"))
+            addHost(p);
+        else if (!apiPerms.contains(p))
+            apiPerms.append(p);
+    }
+    for (const QJsonValue &v : manifest.value(
+             QStringLiteral("host_permissions")).toArray())
+        addHost(v.toString());
+    for (const QJsonValue &v : manifest.value(
+             QStringLiteral("content_scripts")).toArray()) {
+        for (const QJsonValue &m : v.toObject().value(
+                 QStringLiteral("matches")).toArray())
+            addHost(m.toString());
+    }
+    for (const QString &p : apiPerms)
+        add(ExtensionReviewDialog::describePermission(p));
+    for (const QString &h : hostPerms)
+        add(ExtensionReviewDialog::describeHostPermission(h));
+    return warnings;
+}
+
+QJsonObject ExtensionShimBackend::invokeManagement(
+        const QString &method, const QJsonObject &args)
+{
+    if (method == QLatin1String("getSelf")) {
+        const ExtensionManager::ExtensionInfo *record = nullptr;
+        if (ExtensionManager *manager = ExtensionManager::instance()) {
+            const QList<ExtensionManager::ExtensionInfo> records =
+                manager->extensions();
+            for (const ExtensionManager::ExtensionInfo &info : records) {
+                if (info.id != m_extensionId)
+                    continue;
+                record = &info;
+                break;
+            }
+        }
+        return okReply(managementInfoJson(
+            m_extensionId, m_extensionName, m_extensionPath,
+            manifestJson(), record));
+    }
+
+    // Everything below rides the 'management' grant — undeclared
+    // keeps Chrome's no-permission answer.
+    if (!manifestPermissions().contains(QLatin1String("management")))
+        return errReply(QStringLiteral("no-permission"));
+
+    if (method == QLatin1String("getAll")) {
+        QJsonArray out;
+        bool selfSeen = false;
+        if (ExtensionManager *manager = ExtensionManager::instance()) {
+            for (const ExtensionManager::ExtensionInfo &info
+                 : manager->extensions()) {
+                out.append(managementInfoJson(
+                    info.id, info.name, info.path,
+                    manifestForExtensionPath(info.path), &info));
+                if (info.id == m_extensionId)
+                    selfSeen = true;
+            }
+        }
+        // Chrome's getAll lists the caller too — a hosted backend
+        // the manager lost track of still appends its own row.
+        if (!selfSeen && !m_extensionPath.isEmpty())
+            out.append(managementInfoJson(
+                m_extensionId, m_extensionName, m_extensionPath,
+                manifestJson(), nullptr));
+        return okReply(out);
+    }
+    if (method == QLatin1String("get")) {
+        const QString wanted = args.value(QStringLiteral("id")).toString();
+        if (wanted.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        if (ExtensionManager *manager = ExtensionManager::instance()) {
+            for (const ExtensionManager::ExtensionInfo &info
+                 : manager->extensions()) {
+                if (info.id != wanted)
+                    continue;
+                return okReply(managementInfoJson(
+                    info.id, info.name, info.path,
+                    manifestForExtensionPath(info.path), &info));
+            }
+        }
+        if (wanted == m_extensionId)
+            return okReply(managementInfoJson(
+                m_extensionId, m_extensionName, m_extensionPath,
+                manifestJson(), nullptr));
+        return errReply(QStringLiteral("not-found"));
+    }
+    if (method == QLatin1String("getPermissionWarningsById")) {
+        const QString wanted =
+            args.value(QStringLiteral("id")).toString();
+        if (wanted.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        QString path;
+        bool found = wanted == m_extensionId;
+        if (found) {
+            path = m_extensionPath;
+        } else if (ExtensionManager *manager =
+                   ExtensionManager::instance()) {
+            for (const ExtensionManager::ExtensionInfo &info
+                 : manager->extensions()) {
+                if (info.id != wanted)
+                    continue;
+                path = info.path;
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            return errReply(QStringLiteral("not-found"));
+        return okReply(managementWarnings(
+            wanted == m_extensionId ? manifestJson()
+                                    : manifestForExtensionPath(path)));
+    }
+    if (method == QLatin1String("getPermissionWarningsByManifest")) {
+        // Chrome takes the manifest as a JSON string; an already-
+        // parsed object is accepted too — either way a malformed
+        // payload is a typed refusal, never an empty list.
+        const QJsonValue raw =
+            args.value(QStringLiteral("manifest"));
+        const QJsonObject manifest =
+            raw.isObject()
+                ? raw.toObject()
+                : QJsonDocument::fromJson(raw.toString().toUtf8())
+                      .object();
+        if (manifest.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        return okReply(managementWarnings(manifest));
+    }
+    return errReply(QStringLiteral("unsupported"));
 }
 
 // -------------------------------------------------------------------
