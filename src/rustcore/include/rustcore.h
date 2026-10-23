@@ -1806,7 +1806,9 @@ char *rc_ua_spoof_list(void);
 
 /* rc_clearplan(periodUtf8, categories, otrActive) -> plan JSON;
  * rc_string_free.  period: "all"/"everything"/"" or the "hour"/"day"/
- * "week" windows; NULL or an unknown name -> NULL + error. */
+ * "week" windows; "secs:<digits>" (MD28) carries an exact window for
+ * callers starting from an absolute timestamp.  NULL or an unknown
+ * name -> NULL + error. */
 char *rc_clearplan(const char *periodUtf8, uint32_t categories,
                    int otrActive);
 

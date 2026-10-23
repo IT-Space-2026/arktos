@@ -4604,6 +4604,54 @@
     }
     installTopSites();
 
+    // --- chrome.browsingData ------------------------------------------------
+    // MD28: settings()/remove() plus the five served remove* members
+    // (history/cookies/downloads/cache/formData) ride the CLR01 clear
+    // plan on the backend — 'browsingData' is enforced per call
+    // there, so the object is always installed.  The other nine
+    // remove* members Chrome publishes stay typed 'unsupported':
+    // fillNs() below adds them as typed stubs onto this object.
+    function installBrowsingData() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.browsingData; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var bdNs = { __arktosShim: true };
+        var mk = function (m, map) {
+            return function () {
+                var a = Array.prototype.slice.call(arguments);
+                var cb = null;
+                if (a.length
+                        && typeof a[a.length - 1] === 'function')
+                    cb = a.pop();
+                var p = call('browsingData', m, map(a));
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            };
+        };
+        bdNs.settings = mk('settings', function () { return {}; });
+        bdNs.remove = mk('remove', function (a) {
+            return { options: a[0] || {}, dataToRemove: a[1] };
+        });
+        var singles = ['removeHistory', 'removeCookies',
+                       'removeDownloads', 'removeCache',
+                       'removeFormData'];
+        for (var i = 0; i < singles.length; ++i) {
+            bdNs[singles[i]] = mk(singles[i], function (a) {
+                return { options: a[0] || {} };
+            });
+        }
+        installNs('browsingData', bdNs);
+    }
+    installBrowsingData();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -4861,7 +4909,7 @@
         'scripting', 'offscreen', 'omnibox', 'devtools',
         'fontSettings', 'userScripts',
         'declarativeNetRequest', 'declarativeContent',
-        'browsingData', 'management',
+        'management',
         'power', 'system', 'tts', 'enterprise', 'debugger',
         'processes', 'readingList', 'search', 'favicon', 'tabCapture',
         'input', 'dns', 'documentScan', 'fileSystemProvider',

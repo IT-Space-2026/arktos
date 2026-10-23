@@ -25,7 +25,9 @@
 //!     the process with.
 //!
 //! Periods: "all" clears whole stores; "hour"/"day"/"week" clear a
-//! recent window.  Ops carry "since_secs" when a window applies and
+//! recent window; "secs:<digits>" (MD28) carries an exact window for
+//! callers that start from an absolute timestamp.  Ops carry
+//! "since_secs" when a window applies and
 //! "ranged" only where the backing store supports a time-scoped
 //! delete — today that is the history visit log alone (the engine's
 //! cookie/cache/storage APIs are all-or-nothing), so ranged-unable
@@ -58,13 +60,29 @@ pub const CAT_FULL_WIPE: u32 = 0x100;
 /// The period vocabulary: normalized name + window length in seconds
 /// (0 = the whole store).  None on an unrecognized name — the FFI
 /// maps it to RC_INVALID_ARGUMENT rather than guessing at a window.
-fn parse_period(period: &str) -> Option<(&'static str, i64)> {
-    match period.trim().to_ascii_lowercase().as_str() {
-        "" | "all" | "everything" => Some(("all", 0)),
-        "hour" | "last-hour" => Some(("hour", 3_600)),
-        "day" | "today" | "last-day" => Some(("day", 86_400)),
-        "week" | "last-week" => Some(("week", 604_800)),
-        _ => None,
+///
+/// MD28: `secs:<digits>` carries an exact window — chrome.browsingData's
+/// `since` is an absolute timestamp the named windows cannot express,
+/// and the one ranged store (the visit log) honors it verbatim.  The
+/// normalized name echoes the parsed value so a plan reports the
+/// window it actually decided on.  Digits only — signs, whitespace
+/// and unit suffixes all refuse, keeping the C++ transliteration
+/// byte-identical.
+fn parse_period(period: &str) -> Option<(String, i64)> {
+    let p = period.trim().to_ascii_lowercase();
+    match p.as_str() {
+        "" | "all" | "everything" => Some(("all".to_string(), 0)),
+        "hour" | "last-hour" => Some(("hour".to_string(), 3_600)),
+        "day" | "today" | "last-day" => Some(("day".to_string(), 86_400)),
+        "week" | "last-week" => Some(("week".to_string(), 604_800)),
+        _ => {
+            let digits = p.strip_prefix("secs:")?;
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            let secs = digits.parse::<i64>().ok()?;
+            Some((format!("secs:{secs}"), secs))
+        }
     }
 }
 
@@ -360,6 +378,27 @@ mod tests {
         assert_eq!(plan("everything", CAT_HISTORY, false)["since_secs"], 0);
         assert!(plan_json("fortnight", CAT_HISTORY, false).is_err());
         assert!(plan_json("hour;drop", CAT_HISTORY, false).is_err());
+    }
+
+    #[test]
+    fn exact_secs_window() {
+        // MD28: "secs:<digits>" is the exact-window form — the plan
+        // reports the parsed value and the ranged store tags it.
+        let p = plan("secs:90", CAT_HISTORY, false);
+        assert_eq!(p["period"], "secs:90");
+        assert_eq!(p["since_secs"], 90);
+        assert_eq!(p["ops"][1]["since_secs"], 90);
+        assert_eq!(p["ops"][1]["ranged"], true);
+        // secs:0 is the whole store, like "all".
+        assert_eq!(plan("secs:0", CAT_HISTORY, false)["since_secs"], 0);
+        // Only plain digits survive — signs, whitespace, units and
+        // overflow all refuse rather than guessing a window.
+        for bad in [
+            "secs:", "secs:-5", "secs:+5", "secs: 5", "secs:5s",
+            "secs:1.5", "secs:99999999999999999999999", "secs",
+        ] {
+            assert!(plan_json(bad, CAT_HISTORY, false).is_err(), "{bad}");
+        }
     }
 
     #[test]

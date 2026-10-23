@@ -1306,6 +1306,11 @@ QStringList ExtensionManager::runtimeServes()
         // MD21: chrome.bookmarks rides the RC05 store through
         // BookmarksManager — the namespace is fully served.
         QStringLiteral("bookmarks"),
+        // MD28: chrome.browsingData serves settings/remove plus the
+        // five remove* members over the CLR01 clear plan — the
+        // declared surface is partially served, unserved dataTypes
+        // answer typed verdicts.
+        QStringLiteral("browsingData"),
         QStringLiteral("contextMenus"),
         // MD23: chrome.cookies reads the RC15 persistent mirror and
         // writes the engine jar + mirror — the namespace is served.

@@ -122,6 +122,7 @@ private slots:
     void extensionSessions();
     void extensionTabGroups();
     void extensionTopSites();
+    void extensionBrowsingData();
     void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
@@ -10371,6 +10372,221 @@ void tst_ExtensionManager::extensionTopSites()
                              QStringLiteral("get"), QJsonObject())
                  .value(QLatin1String("error")).toString(),
              QStringLiteral("no-permission"));
+
+    QDir(dirB).removeRecursively();
+}
+
+// MD28 — chrome.browsingData over the CLR01 clear plan: remove() and
+// the five served remove* members (history/cookies/downloads/cache/
+// formData) map Chrome's DataTypeSet onto ClearPrivateData category
+// bits, 'browsingData' gates the namespace, and the nine unserved
+// dataTypes + unservable RemovalOptions scoping keep typed verdicts
+// — reported inside the removal result, never silently skipped.
+void tst_ExtensionManager::extensionBrowsingData()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // Same ambient-persona binding the MD27 leg uses — the backend's
+    // HistoryManager/AutoFillManager resolve exactly these stores.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstextbd%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    HistoryManager *manager = HistoryManager::instance();
+    QVERIFY(manager);
+    QCOMPARE(manager->profileId(), profileId);
+    auto unbind = qScopeGuard([prevId, profileId]() {
+        HistoryManager::releaseFor(profileId);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+    manager->clear();
+
+    // A two-hour-old row and a fresh one — the windowed remove must
+    // take only the in-window row.
+    const QDateTime now = QDateTime::currentDateTime();
+    QList<HistoryEntry> seed;
+    seed.append(HistoryEntry(
+        QStringLiteral("https://old.example/"),
+        now.addSecs(-7200), QStringLiteral("Old")));
+    seed.append(HistoryEntry(
+        QStringLiteral("https://new.example/"),
+        now, QStringLiteral("New")));
+    manager->setHistory(seed);
+    QCOMPARE(manager->history().size(), 2);
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extbd-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-bd\","
+                "\"version\":\"1.0\",\"permissions\":[\"browsingData\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0047"),
+        QStringLiteral("tst-bd"), dir);
+
+    // settings() answers Chrome's {options, dataToRemove,
+    // dataRemovalPermitted} — served types permitted, the other nine
+    // honestly not.
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("browsingData"), QStringLiteral("settings"),
+        QJsonObject());
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject settings =
+        reply.value(QLatin1String("result")).toObject();
+    const QJsonObject permitted = settings
+        .value(QLatin1String("dataRemovalPermitted")).toObject();
+    QCOMPARE(permitted.value(QLatin1String("history")).toBool(), true);
+    QCOMPARE(permitted.value(QLatin1String("cookies")).toBool(), true);
+    QCOMPARE(permitted.value(QLatin1String("downloads")).toBool(), true);
+    QCOMPARE(permitted.value(QLatin1String("cache")).toBool(), true);
+    QCOMPARE(permitted.value(QLatin1String("formData")).toBool(), true);
+    QCOMPARE(permitted.value(QLatin1String("passwords")).toBool(), false);
+    QCOMPARE(permitted.value(QLatin1String("localStorage")).toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("options")).toObject()
+                 .value(QLatin1String("originTypes")).toObject()
+                 .value(QLatin1String("unprotectedWeb")).toBool(),
+             true);
+
+    // removeHistory with a 'since' stamp 60s back: the plan carries
+    // it as an exact secs:<n> window — the fresh row goes, the
+    // two-hour-old one survives, and the widening past the window on
+    // the unranged companion store is reported under 'degraded'.
+    const double sinceMs =
+        double(now.toMSecsSinceEpoch() - 60 * 1000);
+    reply = backend.invoke(
+        QStringLiteral("browsingData"), QStringLiteral("removeHistory"),
+        QJsonObject{{QStringLiteral("options"),
+                     QJsonObject{{QStringLiteral("since"), sinceMs}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject result =
+        reply.value(QLatin1String("result")).toObject();
+    QVERIFY(result.value(QLatin1String("removed")).toArray()
+                .contains(QStringLiteral("history")));
+    QVERIFY(result.value(QLatin1String("degraded")).toArray()
+                .contains(QStringLiteral("history")));
+    QVERIFY(manager->historyContains(
+                QStringLiteral("https://old.example/")));
+    QVERIFY(!manager->historyContains(
+                QStringLiteral("https://new.example/")));
+
+    // remove() with a mixed DataTypeSet: the served member executes,
+    // the unserved one reports inside the removal set — not skipped.
+    manager->setHistory(seed);
+    reply = backend.invoke(
+        QStringLiteral("browsingData"), QStringLiteral("remove"),
+        QJsonObject{{QStringLiteral("options"), QJsonObject()},
+                    {QStringLiteral("dataToRemove"),
+                     QJsonObject{{QStringLiteral("history"), true},
+                                 {QStringLiteral("passwords"), true}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject mixed =
+        reply.value(QLatin1String("result")).toObject();
+    QVERIFY(mixed.value(QLatin1String("removed")).toArray()
+                .contains(QStringLiteral("history")));
+    QVERIFY(mixed.value(QLatin1String("unsupported")).toArray()
+                .contains(QStringLiteral("passwords")));
+    QVERIFY(manager->history().isEmpty());
+
+    // A call whose WHOLE requested set is unservable answers the
+    // typed verdict — nothing was cleared.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("remove"),
+                 QJsonObject{{QStringLiteral("dataToRemove"),
+                              QJsonObject{
+                                  {QStringLiteral("passwords"), true},
+                                  {QStringLiteral("localStorage"), true}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // A dedicated removeX member on an unserved store answers the
+    // same typed verdict.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("removePasswords"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // Per-origin scoping has no whole-store equivalent — refused,
+    // not widened.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("removeHistory"),
+                 QJsonObject{{QStringLiteral("options"),
+                              QJsonObject{
+                                  {QStringLiteral("origins"),
+                                   QJsonArray{
+                                       QStringLiteral("https://a.example")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // Scoping the regular web out leaves nothing we serve.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("removeHistory"),
+                 QJsonObject{{QStringLiteral("options"),
+                              QJsonObject{
+                                  {QStringLiteral("originTypes"),
+                                   QJsonObject{
+                                       {QStringLiteral("unprotectedWeb"),
+                                        false}}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // Missing/mistyped args are the argument verdicts.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("remove"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("removeHistory"),
+                 QJsonObject{{QStringLiteral("options"),
+                              QJsonObject{
+                                  {QStringLiteral("since"),
+                                   QStringLiteral("abc")}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // A mistyped bridge call is the typed unreachable-member verdict.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("purge"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // The manifest gate is per-context: a sibling backend without
+    // 'browsingData' hears no-permission on every member.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extbdb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-bd-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0048"),
+        QStringLiteral("tst-bd-b"), dirB);
+    for (const QString m : {QStringLiteral("settings"),
+                            QStringLiteral("remove"),
+                            QStringLiteral("removeHistory"),
+                            QStringLiteral("removeCookies")}) {
+        QCOMPARE(backendB.invoke(QStringLiteral("browsingData"), m,
+                                 QJsonObject())
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+    }
 
     QDir(dirB).removeRecursively();
 }

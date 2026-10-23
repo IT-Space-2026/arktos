@@ -403,6 +403,18 @@ private:
     // only member Chrome publishes, and the namespace has no events.
     QJsonObject invokeTopSites(const QString &method,
                                const QJsonObject &args);
+    // MD28: chrome.browsingData over the CLR01 clear-plan machinery —
+    // 'browsingData' gates the namespace; settings/remove plus the
+    // five served remove* members (history/cookies/downloads/cache/
+    // formData) map Chrome's DataTypeSet onto ClearPrivateData
+    // category bits and the plan vocabulary decides scope + ops.
+    // The other nine Chrome dataTypes stay typed 'unsupported' —
+    // inside a mixed remove() they are reported in the removal
+    // result, never silently skipped; per-origin scoping
+    // (origins/excludeOrigins, non-web originTypes) is typed
+    // unservable rather than widened to a whole-store wipe.
+    QJsonObject invokeBrowsingData(const QString &method,
+                                   const QJsonObject &args);
     // MD23: chrome.cookies — reads over the RC15 persistent mirror
     // (the jar's on-disk shadow, fed by the engine's cookie signals;
     // the C++ jar's live mirror is the no-rust read path), writes go
@@ -534,6 +546,9 @@ private:
     // MD25: the getDevices honest-empty caveat (no sync service) is
     // recorded once per context, not on every call.
     bool m_sessionsDevicesNoted = false;
+    // MD28: the served-subset vocabulary + window-degradation caveat
+    // is recorded once per context, not on every remove.
+    bool m_browsingDataNoted = false;
 };
 
 #endif // EXTENSIONSHIMBACKEND_H

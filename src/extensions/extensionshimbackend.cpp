@@ -19,11 +19,13 @@
 
 #include "extensionshimbackend.h"
 
+#include "autofillmanager.h"
 #include "bookmarksmanager.h"
 #include "bookmarknode.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserpaths.h"
+#include "clearprivatedata.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "engineinterface.h"
@@ -35,6 +37,7 @@
 #include "extensionnotificationcenter.h"
 #include "extensionreviewdialog.h"
 #include "historymanager.h"
+#include "profilesettings.h"
 #include "tabbar.h"
 #include "tabwidget.h"
 #include "webenginebackend.h"
@@ -1370,6 +1373,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeHistory(method, args);
     if (ns == QLatin1String("topSites"))
         return invokeTopSites(method, args);
+    if (ns == QLatin1String("browsingData"))
+        return invokeBrowsingData(method, args);
     if (ns == QLatin1String("cookies"))
         return invokeCookies(method, args);
     if (ns == QLatin1String("downloads"))
@@ -4971,6 +4976,310 @@ QJsonObject ExtensionShimBackend::invokeTopSites(
         }
         return okReply(out);
     }
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.browsingData — MD28.  Chrome's bulk-clear API over the CLR01
+// plan machinery: remove() and the five served remove* convenience
+// members map Chrome's DataTypeSet onto ClearPrivateData category
+// bits, and the same rc_clearplan/planQt planner the dialog runs
+// decides the ops and the persistent/OTR scope.  'browsingData'
+// gates the namespace (Chrome lists it as a required permission).
+//
+// Served dataTypes: history, downloads, cookies, cache, formData —
+// the stores the plan vocabulary owns (formData has no plan op; the
+// autofill wipe runs direct, same as accept()).  The other nine
+// Chrome dataTypes (appcache, cacheStorage, fileSystems, indexedDB,
+// localStorage, passwords, pluginData, serviceWorkers, webSQL) name
+// stores this build cannot remove selectively — a remove() that
+// asks for them reports them in the result's 'unsupported' list and
+// a dedicated removeX() answers the typed verdict; never silently
+// skipped.  RemovalOptions scoping this build cannot honor —
+// origins/excludeOrigins, non-web originTypes — is a typed
+// 'unsupported' too: widening it to a whole-store wipe would delete
+// data the caller scoped out.
+//
+// RemovalOptions.since is an absolute ms-epoch stamp; the plan's
+// window vocabulary carries it exactly via "secs:<n>" — the ranged
+// visit log honors the window, the all-or-nothing stores wipe whole
+// and are reported under 'degraded'.
+// -------------------------------------------------------------------
+
+// Chrome DataTypeSet -> the CLR01 category bits.  formData returns 0
+// here — the autofill store has no plan op and wipes direct, the
+// same path ClearPrivateData::accept() runs.
+static quint32 browsingDataCategory(const QString &type)
+{
+    if (type == QLatin1String("history"))
+        return ClearPrivateData::ClearHistory;
+    if (type == QLatin1String("downloads"))
+        return ClearPrivateData::ClearDownloads;
+    if (type == QLatin1String("cookies"))
+        return ClearPrivateData::ClearCookies;
+    if (type == QLatin1String("cache"))
+        return ClearPrivateData::ClearCache;
+    return 0;
+}
+
+// The Chrome vocabulary beyond the five served names — kept explicit
+// so settings() can answer dataRemovalPermitted:false for each and
+// remove() can tell a known-unserved type from an unrecognized key
+// (an unrecognized key in DataTypeSet is ignored, like Chrome).
+static const QStringList &browsingDataUnserved()
+{
+    static const QStringList unserved = {
+        QStringLiteral("appcache"), QStringLiteral("cacheStorage"),
+        QStringLiteral("fileSystems"), QStringLiteral("indexedDB"),
+        QStringLiteral("localStorage"), QStringLiteral("passwords"),
+        QStringLiteral("pluginData"), QStringLiteral("serviceWorkers"),
+        QStringLiteral("webSQL"),
+    };
+    return unserved;
+}
+
+// Every removeXyz() convenience member Chrome publishes is remove()
+// with a fixed one-member DataTypeSet — the member name camel-cases
+// the dataType, so removeHistory -> {history:true}.  An empty string
+// means the name is not a remove* member at all.
+static QString browsingDataFixedType(const QString &method)
+{
+    if (!method.startsWith(QLatin1String("remove"))
+            || method == QLatin1String("remove")
+            || method.size() <= 6)
+        return QString();
+    QString type = method.mid(6);
+    type[0] = type[0].toLower();
+    return type;
+}
+
+// settings() — Chrome answers {options, dataToRemove,
+// dataRemovalPermitted} from the browser's own clear dialog.  The
+// honest local mapping is the persisted ClearPrivateData checkbox
+// state for the five served types; dataRemovalPermitted is the
+// capability truth — served types true, the rest false.
+static QJsonObject browsingDataSettings()
+{
+    ProfileSettings settings;
+    settings.beginGroup(QLatin1String("clearprivatedata"));
+    QJsonObject dataToRemove{
+        {QStringLiteral("history"),
+         settings.value(QLatin1String("browsingHistory"), true).toBool()},
+        {QStringLiteral("downloads"),
+         settings.value(QLatin1String("downloadHistory"), true).toBool()},
+        {QStringLiteral("cookies"),
+         settings.value(QLatin1String("cookies"), true).toBool()},
+        {QStringLiteral("cache"),
+         settings.value(QLatin1String("cache"), true).toBool()},
+        {QStringLiteral("formData"),
+         settings.value(QLatin1String("autofill"), true).toBool()},
+    };
+    settings.endGroup();
+
+    QJsonObject permitted = dataToRemove;
+    for (const QString &type : browsingDataUnserved()) {
+        dataToRemove.insert(type, false);
+        permitted.insert(type, false);
+    }
+
+    return QJsonObject{
+        {QStringLiteral("options"), QJsonObject{
+            {QStringLiteral("since"), 0},
+            {QStringLiteral("originTypes"), QJsonObject{
+                {QStringLiteral("unprotectedWeb"), true},
+                {QStringLiteral("protectedWeb"), false},
+                {QStringLiteral("extension"), false}}},
+        }},
+        {QStringLiteral("dataToRemove"), dataToRemove},
+        {QStringLiteral("dataRemovalPermitted"), permitted},
+    };
+}
+
+// remove(options, dataToRemove) — the shared body for remove() and
+// every served remove* member.  Executes the served subset and
+// reports the rest; a call whose WHOLE requested set is unservable
+// answers the typed verdict instead.
+static QJsonObject browsingDataRemove(const QJsonValue &optionsValue,
+                                      const QJsonObject &dataToRemove)
+{
+    QJsonObject options;
+    if (optionsValue.isObject())
+        options = optionsValue.toObject();
+    else if (!optionsValue.isUndefined())
+        return errReply(QStringLiteral("invalid-argument"));
+
+    // 'since' is an absolute ms-epoch stamp — the plan vocabulary
+    // carries it verbatim as a "secs:<n>" window so the ranged visit
+    // log honors exactly the window the extension asked for.
+    QString period = QLatin1String("all");
+    bool windowed = false;
+    const QJsonValue sinceValue = options.value(QLatin1String("since"));
+    if (!sinceValue.isUndefined()) {
+        const double since = sinceValue.toDouble();
+        // !(s >= 0) catches NaN and negatives alike.
+        if (!sinceValue.isDouble() || !(since >= 0))
+            return errReply(QStringLiteral("invalid-argument"));
+        if (since > 0) {
+            // Round up to whole seconds — over-clearing is the
+            // honest direction for a privacy wipe; a future stamp
+            // (or one beyond ms precision) clamps to a 1s window
+            // rather than meaning "all".
+            const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+            const qint64 sinceMs =
+                since >= double(nowMs) ? nowMs : qint64(since);
+            const qint64 secs =
+                qMax<qint64>(1, (nowMs - sinceMs + 999) / 1000);
+            period = QStringLiteral("secs:%1").arg(secs);
+            windowed = true;
+        }
+    }
+
+    // originTypes: every store the plan touches is regular-web data
+    // (unprotectedWeb).  Scopes outside it are reported, never
+    // silently dropped; per-origin limits (origins/excludeOrigins)
+    // cannot be honored by whole-store ops, so they refuse — a
+    // degraded all-store wipe would remove data the caller scoped
+    // out.
+    const QJsonValue originTypes =
+        options.value(QLatin1String("originTypes"));
+    bool unprotectedWeb = true;
+    QStringList unsupportedScopes;
+    if (originTypes.isObject()) {
+        const QJsonObject ot = originTypes.toObject();
+        if (ot.contains(QLatin1String("unprotectedWeb")))
+            unprotectedWeb =
+                ot.value(QLatin1String("unprotectedWeb")).toBool();
+        if (ot.value(QLatin1String("protectedWeb")).toBool())
+            unsupportedScopes << QStringLiteral("protectedWeb");
+        if (ot.value(QLatin1String("extension")).toBool())
+            unsupportedScopes << QStringLiteral("extension");
+    } else if (!originTypes.isUndefined()) {
+        return errReply(QStringLiteral("invalid-argument"));
+    }
+    for (const char *key : {"origins", "excludeOrigins"}) {
+        const QJsonValue v = options.value(QLatin1String(key));
+        if (v.isUndefined())
+            continue;
+        if (!v.isArray())
+            return errReply(QStringLiteral("invalid-argument"));
+        if (!v.toArray().isEmpty())
+            return errReply(QStringLiteral("unsupported"));
+    }
+
+    // Split the requested set: explicit false members are not
+    // requested (Chrome's DataTypeSet semantics); true members split
+    // into served stores and typed-unserved ones.
+    quint32 categories = 0;
+    bool wantFormData = false;
+    QStringList served, unserved;
+    for (auto it = dataToRemove.constBegin();
+         it != dataToRemove.constEnd(); ++it) {
+        if (!it.value().toBool())
+            continue;
+        const QString type = it.key();
+        const quint32 category = browsingDataCategory(type);
+        if (category) {
+            categories |= category;
+            served << type;
+        } else if (type == QLatin1String("formData")) {
+            wantFormData = true;
+            served << type;
+        } else if (browsingDataUnserved().contains(type)) {
+            unserved << type;
+        }
+        // Unrecognized keys are ignored like Chrome's dictionary.
+    }
+    if (!unprotectedWeb) {
+        // The regular-web scope is explicitly off — every served
+        // type was requested under scopes this build cannot reach.
+        unserved << served;
+        served.clear();
+        categories = 0;
+        wantFormData = false;
+    }
+    if (served.isEmpty() && !unserved.isEmpty())
+        return errReply(QStringLiteral("unsupported"));
+
+    // The decision — which ops, in which scope — is the planner's;
+    // Qt only executes.  The scope mirrors ClearPrivateData::accept():
+    // a private-context request gets the OTR plan whose ops can never
+    // reach the persistent profile.
+    const bool otr = BrowserApplication::isPrivate();
+    const QJsonArray ops =
+        ClearPrivateData::plan(period, categories, otr);
+    ClearPrivateData::executePlan(ops);
+    // formData has no plan op — the autofill store wipes direct, the
+    // same path accept() runs.  An OTR context writes no autofill
+    // data, so a private-requested formData is satisfied vacuously.
+    if (wantFormData && !otr)
+        AutoFillManager::instance()->clearData();
+
+    QJsonObject result;
+    result.insert(QStringLiteral("removed"),
+                  QJsonArray::fromStringList(served));
+    if (!unserved.isEmpty())
+        result.insert(QStringLiteral("unsupported"),
+                      QJsonArray::fromStringList(unserved));
+    if (!unsupportedScopes.isEmpty())
+        result.insert(QStringLiteral("unsupportedScopes"),
+                      QJsonArray::fromStringList(unsupportedScopes));
+    if (windowed && !served.isEmpty()) {
+        // The visit log is the only ranged store — every requested
+        // type ends up at least partially beyond the window (the
+        // visited-link companion op is unranged too), so report the
+        // widening on all of them.
+        result.insert(QStringLiteral("degraded"),
+                      QJsonArray::fromStringList(served));
+    }
+    return okReply(result);
+}
+
+QJsonObject ExtensionShimBackend::invokeBrowsingData(
+        const QString &method, const QJsonObject &args)
+{
+    // Chrome exposes the namespace only under the declared
+    // 'browsingData' grant — the bridge object answers a direct call
+    // from any code in the context, so the gate runs here too.
+    if (!manifestPermissions().contains(QLatin1String("browsingData")))
+        return errReply(QStringLiteral("no-permission"));
+
+    if (!m_browsingDataNoted) {
+        m_browsingDataNoted = true;
+        recordNote(QStringLiteral(
+            "chrome.browsingData: served subset is history, downloads, "
+            "cookies, cache and formData over the CLR01 plan; the other "
+            "nine Chrome dataTypes answer typed unsupported; a 'since' "
+            "window widens to a full wipe on the all-or-nothing "
+            "stores"));
+    }
+
+    if (method == QLatin1String("settings"))
+        return okReply(browsingDataSettings());
+
+    if (method == QLatin1String("remove")) {
+        // Chrome requires the DataTypeSet argument.
+        const QJsonValue dataToRemove =
+            args.value(QLatin1String("dataToRemove"));
+        if (!dataToRemove.isObject())
+            return errReply(QStringLiteral("invalid-argument"));
+        return browsingDataRemove(args.value(QLatin1String("options")),
+                                  dataToRemove.toObject());
+    }
+
+    const QString fixed = browsingDataFixedType(method);
+    if (!fixed.isEmpty()) {
+        const quint32 category = browsingDataCategory(fixed);
+        const bool served = category
+            || fixed == QLatin1String("formData");
+        if (!served && !browsingDataUnserved().contains(fixed))
+            return errReply(QStringLiteral("unimplemented"));
+        if (!served)
+            return errReply(QStringLiteral("unsupported"));
+        return browsingDataRemove(
+            args.value(QLatin1String("options")),
+            QJsonObject{{fixed, true}});
+    }
+
     return errReply(QStringLiteral("unimplemented"));
 }
 

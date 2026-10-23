@@ -38,16 +38,15 @@ matching every member of the namespace (or a dotted sub-path such as
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
 # stores this tree already has.  They stay in this block — still
-# typed today — but are queued: browsingData -> MD28,
-# dns -> MD29, system -> MD30, privacy -> MD31,
+# typed today — but are queued: dns -> MD29,
+# system -> MD30, privacy -> MD31,
 # userScripts -> MD32, fontSettings -> MD33.  Entries leave the
 # declared set only when the row lands the implementation (downloads
 # left with MD24, sessions with MD25, tabGroups with MD26,
-# topSites with MD27).
+# topSites with MD27, browsingData with MD28).
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
-chrome.browsingData.*: unsupported
 chrome.certificateProvider.*: unsupported
 chrome.chromeOs.*: unsupported
 chrome.contentSettings.*: unsupported
@@ -155,6 +154,20 @@ chrome.history.*: no-store
 # naming anything else is the typed unreachable-member verdict.
 chrome.topSites.*: no-permission
 chrome.topSites.*: unimplemented
+# MD28: chrome.browsingData is served over the CLR01 clear-plan
+# machinery — 'browsingData' gates the namespace (no-permission
+# undeclared).  settings/remove plus removeHistory/removeCookies/
+# removeDownloads/removeCache/removeFormData are live; the other
+# nine Chrome dataTypes (appcache, cacheStorage, fileSystems,
+# indexedDB, localStorage, passwords, pluginData, serviceWorkers,
+# webSQL) and per-origin/non-web RemovalOptions scoping are typed
+# unsupported — inside a mixed remove() they report in the result,
+# never silently skipped.  The rest are the calls' correct
+# verdicts (missing/mistyped args, unreachable members).
+chrome.browsingData.*: no-permission
+chrome.browsingData.*: invalid-argument
+chrome.browsingData.*: unsupported
+chrome.browsingData.*: unimplemented
 # MD23: chrome.cookies is served over the RC15 persistent mirror
 # (reads) + QWebEngineCookieStore live jar (writes land both).
 # 'cookies' gates the namespace; url-bearing ops additionally need

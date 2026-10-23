@@ -926,6 +926,14 @@ UI:
   hosts ranked by visit count off the same history rollup the
   location completer ranks, each host's newest visit supplying the
   entry's url and title (MD27).
+- chrome.browsingData is live for extensions that declare the grant:
+  remove() plus removeHistory/removeCookies/removeDownloads/
+  removeCache/removeFormData run the same clear plan the browser's
+  own Clear Private Data dialog uses — a "since" timestamp bounds
+  the history wipe to an exact window — and settings() reports which
+  Chrome data types the browser can actually clear. Data types the
+  browser cannot remove selectively are reported as unsupported
+  rather than silently skipped (MD28).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now
