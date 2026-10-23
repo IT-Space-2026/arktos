@@ -782,6 +782,12 @@ UI:
   or jpeg data url, gated by the same tabs/host-coverage rule that
   decides whether an extension may see a tab's URL — an uncovered
   extension gets a typed refusal, never pixels (MD11).
+- chrome.tabs.connect is live: an extension can open a long-lived
+  Port into a covered tab's content-script context and exchange
+  postMessage traffic both ways, with onConnect on the page end,
+  sender.tab on the connecting port and onDisconnect propagating in
+  both directions — gated by the same host-coverage rule
+  tabs.sendMessage applies (MD12).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

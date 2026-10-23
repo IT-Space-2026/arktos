@@ -752,12 +752,12 @@
             for (var tk in tabsNsRef) {
                 if (tk === '__arktosShim')
                     continue;
-                // sendMessage is an identity override like
+                // sendMessage/connect are identity overrides like
                 // runtime.connect: the native binding can only reach
                 // the dead service worker, the hosted route is the
-                // live one — fill it even over a native member.
+                // live one — fill them even over a native member.
                 if (chrome.tabs[tk] === undefined
-                        || tk === 'sendMessage')
+                        || tk === 'sendMessage' || tk === 'connect')
                     safeSet(chrome.tabs, tk, tabsNsRef[tk],
                             'chrome.tabs.' + tk);
             }
@@ -2541,6 +2541,50 @@
                             : 'chrome.tabs.sendMessage failed');
                     });
             });
+        };
+        // MD12 — tabs.connect(tabId, connectInfo): a long-lived Port
+        // to the tab's page agent over the same ER02 relay machinery
+        // sendMessage uses.  The bridge call registers THIS context
+        // as the local end on the chan and pushes the offer to the
+        // agent; its runtime.onConnect answers 'portAccept' and from
+        // then on postMessage/onMessage/onDisconnect ride the shared
+        // 'relay' port ops.  The API cannot refuse synchronously —
+        // a typed failure lands as an immediate onDisconnect, the
+        // same surface Chrome's 'Could not establish connection'
+        // takes.
+        tabsNs.connect = function (tabId, connectInfo) {
+            var info = connectInfo || {};
+            touch('chrome.tabs.connect');
+            var localId = 'p' + (++shim.seq) + '#' + Date.now();
+            var chan = cfg.id + '#' + localId;
+            var port = newPort(info.name || '', chan, localId);
+            call('tabs', 'connect',
+                 { id: tabId, chan: chan, portId: localId,
+                   name: info.name || '', opts: info })
+                .then(function (sender) {
+                    // The reply carries the tab end's MessageSender —
+                    // Chrome fills the connecting port's sender.tab.
+                    if (sender && typeof sender === 'object')
+                        port.sender = sender;
+                })
+                .catch(function (e) {
+                    var msg = (e && e.message)
+                        ? String(e.message)
+                        : 'chrome.tabs.connect failed';
+                    recordGap('chrome.tabs.connect', msg);
+                    if (port.disconnected)
+                        return;
+                    port.disconnected = true;
+                    delete shim.ports[localId];
+                    setTimeout(function () {
+                        // Chrome sets lastError for the duration of
+                        // the onDisconnect listeners only.
+                        setLastError(msg);
+                        port.onDisconnect.__fire([port]);
+                        clearLastError();
+                    }, 0);
+                });
+            return port;
         };
         // MD11 — zoom + capture.  Zoom rides the tab's real zoom
         // machinery; zoomSettings are a recorded model the backend

@@ -142,6 +142,9 @@ private:
     // page agent's response resolves onto it), so it lives at this
     // level like getCurrent rather than in the shared backend.
     QJsonObject invokeTabMessage(const QJsonObject &args);
+    // MD12: tabs.connect — same scoping reason: this bridge is the
+    // port's local end, so the connect lives here too.
+    QJsonObject invokeTabConnect(const QJsonObject &args);
     // ER07/ER08: chrome.scripting.executeScript/insertCSS/removeCSS —
     // async for the same reason: the per-frame results resolve onto
     // THIS bridge's hostEvent as '__arktos.execResult', so dispatch
@@ -581,6 +584,16 @@ public:
     QJsonObject pagePortDisconnect(ExtensionPageBridge *page,
                                    const QString &chan,
                                    const QString &portId);
+    // MD12: the reverse offer — tabs.connect registers the CALLING
+    // shim context's end and pushes '__arktos.portConnect' onto the
+    // tab's page agent (its runtime.onConnect fires -> portAccept
+    // registers the page end).  Answers the tab end's MessageSender
+    // so the shim can fill the connecting port's sender.tab.
+    QJsonObject tabPortConnect(ChromeBridge *from,
+                               ExtensionPageBridge *page,
+                               const QString &chan,
+                               const QString &portId,
+                               const QString &name);
     // The page (or its bridge) died — drop its pending sends and port
     // ends; surviving ends get the honest portDisconnect push.
     void unregisterPageContext(ExtensionPageBridge *page);

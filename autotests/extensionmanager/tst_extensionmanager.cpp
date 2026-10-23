@@ -101,6 +101,7 @@ private slots:
     void extensionPopupContext();
     void extensionPageAgent();
     void extensionTabMessaging();
+    void extensionTabConnect();
     void extensionScripting();
     void extensionScriptCss();
     void extensionContentScriptRegistration();
@@ -6536,6 +6537,287 @@ void tst_ExtensionManager::extensionTabMessaging()
     // deleteLater, not close(): three open tabs trip the
     // confirmClosingMultipleTabs QMessageBox, which is modal and
     // unanswerable headless.
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->removeExtension(id);
+    QDir(dir).removeRecursively();
+}
+
+// MD12 — chrome.tabs.connect: a long-lived Port from the hosted
+// context into a tab's page agent over the same relay machinery
+// ER02's sendMessage uses.  The leg drives the real API from the
+// host page: the agent's runtime.onConnect fires with a Chrome-
+// shaped sender, postMessage flows both ways, the connecting port's
+// sender.tab is the remote tab, and disconnect propagates in both
+// directions.  The C++ gates are direct-driven like the sendMessage
+// legs.
+void tst_ExtensionManager::extensionTabConnect()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exttabconn-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-tabconn\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\","
+                "\"tabs\"],\"host_permissions\":[\"<all_urls>\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"},"
+                "\"content_scripts\":[{\"matches\":[\"<all_urls>\"],"
+                "\"js\":[\"cs.js\"],\"run_at\":\"document_idle\"}]}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+        QFile c(dir + QLatin1String("/cs.js"));
+        QVERIFY(c.open(QIODevice::WriteOnly));
+        c.write(
+            "window.__csConns=[];window.__csPorts=[];"
+            "window.__csDisc=0;\n"
+            "chrome.runtime.onConnect.addListener(function(p){"
+            " window.__csConns.push({name:p.name,"
+            "  id:(p.sender&&p.sender.id)||null,"
+            "  origin:(p.sender&&p.sender.origin)||null,"
+            "  hasTab:!!(p.sender&&p.sender.tab)});"
+            " window.__csPorts.push(p);"
+            " p.onMessage.addListener(function(m,port){"
+            "  port.postMessage({echo:m});});"
+            " p.onDisconnect.addListener(function(){"
+            "  window.__csDisc++;});"
+            "});\n");
+        c.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-tabconn")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *host = runtime->host(id);
+    QVERIFY(host && host->bridge());
+
+    auto eval = [](QWebEnginePage *page, const QString &source,
+                   quint32 worldId = 0) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(
+            source, worldId,
+            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const quint32 agentWorld =
+        ExtensionBackgroundRuntime::AgentWorldId;
+    const QString probe = QStringLiteral(
+        "((window.__arktosExtAgents&&__arktosExtAgents['%1'])"
+        "||{active:false,bridgeUp:false})").arg(id);
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    QObject::connect(&server, &QTcpServer::newConnection,
+                     this, [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead,
+                         socket, [socket]() {
+            socket->readAll();
+            const QByteArray body =
+                "<html><body>tabconn</body></html>";
+            socket->write(
+                "HTTP/1.1 200\r\nContent-Type: text/html\r\n"
+                "Content-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view = tw->webView(0);
+    QVERIFY(view && view->page());
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    view->load(QUrl(base + QStringLiteral("/connect")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), probe + QStringLiteral(".bridgeUp"),
+             agentWorld).toBool(),
+        30000);
+    const int tabId = ExtensionShimBackend::tabIdFor(view);
+    QVERIFY(tabId > 0);
+
+    // --- open the port from the hosted context ---------------------
+    eval(host->page(), QStringLiteral(
+        "self.__tc={msgs:[],disc:0};"
+        "var p=chrome.tabs.connect(%1,{name:'md12-conn'});"
+        "self.__tc.port=p;"
+        "p.onMessage.addListener(function(m){"
+        " self.__tc.msgs.push(m);});"
+        "p.onDisconnect.addListener(function(){self.__tc.disc++;});"
+        "0").arg(tabId));
+
+    // The agent's runtime.onConnect fired with a Chrome-shaped
+    // extension-context sender (id + extension origin, no .tab).
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral(
+            "(window.__csConns||[]).length>=1"),
+            agentWorld).toBool(),
+        20000);
+    const QJsonObject conn = QJsonDocument::fromJson(
+        eval(view->page(), QStringLiteral(
+            "JSON.stringify(window.__csConns[0])"),
+            agentWorld).toString().toUtf8()).object();
+    QCOMPARE(conn.value(QLatin1String("name")).toString(),
+             QStringLiteral("md12-conn"));
+    QCOMPARE(conn.value(QLatin1String("id")).toString(), id);
+    QCOMPARE(conn.value(QLatin1String("origin")).toString(),
+             QStringLiteral("chrome-extension://") + id);
+    QCOMPARE(conn.value(QLatin1String("hasTab")).toBool(), false);
+
+    // The connecting port's sender is the tab end — Chrome exposes
+    // it as sender.tab once the offer resolves.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "!!(self.__tc.port.sender&&self.__tc.port.sender.tab)"))
+            .toBool(),
+        20000);
+    QCOMPARE(eval(host->page(), QStringLiteral(
+                  "self.__tc.port.sender.tab.id")).toInt(), tabId);
+
+    // --- messages both ways ----------------------------------------
+    eval(host->page(), QStringLiteral(
+        "self.__tc.port.postMessage({hello:1});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "self.__tc.msgs.length>=1")).toBool(),
+        20000);
+    QCOMPARE(eval(host->page(), QStringLiteral(
+                  "self.__tc.msgs[0].echo.hello")).toInt(), 1);
+    // Page-initiated postMessage lands on the extension's onMessage.
+    eval(view->page(), QStringLiteral(
+        "window.__csPorts[0].postMessage({page:2});0"),
+        agentWorld);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "self.__tc.msgs.length>=2")).toBool(),
+        20000);
+    QCOMPARE(eval(host->page(), QStringLiteral(
+                  "self.__tc.msgs[1].page")).toInt(), 2);
+
+    // --- disconnect propagates page->extension ---------------------
+    eval(view->page(), QStringLiteral(
+        "window.__csPorts[0].disconnect();0"), agentWorld);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral("self.__tc.disc>=1"))
+            .toBool(),
+        20000);
+
+    // --- and extension->page on a second port -----------------------
+    eval(host->page(), QStringLiteral(
+        "self.__tc2={disc:0};"
+        "var p=chrome.tabs.connect(%1,{name:'md12-conn2'});"
+        "self.__tc2.port=p;"
+        "p.onDisconnect.addListener(function(){self.__tc2.disc++;});"
+        "0").arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral(
+            "(window.__csConns||[]).length>=2"),
+            agentWorld).toBool(),
+        20000);
+    eval(host->page(), QStringLiteral("self.__tc2.port.disconnect();0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral("window.__csDisc>=1"),
+             agentWorld).toBool(),
+        20000);
+
+    // --- the C++ gates, direct-driven ------------------------------
+    ChromeBridge *bridge = host->bridge();
+    // Wrong tab id — the registry has no such view.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("connect"),
+                 QJsonObject{{QStringLiteral("id"), 424242},
+                             {QStringLiteral("chan"),
+                              id + QStringLiteral("#c#1")},
+                             {QStringLiteral("portId"),
+                              QStringLiteral("p1")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    // A chan outside the extension's namespace never routes.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("connect"),
+                 QJsonObject{{QStringLiteral("id"), tabId},
+                             {QStringLiteral("chan"),
+                              QStringLiteral("other#c#1")},
+                             {QStringLiteral("portId"),
+                              QStringLiteral("p1")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // Subframe addressing is the same documented gap sendMessage
+    // answers — typed, not silently delivered to frame 0.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("connect"),
+                 QJsonObject{{QStringLiteral("id"), tabId},
+                             {QStringLiteral("chan"),
+                              id + QStringLiteral("#c#2")},
+                             {QStringLiteral("portId"),
+                              QStringLiteral("p2")},
+                             {QStringLiteral("opts"),
+                              QJsonObject{{QStringLiteral("frameId"),
+                                           1}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+
+    // --- an uncovered page: the offer never happens -----------------
+    WebView *view3 = tw->makeNewTab(false);
+    QVERIFY(view3 && view3->page());
+    QSignalSpy loadSpy3(view3->page(), &QWebEnginePage::loadFinished);
+    view3->load(QUrl(QStringLiteral("qrc:/pip-player.html")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy3.count() >= 1, 30000);
+    const int tabId3 = ExtensionShimBackend::tabIdFor(view3);
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("connect"),
+                 QJsonObject{{QStringLiteral("id"), tabId3},
+                             {QStringLiteral("chan"),
+                              id + QStringLiteral("#c#3")},
+                             {QStringLiteral("portId"),
+                              QStringLiteral("p3")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+
+    // deleteLater, not close(): open tabs trip the modal
+    // confirmClosingMultipleTabs prompt, unanswerable headless.
     window->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     manager->setExtensionEnabled(id, false);

@@ -163,6 +163,12 @@ chrome.tabs.captureVisibleTab: invalid-argument
 chrome.tabs.captureVisibleTab: no-permission
 chrome.tabs.captureVisibleTab: no-window
 chrome.tabs.captureVisibleTab: not-found
+chrome.tabs.connect: invalid-argument
+chrome.tabs.connect: no-host-access
+chrome.tabs.connect: no-receiver
+chrome.tabs.connect: not-found
+chrome.tabs.connect: too-many-ends
+chrome.tabs.connect: unsupported
 chrome.tabs.create: no-tab
 chrome.tabs.create: no-window
 chrome.tabs.create: url-refused

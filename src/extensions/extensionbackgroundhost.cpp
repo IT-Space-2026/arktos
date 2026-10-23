@@ -158,6 +158,12 @@ QJsonObject ChromeBridge::invoke(const QString &ns,
             && method == QLatin1String("sendMessage")) {
         return invokeTabMessage(args);
     }
+    // MD12: tabs.connect — context-scoped like sendMessage: this
+    // bridge is the port's local end, so the dispatch lives here.
+    if (ns == QLatin1String("tabs")
+            && method == QLatin1String("connect")) {
+        return invokeTabConnect(args);
+    }
     // ER07: chrome.scripting.executeScript — async the same way:
     // the per-frame results resolve onto this bridge's hostEvent as
     // '__arktos.execResult'.
@@ -2503,6 +2509,55 @@ QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
     return ok(QJsonObject{{QStringLiteral("delivered"), true}});
 }
 
+// MD12 — chrome.tabs.connect: a long-lived Port between this shim
+// context and a tab's page agent.  Same entry gates as
+// invokeTabMessage (tab resolution, host coverage BEFORE any push,
+// frameId!=0 typed unsupported), but instead of a one-shot delivery
+// the calling bridge registers a port end on the chan and the page
+// agent answers 'portAccept' — after which traffic rides the shared
+// relay portMessage/portDisconnect ops unchanged.  Chrome cannot
+// refuse a connect synchronously (the API returns a Port), so the
+// typed errors here surface shim-side as an immediate onDisconnect.
+QJsonObject ChromeBridge::invokeTabConnect(const QJsonObject &args)
+{
+    auto err = [](const QString &code) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"), code);
+        return o;
+    };
+    const QString chan = args.value(QStringLiteral("chan")).toString();
+    const QString portId =
+        args.value(QStringLiteral("portId")).toString();
+    if (chan.isEmpty() || portId.isEmpty()
+            || !ownsRelayKey(m_extensionId, chan))
+        return err(QStringLiteral("invalid-argument"));
+    // connectInfo.frameId/documentId: the page agent lives in the
+    // main frame only — the same documented gap sendMessage answers.
+    const QJsonObject opts =
+        args.value(QStringLiteral("opts")).toObject();
+    if ((opts.contains(QStringLiteral("frameId"))
+         && int(opts.value(QStringLiteral("frameId"))
+                    .toDouble(-1)) != 0)
+            || opts.contains(QStringLiteral("documentId")))
+        return err(QStringLiteral("unsupported"));
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    WebView *view = ExtensionShimBackend::viewForTabId(
+        int(args.value(QStringLiteral("id")).toDouble(-1)));
+    if (!view || !view->page())
+        return err(QStringLiteral("not-found"));
+    if (!runtime->agentCovers(m_extensionId, view->page()->url()))
+        return err(QStringLiteral("no-host-access"));
+    ExtensionPageBridge *page =
+        view->page()->findChild<ExtensionPageBridge *>();
+    if (!page)
+        return err(QStringLiteral("no-receiver"));
+    return runtime->tabPortConnect(
+        this, page, chan, portId,
+        args.value(QStringLiteral("name")).toString());
+}
+
 // -------------------------------------------------------------------
 // ER07/ER08 — chrome.scripting.executeScript + insertCSS/removeCSS:
 // the product API.  The call resolves a tab through the same registry
@@ -4185,6 +4240,63 @@ QJsonObject ExtensionBackgroundRuntime::pagePortDisconnect(
         }
     }
     return pageOk();
+}
+
+// MD12 — tabs.connect's offer to a page end.  The caller's own end
+// registers exactly like relayPortConnect's (dedup + the shared
+// bounds), then the chan is offered ONLY to the addressed tab's
+// agent — unlike runtime.connect's fan-out there is exactly one
+// candidate receiver.  The push carries 'ext' because the extEvent
+// repost reaches EVERY agent on the document; the addressed
+// extension's agent fires runtime.onConnect and answers
+// 'portAccept', after which both ends ride the shared
+// portMessage/portDisconnect paths.  The reply carries the tab
+// end's MessageSender — Chrome exposes it as the connecting port's
+// sender.tab.
+QJsonObject ExtensionBackgroundRuntime::tabPortConnect(
+        ChromeBridge *from, ExtensionPageBridge *page,
+        const QString &chan, const QString &portId,
+        const QString &name)
+{
+    if (!from || !page || chan.isEmpty() || portId.isEmpty()
+            || !ownsRelayKey(from, chan))
+        return pageErr(QStringLiteral("invalid-argument"));
+    QList<PortEnd> &ends = m_portEnds[chan];
+    for (const PortEnd &end : std::as_const(ends)) {
+        if (end.target == from && end.localPortId == portId)
+            return pageOk();   // this end is already registered
+    }
+    if (ends.size() >= kMaxPortEndsPerChan
+            || (ends.isEmpty() && m_portEnds.size() >= kMaxPortChans)) {
+        if (ends.isEmpty())
+            m_portEnds.remove(chan);
+        return pageErr(QStringLiteral("too-many-ends"));
+    }
+    ends.append(PortEnd{from, portId});
+    // The extension-context MessageSender — same construction
+    // relayPortConnect stamps: id trusted from the bridge, url the
+    // connecting document's real url when a context page exists.
+    QString senderUrl;
+    if (from->contextPage() && !from->contextPage()->url().isEmpty()) {
+        QUrl u = from->contextPage()->url();
+        u.setFragment(QString());
+        senderUrl = u.toString();
+    }
+    emit page->extEvent(
+        QStringLiteral("__arktos.portConnect"),
+        QJsonObject{{QStringLiteral("chan"), chan},
+                    {QStringLiteral("name"), name},
+                    {QStringLiteral("ext"), from->extensionId()},
+                    {QStringLiteral("sender"),
+                     QJsonObject{
+                         {QStringLiteral("id"), from->extensionId()},
+                         {QStringLiteral("url"), senderUrl},
+                         {QStringLiteral("origin"),
+                          QStringLiteral("chrome-extension://")
+                              + from->extensionId()}}}});
+    return pageOk(page->senderFor(
+        from->extensionId(),
+        page->page() ? page->page()->url().toString() : QString()));
 }
 
 void ExtensionBackgroundRuntime::unregisterPageContext(
