@@ -2146,6 +2146,11 @@ QString eventGate(const QString &name)
     // contexts — the same grant invokeBookmarks applies per call.
     if (ns == QLatin1String("bookmarks"))
         return QStringLiteral("bookmarks");
+    // MD22: history.onVisited/onVisitRemoved reach only
+    // 'history'-declaring contexts — the same grant invokeHistory
+    // applies per call.
+    if (ns == QLatin1String("history"))
+        return QStringLiteral("history");
     return QString();
 }
 

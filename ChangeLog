@@ -865,6 +865,16 @@ UI:
   bookmarks.onCreated/onRemoved/onChanged/onMoved fan out to every
   hosted context that declared "bookmarks" — including changes made
   through the browser's own UI (MD21).
+- chrome.history is live for extensions that declare the grant:
+  search answers Chrome's per-url HistoryItem shape (space-delimited
+  terms AND-matched on url/title, the last-24-hours default window,
+  the 100-result cap), getVisits reports the per-visit rows for one
+  url, addUrl records a visit, and deleteUrl/deleteRange/deleteAll
+  run the same retention path Clear Private Data uses so the store,
+  models and icon sweep stay consistent — with history.onVisited and
+  history.onVisitRemoved fanning out to every hosted context that
+  declared "history", including visits and deletes made through the
+  browser's own UI (MD22).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

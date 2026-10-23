@@ -4201,6 +4201,65 @@
     }
     installBookmarks();
 
+    // --- chrome.history -----------------------------------------------
+    // MD22: same posture as bookmarks — Chrome exposes the object to
+    // every extension and the 'history' grant is enforced per call
+    // by the backend, so the namespace is always installed.  Every
+    // member rides the bridge over the RC04 store; a HistoryItem's
+    // id is the backend's deterministic url serial.
+    function installHistory() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.history; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var histNs = {
+            __arktosShim: true,
+            onVisited: makeEvent('history.onVisited'),
+            onVisitRemoved: makeEvent('history.onVisitRemoved')
+        };
+        var histArgs = {
+            search: function (a) { return { query: a[0] }; },
+            getVisits: function (a) {
+                return { url: a[0] && a[0].url };
+            },
+            addUrl: function (a) {
+                return { url: a[0] && a[0].url };
+            },
+            deleteUrl: function (a) {
+                return { url: a[0] && a[0].url };
+            },
+            deleteRange: function (a) {
+                var r = a[0] || {};
+                return { startTime: r.startTime, endTime: r.endTime };
+            },
+            deleteAll: function () { return {}; }
+        };
+        for (var mk in histArgs) {
+            (function (m, map) {
+                histNs[m] = function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('history', m, map(a));
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mk, histArgs[mk]);
+        }
+        installNs('history', histNs);
+    }
+    installHistory();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -4454,7 +4513,7 @@
     // noted.  Nothing claims to work that doesn't.
     var unsupportedNames = [
         'windows', 'cookies', 'identity', 'gcm',
-        'nativeMessaging', 'privacy', 'topSites', 'history',
+        'nativeMessaging', 'privacy', 'topSites',
         'scripting', 'offscreen', 'omnibox', 'devtools',
         'fontSettings', 'tabGroups', 'userScripts',
         'declarativeNetRequest', 'declarativeContent',

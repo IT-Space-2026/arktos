@@ -112,6 +112,15 @@ class QWebEngineProfile;
 //                  other nodes serialize their store handle; the
 //                  'bookmarks' manifest permission gates the
 //                  namespace and its on* event fan-out
+//   history.*    — MD22: the real visit log over the RC04 store
+//                  through HistoryManager (the facade/FFI lane the
+//                  UI already rides — deletes walk the same
+//                  remove/clear path checkForExpired uses);
+//                  per-url HistoryItem aggregates answer Chrome's
+//                  search shape, 'history' manifest permission gates
+//                  the namespace and its onVisited/onVisitRemoved
+//                  fan-out; transition/typedCount the store never
+//                  records answer 'link'/0 with a recorded note
 //   runtime.*    — context bookkeeping (getViews counts); MD18
 //                  lifecycle ops: reload rides ExtensionManager's
 //                  unload+load, requestUpdateCheck rides
@@ -310,6 +319,14 @@ private:
                                 const QJsonObject &args);
     void bookmarksFanOut(const QString &name,
                          const QJsonArray &eventArgs);
+    // MD22: chrome.history over the RC04 store — the same fan-out
+    // discipline bookmarks/management use (broadcast to
+    // 'history'-declaring contexts, pushEvent fallback for a bare
+    // backend).
+    QJsonObject invokeHistory(const QString &method,
+                              const QJsonObject &args);
+    void historyFanOut(const QString &name,
+                       const QJsonArray &eventArgs);
     QJsonObject invokeExtension(const QString &method,
                                 const QJsonObject &args);
     QJsonObject invokeSidebarAction(const QString &method,
@@ -391,6 +408,9 @@ private:
     // MD21: the getRecent serial-ordering approximation is recorded
     // once per context, not on every call.
     bool m_bmRecentNoted = false;
+    // MD22: the untracked transition-type approximation is recorded
+    // once per context, not on every getVisits.
+    bool m_histTransitionNoted = false;
 };
 
 #endif // EXTENSIONSHIMBACKEND_H

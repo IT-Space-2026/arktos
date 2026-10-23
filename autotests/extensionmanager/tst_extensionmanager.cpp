@@ -54,6 +54,7 @@
 #include "extensionrequestwatcher.h"
 #include "extensionreviewdialog.h"
 #include "extensionshimbackend.h"
+#include "historymanager.h"
 #include "engineinterface.h"
 #include "profilesettings.h"
 #include "qtest_arktos.h"
@@ -112,6 +113,7 @@ private slots:
     void extensionManagementRead();
     void extensionManagementMutations();
     void extensionBookmarks();
+    void extensionHistory();
     void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
@@ -8508,6 +8510,264 @@ void tst_ExtensionManager::extensionBookmarks()
                  QStringLiteral("create"),
                  QJsonObject{{QStringLiteral("props"), QJsonObject{
                      {QStringLiteral("title"), QStringLiteral("x")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
+}
+
+// MD22 — chrome.history served over the RC04 store.  A dedicated
+// temp persona is bound as the ambient profile — the backend's
+// HistoryManager::instance() then resolves exactly this store — and
+// the leg drives the member surface: addUrl's 'link' visit and the
+// aggregate onVisited, search's term/range/maxResults shape,
+// getVisits' VisitItem rows, the three delete ops' onVisitRemoved
+// payloads, the scheme gate, and the 'history' permission gate.
+void tst_ExtensionManager::extensionHistory()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // Same ambient-persona binding the MD21 leg uses: the backend's
+    // HistoryManager::instance() resolves exactly this store, the
+    // ambient id restores on exit, the persona dir goes with it.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstexthist%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    HistoryManager *manager = HistoryManager::instance();
+    QVERIFY(manager);
+    QCOMPARE(manager->profileId(), profileId);
+    auto unbind = qScopeGuard([prevId, profileId]() {
+        HistoryManager::releaseFor(profileId);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+    manager->clear();
+    QVERIFY(manager->history().isEmpty());
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exthist-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-hist\","
+                "\"version\":\"1.0\",\"permissions\":[\"history\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0023"),
+        QStringLiteral("tst-hist"), dir);
+    QSignalSpy events(&backend, &ExtensionShimBackend::pushEvent);
+    auto invoke = [&](const QString &m, const QJsonObject &args) {
+        return backend.invoke(QStringLiteral("history"), m, args);
+    };
+
+    // addUrl — a 'link' visit at now; onVisited carries the url's
+    // aggregated HistoryItem once.
+    const QString url =
+        QStringLiteral("https://arktos-history.example/path");
+    QJsonObject reply = invoke(QStringLiteral("addUrl"), QJsonObject{
+        {QStringLiteral("url"), url}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QCOMPARE(manager->history().size(), 1);
+    QCOMPARE(pushCount(events, QStringLiteral("history.onVisited")), 1);
+
+    // Refused shapes — missing/malformed urls, script schemes.
+    QCOMPARE(invoke(QStringLiteral("addUrl"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("addUrl"), QJsonObject{
+                 {QStringLiteral("url"),
+                  QStringLiteral("javascript:alert(1)")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("scheme-refused"));
+    QCOMPARE(manager->history().size(), 1);
+
+    // A second visit of the same url aggregates into one item.
+    reply = invoke(QStringLiteral("addUrl"), QJsonObject{
+        {QStringLiteral("url"), url}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(manager->history().size(), 2);
+    QCOMPARE(pushCount(events, QStringLiteral("history.onVisited")), 2);
+
+    // search — term AND-match on url/title, Chrome's per-url
+    // aggregate shape, the 24h default window, maxResults bounds.
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("text"),
+             QStringLiteral("arktos-history path")}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonArray hits =
+        reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(hits.size(), 1);
+    const QJsonObject item = hits.at(0).toObject();
+    QCOMPARE(item.value(QLatin1String("url")).toString(), url);
+    QVERIFY(item.value(QLatin1String("lastVisitTime")).toDouble() > 0);
+    QCOMPARE(item.value(QLatin1String("visitCount")).toInt(), 2);
+    QCOMPARE(item.value(QLatin1String("typedCount")).toInt(), 0);
+    QVERIFY(!item.value(QLatin1String("id")).toString().isEmpty());
+    // AND-match: one missing term drops the item; a missing query
+    // object and a sub-1 maxResults answer typed refusals.
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("text"),
+             QStringLiteral("arktos-history nomatch")}}}});
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("search"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("search"), QJsonObject{
+                 {QStringLiteral("query"), QJsonObject{
+                     {QStringLiteral("maxResults"), 0}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // A 3-day-old visit seeded through the import seam falls outside
+    // Chrome's default 24h window but inside an explicit startTime.
+    const QString oldUrl = QStringLiteral("https://old.example/x");
+    const qint64 oldMs = QDateTime::currentMSecsSinceEpoch()
+        - 3 * 86400000;
+    QList<HistoryEntry> seed = manager->history();
+    seed.append(HistoryEntry(oldUrl,
+        QDateTime::fromMSecsSinceEpoch(oldMs),
+        QStringLiteral("Old page")));
+    manager->setHistory(seed);
+    QCOMPARE(manager->history().size(), 3);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("text"), QStringLiteral("")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("text"), QStringLiteral("")},
+            {QStringLiteral("startTime"),
+             double(oldMs - 3600000)}}}});
+    const QJsonArray wide =
+        reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(wide.size(), 2);
+    // Newest lastVisitTime first — the fresh url leads the old one.
+    QCOMPARE(wide.at(0).toObject().value(QLatin1String("url"))
+                 .toString(), url);
+    QCOMPARE(wide.at(1).toObject().value(QLatin1String("url"))
+                 .toString(), oldUrl);
+    QCOMPARE(wide.at(1).toObject().value(QLatin1String("title"))
+                 .toString(), QStringLiteral("Old page"));
+
+    // getVisits — reverse-chronological VisitItems for one url;
+    // transition honestly 'link' (untracked), unknown urls empty.
+    reply = invoke(QStringLiteral("getVisits"),
+                   QJsonObject{{QStringLiteral("url"), url}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonArray visits =
+        reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(visits.size(), 2);
+    const QJsonObject visit = visits.at(0).toObject();
+    QVERIFY(visit.value(QLatin1String("visitTime")).toDouble()
+            >= visits.at(1).toObject()
+                   .value(QLatin1String("visitTime")).toDouble());
+    QCOMPARE(visit.value(QLatin1String("transition")).toString(),
+             QStringLiteral("link"));
+    QCOMPARE(visit.value(QLatin1String("referringVisitId")).toString(),
+             QStringLiteral("0"));
+    QVERIFY(visit.value(QLatin1String("visitId")).toDouble() > 0);
+    QCOMPARE(visit.value(QLatin1String("id")).toString(),
+             item.value(QLatin1String("id")).toString());
+    QVERIFY(invoke(QStringLiteral("getVisits"), QJsonObject{
+                 {QStringLiteral("url"),
+                  QStringLiteral("https://never.example")}})
+            .value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("getVisits"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // deleteRange — bounds are required and inclusive; the removed
+    // urls travel in one aggregate onVisitRemoved.
+    QCOMPARE(invoke(QStringLiteral("deleteRange"), QJsonObject{
+                 {QStringLiteral("startTime"), 0.0}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    reply = invoke(QStringLiteral("deleteRange"), QJsonObject{
+        {QStringLiteral("startTime"), double(oldMs - 1000)},
+        {QStringLiteral("endTime"), double(oldMs + 1000)}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(manager->history().size(), 2);
+    QCOMPARE(pushCount(events,
+                       QStringLiteral("history.onVisitRemoved")), 1);
+    {
+        const QVariantList last = events.last();
+        const QJsonObject removed = last.at(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray()
+            .at(0).toObject();
+        QCOMPARE(removed.value(QLatin1String("allHistory")).toBool(),
+                 false);
+        const QJsonArray urls =
+            removed.value(QLatin1String("urls")).toArray();
+        QCOMPARE(urls.size(), 1);
+        QCOMPARE(urls.at(0).toString(), oldUrl);
+    }
+
+    // deleteUrl — every visit of the url goes in one call.
+    reply = invoke(QStringLiteral("deleteUrl"),
+                   QJsonObject{{QStringLiteral("url"), url}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(manager->history().isEmpty());
+    QCOMPARE(pushCount(events,
+                       QStringLiteral("history.onVisitRemoved")), 2);
+    QCOMPARE(invoke(QStringLiteral("deleteUrl"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // deleteAll — the store's clear path, allHistory:true.
+    invoke(QStringLiteral("addUrl"),
+           QJsonObject{{QStringLiteral("url"), url}});
+    reply = invoke(QStringLiteral("deleteAll"), QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(manager->history().isEmpty());
+    QCOMPARE(pushCount(events,
+                       QStringLiteral("history.onVisitRemoved")), 3);
+    {
+        const QVariantList last = events.last();
+        const QJsonObject removed = last.at(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray()
+            .at(0).toObject();
+        QCOMPARE(removed.value(QLatin1String("allHistory")).toBool(),
+                 true);
+        QVERIFY(removed.value(QLatin1String("urls")).toArray()
+                .isEmpty());
+    }
+
+    // The manifest gate is per-context: a sibling backend without
+    // 'history' hears no-permission on reads and writes alike.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-exthistb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-hist-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0024"),
+        QStringLiteral("tst-hist-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("history"),
+                 QStringLiteral("search"), QJsonObject{
+                     {QStringLiteral("query"), QJsonObject{
+                         {QStringLiteral("text"),
+                          QStringLiteral("")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(QStringLiteral("history"),
+                 QStringLiteral("deleteAll"), QJsonObject())
              .value(QLatin1String("error")).toString(),
              QStringLiteral("no-permission"));
 

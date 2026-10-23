@@ -154,6 +154,12 @@ public:
     QList<HistoryEntry> history() const;
     void setHistory(const QList<HistoryEntry> &history, bool loadedAndSorted = false);
 
+    // MD22: the exact-entry removal made public for chrome.history's
+    // ranged deletes — deleteRange needs (url,title,dateTime) identity
+    // the by-url overload cannot express.  Same retention path
+    // checkForExpired uses: mirror list, store row, entryRemoved.
+    void removeHistoryEntry(const HistoryEntry &item);
+
     // Favicon lookup for the history models (replaces
     // BrowserApplication::icon() / the WebKit icon database).  Pages
     // feed entries via setIcon() from WebPage's iconChanged hook.
@@ -195,7 +201,6 @@ private slots:
 
 protected:
     void prependHistoryEntry(const HistoryEntry &item);
-    void removeHistoryEntry(const HistoryEntry &item);
 
 private:
     void load();

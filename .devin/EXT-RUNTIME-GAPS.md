@@ -38,8 +38,8 @@ matching every member of the namespace (or a dotted sub-path such as
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
 # stores this tree already has.  They stay in this block — still
-# typed today — but are queued: history -> MD22,
-# cookies -> MD23, downloads -> MD24, sessions -> MD25,
+# typed today — but are queued: cookies -> MD23,
+# downloads -> MD24, sessions -> MD25,
 # tabGroups -> MD26, topSites -> MD27, browsingData -> MD28,
 # dns -> MD29, system -> MD30, privacy -> MD31, userScripts -> MD32,
 # fontSettings -> MD33.  Entries leave the declared set only when the
@@ -67,7 +67,6 @@ chrome.fileBrowserHandler.*: unsupported
 chrome.fileSystemProvider.*: unsupported
 chrome.fontSettings.*: unsupported
 chrome.gcm.*: unsupported
-chrome.history.*: unsupported
 chrome.identity.*: unsupported
 chrome.input.*: unsupported
 chrome.loginState.*: unsupported
@@ -147,6 +146,14 @@ chrome.bookmarks.*: scheme-refused
 chrome.bookmarks.*: create-refused
 chrome.bookmarks.*: folder-not-empty
 chrome.bookmarks.*: no-store
+# MD22: chrome.history is served over the RC04 store — 'history'
+# permission gates every member (no-permission undeclared); the rest
+# are the op's correct verdicts (bad/missing args, script-or-data
+# schemes refused at addUrl, store unreachable).
+chrome.history.*: no-permission
+chrome.history.*: invalid-argument
+chrome.history.*: scheme-refused
+chrome.history.*: no-store
 chrome.action.setIcon: invalid-image-data
 chrome.action.setIcon: invalid-path
 chrome.browserAction.setIcon: invalid-image-data

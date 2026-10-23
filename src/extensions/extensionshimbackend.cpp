@@ -32,6 +32,7 @@
 #include "extensionmanager.h"
 #include "extensionnotificationcenter.h"
 #include "extensionreviewdialog.h"
+#include "historymanager.h"
 #include "tabbar.h"
 #include "tabwidget.h"
 #include "webview.h"
@@ -59,6 +60,7 @@
 #include <qwebengineprofile.h>
 
 #include <algorithm>
+#include <limits>
 
 namespace {
 
@@ -473,6 +475,201 @@ void tapBmEvents(BookmarksManager *manager)
         });
 }
 
+// -------------------------------------------------------------------
+// MD22: chrome.history over the RC04 store.  HistoryManager is
+// already the facade/FFI lane: under rustcore m_history mirrors
+// history.db and every mutation below rides the same store ops the
+// UI uses, so deletes walk the same remove/clear path
+// checkForExpired/clearSince take (icons and models included).
+//
+// Chrome shapes: a HistoryItem is the per-url aggregate (visitCount
+// across the visit rows, lastVisitTime the newest).  The store has
+// no separate url table, so the group-by runs over the manager's
+// newest-first listing — first occurrence wins the group's order
+// slot and its newest visit's title/timestamp.  ids are FNV-1a
+// serials of the url masked to JS's exact-integer range — stable
+// across calls, deterministic, never a pointer.  The store carries
+// no transition or typed-count column: every VisitItem answers
+// 'link' and HistoryItem.typedCount 0, noted once per context
+// rather than fabricated.
+quint64 histHash(const QByteArray &key)
+{
+    quint64 h = 14695981039346656037ULL;   // FNV-1a 64 offset basis
+    for (const char c : key) {
+        h ^= quint64(quint8(c));
+        h *= 1099511628211ULL;             // FNV prime
+    }
+    return h & 0x1fffffffffffffULL;        // 2^53-1: exact JSON int
+}
+
+// The addUrl-time scheme policy, same posture the bookmarks url gate
+// takes: extension code is not a user's deliberate navigation, so
+// script/data-bearing spellings never enter the visit log; every
+// well-formed url a page could actually load (file: included —
+// Chrome records it too) passes.
+bool histUrlAllowed(const QString &url)
+{
+    QString probe = url;
+    probe.remove(
+        QRegularExpression(QStringLiteral("[\\x00-\\x20\\x7f]+")));
+    const int colon = probe.indexOf(QLatin1Char(':'));
+    if (colon < 0)
+        return true;    // schemeless — treated relative/harmless
+    const QString scheme = probe.left(colon).toLower();
+    if (scheme.isEmpty() || !scheme.at(0).isLetter())
+        return true;
+    for (const QChar c : scheme) {
+        if (!c.isLetterOrNumber() && c != QLatin1Char('+')
+                && c != QLatin1Char('-') && c != QLatin1Char('.'))
+            return true;    // not a scheme token — treated relative
+    }
+    return scheme != QLatin1String("javascript")
+        && scheme != QLatin1String("data")
+        && scheme != QLatin1String("vbscript");
+}
+
+// The Chrome HistoryItem object for one url's visit rows.
+QJsonObject histItemJson(const QString &url, const QString &title,
+                         qint64 lastVisitMs, int visitCount)
+{
+    QJsonObject o;
+    o.insert(QStringLiteral("id"),
+             QString::number(histHash(url.toUtf8())));
+    o.insert(QStringLiteral("url"), url);
+    if (!title.isEmpty())
+        o.insert(QStringLiteral("title"), title);
+    o.insert(QStringLiteral("lastVisitTime"), double(lastVisitMs));
+    o.insert(QStringLiteral("visitCount"), visitCount);
+    // Not tracked by the store — the honest zero, not a guess.
+    o.insert(QStringLiteral("typedCount"), 0);
+    return o;
+}
+
+// Aggregate a url's rows into its HistoryItem; empty object when the
+// url has no visit at all.
+QJsonObject histItemForUrl(const QList<HistoryEntry> &entries,
+                           const QString &url)
+{
+    QString title;
+    qint64 lastTs = 0;
+    int visits = 0;
+    for (const HistoryEntry &e : entries) {
+        if (e.url != url)
+            continue;
+        if (!visits) {
+            title = e.title;
+            lastTs = e.dateTime.toMSecsSinceEpoch();
+        }
+        ++visits;
+    }
+    if (!visits)
+        return QJsonObject();
+    return histItemJson(url, title, lastTs, visits);
+}
+
+// One url's visit rows -> Chrome's reverse-chronological VisitItem[]
+// (the listing is already newest-first).  visitId serials mix the
+// same-stamp ordinal so two visits sharing url AND millisecond still
+// mint distinct ids.
+QJsonArray histVisitItems(const QList<HistoryEntry> &entries,
+                          const QString &url)
+{
+    QJsonArray out;
+    QHash<qint64, int> sameStamp;
+    for (const HistoryEntry &e : entries) {
+        if (e.url != url)
+            continue;
+        const qint64 ts = e.dateTime.toMSecsSinceEpoch();
+        const int k = sameStamp.value(ts);
+        sameStamp.insert(ts, k + 1);
+        QJsonObject v;
+        v.insert(QStringLiteral("id"),
+                 QString::number(histHash(url.toUtf8())));
+        v.insert(QStringLiteral("visitId"), double(histHash(
+            (url + QLatin1Char('\x1f') + QString::number(ts)
+             + QLatin1Char('\x1f') + QString::number(k)).toUtf8())));
+        v.insert(QStringLiteral("visitTime"), double(ts));
+        // Referring visits are not tracked — Chrome's "no referrer".
+        v.insert(QStringLiteral("referringVisitId"),
+                 QStringLiteral("0"));
+        v.insert(QStringLiteral("transition"),
+                 QStringLiteral("link"));
+        out.append(v);
+    }
+    return out;
+}
+
+// History-manager signal -> chrome.history.on* broadcast, for
+// changes that arrive through the UI (page visits feed entryAdded,
+// the dialog's delete entryRemoved, Clear History historyCleared).
+// API ops suppress the tap while they run and emit their own
+// Chrome-accurate aggregate event (a deleteRange reports one
+// onVisitRemoved carrying every affected url, not one per row).
+int s_histApiDepth = 0;
+
+struct HistApiSuppress {
+    HistApiSuppress() { ++s_histApiDepth; }
+    ~HistApiSuppress() { --s_histApiDepth; }
+};
+
+void histBroadcast(const QString &name, const QJsonArray &eventArgs)
+{
+    ExtensionBackgroundRuntime::instance()->broadcastEvent(
+        name, QJsonObject{{QStringLiteral("__args"), eventArgs}});
+}
+
+QPointer<HistoryManager> s_histTapTarget;
+QList<QMetaObject::Connection> s_histTapConns;
+
+// Lazily binds the ambient profile's manager signals to the event
+// fan-out; re-points when the ambient persona (and therefore the
+// manager) changes — history events must describe the profile the
+// extension actually reads through this namespace.
+void tapHistEvents(HistoryManager *manager)
+{
+    if (s_histTapTarget == manager)
+        return;
+    for (const QMetaObject::Connection &conn : s_histTapConns)
+        QObject::disconnect(conn);
+    s_histTapConns.clear();
+    s_histTapTarget = manager;
+    if (!manager)
+        return;
+    const QPointer<HistoryManager> weak = manager;
+    s_histTapConns << QObject::connect(
+        manager, &HistoryManager::entryAdded, manager,
+        [weak](const HistoryEntry &item) {
+            if (s_histApiDepth || !weak)
+                return;
+            const QJsonObject histItem =
+                histItemForUrl(weak->history(), item.url);
+            if (!histItem.isEmpty())
+                histBroadcast(QStringLiteral("history.onVisited"),
+                              {histItem});
+        });
+    s_histTapConns << QObject::connect(
+        manager, &HistoryManager::entryRemoved, manager,
+        [weak](const HistoryEntry &item) {
+            if (s_histApiDepth || !weak)
+                return;
+            histBroadcast(QStringLiteral("history.onVisitRemoved"),
+                          {QJsonObject{
+                              {QStringLiteral("allHistory"), false},
+                              {QStringLiteral("urls"),
+                               QJsonArray{item.url}}}});
+        });
+    s_histTapConns << QObject::connect(
+        manager, &HistoryManager::historyCleared, manager, [weak]() {
+            if (s_histApiDepth || !weak)
+                return;
+            histBroadcast(QStringLiteral("history.onVisitRemoved"),
+                          {QJsonObject{
+                              {QStringLiteral("allHistory"), true},
+                              {QStringLiteral("urls"),
+                               QJsonArray()}}});
+        });
+}
+
 // MD13: chrome.windows create/update share this prop application —
 // bounds land first (frame-inclusive move, matching Chrome's
 // outer-bounds vocabulary), then window state so a maximized or
@@ -664,6 +861,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeManagement(method, args);
     if (ns == QLatin1String("bookmarks"))
         return invokeBookmarks(method, args);
+    if (ns == QLatin1String("history"))
+        return invokeHistory(method, args);
     if (ns == QLatin1String("extension"))
         return invokeExtension(method, args);
     if (ns == QLatin1String("sidebarAction"))
@@ -3774,6 +3973,238 @@ QJsonObject ExtensionShimBackend::invokeBookmarks(
         }
         bookmarksFanOut(QStringLiteral("bookmarks.onRemoved"),
                         QJsonArray{id, removeInfo});
+        return okReply();
+    }
+
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.history — MD22.  The real visit log served over the RC04
+// store through HistoryManager (the C++ mirror is the facade/FFI
+// lane — under rustcore it persists to history.db, under the Qt
+// fallback to the legacy file, both through the ops the UI rides).
+// The 'history' manifest permission gates the whole namespace and
+// the onVisited/onVisitRemoved fan-out (eventGate).  Api-driven
+// deletions suppress the signal tap while they emit their own
+// Chrome-accurate onVisitRemoved; UI-driven changes (page visits,
+// dialog deletes, Clear History) still reach 'history'-declaring
+// contexts through it.
+// -------------------------------------------------------------------
+
+void ExtensionShimBackend::historyFanOut(
+        const QString &name, const QJsonArray &eventArgs)
+{
+    const QJsonObject payload{
+        {QStringLiteral("__args"), eventArgs}};
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    runtime->broadcastEvent(name, payload);
+    // Same bare-backend fallback bookmarksFanOut applies — tests
+    // and mid-respawn hosts have no registered context.
+    if (!runtime->hasRelayContext(m_extensionId))
+        emit pushEvent(name, payload);
+}
+
+QJsonObject ExtensionShimBackend::invokeHistory(
+        const QString &method, const QJsonObject &args)
+{
+    // ER16 shape: Chrome exposes the namespace only under the
+    // declared 'history' grant — the bridge object answers a direct
+    // call from any code in the context, so the gate runs here too.
+    if (!manifestPermissions().contains(QLatin1String("history")))
+        return errReply(QStringLiteral("no-permission"));
+
+    HistoryManager *manager = HistoryManager::instance();
+    if (!manager)
+        return errReply(QStringLiteral("no-store"));
+    tapHistEvents(manager);
+    const QList<HistoryEntry> entries = manager->history();
+
+    if (method == QLatin1String("search")) {
+        // Chrome's query object: 'text' splits into space-delimited
+        // terms each AND-matched case-insensitively against url or
+        // title ('' matches all); the time range admits an item when
+        // ANY of its visits lands inside it (startTime defaults to
+        // the last 24h, endTime is open); maxResults defaults 100,
+        // minimum 1.
+        if (!args.value(QLatin1String("query")).isObject())
+            return errReply(QStringLiteral("invalid-argument"));
+        const QJsonObject query =
+            args.value(QLatin1String("query")).toObject();
+        const QStringList rawTerms = query.value(QLatin1String("text"))
+            .toString().split(QRegularExpression(QStringLiteral("\\s+")),
+                              Qt::SkipEmptyParts);
+        QStringList terms;
+        for (const QString &t : rawTerms)
+            terms.append(t.toLower());
+        const qint64 startMs = query.contains(QLatin1String("startTime"))
+            ? qint64(query.value(QLatin1String("startTime")).toDouble())
+            : QDateTime::currentMSecsSinceEpoch() - 86400000;
+        const qint64 endMs = query.contains(QLatin1String("endTime"))
+            ? qint64(query.value(QLatin1String("endTime")).toDouble())
+            : std::numeric_limits<qint64>::max();
+        int maxResults = 100;
+        if (query.contains(QLatin1String("maxResults"))) {
+            maxResults = query.value(QLatin1String("maxResults")).toInt();
+            if (maxResults < 1)
+                return errReply(QStringLiteral("invalid-argument"));
+        }
+        // Group the newest-first listing per url; first occurrence
+        // claims the order slot (descending lastVisitTime) and the
+        // newest visit's title.
+        struct HistGroup {
+            QString title;
+            qint64 lastTs;
+            int visits = 0;
+            bool inRange = false;
+        };
+        QStringList order;
+        QHash<QString, HistGroup> groups;
+        for (const HistoryEntry &e : entries) {
+            HistGroup &g = groups[e.url];
+            if (!g.visits) {
+                order.append(e.url);
+                g.title = e.title;
+                g.lastTs = e.dateTime.toMSecsSinceEpoch();
+            }
+            ++g.visits;
+            const qint64 ts = e.dateTime.toMSecsSinceEpoch();
+            if (ts >= startMs && ts <= endMs)
+                g.inRange = true;
+            if (g.title.isEmpty() && !e.title.isEmpty())
+                g.title = e.title;
+        }
+        QJsonArray out;
+        for (const QString &url : order) {
+            const HistGroup &g = groups.value(url);
+            if (!g.inRange)
+                continue;
+            const QString urlL = url.toLower();
+            const QString titleL = g.title.toLower();
+            bool match = true;
+            for (const QString &term : terms) {
+                if (!urlL.contains(term) && !titleL.contains(term)) {
+                    match = false;
+                    break;
+                }
+            }
+            if (!match)
+                continue;
+            out.append(histItemJson(url, g.title, g.lastTs, g.visits));
+            if (out.size() >= maxResults)
+                break;
+        }
+        return okReply(out);
+    }
+
+    if (method == QLatin1String("getVisits")) {
+        const QString url = args.value(QLatin1String("url")).toString();
+        if (url.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        if (!m_histTransitionNoted) {
+            m_histTransitionNoted = true;
+            recordNote(QStringLiteral(
+                "history.getVisits: the store carries no transition "
+                "column — 'link' answers every visit, referringVisitId "
+                "is always \"0\", and typedCount is 0"));
+        }
+        return okReply(histVisitItems(entries, url));
+    }
+
+    if (method == QLatin1String("addUrl")) {
+        // Chrome: a 'link'-transition visit recorded at the current
+        // time — addHistoryEntry is exactly that (it cleans the url
+        // the same way a page visit does).  The entryAdded tap is
+        // suppressed so onVisited emits once, Chrome-accurate, with
+        // the url's aggregated HistoryItem.
+        const QString url = args.value(QLatin1String("url")).toString();
+        const QUrl parsed(url);
+        if (url.isEmpty() || !parsed.isValid())
+            return errReply(QStringLiteral("invalid-argument"));
+        if (!histUrlAllowed(url))
+            return errReply(QStringLiteral("scheme-refused"));
+        {
+            const HistApiSuppress suppress;
+            manager->addHistoryEntry(url);
+        }
+        const QList<HistoryEntry> after = manager->history();
+        if (!after.isEmpty()) {
+            const QJsonObject histItem =
+                histItemForUrl(after, after.first().url);
+            if (!histItem.isEmpty())
+                historyFanOut(QStringLiteral("history.onVisited"),
+                              QJsonArray{histItem});
+        }
+        return okReply();
+    }
+
+    if (method == QLatin1String("deleteUrl")) {
+        const QString url = args.value(QLatin1String("url")).toString();
+        if (url.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        {
+            const HistApiSuppress suppress;
+            for (const HistoryEntry &e : entries) {
+                if (e.url == url)
+                    manager->removeHistoryEntry(e);
+            }
+        }
+        historyFanOut(QStringLiteral("history.onVisitRemoved"),
+                      QJsonArray{QJsonObject{
+                          {QStringLiteral("allHistory"), false},
+                          {QStringLiteral("urls"),
+                           QJsonArray{url}}}});
+        return okReply();
+    }
+
+    if (method == QLatin1String("deleteRange")) {
+        // Chrome requires both bounds; the range is inclusive —
+        // every visit inside it goes, urls outside it stay.
+        if (!args.contains(QLatin1String("startTime"))
+                || !args.contains(QLatin1String("endTime")))
+            return errReply(QStringLiteral("invalid-argument"));
+        const qint64 startMs =
+            qint64(args.value(QLatin1String("startTime")).toDouble());
+        const qint64 endMs =
+            qint64(args.value(QLatin1String("endTime")).toDouble());
+        QList<HistoryEntry> doomed;
+        QSet<QString> seen;
+        QStringList removedUrls;
+        for (const HistoryEntry &e : entries) {
+            const qint64 ts = e.dateTime.toMSecsSinceEpoch();
+            if (ts < startMs || ts > endMs)
+                continue;
+            doomed.append(e);
+            if (!seen.contains(e.url)) {
+                seen.insert(e.url);
+                removedUrls.append(e.url);
+            }
+        }
+        {
+            const HistApiSuppress suppress;
+            for (const HistoryEntry &e : doomed)
+                manager->removeHistoryEntry(e);
+        }
+        QJsonArray urls;
+        for (const QString &u : removedUrls)
+            urls.append(u);
+        historyFanOut(QStringLiteral("history.onVisitRemoved"),
+                      QJsonArray{QJsonObject{
+                          {QStringLiteral("allHistory"), false},
+                          {QStringLiteral("urls"), urls}}});
+        return okReply();
+    }
+
+    if (method == QLatin1String("deleteAll")) {
+        {
+            const HistApiSuppress suppress;
+            manager->clear();
+        }
+        historyFanOut(QStringLiteral("history.onVisitRemoved"),
+                      QJsonArray{QJsonObject{
+                          {QStringLiteral("allHistory"), true},
+                          {QStringLiteral("urls"), QJsonArray()}}});
         return okReply();
     }
 

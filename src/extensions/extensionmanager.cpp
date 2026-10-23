@@ -1307,6 +1307,9 @@ QStringList ExtensionManager::runtimeServes()
         // BookmarksManager — the namespace is fully served.
         QStringLiteral("bookmarks"),
         QStringLiteral("contextMenus"),
+        // MD22: chrome.history rides the RC04 store through
+        // HistoryManager — the namespace is fully served.
+        QStringLiteral("history"),
         QStringLiteral("idle"),
         QStringLiteral("menus"),
         QStringLiteral("notifications"),
