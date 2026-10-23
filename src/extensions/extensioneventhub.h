@@ -177,6 +177,20 @@ private:
     // a webRequest subscription exists (see armRequestProbes).
     void injectRequestProbe(WebView *view);
     void onTabActivated(TabWidget *tabs, int index);
+    // MD26: chrome.tabGroups' four events.  The strip emits one
+    // coarse tabGroupsChanged for every mutation, so the on*
+    // vocabulary is reconstructed by diffing a per-window snapshot
+    // of each group's Chrome shape + visible membership.
+    void onTabGroupsChanged(BrowserMainWindow *window);
+    // Per-tab membership diff producing tabs.onUpdated's
+    // changeInfo.groupId — the group signal is strip-scoped, so the
+    // tap walks the window's tracked tabs itself.  syncNow() runs
+    // the same pass so a missed signal still heals on the scan.
+    void syncGroupMembership(BrowserMainWindow *window,
+                             TabWidget *tabs);
+    struct GroupSnap;   // defined beside m_groupSnaps below
+    QHash<QString, GroupSnap> groupSnapshot(BrowserMainWindow *window,
+                                          TabWidget *tabs) const;
     // destroyed() handlers receive the TYPED pointer captured at wire
     // time — during the signal the object is already sliced to
     // QObject and any downcast or member access on it is UB.
@@ -245,8 +259,23 @@ private:
         QString lastError;
         int lastErrorCode = 0;
         int lastErrorDomain = -1;
+        // MD26: the tab's strip group id ("" ungrouped) — diffed for
+        // tabs.onUpdated's changeInfo.groupId.  Detached members of
+        // a collapsed group keep their entry; membership still names
+        // them, so they stay tracked rather than firing onRemoved.
+        QString groupId;
     };
     QHash<WebView *, TrackedTab> m_tabs;
+
+    // MD26: one snapshot per group per window — the diff source for
+    // onCreated/onUpdated/onMoved/onRemoved.  QObject-identity keys
+    // like m_windowIds: teardown only ever compares/removes by key.
+    struct GroupSnap {
+        QJsonObject json;            // last emitted TabGroup shape
+        int firstIndex = -1;         // first visible member's index
+        QList<QPointer<WebView>> members;   // strip order
+    };
+    QHash<QObject *, QHash<QString, GroupSnap>> m_groupSnaps;
 
     // Windows whose tab widget is already wired — raw pointers are
     // safe: every wired window's destroyed() removes the entry.

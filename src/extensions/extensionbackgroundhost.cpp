@@ -2165,6 +2165,10 @@ QString eventGate(const QString &name)
     // contexts — the same grant invokeSessions applies per call.
     if (ns == QLatin1String("sessions"))
         return QStringLiteral("sessions");
+    // MD26: tabGroups.on* reaches only 'tabGroups'-declaring
+    // contexts — the same grant invokeTabGroups applies per call.
+    if (ns == QLatin1String("tabGroups"))
+        return QStringLiteral("tabGroups");
     return QString();
 }
 

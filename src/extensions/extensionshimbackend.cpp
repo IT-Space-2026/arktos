@@ -42,6 +42,7 @@
 
 #include <qapplication.h>
 #include <qbuffer.h>
+#include <qcolor.h>
 #include <qcoreapplication.h>
 #include <qdatetime.h>
 #include <qdir.h>
@@ -219,6 +220,83 @@ int chromeGroupId(int windowId, const QString &groupId)
     if (!slot)
         slot = next++;
     return slot;
+}
+
+// chrome.tabGroups' Color enum onto the Arktos palette — the same
+// ContainerManager::defaultColors() swatches the group's own color
+// submenu offers, so a written color renders exactly what the UI
+// could pick.  'grey' has no palette member and writes Chrome's
+// canonical grey instead.  Reads classify the live color to the
+// nearest name — a custom color lands on its closest Chrome name.
+const QList<QPair<QString, QColor>> &chromeGroupPalette()
+{
+    static const QList<QPair<QString, QColor>> colors = {
+        {QStringLiteral("blue"),   QColor(0x37, 0xad, 0xff)},
+        {QStringLiteral("cyan"),   QColor(0x00, 0xc7, 0x9a)},
+        {QStringLiteral("green"),  QColor(0x51, 0xcd, 0x00)},
+        {QStringLiteral("yellow"), QColor(0xff, 0xcb, 0x00)},
+        {QStringLiteral("orange"), QColor(0xff, 0x9f, 0x00)},
+        {QStringLiteral("red"),    QColor(0xff, 0x61, 0x3d)},
+        {QStringLiteral("pink"),   QColor(0xff, 0x4b, 0xda)},
+        {QStringLiteral("purple"), QColor(0xaf, 0x51, 0xf5)},
+        {QStringLiteral("grey"),   QColor(0x80, 0x86, 0x8b)},
+    };
+    return colors;
+}
+
+QString chromeGroupColorName(const QColor &color)
+{
+    int best = -1;
+    qint64 bestDist = std::numeric_limits<qint64>::max();
+    for (int i = 0; i < chromeGroupPalette().size(); ++i) {
+        const QColor c = chromeGroupPalette().at(i).second;
+        const qint64 dr = color.red() - c.red();
+        const qint64 dg = color.green() - c.green();
+        const qint64 db = color.blue() - c.blue();
+        const qint64 dist = dr * dr + dg * dg + db * db;
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = i;
+        }
+    }
+    return best >= 0 ? chromeGroupPalette().at(best).first
+                     : QStringLiteral("grey");
+}
+
+QColor chromeGroupColor(const QString &name)
+{
+    for (const auto &entry : chromeGroupPalette()) {
+        if (entry.first == name)
+            return entry.second;
+    }
+    return QColor();    // invalid -> the caller's invalid-argument
+}
+
+// chrome group id -> the live (window, string-id) pair: enumerate
+// the strip-visible groups of every window and compare minted ids.
+// Minting is stable per pair, so a live group resolves whether or
+// not a query() ran first; a stale id (group gone) never matches —
+// the same dead-id verdict bmResolve answers for bookmarks.
+bool resolveTabGroup(int chromeId, BrowserMainWindow **windowOut,
+                     QString *groupIdOut)
+{
+    for (BrowserMainWindow *window
+         : ExtensionEventHub::browsingWindows()) {
+        TabWidget *tw = window ? window->tabWidget() : nullptr;
+        if (!tw)
+            continue;
+        const int wid = idFor(window);
+        for (const QString &gid : tw->tabGroupIds()) {
+            if (chromeGroupId(wid, gid) == chromeId) {
+                if (windowOut)
+                    *windowOut = window;
+                if (groupIdOut)
+                    *groupIdOut = gid;
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 // MD11: Chrome's zoomSettings shape for a tab — the recorded
@@ -1296,6 +1374,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeDownloads(method, args);
     if (ns == QLatin1String("sessions"))
         return invokeSessions(method, args);
+    if (ns == QLatin1String("tabGroups"))
+        return invokeTabGroups(method, args);
     if (ns == QLatin1String("extension"))
         return invokeExtension(method, args);
     if (ns == QLatin1String("sidebarAction"))
@@ -2384,6 +2464,126 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
         }
         return okReply(ids.size() == 1
             ? moved.at(0) : QJsonValue(moved));
+    }
+    if (method == QLatin1String("group")
+            || method == QLatin1String("ungroup")) {
+        // MD26 — Chrome puts group membership ops under chrome.tabs:
+        // group() is the API's only group-CREATE path (its
+        // chrome.tabGroups surface has none), ungroup() drops the
+        // listed tabs out of their respective groups — an emptied
+        // group dies like Chrome's does.
+        const QJsonObject opts =
+            args.value(QStringLiteral("options")).toObject();
+        QList<int> ids;
+        const QJsonValue multi = opts.value(QStringLiteral("tabIds"));
+        const QJsonValue single = opts.value(QStringLiteral("tabId"));
+        bool badId = false;
+        if (multi.isArray()) {
+            for (const QJsonValue &v : multi.toArray()) {
+                if (!v.isDouble()) {
+                    badId = true;
+                    break;
+                }
+                ids.append(int(v.toDouble(-1)));
+            }
+        } else if (multi.isDouble()) {
+            ids.append(int(multi.toDouble(-1)));
+        }
+        if (single.isDouble())
+            ids.append(int(single.toDouble(-1)));
+        else if (single.isArray() || single.isObject())
+            badId = true;
+        if (badId || ids.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        // Resolve every tab first — Chrome's call is atomic, a dead
+        // id must not leave a half-grouped strip.
+        QList<LocatedTab> located;
+        for (const int id : ids) {
+            const LocatedTab t = locateTab(id);
+            if (!t.view)
+                return errReply(QStringLiteral("not-found"));
+            located.append(t);
+        }
+
+        if (method == QLatin1String("ungroup")) {
+            for (const LocatedTab &t : located) {
+                const int at = t.tabs->webViewIndex(t.view);
+                if (at >= 0)
+                    t.tabs->removeTabFromGroup(at);
+            }
+            return okReply();
+        }
+
+        // group(): the destination window is the named group's, or
+        // createProperties.windowId, else the first tab's own — and
+        // every listed tab must live there (a cross-window member
+        // would tear the run).
+        BrowserMainWindow *target = nullptr;
+        QString joinGid;
+        if (opts.contains(QStringLiteral("groupId"))) {
+            const QJsonValue gv = opts.value(QStringLiteral("groupId"));
+            if (!gv.isDouble())
+                return errReply(QStringLiteral("invalid-argument"));
+            const int cid = int(gv.toDouble(-1));
+            // TAB_GROUP_ID_NONE (-1) asks for a fresh group.
+            if (cid != -1
+                    && !resolveTabGroup(cid, &target, &joinGid))
+                return errReply(QStringLiteral("not-found"));
+        }
+        if (!target) {
+            const QJsonObject create =
+                opts.value(QStringLiteral("createProperties"))
+                    .toObject();
+            if (create.contains(QStringLiteral("windowId"))) {
+                int wanted = int(
+                    create.value(QStringLiteral("windowId"))
+                        .toDouble(-2));
+                if (wanted == -2)
+                    wanted = idFor(currentWindow());
+                for (BrowserMainWindow *w : windows) {
+                    if (w && idFor(w) == wanted) {
+                        target = w;
+                        break;
+                    }
+                }
+                if (!target)
+                    return errReply(QStringLiteral("no-window"));
+            }
+            if (!target)
+                target = located.first().window;
+        }
+        TabWidget *tw = target->tabWidget();
+        if (!tw)
+            return errReply(QStringLiteral("no-window"));
+        for (const LocatedTab &t : located) {
+            if (t.window != target || t.tabs != tw)
+                return errReply(QStringLiteral("invalid-argument"));
+        }
+        if (joinGid.isEmpty()) {
+            // createTabGroup() binds the first tab and mints the id;
+            // addTabToGroup() joins the rest, sliding each into the
+            // run like drop-stacking does.
+            joinGid = tw->createTabGroup(
+                tw->webViewIndex(located.first().view));
+            if (joinGid.isEmpty())
+                return errReply(QStringLiteral("group-refused"));
+            for (int k = 1; k < located.size(); ++k) {
+                const int at = tw->webViewIndex(located.at(k).view);
+                if (at >= 0)
+                    tw->addTabToGroup(at, joinGid);
+            }
+        } else {
+            for (const LocatedTab &t : located) {
+                if (tw->tabGroupOf(t.view) == joinGid)
+                    continue;   // already a member — idempotent
+                const int at = tw->webViewIndex(t.view);
+                if (at >= 0)
+                    tw->addTabToGroup(at, joinGid);
+            }
+        }
+        return okReply(QJsonObject{
+            {QStringLiteral("groupId"),
+             chromeGroupId(idFor(target), joinGid)}});
     }
     if (method == QLatin1String("goBack")
             || method == QLatin1String("goForward")) {
@@ -5788,6 +5988,260 @@ QJsonObject ExtensionShimBackend::invokeDownloads(
         if (method == m)
             return errReply(QStringLiteral("unsupported"));
     }
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.tabGroups — MD26: get/query/update/move/ungroup over the
+// TABGRP machinery (per-window membership keyed on the WebView, so
+// drags never lose it).  The strip's group ids are per-window
+// strings; Chrome's ints ride the same minted map tabObject's
+// groupId field reports.  Group CREATION lives in chrome.tabs.group
+// like the real API — update() on an unknown id is Chrome's
+// not-found, never a silent create.  The four on* events are
+// entirely tap-driven (ExtensionEventHub diffs the strip's group
+// set on every tabGroupsChanged), so API and UI mutations fan out
+// identically through the broadcast lane — no member-emit path.
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::tabGroupJson(TabWidget *tw,
+                                             const QString &groupId,
+                                             int windowId)
+{
+    QJsonObject group;
+    group.insert(QStringLiteral("id"),
+                 chromeGroupId(windowId, groupId));
+    group.insert(QStringLiteral("windowId"), windowId);
+    group.insert(QStringLiteral("collapsed"),
+                 tw && tw->tabGroupIsCollapsed(groupId));
+    group.insert(QStringLiteral("color"),
+                 chromeGroupColorName(
+                     tw ? tw->tabGroupColor(groupId) : QColor()));
+    const QString title =
+        tw ? tw->tabGroupName(groupId) : QString();
+    // Chrome's TabGroup.title is optional — omitted when unnamed.
+    if (!title.isEmpty())
+        group.insert(QStringLiteral("title"), title);
+    return group;
+}
+
+int ExtensionShimBackend::chromeGroupIdFor(int windowId,
+                                           const QString &groupId)
+{
+    return chromeGroupId(windowId, groupId);
+}
+
+QJsonObject ExtensionShimBackend::invokeTabGroups(
+        const QString &method, const QJsonObject &args)
+{
+    // ER16 shape: 'tabGroups' gates the namespace — the bridge
+    // answers a direct call from any code in the context, so the
+    // gate runs here too.
+    if (!manifestPermissions().contains(QLatin1String("tabGroups")))
+        return errReply(QStringLiteral("no-permission"));
+
+    // 'groupId' is a required int for every member but query/ungroup
+    // — validate once; a non-numeric value is Chrome's argument
+    // error, not the not-found a well-typed miss deserves.
+    const auto groupIdArg = [&args](int *out) {
+        const QJsonValue v = args.value(QStringLiteral("groupId"));
+        if (!v.isDouble())
+            return false;
+        *out = int(v.toDouble(-1));
+        return true;
+    };
+
+    if (method == QLatin1String("get")) {
+        int chromeId = -1;
+        if (!groupIdArg(&chromeId))
+            return errReply(QStringLiteral("invalid-argument"));
+        BrowserMainWindow *window = nullptr;
+        QString gid;
+        if (!resolveTabGroup(chromeId, &window, &gid))
+            return errReply(QStringLiteral("not-found"));
+        return okReply(tabGroupJson(window->tabWidget(), gid,
+                                    idFor(window)));
+    }
+
+    if (method == QLatin1String("query")) {
+        const QJsonObject q =
+            args.value(QStringLiteral("query")).toObject();
+        BrowserMainWindow *current = currentWindow();
+        const int currentWid = idFor(current);
+        // Chrome's QueryInfo.shared belongs to shared tab groups —
+        // Arktos has none, so an explicit shared:true matches
+        // nothing rather than lying about the filter.
+        if (q.value(QStringLiteral("shared")).toBool(false))
+            return okReply(QJsonArray());
+        QJsonArray out;
+        for (BrowserMainWindow *window
+             : ExtensionEventHub::browsingWindows()) {
+            if (!window)
+                continue;
+            const int wid = idFor(window);
+            if (q.contains(QStringLiteral("windowId"))) {
+                int wanted = int(q.value(QStringLiteral("windowId"))
+                                     .toDouble(-2));
+                if (wanted == -2)       // WINDOW_ID_CURRENT
+                    wanted = currentWid;
+                if (wanted != wid)
+                    continue;
+            }
+            TabWidget *tw = window->tabWidget();
+            if (!tw)
+                continue;
+            for (const QString &gid : tw->tabGroupIds()) {
+                const QJsonObject group =
+                    tabGroupJson(tw, gid, wid);
+                if (q.contains(QStringLiteral("collapsed"))
+                        && q.value(QStringLiteral("collapsed"))
+                               .toBool()
+                               != group.value(
+                                   QStringLiteral("collapsed"))
+                                   .toBool())
+                    continue;
+                if (q.contains(QStringLiteral("color"))
+                        && q.value(QStringLiteral("color")).toString()
+                               != group.value(QStringLiteral("color"))
+                                      .toString())
+                    continue;
+                if (q.contains(QStringLiteral("title"))) {
+                    const QString needle =
+                        q.value(QStringLiteral("title")).toString();
+                    if (!group.value(QStringLiteral("title"))
+                            .toString()
+                            .contains(needle, Qt::CaseInsensitive))
+                        continue;
+                }
+                if (q.contains(QStringLiteral("status"))) {
+                    // "loading" when any visible member loads —
+                    // the group-level aggregate of the tab status
+                    // tabs.query already reports.
+                    bool loading = false;
+                    for (const int member : tw->tabGroupMembers(gid)) {
+                        WebView *view = tw->webView(member);
+                        if (view && view->isLoading()) {
+                            loading = true;
+                            break;
+                        }
+                    }
+                    if (q.value(QStringLiteral("status")).toString()
+                            != QLatin1String(loading ? "loading"
+                                                     : "complete"))
+                        continue;
+                }
+                out.append(group);
+            }
+        }
+        return okReply(out);
+    }
+
+    if (method == QLatin1String("update")) {
+        int chromeId = -1;
+        if (!groupIdArg(&chromeId))
+            return errReply(QStringLiteral("invalid-argument"));
+        BrowserMainWindow *window = nullptr;
+        QString gid;
+        if (!resolveTabGroup(chromeId, &window, &gid))
+            return errReply(QStringLiteral("not-found"));
+        const QJsonObject props =
+            args.value(QStringLiteral("props")).toObject();
+        TabWidget *tw = window->tabWidget();
+        // An unknown color name is Chrome's argument error — check
+        // before ANY mutation so a bad call stays atomic.
+        QColor color;
+        if (props.contains(QStringLiteral("color"))) {
+            color = chromeGroupColor(
+                props.value(QStringLiteral("color")).toString());
+            if (!color.isValid())
+                return errReply(QStringLiteral("invalid-argument"));
+        }
+        if (props.contains(QStringLiteral("title")))
+            tw->renameTabGroup(
+                gid, props.value(QStringLiteral("title")).toString());
+        if (color.isValid())
+            tw->setTabGroupColor(gid, color);
+        if (props.contains(QStringLiteral("collapsed")))
+            tw->setTabGroupCollapsed(
+                gid, props.value(QStringLiteral("collapsed"))
+                         .toBool());
+        // The group can vanish mid-update only if it died a moment
+        // ago — answer the live shape when it still resolves.
+        return okReply(tabGroupJson(tw, gid, idFor(window)));
+    }
+
+    if (method == QLatin1String("move")) {
+        int chromeId = -1;
+        if (!groupIdArg(&chromeId))
+            return errReply(QStringLiteral("invalid-argument"));
+        BrowserMainWindow *window = nullptr;
+        QString gid;
+        if (!resolveTabGroup(chromeId, &window, &gid))
+            return errReply(QStringLiteral("not-found"));
+        const QJsonObject props =
+            args.value(QStringLiteral("props")).toObject();
+        TabWidget *tw = window->tabWidget();
+        const int wid = idFor(window);
+        if (props.contains(QStringLiteral("windowId"))) {
+            int wanted = int(
+                props.value(QStringLiteral("windowId")).toDouble(-2));
+            if (wanted == -2)
+                wanted = idFor(currentWindow());
+            // TAB02's carry machinery moves a group's members one
+            // tab at a time between windows — there is no atomic
+            // cross-window group move, so the honest answer is the
+            // typed refusal, not a torn run.
+            if (wanted != wid)
+                return errReply(QStringLiteral("unsupported"));
+        }
+        const QJsonValue indexValue =
+            props.value(QStringLiteral("index"));
+        if (!indexValue.isDouble())
+            return errReply(QStringLiteral("invalid-argument"));
+        int index = int(indexValue.toDouble(-2));
+        // Chrome's -1 parks the group at the strip's end; anything
+        // lower — or past the last slot — is an argument error.
+        if (index == -1)
+            index = tw->count();
+        else if (index < -1 || index >= tw->count())
+            return errReply(QStringLiteral("invalid-argument"));
+        if (!tw->moveTabGroup(gid, index))
+            return errReply(QStringLiteral("move-refused"));
+        return okReply(tabGroupJson(tw, gid, wid));
+    }
+
+    if (method == QLatin1String("ungroup")) {
+        // Chrome accepts one id or an array; the call is atomic —
+        // resolve every id before any dissolve so a stale member of
+        // the list leaves the earlier groups untouched.
+        const QJsonValue gv =
+            args.value(QStringLiteral("groupIds"));
+        QList<int> ids;
+        if (gv.isArray()) {
+            for (const QJsonValue &v : gv.toArray()) {
+                if (!v.isDouble())
+                    return errReply(
+                        QStringLiteral("invalid-argument"));
+                ids.append(int(v.toDouble(-1)));
+            }
+        } else if (gv.isDouble()) {
+            ids.append(int(gv.toDouble(-1)));
+        }
+        if (ids.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        QList<QPair<TabWidget *, QString>> resolved;
+        for (const int chromeId : ids) {
+            BrowserMainWindow *window = nullptr;
+            QString gid;
+            if (!resolveTabGroup(chromeId, &window, &gid))
+                return errReply(QStringLiteral("not-found"));
+            resolved.append({window->tabWidget(), gid});
+        }
+        for (const auto &entry : resolved)
+            entry.first->ungroupTabs(entry.second);
+        return okReply();
+    }
+
     return errReply(QStringLiteral("unimplemented"));
 }
 

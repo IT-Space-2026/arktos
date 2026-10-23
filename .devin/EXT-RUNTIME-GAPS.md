@@ -38,11 +38,11 @@ matching every member of the namespace (or a dotted sub-path such as
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
 # stores this tree already has.  They stay in this block — still
-# typed today — but are queued: tabGroups -> MD26, topSites -> MD27,
+# typed today — but are queued: topSites -> MD27,
 # browsingData -> MD28, dns -> MD29, system -> MD30, privacy -> MD31,
 # userScripts -> MD32, fontSettings -> MD33.  Entries leave the
 # declared set only when the row lands the implementation (downloads
-# left with MD24, sessions with MD25).
+# left with MD24, sessions with MD25, tabGroups with MD26).
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
@@ -82,7 +82,6 @@ chrome.signedInDevices.*: unsupported
 chrome.system.*: unsupported
 chrome.systemIndicator.*: unsupported
 chrome.tabCapture.*: unsupported
-chrome.tabGroups.*: unsupported
 chrome.topSites.*: unsupported
 chrome.tts.*: unsupported
 chrome.userScripts.*: unsupported
@@ -200,6 +199,20 @@ chrome.sessions.*: invalid-argument
 chrome.sessions.*: not-found
 chrome.sessions.*: restore-failed
 chrome.sessions.*: unimplemented
+# MD26: chrome.tabGroups is served over the TABGRP machinery —
+# 'tabGroups' gates the namespace (no-permission undeclared); get/
+# query/update/move/ungroup are all live, creation rides
+# chrome.tabs.group like the real API.  The rest are the ops'
+# correct verdicts (bad/mistyped args, unknown or stale groupId,
+# cross-window move has no atomic machinery, the strip refusing a
+# move, unreachable members).  tabs.group/ungroup verdicts land
+# under chrome.tabs.* below.
+chrome.tabGroups.*: no-permission
+chrome.tabGroups.*: invalid-argument
+chrome.tabGroups.*: not-found
+chrome.tabGroups.*: unsupported
+chrome.tabGroups.*: move-refused
+chrome.tabGroups.*: unimplemented
 chrome.action.setIcon: invalid-image-data
 chrome.action.setIcon: invalid-path
 chrome.browserAction.setIcon: invalid-image-data
@@ -263,6 +276,10 @@ chrome.tabs.goBack: no-history
 chrome.tabs.goBack: not-found
 chrome.tabs.goForward: no-history
 chrome.tabs.goForward: not-found
+chrome.tabs.group: invalid-argument
+chrome.tabs.group: not-found
+chrome.tabs.group: no-window
+chrome.tabs.group: group-refused
 chrome.tabs.highlight: invalid-argument
 chrome.tabs.highlight: not-found
 chrome.tabs.highlight: no-window
@@ -281,6 +298,8 @@ chrome.tabs.setZoom: not-found
 chrome.tabs.setZoom: zoom-disabled
 chrome.tabs.setZoomSettings: invalid-argument
 chrome.tabs.setZoomSettings: not-found
+chrome.tabs.ungroup: invalid-argument
+chrome.tabs.ungroup: not-found
 chrome.tabs.update: not-found
 chrome.webNavigation.getAllFrames: no-tab
 chrome.webNavigation.getFrame: no-frame

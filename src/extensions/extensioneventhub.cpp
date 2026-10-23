@@ -132,6 +132,7 @@ void ExtensionEventHub::setTracking(bool on)
         qApp->removeEventFilter(this);
         m_scan->stop();
         m_tabs.clear();
+        m_groupSnaps.clear();
         m_wiredWindows.clear();
         m_windowIds.clear();
         m_dyingWindows.clear();
@@ -309,6 +310,16 @@ void ExtensionEventHub::wireWindow(BrowserMainWindow *window)
             ExtensionBackgroundRuntime::instance()->broadcastEvent(
                 QStringLiteral("sessions.onChanged"), argsPayload({}));
         });
+        // MD26: chrome.tabGroups' on* set — the strip's coarse
+        // signal carries no diff detail, so the tap keeps a
+        // per-window snapshot of each group's Chrome shape and
+        // reconstructs onCreated/onUpdated/onMoved/onRemoved from
+        // it.  The baseline is seeded silently at wire time — like
+        // the first syncNow scan, groups that predate the listener
+        // produce no onCreated.
+        m_groupSnaps.insert(window, groupSnapshot(window, tw));
+        connect(tw, &TabWidget::tabGroupsChanged, this,
+                [this, window]() { onTabGroupsChanged(window); });
     }
     // The destroyed() signal runs while the object is already sliced
     // to QObject — a slot parameter cast would be UB, so the typed
@@ -657,6 +668,108 @@ void ExtensionEventHub::onTabActivated(TabWidget *tabs, int index)
             {QStringLiteral("tabIds"), QJsonArray{tabId}}}}));
 }
 
+QHash<QString, ExtensionEventHub::GroupSnap>
+ExtensionEventHub::groupSnapshot(BrowserMainWindow *window,
+                                 TabWidget *tabs) const
+{
+    QHash<QString, GroupSnap> out;
+    if (!tabs)
+        return out;
+    const int wid = ExtensionShimBackend::windowIdFor(window);
+    // tabGroupIds() enumerates in strip order — the same order the
+    // context menus present groups in.
+    for (const QString &gid : tabs->tabGroupIds()) {
+        GroupSnap snap;
+        snap.json =
+            ExtensionShimBackend::tabGroupJson(tabs, gid, wid);
+        const QList<int> members = tabs->tabGroupMembers(gid);
+        snap.firstIndex = members.isEmpty() ? -1 : members.first();
+        for (const int member : members)
+            snap.members.append(tabs->webView(member));
+        out.insert(gid, snap);
+    }
+    return out;
+}
+
+void ExtensionEventHub::onTabGroupsChanged(BrowserMainWindow *window)
+{
+    if (!m_tracking || !window)
+        return;
+    TabWidget *tw = window->tabWidget();
+    if (!tw)
+        return;
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    const QHash<QString, GroupSnap> now = groupSnapshot(window, tw);
+    QHash<QString, GroupSnap> &before = m_groupSnaps[window];
+    for (auto it = now.constBegin(); it != now.constEnd(); ++it) {
+        const auto old = before.constFind(it.key());
+        if (old == before.constEnd()) {
+            runtime->broadcastEvent(
+                QStringLiteral("tabGroups.onCreated"),
+                argsPayload({it.value().json}));
+            continue;
+        }
+        const GroupSnap &o = old.value();
+        // Chrome's vocabulary: property edits are onUpdated, a run
+        // relocating on the strip is onMoved.  Membership changes
+        // alone (tab joining/leaving) carry NO tabGroups event —
+        // they surface through tabs.onUpdated's changeInfo.groupId,
+        // diffed by syncGroupMembership below.
+        if (o.json != it.value().json) {
+            runtime->broadcastEvent(
+                QStringLiteral("tabGroups.onUpdated"),
+                argsPayload({it.value().json}));
+        }
+        // Moved: same visible membership, different anchor index.
+        // A passive shift (a neighbor closed before the run) can
+        // land here too — the strip cannot tell it from a drag, and
+        // Chrome's model does not detach collapsed members anyway.
+        if (o.members == it.value().members
+                && o.firstIndex != it.value().firstIndex) {
+            runtime->broadcastEvent(
+                QStringLiteral("tabGroups.onMoved"),
+                argsPayload({it.value().json}));
+        }
+    }
+    for (auto it = before.constBegin(); it != before.constEnd(); ++it) {
+        if (!now.contains(it.key())) {
+            // Ungroup/close — Chrome reports the group's last shape.
+            runtime->broadcastEvent(
+                QStringLiteral("tabGroups.onRemoved"),
+                argsPayload({it.value().json}));
+        }
+    }
+    before = now;
+    syncGroupMembership(window, tw);
+}
+
+void ExtensionEventHub::syncGroupMembership(BrowserMainWindow *window,
+                                            TabWidget *tabs)
+{
+    if (!window || !tabs)
+        return;
+    const int wid = ExtensionShimBackend::windowIdFor(window);
+    for (auto it = m_tabs.begin(); it != m_tabs.end(); ++it) {
+        TrackedTab &tab = it.value();
+        if (!tab.view || tab.windowObject != window)
+            continue;
+        // tabGroupOf() covers the detached members a collapsed
+        // group parked — index lookups cannot reach them.
+        const QString gid = tabs->tabGroupOf(tab.view.data());
+        if (gid == tab.groupId)
+            continue;
+        tab.groupId = gid;
+        // The first scan seeds silently like every other diffed
+        // field — pre-listener membership is baseline, not a change.
+        if (!m_firstScanDone)
+            continue;
+        emitTabUpdated(tab.view.data(), QJsonObject{
+            {QStringLiteral("groupId"),
+             ExtensionShimBackend::chromeGroupIdFor(wid, gid)}});
+    }
+}
+
 void ExtensionEventHub::onViewDestroyed(WebView *view)
 {
     // 'view' is mid-destruction — use it ONLY as a map key; every
@@ -693,6 +806,7 @@ void ExtensionEventHub::onWindowDestroyed(BrowserMainWindow *window)
             argsPayload({windowId}));
     }
     m_wiredWindows.remove(window);
+    m_groupSnaps.remove(window);
 }
 
 void ExtensionEventHub::syncNow()
@@ -733,6 +847,7 @@ void ExtensionEventHub::syncNow()
                 tab.windowId =
                     ExtensionShimBackend::windowIdFor(window);
                 tab.index = i;
+                tab.groupId = tw->tabGroupId(i);
                 wireView(view);
                 // Tabs the extension never saw get no onCreated —
                 // Chrome fires it only for tabs born after the
@@ -791,6 +906,10 @@ void ExtensionEventHub::syncNow()
         }
         if (!anyTrackable)
             continue;
+        // MD26: membership flips ride tabGroupsChanged promptly, but
+        // paths that skip the signal (session restore re-creates
+        // membership wholesale) heal here on the scan.
+        syncGroupMembership(window, tw);
         liveWindows.insert(window);
         if (!m_windowIds.contains(window)) {
             m_windowIds.insert(window,
@@ -814,6 +933,19 @@ void ExtensionEventHub::syncNow()
         WebView *view = it.key();
         TrackedTab tab = it.value();
         if (!tab.view || !seen.contains(view)) {
+            // A collapsed group's members are detached from the
+            // strip, not closed — the hidden store keeps the widget
+            // and tabGroupOf() still names them.  Chrome keeps
+            // collapsed members in its tab list, so detachment alone
+            // is not a removal.
+            WebView *live = tab.view.data();
+            BrowserMainWindow *home = tab.window.data();
+            TabWidget *homeTabs = home ? home->tabWidget() : nullptr;
+            if (live && homeTabs
+                    && !homeTabs->tabGroupOf(live).isEmpty()) {
+                ++it;
+                continue;
+            }
             it = m_tabs.erase(it);
             const bool closing =
                 m_dyingWindows.contains(tab.windowObject)

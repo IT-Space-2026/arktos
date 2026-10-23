@@ -905,6 +905,22 @@ UI:
   to every hosted context that declared "sessions", including
   closes, restores and clears made through the browser's own UI
   (MD25).
+- chrome.tabGroups is live for extensions that declare the grant:
+  get/query enumerate the same groups the strip renders — Chrome's
+  integer ids, palette-named colors, title, collapsed state —
+  update() renames/recolors/collapses through the same setters the
+  context menu drives, move() relocates the whole run on the strip
+  (a cross-window request gets a typed refusal, not a torn run),
+  and ungroup() dissolves groups atomically. Membership itself is
+  Chrome-shaped: tabs.group() creates or joins a group with all the
+  listed tabs at once, tabs.ungroup() drops them out, and every
+  tab's groupId reports the same integer the API minted.
+  tabGroups.onCreated/onUpdated/onMoved/onRemoved fan out to every
+  hosted context that declared "tabGroups" — including groups made,
+  edited or dissolved through the browser's own context menus —
+  while tabs.onUpdated's changeInfo.groupId tracks membership flips,
+  and a collapsed group's hidden members stay in the tab list like
+  Chrome's instead of reporting as closed (MD26).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

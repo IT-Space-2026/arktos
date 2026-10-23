@@ -153,6 +153,15 @@ class QWebEngineProfile;
 //                  shared undo path; 'sessions' gates the namespace
 //                  and onChanged rides the hub's
 //                  recentlyClosedTabsChanged tap (eventGate)
+//   tabGroups.*  — MD26: get/query/update/move/ungroup over the
+//                  TABGRP machinery (per-window membership keyed on
+//                  the WebView); Chrome's int ids ride the minted
+//                  map tabObject's groupId reports, colors map the
+//                  enum onto the container palette.  Creation lives
+//                  in chrome.tabs.group/ungroup like the real API;
+//                  'tabGroups' gates the namespace, and the
+//                  onCreated/onUpdated/onMoved/onRemoved fan-out is
+//                  the hub's tabGroupsChanged diff tap (eventGate)
 //   runtime.*    — context bookkeeping (getViews counts); MD18
 //                  lifecycle ops: reload rides ExtensionManager's
 //                  unload+load, requestUpdateCheck rides
@@ -258,6 +267,15 @@ public:
     static QJsonObject downloadsDeltaJson(class DownloadItem *item,
                                         bool finished);
     static bool downloadsClaimPending(class DownloadItem *item);
+    // MD26: the chrome.tabGroups TabGroup shape + the minted int id
+    // for a (window, strip group-id) pair — public statics (the
+    // tabObject/windowObject discipline) so the EXT16 hub's
+    // group-diff tap can emit identical payloads for UI-driven
+    // mutations.
+    static QJsonObject tabGroupJson(class TabWidget *tabs,
+                                    const QString &groupId,
+                                    int windowId);
+    static int chromeGroupIdFor(int windowId, const QString &groupId);
     // The card's statusChanged arrives BEFORE QtWebEngine applies a
     // pause (the request's isPaused flips asynchronously) — a delta
     // emitted from that signal alone always reads stale.  This tap
@@ -408,6 +426,13 @@ private:
     // recentlyClosedTabsChanged), so no member-emit path exists here.
     QJsonObject invokeSessions(const QString &method,
                                const QJsonObject &args);
+    // MD26: chrome.tabGroups over the TABGRP machinery — 'tabGroups'
+    // gates the namespace; every member is served (get/query/
+    // update/move/ungroup), so only mistyped calls, stale ids and
+    // the cross-window move produce typed verdicts.  The four on*
+    // events are tap-driven in the hub, like sessions/downloads.
+    QJsonObject invokeTabGroups(const QString &method,
+                                const QJsonObject &args);
     QJsonObject invokeExtension(const QString &method,
                                 const QJsonObject &args);
     QJsonObject invokeSidebarAction(const QString &method,

@@ -2677,6 +2677,28 @@
                        function (e) { answerCb(cb, undefined, e.message); });
             return p;
         };
+        // MD26 — group membership ops live under chrome.tabs in the
+        // real API: group() is the only group-CREATE surface,
+        // ungroup() drops the listed tabs out of their groups.
+        tabsNs.group = function (options, cb) {
+            var p = call('tabs', 'group', { options: options || {} });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        tabsNs.ungroup = function (tabIds, cb) {
+            var opts = {};
+            if (Array.isArray(tabIds))
+                opts.tabIds = tabIds;
+            else
+                opts.tabId = tabIds;
+            var p = call('tabs', 'ungroup', { options: opts });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
         // Deprecated Chrome spellings — aliases over the query
         // surface, kept for MV2-era callers.
         tabsNs.getAllInWindow = function (windowId, cb) {
@@ -4494,6 +4516,63 @@
     }
     installSessions();
 
+    // --- chrome.tabGroups -----------------------------------------------
+    // MD26: same posture as sessions — the object answers in every
+    // extension context and the 'tabGroups' grant is enforced per
+    // call by the backend (invokeTabGroups), so the namespace is
+    // always installed.  get/query/update/move/ungroup ride the
+    // TABGRP machinery; creation lives at chrome.tabs.group like the
+    // real API; TAB_GROUP_ID_NONE is Chrome's published -1 constant.
+    function installTabGroups() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.tabGroups; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var tgNs = {
+            __arktosShim: true,
+            TAB_GROUP_ID_NONE: -1,
+            onCreated: makeEvent('tabGroups.onCreated'),
+            onUpdated: makeEvent('tabGroups.onUpdated'),
+            onMoved: makeEvent('tabGroups.onMoved'),
+            onRemoved: makeEvent('tabGroups.onRemoved')
+        };
+        var tgArgs = {
+            get: function (a) { return { groupId: a[0] }; },
+            query: function (a) { return { query: a[0] || {} }; },
+            update: function (a) {
+                return { groupId: a[0], props: a[1] || {} };
+            },
+            move: function (a) {
+                return { groupId: a[0], props: a[1] || {} };
+            },
+            ungroup: function (a) { return { groupIds: a[0] }; }
+        };
+        for (var mk in tgArgs) {
+            (function (m, map) {
+                tgNs[m] = function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('tabGroups', m, map(a));
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mk, tgArgs[mk]);
+        }
+        installNs('tabGroups', tgNs);
+    }
+    installTabGroups();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -4749,7 +4828,7 @@
         'windows', 'identity', 'gcm',
         'nativeMessaging', 'privacy', 'topSites',
         'scripting', 'offscreen', 'omnibox', 'devtools',
-        'fontSettings', 'tabGroups', 'userScripts',
+        'fontSettings', 'userScripts',
         'declarativeNetRequest', 'declarativeContent',
         'browsingData', 'management',
         'power', 'system', 'tts', 'enterprise', 'debugger',

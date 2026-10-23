@@ -2091,6 +2091,61 @@ void TabWidget::ungroupTabs(const QString &groupId)
     emit tabGroupsChanged();
 }
 
+QString TabWidget::tabGroupOf(const WebView *view) const
+{
+    return m_tabGroups.value(const_cast<WebView*>(view));
+}
+
+// chrome.tabGroups.move's half of the machinery: relocate the whole
+// run so its first member lands at index.  Each member's bar move
+// re-emits tabMoved -> moveTab() — m_groupAdjust keeps the per-tab
+// normalize from dissolving the run mid-relocation (the same guard
+// moveTabIntoGroupRun sets), while the pin-boundary fixup in that
+// slot still applies, matching drag semantics.  A collapsed group's
+// only visible member is the chip; its hidden stack re-inserts after
+// it on expand, so the chip move carries the group.
+bool TabWidget::moveTabGroup(const QString &groupId, int index)
+{
+    if (!m_tabGroupInfo.contains(groupId))
+        return false;
+    QList<WebView*> memberViews;
+    for (const int member : tabGroupMembers(groupId)) {
+        if (WebView *view = webView(member))
+            memberViews.append(view);
+    }
+    if (memberViews.isEmpty())
+        return false;
+    // index is the first member's landing slot in the final strip.
+    const int target =
+        qBound(0, index, count() - memberViews.count());
+    const int before = webViewIndex(memberViews.first());
+    if (before < 0 || before == target)
+        return before >= 0;
+    m_groupAdjust = true;
+    if (target < before) {
+        // Leftward: seat members in strip order — each moveTab
+        // inserts at its slot and shifts the rest right.
+        for (int i = 0; i < memberViews.count(); ++i) {
+            const int cur = webViewIndex(memberViews.at(i));
+            if (cur >= 0 && cur != target + i)
+                m_tabBar->moveTab(cur, target + i);
+        }
+    } else {
+        // Rightward: seat from the last member back so earlier
+        // moves never push a seated member off its slot.
+        for (int i = memberViews.count() - 1; i >= 0; --i) {
+            const int cur = webViewIndex(memberViews.at(i));
+            if (cur >= 0 && cur != target + i)
+                m_tabBar->moveTab(cur, target + i);
+        }
+    }
+    m_groupAdjust = false;
+    m_tabBar->updateGeometry();
+    m_tabBar->update();
+    emit tabGroupsChanged();
+    return true;
+}
+
 // TABGRP02: "Close Group" — every member dies through closeTab() (or
 // the hidden-store counterpart for a tab filtered into a non-active
 // container level), so each one lands on the recently-closed stack

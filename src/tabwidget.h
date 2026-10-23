@@ -329,6 +329,17 @@ public:
     // a warning that reports the real (hidden-inclusive) count.
     void closeTabGroup(const QString &groupId);
 
+    // Membership lookup by view rather than strip index — covers the
+    // collapsed group's DETACHED members and container-level-hidden
+    // tabs that index-based lookups cannot reach.
+    QString tabGroupOf(const WebView *view) const;
+    // Relocates the group so its first visible member lands at index
+    // (a collapsed group moves as its chip; the hidden stack follows
+    // on expand).  Members move under m_groupAdjust so the per-tab
+    // normalize never rips the run apart.  Returns false for an
+    // unknown group or one with no visible member to place.
+    bool moveTabGroup(const QString &groupId, int index);
+
     QByteArray saveState() const;
     bool restoreState(const QByteArray &state);
 #ifdef ARKTOS_RUSTCORE

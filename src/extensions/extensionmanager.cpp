@@ -1323,6 +1323,11 @@ QStringList ExtensionManager::runtimeServes()
         // declared surface is live.
         QStringLiteral("sessions"),
         QStringLiteral("sidePanel"),
+        // MD26: chrome.tabGroups serves get/query/update/move/
+        // ungroup over the TABGRP machinery; creation rides
+        // chrome.tabs.group like the real API — the declared
+        // surface is live.
+        QStringLiteral("tabGroups"),
         QStringLiteral("tabs"),
         QStringLiteral("webNavigation"),
         QStringLiteral("webRequest"),

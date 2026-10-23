@@ -120,6 +120,7 @@ private slots:
     void extensionCookies();
     void extensionDownloads();
     void extensionSessions();
+    void extensionTabGroups();
     void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
@@ -9917,6 +9918,344 @@ void tst_ExtensionManager::extensionSessions()
                  QStringLiteral("restore"), QJsonObject())
              .value(QLatin1String("error")).toString(),
              QStringLiteral("no-permission"));
+
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    hub->setTracking(false);
+    QDir(dirB).removeRecursively();
+}
+
+// MD26 — chrome.tabGroups over the TABGRP machinery: creation rides
+// chrome.tabs.group like the real API (the namespace has no create),
+// get/query/update/move/ungroup resolve the minted chrome int ids
+// onto the strip's per-window groups, and the four on* events fan
+// out from the hub's tabGroupsChanged diff tap.
+void tst_ExtensionManager::extensionTabGroups()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exttg-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-tg\","
+                "\"version\":\"1.0\",\"permissions\":[\"tabGroups\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write("self.__tg=[];\n"
+                "self.__tgNone=(chrome.tabGroups\n"
+                " ? chrome.tabGroups.TAB_GROUP_ID_NONE : null);\n"
+                "try{['onCreated','onUpdated','onMoved','onRemoved']\n"
+                " .forEach(function(n){chrome.tabGroups[n].addListener(\n"
+                "  function(g){self.__tg.push(n+':'+g.id);});});}catch(e){}\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.name == QLatin1String("tst-tg"))
+            manager->removeExtension(info.id);
+    }
+    auto loaded = std::make_shared<QString>();
+    auto loadErr = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded, loadErr](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name != QLatin1String("tst-tg"))
+            return;
+        if (info.error.isEmpty())
+            *loaded = info.id;
+        else
+            *loadErr = info.error;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && loadErr->isEmpty()
+           && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString extId = *loaded;
+    QVERIFY2(!extId.isEmpty(), qPrintable(QStringLiteral(
+        "fixture loaded (err=%1)").arg(*loadErr)));
+    manager->setExtensionEnabled(extId, true);
+    auto unload = qScopeGuard([manager, extId, dir]() {
+        manager->setExtensionEnabled(extId, false);
+        manager->removeExtension(extId);
+        QDir(dir).removeRecursively();
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(extId)
+            && runtime->host(extId)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    ChromeBridge *bridge = runtime->host(extId)->bridge();
+    QVERIFY(bridge);
+    QSignalSpy hostEvents(bridge, &ChromeBridge::hostEvent);
+    auto invoke = [&](const QString &m, const QJsonObject &args) {
+        return bridge->invoke(QStringLiteral("tabGroups"), m, args);
+    };
+    auto invokeTabs = [&](const QString &m, const QJsonObject &args) {
+        return bridge->invoke(QStringLiteral("tabs"), m, args);
+    };
+    auto hostEventsFor = [&](const QString &name) {
+        QList<QVariantList> out;
+        for (const QVariantList &args : hostEvents)
+            if (!args.isEmpty() && args.at(0).toString() == name)
+                out.append(args);
+        return out;
+    };
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+
+    // The namespace constant landed page-side.
+    QCOMPARE(eval(runtime->host(extId)->page(),
+                  QStringLiteral("self.__tgNone")).toInt(), -1);
+
+    // Empty-strip answers + the arg refusals needing no group.
+    QJsonObject reply = invoke(QStringLiteral("query"), QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("groupId"),
+                  QStringLiteral("bogus")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("groupId"), 424242.0}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(invoke(QStringLiteral("bogus"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // A real window + three tabs — grouping needs members.
+    ExtensionEventHub *hub = ExtensionEventHub::instance();
+    hub->setTracking(true);
+    hub->syncNow();
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    hub->syncNow();   // wires tabGroupsChanged + seeds the baseline
+    tw->newTab();
+    tw->newTab();
+    QVERIFY(tw->count() >= 3);
+    WebView *view0 = tw->webView(0);
+    WebView *view1 = tw->webView(1);
+    WebView *view2 = tw->webView(2);
+    QVERIFY(view0 && view1 && view2);
+    const int tid1 = ExtensionShimBackend::tabIdFor(view1);
+    const int tid2 = ExtensionShimBackend::tabIdFor(view2);
+
+    // UI-originated create first — the tap diff announces it exactly
+    // like an API mutation (the hub seeds at wire time, so this is
+    // the first observable transition).
+    const QString uiGid = tw->createTabGroup(0);
+    QVERIFY(!uiGid.isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("tabGroups.onCreated"))
+             .isEmpty(),
+        15000);
+    {
+        const QVariantList evt =
+            hostEventsFor(QStringLiteral("tabGroups.onCreated"))
+                .last();
+        const QJsonObject payload = evt.at(1).toJsonObject();
+        const QJsonObject group = payload
+            .value(QLatin1String("__args")).toArray().at(0).toObject();
+        QVERIFY(group.value(QLatin1String("id")).toInt() > 0);
+        QCOMPARE(group.value(QLatin1String("windowId")).toInt(),
+                 ExtensionShimBackend::windowIdFor(window));
+        QCOMPARE(group.value(QLatin1String("collapsed")).toBool(),
+                 false);
+        tw->ungroupTabs(uiGid);
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("tabGroups.onRemoved"))
+             .isEmpty(),
+        15000);
+
+    // tabs.group is the create path — tabs 1+2 form a new group and
+    // the minted chrome id comes back in the reply.
+    reply = invokeTabs(QStringLiteral("group"), QJsonObject{
+        {QStringLiteral("options"), QJsonObject{
+            {QStringLiteral("tabIds"), QJsonArray{tid1, tid2}}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const int groupId = reply.value(QLatin1String("result"))
+        .toObject().value(QLatin1String("groupId")).toInt();
+    QVERIFY(groupId > 0);
+    QCOMPARE(tw->tabGroupSize(
+                 tw->tabGroupOf(view1)), 2);
+
+    // tabObject.groupId reports the same minted int.
+    reply = invokeTabs(QStringLiteral("get"), QJsonObject{
+        {QStringLiteral("id"), tid1}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("groupId")).toInt(),
+             groupId);
+    // tabs.onUpdated carried the membership flip as changeInfo.
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        for (const QVariantList &args : hostEvents) {
+            if (args.isEmpty()
+                    || args.at(0).toString()
+                           != QLatin1String("tabs.onUpdated"))
+                continue;
+            const QJsonArray evtArgs = args.at(1).toJsonObject()
+                .value(QLatin1String("__args")).toArray();
+            if (evtArgs.size() >= 2
+                    && evtArgs.at(1).toObject().contains(
+                        QLatin1String("groupId")))
+                return true;
+        }
+        return false;
+    }(), 15000);
+
+    // get + query — the live Chrome TabGroup shape.
+    reply = invoke(QStringLiteral("get"), QJsonObject{
+        {QStringLiteral("groupId"), double(groupId)}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("windowId")).toInt(),
+             ExtensionShimBackend::windowIdFor(window));
+    reply = invoke(QStringLiteral("query"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("windowId"),
+             double(ExtensionShimBackend::windowIdFor(window))}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(),
+             1);
+
+    // update() — title + color + collapsed all land on the strip
+    // record; each mutation answers the live shape.
+    reply = invoke(QStringLiteral("update"), QJsonObject{
+        {QStringLiteral("groupId"), double(groupId)},
+        {QStringLiteral("props"), QJsonObject{
+            {QStringLiteral("title"), QStringLiteral("Work")},
+            {QStringLiteral("color"), QStringLiteral("blue")}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("title")).toString(),
+             QStringLiteral("Work"));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("color")).toString(),
+             QStringLiteral("blue"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("tabGroups.onUpdated"))
+             .isEmpty(),
+        15000);
+    QCOMPARE(invoke(QStringLiteral("update"), QJsonObject{
+                 {QStringLiteral("groupId"), double(groupId)},
+                 {QStringLiteral("props"), QJsonObject{
+                     {QStringLiteral("color"),
+                      QStringLiteral("mauve")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // Filtered query — title substring and color both match.
+    reply = invoke(QStringLiteral("query"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("title"), QStringLiteral("wor")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(),
+             1);
+    reply = invoke(QStringLiteral("query"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("color"), QStringLiteral("red")}}}});
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+
+    // move() — the run relocates so its first member lands at the
+    // index; onMoved reports the group's new shape.
+    reply = invoke(QStringLiteral("move"), QJsonObject{
+        {QStringLiteral("groupId"), double(groupId)},
+        {QStringLiteral("props"), QJsonObject{
+            {QStringLiteral("index"), 0.0}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QString gid = tw->tabGroupOf(view1);
+    QVERIFY(!gid.isEmpty());
+    const QList<int> members = tw->tabGroupMembers(gid);
+    QVERIFY(!members.isEmpty());
+    QCOMPARE(members.first(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("tabGroups.onMoved")).isEmpty(),
+        15000);
+    QCOMPARE(invoke(QStringLiteral("move"), QJsonObject{
+                 {QStringLiteral("groupId"), double(groupId)},
+                 {QStringLiteral("props"), QJsonObject{
+                     {QStringLiteral("index"), -5.0}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // ungroup() dissolves the group; the tabs stay.  get() on the
+    // stale id answers the typed miss.
+    reply = invoke(QStringLiteral("ungroup"), QJsonObject{
+        {QStringLiteral("groupIds"), QJsonArray{double(groupId)}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(tw->tabGroupOf(view1).isEmpty());
+    QVERIFY(tw->tabGroupOf(view2).isEmpty());
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("groupId"), double(groupId)}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    reply = invoke(QStringLiteral("query"), QJsonObject());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+
+    // The events reached the page-side listeners too — the hosted
+    // context's own chrome.tabGroups.* objects fired.
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QString seen = eval(
+            runtime->host(extId)->page(),
+            QStringLiteral("self.__tg.join('|')")).toString();
+        return seen.contains(QLatin1String("onCreated:"))
+            && seen.contains(QLatin1String("onUpdated:"))
+            && seen.contains(QLatin1String("onMoved:"))
+            && seen.contains(QLatin1String("onRemoved:"));
+    }(), 15000);
+
+    // The manifest gate — a sibling without 'tabGroups' hears
+    // no-permission on every member.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-exttgb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-tg-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0044"),
+        QStringLiteral("tst-tg-b"), dirB);
+    for (const QString m : {QStringLiteral("get"),
+                            QStringLiteral("query"),
+                            QStringLiteral("update"),
+                            QStringLiteral("move"),
+                            QStringLiteral("ungroup")}) {
+        QCOMPARE(backendB.invoke(QStringLiteral("tabGroups"), m,
+                                 QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+    }
 
     window->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
