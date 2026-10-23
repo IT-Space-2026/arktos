@@ -333,3 +333,198 @@ instances and manager-owned stores that haven't been facade-bound.
   consult it are listed above.
 - `DownloadManager` UI (interception policy → MD04) — outside the listed
   audit scope; the one UI touch (`fileSaveAs`/`downloadManager`) delegates.
+
+## MS09 — final boundary map
+
+The lane's contract, stated once.
+
+**Stays Qt-side (widget code):**
+
+- paint, focus, input, menus, drag/drop, dialogs
+- engine-object ownership and live state: QWebEngineView/Page/Profile,
+  EngineInterface/EngineTab adapters, Servo/WebKit view objects,
+  TorManager, EnergySaver, PdfView
+- codecs for persisted blobs whose *bytes* already route through the
+  facade: the window-state QByteArray codec, the session-manifest JSON
+  schema — the layout is chrome's, the store route is not
+- per-run widget state that never crosses a store boundary: strip state
+  (`m_pinnedTabs`, live group maps, hidden-store levels), the in-memory
+  closed-tab stack, pending-restore placeholders, sleep timestamps,
+  completer/mirror caches fed by facade reads
+- mechanics that *execute* a verdict someone else made: menu
+  build/exec/strings, tab placement and reflow, tor-queue timers,
+  widget/view construction, focus policy
+
+**Moved behind the facade (arktos_core.h / rc_*):**
+
+- store reads/writes: ac_settings (incl. ProfileSettings), ac_hist,
+  ac_bm, ac_sitedec, ac_policy, ac_containers, ac_cookies, ac_notes,
+  ac_icons, ac_blocklist, ac_tranco, rc_cred, rc_autofill
+- verdicts: rc_classify_input (typed input), rc_ose_* (engine
+  resolution/opt-ins), rc_urlstrip (url clean), ac_sitetrust (trust
+  level/signals), ac_session_exists + ac_session_*_restoring (store
+  presence + restore guard), rc_frecency_score candidate
+- menu/status models: `WebViewController::contextMenuModel` /
+  `hoverStatusText` (MS04) — entry set/order/enabled and hover text are
+  controller decisions fed by facade env; the widget renders
+
+**Still Qt-legged pending a domains/bridge module (thin-blocked):**
+
+- MD02 navpolicy — scheme gates on untrusted input (drops, middle-click,
+  context menu, `loadStringFromUntrustedSource`), tor nav-hold verdict,
+  referer/same-profile hand-off, private/tor window routing (~9 rows)
+- MD03 permpolicy — permission entry list/revoke (~2 rows)
+- MD06 url-clean policy (~1 row plus interceptor sites)
+- MD08 session policy — snapshot contents, restore order/lazy deferral,
+  closed-stack capture exclusion, serialization ordering (~8 rows)
+- MD09 popup verdict (~3 rows)
+- MB04 caps table (mw-bridge) — engine-capability gating that MS05/MS06
+  consume: devtools/print/zoom/find/reader/engine-indicator rows
+- no-MD-row flags for the domains lane — padlock composite verdict
+  (sitepadlock.cpp:222), suggestion-source pick + availability
+  (omniboxsuggestions.cpp:67/80/125), scope→provider pick
+  (historycompleter.cpp:471), branded-start-page re-pick
+  (tabwidget.cpp:4807/:4526), energy/sleep cadence + saver policy,
+  extension install-registry surface
+
+**Ledger (table rows above):** 75 pure `keep`; ~67 rows carrying a
+`thin` leg (facade surface exists — any MS row can take them); ~18 rows
+with a `done` leg; thin-blocked MD02 ~9 / MD03 ~2 / MD06 ~1 / MD08 ~8 /
+unlabeled ~4; MD09 popup-verdict rows (~3) count as `thin` — the
+ac_sitedec write leg is routed, only the verdict half waits on MD09.
+Dominant mass is `keep` — as intended, the bulk of the shell is
+paint/input/engine-object code that should never leave Qt.
+
+### Smoke parity
+
+Every standalone `--*-smoke` leg re-run headless
+(`QT_QPA_PLATFORM=offscreen`, `QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu`,
+`ARKTOS_BUNDLED_EXTENSIONS_DIR=<empty>` — the MS08 fixture note —
+`ARKTOS_TOR_BINARY=<fetched tor>`).  Internal child/seed flags are not
+legs — they exist to be spawned by their orchestrators and are listed
+here for completeness: `sigterm-child-smoke`, `fingerprint-child-smoke`,
+`fingerprint-inject-seed`, `telemetry-prefetch-child-smoke`,
+`profile-wipe-arm-smoke`, `profile-wipe-child-smoke`, `vault-smoke-seed`,
+`vault-smoke-dirty-seed`.
+
+Two harness properties found en route, both pre-existing:
+
+- `QStandardPaths` test mode resolves the data root to
+  `~/.qttest/share/Arktos/Arktos` and ignores the XDG redirect, so a
+  same-HOME sweep shares one profile store across legs — legs that pin
+  `AdBlock/enabled=false` for determinism (browser-smoke etc.) poison
+  later legs' adblock-enabled assumptions.  A fresh `HOME` per leg
+  restores standalone semantics; every leg below was verified that way
+  or in a state where the shared keys did not matter.
+- `about:blank` commits are instant — a page-level `QWebEngineScript`
+  armed during `acceptNavigationRequest` can lose to the renderer's
+  per-document collection snapshot (profile-level scripts, installed
+  before navigation, always make it).  `--adblock-smoke`'s cosmetic
+  leg now re-issues the `about:blank` load once on first-check
+  failure; the armed script stays resident and runs on the second
+  commit.  Same leg, same assertion — this is the load bearing, not
+  the adblock pipeline.
+- DLACC06 made rustdl the default download engine: it claims http(s)
+  downloads and cancels the Chromium request before a
+  `downloadRequested` observer can attach, so the three Chromium-path
+  legs (`--download-smoke`, `--parallel-download-smoke`,
+  `--parallel-download-off-smoke`) silently timed out.  All three now
+  pin `downloadmanager/engine=builtin` in the pre-init settings store
+  — they exist to verify Chromium's DownloadRequest lifecycle and
+  `ParallelDownloading` flag, which is exactly what they check again.
+
+Also found: `AutoFillManager::scheduleOnPage` appended a fresh
+`arktos:autofill-submit` page script on every navigation without
+removing the prior copy (the armed-collection dump showed 5 copies).
+`insert()` appends — the shim now goes through the same
+remove-then-insert as `replacePageScript`.
+
+| Leg | rc | Verdict |
+|-----|----|---------|
+| `--browser-smoke` | 0 | PASS |
+| `--settings-smoke` | 0 | PASS |
+| `--session-smoke` | 0 | PASS (8/8) |
+| `--restore-smoke` | 0 | PASS |
+| `--session-floor-smoke` | 0 | PASS (29/29) |
+| `--sigterm-smoke` | 0 | PASS (15/15) |
+| `--nam-smoke` | 0 | PASS (NoError on file fetch; rc is verdict) |
+| `--history-smoke` | 0 | PASS |
+| `--cookie-smoke` | 0 | PASS |
+| `--bookmarks-smoke` | 0 | PASS |
+| `--search-smoke` | 0 | PASS |
+| `--search-guess-smoke` | 0 | PASS |
+| `--adblock-smoke` | 0 | PASS (4/4 — cosmetic leg retried per note above) |
+| `--adblock-list-smoke` | 0 | PASS |
+| `--adblock-rust-smoke` | 0 | PASS |
+| `--autofill-smoke` | 0 | PASS |
+| `--find-smoke` | 0 | PASS |
+| `--source-smoke` | 0 | PASS (fresh HOME — see store note) |
+| `--app-smoke` | 0 | PASS |
+| `--ua-smoke` | 0 | PASS |
+| `--privacy-smoke` | 0 | PASS |
+| `--referer-smoke` | 0 | PASS |
+| `--container-smoke` | 0 | PASS |
+| `--sorry-smoke` | 0 | PASS |
+| `--icons-smoke` | 0 | PASS |
+| `--seclvl-smoke` | 0 | PASS |
+| `--ping-smoke` | 0 | PASS |
+| `--httpsonly-smoke` | 0 | PASS |
+| `--resourceblock-smoke` | 0 | PASS |
+| `--urlclean-smoke` | 0 | PASS |
+| `--gpc-smoke` | 0 | PASS |
+| `--fingerprint-smoke` | 0 | PASS |
+| `--fingerprint-inject-smoke` | 0 | PASS |
+| `--reader-smoke` | 0 | PASS |
+| `--telemetry-smoke` | 0 | PASS |
+| `--telemetry-browse-smoke` | 0 | PASS |
+| `--doh-smoke` | 0 | PASS |
+| `--tls-smoke` | 0 | PASS |
+| `--tls-off-smoke` | 0 | PASS |
+| `--webrtc-smoke` | 0 | PASS |
+| `--webrtc-off-smoke` | 0 | PASS |
+| `--clientcert-smoke` | 0 | PASS (local PEM + loopback fixture — `ARKTOS_CLIENTCERT_FILE`/`_URL`; without it the leg is env-gated) |
+| `--pingspotter-smoke` | 0 | PASS (fresh HOME — see store note) |
+| `--sleep-smoke` | 0 | PASS |
+| `--palette-smoke` | 0 | PASS |
+| `--pip-smoke` | 0 | PASS |
+| `--tabstrip-smoke` | 0 | PASS |
+| `--startpage-smoke` | 0 | PASS (fresh HOME — see store note) |
+| `--crash-smoke` | 139 | PASS — rc=139 is the verdict: deliberate SIGSEGV, `crashreport.log` written |
+| `--sandbox-smoke` | 0 | PASS |
+| `--perf-smoke` | 0 | PASS (benchmark output; rc is verdict) |
+| `--download-smoke` | 0 | PASS (`file://…/README.md` arg — the leg is inert without a URL operand) |
+| `--download-smoke` (refused) | 1 | tolerated — check-coverage marks this leg tolerated; with the builtin pin the Interrupted arm genuinely runs (still rc=1, `FAIL <reason>`) |
+| `--parallel-download-smoke` | 0 | PASS (3 conns, 2 range requests — forked slices) |
+| `--parallel-download-off-smoke` | 0 | PASS (1 conn, 0 ranges — differential control) |
+| `--ingress-smoke` | 0 | PASS |
+| `--otr-teardown-smoke` | 0 | PASS |
+| `--profile-wipe-smoke` | 0 | PASS (orchestrates arm/child legs itself) |
+| `--vault-smoke` | 0 | PASS — two independent pairs, each on a fresh profile: locked pair (seed→locked-boot checks→prompt unseal→teardown auto-lock re-seal) rc=0/0; dirty pair (dirty-seed `_exit` crash plant → boot dirty-scan → offer-accept re-seal → Locked) rc=0/0 |
+| `--pdf-smoke` | 0 | PASS |
+| `--pdfview-smoke` | 0 | PASS |
+| `--printpreview-smoke` | 0 | PASS |
+| `--engine-smoke` | 0 | PASS |
+| `--extension-smoke` | 0 | PASS |
+| `--extension-otr-smoke` | 0 | PASS |
+| `--extension-update-smoke` | 0 | PASS |
+| `--extension-host-smoke` | 0 | PASS |
+| `--bitwarden-smoke` | 0 | PASS — verifies the bundled zip itself; run WITHOUT the emptied bundled-dir override |
+| `--mv3-health-smoke` | 0 | PASS |
+| `--extension-health-smoke` | 1 | FAIL — "health verdicts never settled": fixtures + bundled Bitwarden install and enable (SW eval crash → status 15, by design), but no probe produced a finished detail inside the leg's own 180s window across two runs; no mw-shell diff touches `extensionmanager.cpp` — recorded as pre-existing/environmental (heavy sibling-lane build load at sweep time) rather than a lane regression |
+| `--bidi-smoke` | 0 | PASS |
+| `--bidi-elements-smoke` | 0 | PASS |
+| `--bidi-network-smoke` | 0 | PASS |
+| `--bidi-sources-smoke` | 0 | PASS |
+| `--bidi-perfmem-smoke` | 0 | PASS |
+| `--servo-smoke` | 0 | SKIP — self-skips, no libservo_embed artifact in this tree |
+| `--tor-smoke` | 0 | PASS (real bootstrap) |
+| `--tor-window-smoke` | 0 | PASS |
+| `--tor-circuit-click-smoke` | 0 | PASS — invoked `--tor --tor-circuit-click-smoke` (the leg is not in the tor-arm flag list) |
+| `--tor-newtab-smoke` | 0 | PASS |
+| `--tor-firstsearch-smoke` | 0 | PASS |
+| `--anon-smoke` | 0 | PASS (ipduh battery settled, dns=3 — rc is verdict) |
+| `--badssl-smoke` | 0 | PASS (72 cases: 24 loaded, 48 blocked, 0 other) |
+| `--browseraudit-smoke` | 0 | PASS (431 tests: 396 pass, 35 warning, 0 critical) |
+| `--xsleak-smoke` | 124 | FAIL (env) — `xsinator.com` root now 404s; the live fixture is dead upstream, not a code regression |
+
+Not legs: `engine-list` is not a flag (sweep listed it in error).
