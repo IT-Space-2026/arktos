@@ -48,6 +48,7 @@
 #include <qpointer.h>
 #include <qregularexpression.h>
 #include <qsavefile.h>
+#include <qset.h>
 #include <qsysinfo.h>
 #include <qtimer.h>
 #include <qvariant.h>
@@ -2415,7 +2416,11 @@ QJsonObject ExtensionShimBackend::invokeIdle(
 // enumerate the manager's live ExtensionInfo rows through the same
 // shape and the permissionWarnings pair derive their strings from
 // the manifest's grant list (the same wording the install review
-// shows).  Every other member rides Chrome's failure vocabulary:
+// shows).  MD17 serves the mutations — setEnabled/uninstall/
+// uninstallSelf ride ExtensionManager::setExtensionEnabled/
+// removeExtension and fan management.onEnabled/onDisabled/
+// onUninstalled out to every 'management'-declaring context.
+// Every other member rides Chrome's failure vocabulary:
 // 'management' undeclared -> no-permission, declared-but-unserved ->
 // unsupported.
 // -------------------------------------------------------------------
@@ -2431,6 +2436,63 @@ static QJsonObject manifestForExtensionPath(const QString &extensionPath)
     if (file.size() > 1024 * 1024 || !file.open(QIODevice::ReadOnly))
         return QJsonObject();
     return QJsonDocument::fromJson(file.readAll()).object();
+}
+
+// MD17: a record the engine keeps only as an unload tombstone — a
+// dev-loaded extension can linger in the enumeration after
+// unloadExtension; Chrome's management surface has no such row
+// (an installed extension that is merely disabled still answers
+// loaded==false but keeps installed==true and stays listed).
+static bool managementRecordGone(
+        const ExtensionManager::ExtensionInfo &info)
+{
+    return !info.loaded && !info.installed;
+}
+
+// MD17: ids the manager has reported unloaded/uninstalled this
+// session.  A dev-loaded extension usually VANISHES from the
+// enumeration entirely on unload — the get()/getAll()/warnings
+// self-fallback ("hosted backend the manager never tracked") must
+// not resurrect a removed extension, so the lifecycle signals mark
+// ids on the way out and clear them on a fresh load/install.
+// Mutations also mark at dispatch so the window between the
+// removeExtension call and unloadFinished never reports the id
+// as alive-but-untracked.
+static QSet<QString> &removedExtensionIds()
+{
+    static QSet<QString> *removed = []() {
+        QSet<QString> *set = new QSet<QString>();
+        if (ExtensionManager *manager = ExtensionManager::instance()) {
+            const auto mark = [set](
+                    const ExtensionManager::ExtensionInfo &info) {
+                if (!info.id.isEmpty())
+                    set->insert(info.id);
+            };
+            const auto unmark = [set](
+                    const ExtensionManager::ExtensionInfo &info) {
+                set->remove(info.id);
+            };
+            QObject::connect(manager,
+                             &ExtensionManager::extensionUnloaded,
+                             manager, mark);
+            QObject::connect(manager,
+                             &ExtensionManager::extensionUninstalled,
+                             manager, mark);
+            QObject::connect(manager,
+                             &ExtensionManager::extensionLoaded,
+                             manager, unmark);
+            QObject::connect(manager,
+                             &ExtensionManager::extensionInstalled,
+                             manager, unmark);
+        }
+        return set;
+    }();
+    return *removed;
+}
+
+static bool extensionMarkedRemoved(const QString &id)
+{
+    return removedExtensionIds().contains(id);
 }
 
 QJsonObject ExtensionShimBackend::managementInfoJson(
@@ -2655,16 +2717,21 @@ QJsonObject ExtensionShimBackend::invokeManagement(
         if (ExtensionManager *manager = ExtensionManager::instance()) {
             for (const ExtensionManager::ExtensionInfo &info
                  : manager->extensions()) {
+                if (info.id == m_extensionId)
+                    selfSeen = true;   // tombstones count — a removed
+                                     // self must not resurrect below
+                if (managementRecordGone(info))
+                    continue;
                 out.append(managementInfoJson(
                     info.id, info.name, info.path,
                     manifestForExtensionPath(info.path), &info));
-                if (info.id == m_extensionId)
-                    selfSeen = true;
             }
         }
         // Chrome's getAll lists the caller too — a hosted backend
-        // the manager lost track of still appends its own row.
-        if (!selfSeen && !m_extensionPath.isEmpty())
+        // the manager lost track of still appends its own row, but
+        // never one the manager reported removed this session.
+        if (!selfSeen && !m_extensionPath.isEmpty()
+                && !extensionMarkedRemoved(m_extensionId))
             out.append(managementInfoJson(
                 m_extensionId, m_extensionName, m_extensionPath,
                 manifestJson(), nullptr));
@@ -2674,17 +2741,26 @@ QJsonObject ExtensionShimBackend::invokeManagement(
         const QString wanted = args.value(QStringLiteral("id")).toString();
         if (wanted.isEmpty())
             return errReply(QStringLiteral("invalid-argument"));
+        bool sawRecord = false;
         if (ExtensionManager *manager = ExtensionManager::instance()) {
             for (const ExtensionManager::ExtensionInfo &info
                  : manager->extensions()) {
                 if (info.id != wanted)
                     continue;
+                sawRecord = true;
+                if (managementRecordGone(info))
+                    break;   // tombstone — it was removed
                 return okReply(managementInfoJson(
                     info.id, info.name, info.path,
                     manifestForExtensionPath(info.path), &info));
             }
         }
-        if (wanted == m_extensionId)
+        // The self-fallback covers a hosted backend the manager
+        // never tracked — a tombstone record or a removed marker
+        // means it was uninstalled, which is Chrome's not-found,
+        // never a resurrection.
+        if (!sawRecord && wanted == m_extensionId
+                && !extensionMarkedRemoved(wanted))
             return okReply(managementInfoJson(
                 m_extensionId, m_extensionName, m_extensionPath,
                 manifestJson(), nullptr));
@@ -2696,19 +2772,27 @@ QJsonObject ExtensionShimBackend::invokeManagement(
         if (wanted.isEmpty())
             return errReply(QStringLiteral("invalid-argument"));
         QString path;
-        bool found = wanted == m_extensionId;
-        if (found) {
-            path = m_extensionPath;
-        } else if (ExtensionManager *manager =
-                   ExtensionManager::instance()) {
+        bool found = false;
+        bool sawRecord = false;
+        if (ExtensionManager *manager = ExtensionManager::instance()) {
             for (const ExtensionManager::ExtensionInfo &info
                  : manager->extensions()) {
                 if (info.id != wanted)
                     continue;
+                sawRecord = true;
+                if (managementRecordGone(info))
+                    break;   // tombstone — it was removed
                 path = info.path;
                 found = true;
                 break;
             }
+        }
+        // Same rule get() applies: the self-fallback only stands in
+        // for a never-tracked backend, not a removed one.
+        if (!sawRecord && wanted == m_extensionId
+                && !extensionMarkedRemoved(wanted)) {
+            path = m_extensionPath;
+            found = true;
         }
         if (!found)
             return errReply(QStringLiteral("not-found"));
@@ -2731,7 +2815,108 @@ QJsonObject ExtensionShimBackend::invokeManagement(
             return errReply(QStringLiteral("invalid-argument"));
         return okReply(managementWarnings(manifest));
     }
+
+    // --- mutations (MD17) -------------------------------------------
+    // Each rides ExtensionManager's real engine calls; the engine
+    // applies asynchronously, so the event carries the committed
+    // end-state, not a poll of it.  Chrome's transition events only
+    // describe real changes — a setEnabled that leaves the record
+    // where it was fires nothing.
+    if (method == QLatin1String("setEnabled")) {
+        const QString wanted = args.value(QStringLiteral("id")).toString();
+        if (wanted.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        ExtensionManager *manager = ExtensionManager::instance();
+        const ExtensionManager::ExtensionInfo *record = nullptr;
+        QList<ExtensionManager::ExtensionInfo> records;
+        if (manager)
+            records = manager->extensions();
+        for (const ExtensionManager::ExtensionInfo &info : records) {
+            if (info.id != wanted || managementRecordGone(info))
+                continue;
+            record = &info;
+            break;
+        }
+        if (!record)
+            return errReply(QStringLiteral("not-found"));
+        // Component extensions (the bundled PDF viewer & friends)
+        // are not user-toggleable — Chrome refuses the same way.
+        if (record->builtin)
+            return errReply(QStringLiteral("cannot-modify"));
+        const bool enabled =
+            args.value(QStringLiteral("enabled")).toBool();
+        if (record->enabled != enabled) {
+            QJsonObject info = managementInfoJson(
+                record->id, record->name, record->path,
+                manifestForExtensionPath(record->path), record);
+            info.insert(QStringLiteral("enabled"), enabled);
+            info.insert(QStringLiteral("mayEnable"), !enabled);
+            info.insert(QStringLiteral("mayDisable"), enabled);
+            manager->setExtensionEnabled(wanted, enabled);
+            managementFanOut(
+                enabled ? QStringLiteral("management.onEnabled")
+                        : QStringLiteral("management.onDisabled"),
+                QJsonArray{info});
+        }
+        return okReply();
+    }
+    if (method == QLatin1String("uninstall")) {
+        const QString wanted = args.value(QStringLiteral("id")).toString();
+        if (wanted.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        ExtensionManager *manager = ExtensionManager::instance();
+        bool found = false;
+        bool builtin = false;
+        if (manager) {
+            for (const ExtensionManager::ExtensionInfo &info
+                 : manager->extensions()) {
+                if (info.id != wanted || managementRecordGone(info))
+                    continue;
+                found = true;
+                builtin = info.builtin;
+                break;
+            }
+        }
+        if (!found)
+            return errReply(QStringLiteral("not-found"));
+        if (builtin)
+            return errReply(QStringLiteral("cannot-modify"));
+        removedExtensionIds().insert(wanted);
+        manager->removeExtension(wanted);
+        managementFanOut(QStringLiteral("management.onUninstalled"),
+                         QJsonArray{wanted});
+        return okReply();
+    }
+    if (method == QLatin1String("uninstallSelf")) {
+        // Chrome does not require 'management' for self-removal —
+        // the permission gate above has already run, which is a
+        // deliberate tightening (uninstall is a destructive call;
+        // an extension that never declared the namespace should not
+        // reach it silently).
+        removedExtensionIds().insert(m_extensionId);
+        if (ExtensionManager *manager = ExtensionManager::instance())
+            manager->removeExtension(m_extensionId);
+        managementFanOut(QStringLiteral("management.onUninstalled"),
+                         QJsonArray{m_extensionId});
+        return okReply();
+    }
     return errReply(QStringLiteral("unsupported"));
+}
+
+void ExtensionShimBackend::managementFanOut(
+        const QString &name, const QJsonArray &eventArgs)
+{
+    const QJsonObject payload{
+        {QStringLiteral("__args"), eventArgs}};
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    runtime->broadcastEvent(name, payload);
+    // The broadcast covers every registered context — the caller's
+    // included.  A bare backend (tests, a host mid-respawn) has no
+    // registered context, so pushEvent is its only surface — the
+    // same fallback the notification center applies.
+    if (!runtime->hasRelayContext(m_extensionId))
+        emit pushEvent(name, payload);
 }
 
 // -------------------------------------------------------------------

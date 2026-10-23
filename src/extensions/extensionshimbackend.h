@@ -79,8 +79,12 @@ class QWebEngineProfile;
 //                  the same ExtensionInfo shape, and the
 //                  permissionWarnings pair derive their strings
 //                  from the manifest's grant list (the same wording
-//                  the install review shows).  The rest stays typed
-//                  no-permission/unsupported.
+//                  the install review shows).  MD17 serves the
+//                  mutations: setEnabled/uninstall ride
+//                  ExtensionManager's engine calls and fan
+//                  management.onEnabled/onDisabled/onUninstalled
+//                  out to every 'management'-declaring context.
+//                  The rest stays typed no-permission/unsupported.
 //   extension.*  — reloadView, the one cross-context capability the
 //                  shim's getViews handles carry (ER15); the
 //                  isAllowed*Access pair answer the honest
@@ -265,6 +269,14 @@ private:
     // ExtensionReviewDialog's consent rows show, deduplicated in
     // declaration order.
     static QJsonArray managementWarnings(const QJsonObject &manifest);
+    // MD17: the Chrome-parity event fan-out for the mutations —
+    // broadcastEvent reaches every relay-registered context of a
+    // 'management'-declaring extension (fanOut gates on the
+    // manifest snapshot); a bare backend with no registered context
+    // (tests, mid-respawn) still sees the event on pushEvent — the
+    // same fallback the notification center applies.
+    void managementFanOut(const QString &name,
+                          const QJsonArray &eventArgs);
     QJsonObject invokeExtension(const QString &method,
                                 const QJsonObject &args);
     QJsonObject invokeSidebarAction(const QString &method,

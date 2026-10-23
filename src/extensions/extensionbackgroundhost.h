@@ -417,6 +417,11 @@ public:
                                  const QString &kind,
                                  const QString &url = QString());
     void unregisterRelayContext(ChromeBridge *bridge);
+    // MD17: whether any live shim context of `extensionId` is
+    // registered — the management mutation fan-out uses it to pick
+    // the bare-backend pushEvent fallback without double-delivering
+    // to a context broadcastEvent already reached.
+    bool hasRelayContext(const QString &extensionId) const;
     int relaySend(ChromeBridge *from, const QString &mid,
                   const QJsonObject &envelope);
     bool relayRespond(ChromeBridge *responder, const QString &mid,

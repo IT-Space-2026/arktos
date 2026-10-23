@@ -1857,6 +1857,16 @@ void ExtensionBackgroundRuntime::unregisterRelayContext(
     }
 }
 
+bool ExtensionBackgroundRuntime::hasRelayContext(
+        const QString &extensionId) const
+{
+    for (const RelayContext &ctx : m_relayContexts) {
+        if (ctx.bridge && ctx.extensionId == extensionId)
+            return true;
+    }
+    return false;
+}
+
 // SEC26: relay bookkeeping bounds — the page supplies mids/chans, so
 // the maps cannot grow without limit on a looping sender.  A mid that
 // is still in flight must not be re-sent either: overwriting the
@@ -2127,6 +2137,11 @@ QString eventGate(const QString &name)
     // onStateChanged included.
     if (ns == QLatin1String("idle"))
         return QStringLiteral("idle");
+    // MD17: management's transition events (onEnabled/onDisabled/
+    // onUninstalled) reach only extensions declaring 'management',
+    // same gate the mutations themselves ride.
+    if (ns == QLatin1String("management"))
+        return QStringLiteral("management");
     return QString();
 }
 

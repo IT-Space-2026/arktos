@@ -62,12 +62,15 @@
  *   chrome.contextMenus — create/update/remove* registry host-side;
  *                         onClicked event (rendering is EXT16)
  *   chrome.sidePanel    — options recorded host-side; no panel UI
- *   chrome.management   — ER15+MD16: getSelf answers the real
+ *   chrome.management   — ER15+MD16/17: getSelf answers the real
  *                         ExtensionInfo shape (id/name/version/enabled/
  *                         installType) host-side; the 'management'
  *                         grant unlocks getAll/get over the manager's
- *                         records + the permissionWarnings pair; the
- *                         rest typed no-permission/unsupported
+ *                         records + the permissionWarnings pair +
+ *                         setEnabled/uninstall/uninstallSelf riding
+ *                         the manager's engine calls (onEnabled/
+ *                         onDisabled/onUninstalled fan out host-side);
+ *                         the rest typed no-permission/unsupported
  *   chrome.sidebarAction— ER15: Firefox-shape sugar when the manifest
  *                         declares sidebar_action — panel/title/icon
  *                         bookkeeping; open/close typed unsupported
@@ -3843,10 +3846,12 @@
             }
         };
         // MD16: getAll/get + the permissionWarnings pair are served
-        // over the manager's records; the mutation/launch members
-        // still answer the backend's typed errors.  Every member
-        // ships its real arguments so the served calls reach real
-        // data and the typed ones stay honest.
+        // over the manager's records; MD17 serves the mutations
+        // (setEnabled/uninstall/uninstallSelf) over the manager's
+        // engine calls — only the launch members still answer the
+        // backend's typed errors.  Every member ships its real
+        // arguments so the served calls reach real data and the
+        // typed ones stay honest.
         var mgmtArgs = {
             get: function (a) { return { id: a[0] }; },
             getAll: function () { return {}; },
@@ -3862,6 +3867,8 @@
                 },
             uninstallSelf:
                 function (a) { return { options: a[0] || {} }; },
+            setLaunchType:
+                function (a) { return { id: a[0], launchType: a[1] }; },
             launchApp: function (a) { return { id: a[0] }; },
             generateAppForLink:
                 function (a) { return { url: a[0], title: a[1] }; }
@@ -4181,7 +4188,7 @@
                ['getAll', 'get', 'getSelf', 'getPermissionWarningsById',
                 'getPermissionWarningsByManifest',
                 'setEnabled', 'uninstall', 'uninstallSelf',
-                'launchApp', 'generateAppForLink']);
+                'setLaunchType', 'launchApp', 'generateAppForLink']);
         fillNs('browsingData', [],
                ['settings', 'remove', 'removeAppcache', 'removeCache',
                 'removeCacheStorage', 'removeCookies',

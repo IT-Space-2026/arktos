@@ -106,6 +106,7 @@ private slots:
     void extensionActionIcon();
     void extensionAllowedAccess();
     void extensionManagementRead();
+    void extensionManagementMutations();
     void extensionScripting();
     void extensionScriptCss();
     void extensionContentScriptRegistration();
@@ -7530,10 +7531,11 @@ void tst_ExtensionManager::extensionManagementRead()
                 QStringLiteral("management"),
                 QStringLiteral("getSelf"), QJsonObject())
                 .value(QLatin1String("ok")).toBool());
-    // Declared-but-unserved members keep the typed answer.
+    // Declared-but-unserved members keep the typed answer — MD17
+    // took the mutations, so the launch ops carry it now.
     QCOMPARE(backend.invoke(
                  QStringLiteral("management"),
-                 QStringLiteral("uninstall"),
+                 QStringLiteral("launchApp"),
                  QJsonObject{{QStringLiteral("id"), id}})
                  .value(QLatin1String("error")).toString(),
              QStringLiteral("unsupported"));
@@ -7541,6 +7543,223 @@ void tst_ExtensionManager::extensionManagementRead()
     manager->removeExtension(id);
     QDir(dir).removeRecursively();
     QDir(dirB).removeRecursively();
+}
+
+// MD17 — chrome.management mutations.  setEnabled/uninstall ride
+// ExtensionManager's engine calls behind the 'management' grant;
+// each committed transition fans its Chrome event (onEnabled/
+// onDisabled carrying the post-change ExtensionInfo, onUninstalled
+// carrying the bare id) out through the runtime broadcast — a bare
+// backend hears it on its own pushEvent sink.
+void tst_ExtensionManager::extensionManagementMutations()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extmgmtmut-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-mgmtmut\","
+                "\"version\":\"1.0\",\"permissions\":[\"management\"]}");
+        f.close();
+    }
+    ExtensionManager *manager = ExtensionManager::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-mgmtmut")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+
+    ExtensionShimBackend backend(id, QStringLiteral("tst-mgmtmut"), dir);
+    QSignalSpy pushSpy(&backend, &ExtensionShimBackend::pushEvent);
+
+    // Freshly dev-loaded records enumerate disabled — the first
+    // toggle on is a real transition: management.onEnabled carries
+    // the post-change ExtensionInfo shape get() answers.
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("setEnabled"),
+        QJsonObject{{QStringLiteral("id"), id},
+                    {QStringLiteral("enabled"), true}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(pushSpy, QStringLiteral("management.onEnabled")),
+             1);
+    for (const QList<QVariant> &args : pushSpy) {
+        if (args.at(0).toString()
+                != QLatin1String("management.onEnabled"))
+            continue;
+        const QJsonObject info = args.at(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray()
+            .at(0).toObject();
+        QCOMPARE(info.value(QLatin1String("id")).toString(), id);
+        QVERIFY(info.value(QLatin1String("enabled")).toBool());
+        QVERIFY(!info.value(QLatin1String("mayEnable")).toBool());
+        QVERIFY(info.value(QLatin1String("mayDisable")).toBool());
+    }
+    // The engine applies asynchronously — poll the live record.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        backend.invoke(QStringLiteral("management"),
+                       QStringLiteral("get"),
+                       QJsonObject{{QStringLiteral("id"), id}})
+            .value(QLatin1String("result")).toObject()
+            .value(QLatin1String("enabled")).toBool(), 10000);
+
+    // Off again — management.onDisabled carries enabled:false.
+    reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("setEnabled"),
+        QJsonObject{{QStringLiteral("id"), id},
+                    {QStringLiteral("enabled"), false}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(pushSpy, QStringLiteral("management.onDisabled")),
+             1);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !backend.invoke(QStringLiteral("management"),
+                        QStringLiteral("get"),
+                        QJsonObject{{QStringLiteral("id"), id}})
+             .value(QLatin1String("result")).toObject()
+             .value(QLatin1String("enabled")).toBool(), 10000);
+
+    // A same-state setEnabled is Chrome's no-op success — the
+    // transition events describe real changes only.
+    reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("setEnabled"),
+        QJsonObject{{QStringLiteral("id"), id},
+                    {QStringLiteral("enabled"), false}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(pushSpy, QStringLiteral("management.onDisabled")),
+             1);
+
+    // Typed refusals: missing id, unknown id.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("setEnabled"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("setEnabled"),
+                 QJsonObject{{QStringLiteral("id"),
+                              QStringLiteral("nonexistentid000000000"
+                                             "00000000000")},
+                             {QStringLiteral("enabled"), true}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("uninstall"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("uninstall"),
+                 QJsonObject{{QStringLiteral("id"),
+                              QStringLiteral("nonexistentid000000000"
+                                             "00000000000")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // The 'management' grant gates all three mutations — an
+    // extension that never declared it keeps no-permission.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extmgmtmut-b-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-mgmtmut-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0010"),
+        QStringLiteral("tst-mgmtmut-b"), dirB);
+    for (const char *m : {"setEnabled", "uninstall", "uninstallSelf"}) {
+        QCOMPARE(backendB.invoke(
+                     QStringLiteral("management"), QLatin1String(m),
+                     QJsonObject{{QStringLiteral("id"), id},
+                                 {QStringLiteral("enabled"), true}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+    }
+
+    // uninstall removes the fixture for real — onUninstalled fires
+    // with the bare id like Chrome, and get stops finding it.
+    reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("uninstall"),
+        QJsonObject{{QStringLiteral("id"), id}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(pushSpy,
+                       QStringLiteral("management.onUninstalled")), 1);
+    for (const QList<QVariant> &args : pushSpy) {
+        if (args.at(0).toString()
+                != QLatin1String("management.onUninstalled"))
+            continue;
+        QCOMPARE(args.at(1).toJsonObject()
+                     .value(QLatin1String("__args")).toArray()
+                     .at(0).toString(), id);
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(
+        backend.invoke(QStringLiteral("management"),
+                       QStringLiteral("get"),
+                       QJsonObject{{QStringLiteral("id"), id}})
+            .value(QLatin1String("error")).toString(),
+        QStringLiteral("not-found"), 10000);
+
+    // uninstallSelf drops the calling extension itself — same
+    // 'management' gate, same onUninstalled id payload.
+    const QString dirC = QDir::temp().filePath(
+        QStringLiteral("tst-extmgmtmut-c-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirC));
+    {
+        QFile f(dirC + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-mgmtmut-c\","
+                "\"version\":\"1.0\",\"permissions\":[\"management\"]}");
+        f.close();
+    }
+    auto loadedC = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loadedC](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-mgmtmut-c")
+                && info.error.isEmpty())
+            *loadedC = info.id;
+    });
+    manager->grantConsent(dirC);
+    manager->loadExtension(dirC);
+    QTRY_VERIFY_WITH_TIMEOUT(!loadedC->isEmpty(), 30000);
+    const QString idC = *loadedC;
+    ExtensionShimBackend backendC(idC, QStringLiteral("tst-mgmtmut-c"),
+                                  dirC);
+    QSignalSpy pushSpyC(&backendC, &ExtensionShimBackend::pushEvent);
+    reply = backendC.invoke(
+        QStringLiteral("management"), QStringLiteral("uninstallSelf"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(pushSpyC,
+                       QStringLiteral("management.onUninstalled")), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        backendC.invoke(QStringLiteral("management"),
+                        QStringLiteral("get"),
+                        QJsonObject{{QStringLiteral("id"), idC}})
+            .value(QLatin1String("error")).toString(),
+        QStringLiteral("not-found"), 10000);
+
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
+    QDir(dirC).removeRecursively();
 }
 
 // ER07 — chrome.scripting.executeScript.  A fixture extension
@@ -12319,8 +12538,9 @@ void tst_ExtensionManager::extensionIntrospection()
     // --- management failure vocabulary ----------------------------
     // A never declared 'management' -> no-permission.  B declared it
     // and MD16 serves the read ops — getAll resolves with the real
-    // enumeration (B's own row included), while the still-unserved
-    // mutations keep the unsupported answer.  Both ledger.
+    // enumeration (B's own row included), while MD17's served
+    // mutations answer their typed refusals (an unknown id is
+    // not-found, never a stub).  Both ledger.
     hostA->page()->runJavaScript(QStringLiteral(
         "self.__mErr=undefined;chrome.management.getAll()"
         ".then(function(){self.__mErr='resolved';},function(e){"
@@ -12369,7 +12589,7 @@ void tst_ExtensionManager::extensionIntrospection()
             "self.__mErr!==undefined")).toBool(), 20000);
     QCOMPARE(eval(hostB->page(), QStringLiteral("self.__mErr"))
                  .toString(),
-             QStringLiteral("unsupported"));
+             QStringLiteral("not-found"));
 
     // --- extension.getBackgroundPage / getViews -------------------
     QCOMPARE(eval(hostA->page(), QStringLiteral(
@@ -12590,7 +12810,7 @@ void tst_ExtensionManager::extensionIntrospection()
                                "unsupported")),
         20000);
     QVERIFY(hostB->bridge()->backend()->gaps().contains(
-        QStringLiteral("chrome.management.uninstall: unsupported")));
+        QStringLiteral("chrome.management.uninstall: not-found")));
 
     // --- teardown ----------------------------------------------------
     optView->deleteLater();

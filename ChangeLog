@@ -817,8 +817,18 @@ UI:
   getPermissionWarningsById/getPermissionWarningsByManifest derive
   their warning strings from the manifest's grant list — the same
   wording the install consent review shows. An undeclaring caller
-  still gets Chrome's no-permission answer, and the mutation members
-  stay honestly unsupported for now (MD16).
+  still gets Chrome's no-permission answer (MD16).
+- chrome.management's mutation side is live for extensions that
+  declare the grant: setEnabled toggles an installed extension,
+  uninstall removes it, and uninstallSelf removes the caller itself —
+  each through the same engine paths the Settings > Extensions
+  surface drives, with Chrome's typed answers for invalid ids,
+  unknown extensions and built-in (non-modifiable) components.
+  management.onEnabled/onDisabled/onUninstalled fan out to every
+  hosted extension context that declared "management" (and to the
+  mutator's own event surface), so extensions observing lifecycle
+  changes see them live; removed extensions stop answering the read
+  members instead of lingering as ghosts (MD17).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

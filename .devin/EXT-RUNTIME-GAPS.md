@@ -124,7 +124,9 @@ chrome.sidebarAction.toggle: unsupported
 # 'management' permission — no-permission undeclared (Bitwarden does
 # not declare it), unsupported when declared and still unserved.
 # MD16 serves getAll/get + the permissionWarnings pair when declared;
-# the mutation/launch members stay typed (MD17 queue).
+# MD17 serves setEnabled/uninstall/uninstallSelf over the manager's
+# engine calls — only the launch members (launchApp/
+# generateAppForLink/setLaunchType) stay typed.
 chrome.management.*: no-permission
 chrome.management.*: unsupported
 # webRequest is observe-only: blocking/requestBody extraInfoSpec and
@@ -149,6 +151,12 @@ chrome.management.get: not-found
 chrome.management.getPermissionWarningsById: invalid-argument
 chrome.management.getPermissionWarningsById: not-found
 chrome.management.getPermissionWarningsByManifest: invalid-argument
+chrome.management.setEnabled: cannot-modify
+chrome.management.setEnabled: invalid-argument
+chrome.management.setEnabled: not-found
+chrome.management.uninstall: cannot-modify
+chrome.management.uninstall: invalid-argument
+chrome.management.uninstall: not-found
 chrome.notifications.clear: not-found
 chrome.notifications.update: not-found
 chrome.offscreen.closeDocument: not-hosted
