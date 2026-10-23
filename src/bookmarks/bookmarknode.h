@@ -100,6 +100,12 @@ public:
     QString title;
     QString desc;
     bool expanded;
+    // The undo command that last detached this node owns it while it
+    // stays detached — remove() clears the claim so only the newest
+    // detaching command's destructor may delete the node (a move's
+    // remove+insert pair re-attaches, and a later remove must not
+    // leave the earlier command thinking it still owns the node).
+    void *removeOwner = nullptr;
 
 #ifdef ARKTOS_RUSTCORE
     // rustcore store handle (RCORE02); 0 means "not backed by the

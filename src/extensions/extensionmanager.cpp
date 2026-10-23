@@ -1303,6 +1303,9 @@ QStringList ExtensionManager::runtimeServes()
     // webRequest, cookies, nativeMessaging, privacy, downloads, ...)
     // stay absent on purpose — they keep the raw engine verdict.
     static const QStringList served = {
+        // MD21: chrome.bookmarks rides the RC05 store through
+        // BookmarksManager — the namespace is fully served.
+        QStringLiteral("bookmarks"),
         QStringLiteral("contextMenus"),
         QStringLiteral("idle"),
         QStringLiteral("menus"),

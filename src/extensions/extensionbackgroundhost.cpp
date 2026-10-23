@@ -2142,6 +2142,10 @@ QString eventGate(const QString &name)
     // same gate the mutations themselves ride.
     if (ns == QLatin1String("management"))
         return QStringLiteral("management");
+    // MD21: bookmarks.on* fans out only to 'bookmarks'-declaring
+    // contexts — the same grant invokeBookmarks applies per call.
+    if (ns == QLatin1String("bookmarks"))
+        return QStringLiteral("bookmarks");
     return QString();
 }
 

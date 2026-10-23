@@ -854,6 +854,17 @@ UI:
   thirty-second floor clamps to half a minute with a recorded health
   note instead of silently spinning, and getAll answers in creation
   order (MD20).
+- chrome.bookmarks is live for extensions that declare the grant:
+  get/getChildren/getRecent/getTree/getSubTree/search read the real
+  bookmark tree, and create/move/update/remove/removeTree drive the
+  same undoable manager ops the bookmark dialogs use — so the model,
+  toolbar and autosave stay consistent — with Chrome's typed answers
+  for unknown ids, fixed-root edits, leaf parents, refused URL
+  schemes and non-empty-folder removes. ids "0"/"1"/"2" name the
+  root, bookmarks bar and Other folders like Chrome, and
+  bookmarks.onCreated/onRemoved/onChanged/onMoved fan out to every
+  hosted context that declared "bookmarks" — including changes made
+  through the browser's own UI (MD21).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

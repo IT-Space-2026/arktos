@@ -103,6 +103,15 @@ class QWebEngineProfile;
 //                  recorded-options model sidePanel uses (ER15);
 //                  open/close/toggle answer typed unsupported;
 //                  the manifest's sidebar_action key gates it (ER16)
+//   bookmarks.*  — MD21: the real bookmark tree over the RC05
+//                  store through BookmarksManager/BookmarkNode (the
+//                  facade/FFI lane the C++ wrappers already ride —
+//                  mutations flow through the undoable manager ops so
+//                  the model, toolbar and autosave stay consistent);
+//                  ids "0"/"1"/"2" name root/bar/menu like Chrome,
+//                  other nodes serialize their store handle; the
+//                  'bookmarks' manifest permission gates the
+//                  namespace and its on* event fan-out
 //   runtime.*    — context bookkeeping (getViews counts); MD18
 //                  lifecycle ops: reload rides ExtensionManager's
 //                  unload+load, requestUpdateCheck rides
@@ -293,6 +302,14 @@ private:
     // same fallback the notification center applies.
     void managementFanOut(const QString &name,
                           const QJsonArray &eventArgs);
+    // MD21: chrome.bookmarks over the RC05 store — same fan-out
+    // discipline the management mutations use (broadcast to
+    // 'bookmarks'-declaring contexts, pushEvent fallback for a bare
+    // backend).
+    QJsonObject invokeBookmarks(const QString &method,
+                                const QJsonObject &args);
+    void bookmarksFanOut(const QString &name,
+                         const QJsonArray &eventArgs);
     QJsonObject invokeExtension(const QString &method,
                                 const QJsonObject &args);
     QJsonObject invokeSidebarAction(const QString &method,
@@ -370,6 +387,10 @@ private:
     // MD18: a requestUpdateCheck whose verdict is still in flight —
     // a second call answers 'throttled' like Chrome.
     bool m_updateCheckPending = false;
+
+    // MD21: the getRecent serial-ordering approximation is recorded
+    // once per context, not on every call.
+    bool m_bmRecentNoted = false;
 };
 
 #endif // EXTENSIONSHIMBACKEND_H

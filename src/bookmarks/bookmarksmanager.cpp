@@ -874,7 +874,11 @@ RemoveBookmarksCommand::RemoveBookmarksCommand(BookmarksManager *m_bookmarkManag
 
 RemoveBookmarksCommand::~RemoveBookmarksCommand()
 {
-    if (m_done && !m_node->parent()) {
+    // removeOwner is claimed in redo() after the emit and cleared by
+    // every detach — a node another command (or a paired insert)
+    // re-detached is not ours to delete.
+    if (m_done && !m_node->parent()
+            && m_node->removeOwner == this) {
         delete m_node;
     }
 }
@@ -890,6 +894,7 @@ void RemoveBookmarksCommand::redo()
 {
     m_parent->remove(m_node);
     emit m_bookmarkManagaer->entryRemoved(m_parent, m_row, m_node);
+    m_node->removeOwner = this;
     m_done = true;
 }
 

@@ -233,6 +233,7 @@ void BookmarkNode::remove(BookmarkNode *child)
     if (!child)
         return;
     child->m_parent = nullptr;
+    child->removeOwner = nullptr;
     m_children.removeAll(child);
 #ifdef ARKTOS_RUSTCORE
     // detach() keeps the subtree addressable — the undo stack

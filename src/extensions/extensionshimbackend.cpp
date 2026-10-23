@@ -19,6 +19,8 @@
 
 #include "extensionshimbackend.h"
 
+#include "bookmarksmanager.h"
+#include "bookmarknode.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserpaths.h"
@@ -225,6 +227,252 @@ QJsonObject zoomSettingsFor(const WebView *view)
     return out;
 }
 
+// -------------------------------------------------------------------
+// MD21: chrome.bookmarks over the RC05 store.  The C++ BookmarkNode
+// wrappers are already the facade/FFI lane (children materialize one
+// rc_bm_child_at handle at a time; mutations ride the undoable
+// manager ops so entryAdded/entryRemoved/entryChanged keep the
+// model, toolbar and autosave consistent).
+//
+// Chrome ids: "0" names the root, "1" the bookmarks bar (our
+// toolbar), "2" Other bookmarks (our menu) — the fixed ids real
+// extensions reach for.  Every other node serializes its store
+// handle (rust builds) or object identity (no-rust) offset by a
+// base, so produced ids can never collide with the fixed ids.
+// Resolution walks the live tree comparing serials — a dead handle
+// (removed node, rebound profile tree) simply never matches, so no
+// stale pointer is ever dereferenced.
+constexpr quint64 kBmIdBase = 1024;
+
+quint64 bmSerial(const BookmarkNode *node)
+{
+#ifdef ARKTOS_RUSTCORE
+    if (node->handle())
+        return node->handle();
+#endif
+    return quintptr(node);
+}
+
+bool bmIsSpecial(BookmarksManager *manager, const BookmarkNode *node)
+{
+    return node == manager->bookmarks() || node == manager->toolbar()
+        || node == manager->menu();
+}
+
+QString bmId(BookmarksManager *manager, const BookmarkNode *node)
+{
+    if (node == manager->bookmarks())
+        return QStringLiteral("0");
+    if (node == manager->toolbar())
+        return QStringLiteral("1");
+    if (node == manager->menu())
+        return QStringLiteral("2");
+    return QString::number(bmSerial(node) + kBmIdBase);
+}
+
+BookmarkNode *bmWalk(BookmarksManager *manager, BookmarkNode *node,
+                     quint64 serial)
+{
+    if (!bmIsSpecial(manager, node) && bmSerial(node) == serial)
+        return node;
+    const QList<BookmarkNode *> children = node->children();
+    for (BookmarkNode *child : children) {
+        if (BookmarkNode *hit = bmWalk(manager, child, serial))
+            return hit;
+    }
+    return nullptr;
+}
+
+// id -> live node; nullptr covers both malformed ids and removed
+// nodes (a detached node is unreachable — Chrome's not-found).
+BookmarkNode *bmResolve(BookmarksManager *manager, const QString &id)
+{
+    if (id == QLatin1String("0"))
+        return manager->bookmarks();
+    if (id == QLatin1String("1"))
+        return manager->toolbar();
+    if (id == QLatin1String("2"))
+        return manager->menu();
+    bool ok = false;
+    const quint64 n = id.toULongLong(&ok);
+    if (!ok || n <= kBmIdBase)
+        return nullptr;
+    return bmWalk(manager, manager->bookmarks(), n - kBmIdBase);
+}
+
+// The Chrome BookmarkTreeNode shape, plus Firefox's WebExtension
+// 'type' member so a separator serializes honestly (Chrome has no
+// separator node).  The store carries no timestamps, so
+// dateAdded/dateGroupModified are honestly omitted rather than
+// fabricated.
+QJsonObject bmNodeJson(BookmarksManager *manager, BookmarkNode *node,
+                     bool deep)
+{
+    QJsonObject o;
+    o.insert(QStringLiteral("id"), bmId(manager, node));
+    if (BookmarkNode *p = node->parent()) {
+        o.insert(QStringLiteral("parentId"), bmId(manager, p));
+        o.insert(QStringLiteral("index"),
+                 p->children().indexOf(node));
+    }
+    o.insert(QStringLiteral("title"), node->title);
+    switch (node->type()) {
+    case BookmarkNode::Bookmark:
+        o.insert(QStringLiteral("type"), QStringLiteral("bookmark"));
+        o.insert(QStringLiteral("url"), node->url);
+        break;
+    case BookmarkNode::Separator:
+        o.insert(QStringLiteral("type"), QStringLiteral("separator"));
+        break;
+    default:
+        o.insert(QStringLiteral("type"), QStringLiteral("folder"));
+        if (deep) {
+            QJsonArray children;
+            const QList<BookmarkNode *> kids = node->children();
+            for (BookmarkNode *child : kids)
+                children.append(bmNodeJson(manager, child, true));
+            o.insert(QStringLiteral("children"), children);
+        }
+        break;
+    }
+    return o;
+}
+
+// Depth-first collection of every attached node under root.
+void bmCollect(BookmarkNode *node, QList<BookmarkNode *> *out)
+{
+    out->append(node);
+    const QList<BookmarkNode *> children = node->children();
+    for (BookmarkNode *child : children)
+        bmCollect(child, out);
+}
+
+// The store's insert-time url policy (rc_bm_create applies
+// check_bookmark_url with allow_javascript=false) mirrored so a
+// refused scheme answers typed BEFORE the node reaches the C++
+// tree: http/https/ftp/mailto and schemeless urls pass, everything
+// else (javascript:, data:, file:, arktos-*) refuses — an extension
+// is code, not a human's deliberate edit.
+bool bmUrlAllowed(const QString &url)
+{
+    QString probe = url;
+    probe.remove(
+        QRegularExpression(QStringLiteral("[\\x00-\\x20\\x7f]+")));
+    const int colon = probe.indexOf(QLatin1Char(':'));
+    if (colon < 0)
+        return true;    // schemeless — the store calls it harmless
+    const QString scheme = probe.left(colon).toLower();
+    if (scheme.isEmpty() || !scheme.at(0).isLetter())
+        return true;
+    for (const QChar c : scheme) {
+        if (!c.isLetterOrNumber() && c != QLatin1Char('+')
+                && c != QLatin1Char('-') && c != QLatin1Char('.'))
+            return true;    // not a scheme token — treated relative
+    }
+    return scheme == QLatin1String("http")
+        || scheme == QLatin1String("https")
+        || scheme == QLatin1String("ftp")
+        || scheme == QLatin1String("mailto");
+}
+
+// bookmarks.search query tokenizing — space-delimited terms with
+// double-quoted phrase grouping, the string form Chrome documents.
+QStringList bmQueryTerms(const QString &query)
+{
+    QStringList terms;
+    QString current;
+    bool inQuote = false;
+    for (const QChar c : query) {
+        if (c == QLatin1Char('"')) {
+            inQuote = !inQuote;
+        } else if (c.isSpace() && !inQuote) {
+            if (!current.isEmpty()) {
+                terms.append(current);
+                current.clear();
+            }
+        } else {
+            current.append(c);
+        }
+    }
+    if (!current.isEmpty())
+        terms.append(current);
+    return terms;
+}
+
+// Bookmark-manager signal -> chrome.bookmarks.on* broadcast, for
+// changes that arrive through the UI (drag, dialog, undo).  The API
+// ops suppress this tap while they run and emit their own
+// Chrome-accurate events (a move must report onMoved, not the
+// onRemoved+onCreated pair its remove+insert decomposition fires).
+int s_bmApiDepth = 0;
+
+struct BmApiSuppress {
+    BmApiSuppress() { ++s_bmApiDepth; }
+    ~BmApiSuppress() { --s_bmApiDepth; }
+};
+
+void bmBroadcast(const QString &name, const QJsonArray &eventArgs)
+{
+    ExtensionBackgroundRuntime::instance()->broadcastEvent(
+        name, QJsonObject{{QStringLiteral("__args"), eventArgs}});
+}
+
+QPointer<BookmarksManager> s_bmTapTarget;
+QList<QMetaObject::Connection> s_bmTapConns;
+
+// Lazily binds the ambient profile's manager signals to the event
+// fan-out; re-points when the ambient persona (and therefore the
+// manager) changes — bookmark events must describe the profile the
+// extension actually reads through this namespace.
+void tapBmEvents(BookmarksManager *manager)
+{
+    if (s_bmTapTarget == manager)
+        return;
+    for (const QMetaObject::Connection &conn : s_bmTapConns)
+        QObject::disconnect(conn);
+    s_bmTapConns.clear();
+    s_bmTapTarget = manager;
+    if (!manager)
+        return;
+    const QPointer<BookmarksManager> weak = manager;
+    s_bmTapConns << QObject::connect(
+        manager, &BookmarksManager::entryAdded, manager,
+        [weak](BookmarkNode *node) {
+            if (s_bmApiDepth || !weak || !node)
+                return;
+            bmBroadcast(QStringLiteral("bookmarks.onCreated"),
+                        {bmId(weak.data(), node),
+                         bmNodeJson(weak.data(), node, false)});
+        });
+    s_bmTapConns << QObject::connect(
+        manager, &BookmarksManager::entryRemoved, manager,
+        [weak](BookmarkNode *parent, int row, BookmarkNode *item) {
+            if (s_bmApiDepth || !weak || !parent || !item)
+                return;
+            bmBroadcast(
+                QStringLiteral("bookmarks.onRemoved"),
+                {bmId(weak.data(), item),
+                 QJsonObject{
+                     {QStringLiteral("parentId"),
+                      bmId(weak.data(), parent)},
+                     {QStringLiteral("index"), row},
+                     {QStringLiteral("node"),
+                      bmNodeJson(weak.data(), item, true)}}});
+        });
+    s_bmTapConns << QObject::connect(
+        manager, &BookmarksManager::entryChanged, manager,
+        [weak](BookmarkNode *node) {
+            if (s_bmApiDepth || !weak || !node)
+                return;
+            QJsonObject changeInfo{
+                {QStringLiteral("title"), node->title}};
+            if (node->type() == BookmarkNode::Bookmark)
+                changeInfo.insert(QStringLiteral("url"), node->url);
+            bmBroadcast(QStringLiteral("bookmarks.onChanged"),
+                        {bmId(weak.data(), node), changeInfo});
+        });
+}
+
 // MD13: chrome.windows create/update share this prop application —
 // bounds land first (frame-inclusive move, matching Chrome's
 // outer-bounds vocabulary), then window state so a maximized or
@@ -414,6 +662,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeIdle(method, args);
     if (ns == QLatin1String("management"))
         return invokeManagement(method, args);
+    if (ns == QLatin1String("bookmarks"))
+        return invokeBookmarks(method, args);
     if (ns == QLatin1String("extension"))
         return invokeExtension(method, args);
     if (ns == QLatin1String("sidebarAction"))
@@ -3107,6 +3357,427 @@ void ExtensionShimBackend::managementFanOut(
     // same fallback the notification center applies.
     if (!runtime->hasRelayContext(m_extensionId))
         emit pushEvent(name, payload);
+}
+
+// -------------------------------------------------------------------
+// chrome.bookmarks — MD21.  The real bookmark tree served over the
+// RC05 store through the C++ wrappers (BookmarkNode/BookmarksManager
+// are already the facade/FFI lane); mutations ride the manager's
+// undoable ops so entryAdded/entryRemoved/entryChanged keep the
+// model, toolbar and autosave in lockstep with the page's view.
+// The 'bookmarks' manifest permission gates the whole namespace —
+// undeclared keeps Chrome's no-permission answer — and the same
+// grant scopes the on* event fan-out (eventGate).  Api-driven
+// mutations suppress the signal tap while they emit their own
+// Chrome-accurate events; UI-driven changes (drag, dialog, undo)
+// still reach 'bookmarks'-declaring contexts through it.
+// -------------------------------------------------------------------
+
+void ExtensionShimBackend::bookmarksFanOut(
+        const QString &name, const QJsonArray &eventArgs)
+{
+    const QJsonObject payload{
+        {QStringLiteral("__args"), eventArgs}};
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    runtime->broadcastEvent(name, payload);
+    // Same bare-backend fallback managementFanOut applies — tests
+    // and mid-respawn hosts have no registered context.
+    if (!runtime->hasRelayContext(m_extensionId))
+        emit pushEvent(name, payload);
+}
+
+QJsonObject ExtensionShimBackend::invokeBookmarks(
+        const QString &method, const QJsonObject &args)
+{
+    // ER16 shape: Chrome exposes the namespace only under the
+    // declared 'bookmarks' grant — the bridge object answers a
+    // direct call from any code in the context, so the gate runs
+    // here too.
+    if (!manifestPermissions().contains(QLatin1String("bookmarks")))
+        return errReply(QStringLiteral("no-permission"));
+
+    BookmarksManager *manager = BookmarksManager::instance();
+    if (!manager)
+        return errReply(QStringLiteral("no-store"));
+    tapBmEvents(manager);
+
+    if (method == QLatin1String("get")) {
+        QStringList ids;
+        const QJsonValue idArg = args.value(QLatin1String("id"));
+        if (idArg.isString())
+            ids.append(idArg.toString());
+        const QJsonArray idList =
+            args.value(QLatin1String("ids")).toArray();
+        for (const QJsonValue &v : idList)
+            ids.append(v.toString());
+        if (ids.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        QJsonArray out;
+        for (const QString &id : ids) {
+            BookmarkNode *node = bmResolve(manager, id);
+            if (!node)
+                return errReply(QStringLiteral("not-found"));
+            out.append(bmNodeJson(manager, node, false));
+        }
+        return okReply(out);
+    }
+
+    if (method == QLatin1String("getChildren")) {
+        const QString id = args.value(QLatin1String("id")).toString();
+        if (id.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        BookmarkNode *node = bmResolve(manager, id);
+        if (!node)
+            return errReply(QStringLiteral("not-found"));
+        QJsonArray out;
+        const QList<BookmarkNode *> children = node->children();
+        for (BookmarkNode *child : children)
+            out.append(bmNodeJson(manager, child, false));
+        return okReply(out);
+    }
+
+    if (method == QLatin1String("getRecent")) {
+        int count = args.value(QLatin1String("count")).toInt(-1);
+        if (count < 0)
+            count = 1;                      // Chrome's default
+        QList<BookmarkNode *> all;
+        bmCollect(manager->bookmarks(), &all);
+        QList<BookmarkNode *> leaves;
+        for (BookmarkNode *node : all) {
+            if (node->type() == BookmarkNode::Bookmark)
+                leaves.append(node);
+        }
+        // The store keeps no timestamps; handle serials mint in
+        // creation order, so serial-desc is the honest "recent" it
+        // can answer — file-loaded nodes keep document order and
+        // anything the API created this session outranks them.
+        std::sort(leaves.begin(), leaves.end(),
+                  [](BookmarkNode *a, BookmarkNode *b) {
+                      return bmSerial(a) > bmSerial(b);
+                  });
+        if (!m_bmRecentNoted) {
+            m_bmRecentNoted = true;
+            recordNote(QStringLiteral(
+                "bookmarks.getRecent: the store carries no creation "
+                "timestamps — ordering is node-serial desc (insert "
+                "order), not Chrome's dateAdded sort"));
+        }
+        QJsonArray out;
+        for (int i = 0; i < leaves.count() && i < count; ++i)
+            out.append(bmNodeJson(manager, leaves.at(i), false));
+        return okReply(out);
+    }
+
+    if (method == QLatin1String("getTree"))
+        return okReply(QJsonArray{
+            bmNodeJson(manager, manager->bookmarks(), true)});
+
+    if (method == QLatin1String("getSubTree")) {
+        const QString id = args.value(QLatin1String("id")).toString();
+        if (id.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        BookmarkNode *node = bmResolve(manager, id);
+        if (!node)
+            return errReply(QStringLiteral("not-found"));
+        return okReply(QJsonArray{bmNodeJson(manager, node, true)});
+    }
+
+    if (method == QLatin1String("search")) {
+        // Chrome/MDN shape: a string is space-delimited terms (double
+        // quotes group phrases) each matched as a case-insensitive
+        // substring of title OR url; an object ANDs `query` (same
+        // term form) with `title` (verbatim, case-sensitive), `url`
+        // (verbatim, case-insensitive, trailing slashes ignored) and
+        // `folder` (the containing folder's title, verbatim).
+        const QJsonValue q = args.value(QLatin1String("query"));
+        QStringList terms;
+        bool hasTitle = false, hasUrl = false, hasFolder = false;
+        QString exactTitle, exactUrl, exactFolder;
+        if (q.isString()) {
+            terms = bmQueryTerms(q.toString());
+        } else if (q.isObject()) {
+            const QJsonObject o = q.toObject();
+            terms = bmQueryTerms(
+                o.value(QLatin1String("query")).toString());
+            hasTitle = o.contains(QLatin1String("title"));
+            hasUrl = o.contains(QLatin1String("url"));
+            hasFolder = o.contains(QLatin1String("folder"));
+            exactTitle = o.value(QLatin1String("title")).toString();
+            exactUrl = o.value(QLatin1String("url")).toString();
+            exactFolder = o.value(QLatin1String("folder")).toString();
+        } else {
+            return errReply(QStringLiteral("invalid-argument"));
+        }
+        QList<BookmarkNode *> all;
+        bmCollect(manager->bookmarks(), &all);
+        QJsonArray out;
+        for (BookmarkNode *node : all) {
+            // Bookmarks and folders match (MDN: folders are in the
+            // result set); separators have no text to match.
+            if (node->type() != BookmarkNode::Bookmark
+                    && node->type() != BookmarkNode::Folder)
+                continue;
+            bool match = true;
+            for (const QString &term : terms) {
+                if (!node->title.contains(term, Qt::CaseInsensitive)
+                        && !node->url.contains(
+                            term, Qt::CaseInsensitive)) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match && hasTitle && node->title != exactTitle)
+                match = false;
+            if (match && hasUrl) {
+                QString a = node->url;
+                QString b = exactUrl;
+                while (a.endsWith(QLatin1Char('/')))
+                    a.chop(1);
+                while (b.endsWith(QLatin1Char('/')))
+                    b.chop(1);
+                if (a.compare(b, Qt::CaseInsensitive) != 0)
+                    match = false;
+            }
+            if (match && hasFolder) {
+                BookmarkNode *p = node->parent();
+                if (!p || p->title != exactFolder)
+                    match = false;
+            }
+            if (match)
+                out.append(bmNodeJson(manager, node, false));
+        }
+        return okReply(out);
+    }
+
+    if (method == QLatin1String("create")) {
+        if (!args.contains(QLatin1String("props")))
+            return errReply(QStringLiteral("invalid-argument"));
+        const QJsonObject props =
+            args.value(QLatin1String("props")).toObject();
+        BookmarkNode *parent = manager->menu();  // Chrome: Other
+        if (props.contains(QLatin1String("parentId"))) {
+            parent = bmResolve(
+                manager,
+                props.value(QLatin1String("parentId")).toString());
+            if (!parent)
+                return errReply(QStringLiteral("not-found"));
+            if (parent->type() == BookmarkNode::Bookmark
+                    || parent->type() == BookmarkNode::Separator)
+                return errReply(QStringLiteral("invalid-parent"));
+        }
+        // Chrome: a missing url means a folder.
+        const bool isBookmark = props.contains(QLatin1String("url"));
+        const QString url =
+            props.value(QLatin1String("url")).toString();
+        if (isBookmark && !bmUrlAllowed(url))
+            return errReply(QStringLiteral("scheme-refused"));
+        const int count = parent->children().count();
+        int index = props.value(QLatin1String("index")).toInt(-1);
+        if (index < 0)
+            index = count;
+        else if (index > count)
+            return errReply(QStringLiteral("invalid-argument"));
+        BookmarkNode *node = new BookmarkNode(
+            isBookmark ? BookmarkNode::Bookmark
+                       : BookmarkNode::Folder);
+        node->title = props.value(QLatin1String("title")).toString();
+        node->url = url;
+        {
+            const BmApiSuppress suppress;
+            manager->addBookmark(parent, node, index);
+        }
+#ifdef ARKTOS_RUSTCORE
+        if (parent->handle() && !node->handle()) {
+            // The store refused behind the wrapper (the url gate is
+            // pre-checked, so this is the belt-and-suspenders leg):
+            // back the insert out through the same undo machinery.
+            const BmApiSuppress suppress;
+            manager->undoRedoStack()->undo();
+            return errReply(QStringLiteral("create-refused"));
+        }
+#endif
+        bookmarksFanOut(
+            QStringLiteral("bookmarks.onCreated"),
+            QJsonArray{bmId(manager, node),
+                       bmNodeJson(manager, node, false)});
+        return okReply(bmNodeJson(manager, node, false));
+    }
+
+    if (method == QLatin1String("move")) {
+        const QString id = args.value(QLatin1String("id")).toString();
+        if (id.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        BookmarkNode *node = bmResolve(manager, id);
+        if (!node)
+            return errReply(QStringLiteral("not-found"));
+        // Chrome's root folders are fixed — root, bar and menu all
+        // refuse a move.
+        if (bmIsSpecial(manager, node))
+            return errReply(QStringLiteral("cannot-modify"));
+        BookmarkNode *oldParent = node->parent();
+        const int oldIndex = oldParent->children().indexOf(node);
+        const QJsonObject dest =
+            args.value(QLatin1String("destination")).toObject();
+        BookmarkNode *newParent = oldParent;
+        if (dest.contains(QLatin1String("parentId"))) {
+            newParent = bmResolve(
+                manager,
+                dest.value(QLatin1String("parentId")).toString());
+            if (!newParent)
+                return errReply(QStringLiteral("not-found"));
+            if (newParent->type() == BookmarkNode::Bookmark
+                    || newParent->type() == BookmarkNode::Separator)
+                return errReply(QStringLiteral("invalid-parent"));
+        }
+        // Re-parenting a folder into its own subtree is a cycle —
+        // the store attach refuses it too, but only after the C++
+        // list already mutated, so it is gated here.
+        for (BookmarkNode *walk = newParent; walk;
+                walk = walk->parent()) {
+            if (walk == node)
+                return errReply(QStringLiteral("invalid-argument"));
+        }
+        const bool hasIndex = dest.contains(QLatin1String("index"));
+        int index = dest.value(QLatin1String("index")).toInt(-1);
+        // Chrome's index is the FINAL position — a same-folder move
+        // extracts the node first, so its valid ceiling there is one
+        // below the current child count.
+        const int indexCap =
+            (newParent == oldParent)
+                ? newParent->children().count() - 1
+                : newParent->children().count();
+        if (hasIndex && (index < 0 || index > indexCap))
+            return errReply(QStringLiteral("invalid-argument"));
+        if (newParent == oldParent && !hasIndex)
+            return okReply(bmNodeJson(manager, node, false));
+        {
+            const BmApiSuppress suppress;
+            // One undoable op — the remove+insert pair is Chrome's
+            // single move, and the events it would double-report
+            // stay suppressed while onMoved fires below.
+            manager->undoRedoStack()->beginMacro(tr("Move Bookmark"));
+            manager->removeBookmark(node);
+            manager->addBookmark(newParent, node, index);
+            manager->undoRedoStack()->endMacro();
+        }
+        bookmarksFanOut(
+            QStringLiteral("bookmarks.onMoved"),
+            QJsonArray{id,
+                       QJsonObject{
+                           {QStringLiteral("parentId"),
+                            bmId(manager, newParent)},
+                           {QStringLiteral("index"),
+                            newParent->children().indexOf(node)},
+                           {QStringLiteral("oldParentId"),
+                            bmId(manager, oldParent)},
+                           {QStringLiteral("oldIndex"), oldIndex}}});
+        return okReply(bmNodeJson(manager, node, false));
+    }
+
+    if (method == QLatin1String("update")) {
+        const QString id = args.value(QLatin1String("id")).toString();
+        if (id.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        BookmarkNode *node = bmResolve(manager, id);
+        if (!node)
+            return errReply(QStringLiteral("not-found"));
+        if (bmIsSpecial(manager, node))
+            return errReply(QStringLiteral("cannot-modify"));
+        const QJsonObject changes =
+            args.value(QLatin1String("changes")).toObject();
+        const bool hasTitle = changes.contains(QLatin1String("title"));
+        const bool hasUrl = changes.contains(QLatin1String("url"));
+        const QString title =
+            changes.value(QLatin1String("title")).toString();
+        const QString url =
+            changes.value(QLatin1String("url")).toString();
+        if (hasUrl && node->type() != BookmarkNode::Bookmark)
+            return errReply(QStringLiteral("invalid-argument"));
+        // Extension-side edits apply the insert-time gate (the
+        // store's own set_url would let javascript: through as a
+        // 'deliberate edit' — code is not a human consenting).
+        if (hasUrl && !bmUrlAllowed(url))
+            return errReply(QStringLiteral("scheme-refused"));
+        bool changed = false;
+        {
+            const BmApiSuppress suppress;
+            if (hasTitle && title != node->title) {
+                manager->setTitle(node, title);
+                changed = true;
+            }
+            if (hasUrl && url != node->url) {
+                manager->setUrl(node, url);
+                changed = true;
+            }
+        }
+        if (changed) {
+            QJsonObject changeInfo{
+                {QStringLiteral("title"), node->title}};
+            if (node->type() == BookmarkNode::Bookmark)
+                changeInfo.insert(QStringLiteral("url"), node->url);
+            bookmarksFanOut(QStringLiteral("bookmarks.onChanged"),
+                            QJsonArray{id, changeInfo});
+        }
+        return okReply(bmNodeJson(manager, node, false));
+    }
+
+    if (method == QLatin1String("remove")) {
+        const QString id = args.value(QLatin1String("id")).toString();
+        if (id.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        BookmarkNode *node = bmResolve(manager, id);
+        if (!node)
+            return errReply(QStringLiteral("not-found"));
+        if (bmIsSpecial(manager, node))
+            return errReply(QStringLiteral("cannot-modify"));
+        // Chrome's remove() deletes a bookmark or an EMPTY folder —
+        // subtrees go through removeTree.
+        if (node->type() != BookmarkNode::Bookmark
+                && !node->children().isEmpty())
+            return errReply(QStringLiteral("folder-not-empty"));
+        BookmarkNode *parent = node->parent();
+        const QJsonObject removeInfo{
+            {QStringLiteral("parentId"), bmId(manager, parent)},
+            {QStringLiteral("index"),
+             parent->children().indexOf(node)},
+            {QStringLiteral("node"),
+             bmNodeJson(manager, node, true)}};
+        {
+            const BmApiSuppress suppress;
+            manager->removeBookmark(node);
+        }
+        bookmarksFanOut(QStringLiteral("bookmarks.onRemoved"),
+                        QJsonArray{id, removeInfo});
+        return okReply();
+    }
+
+    if (method == QLatin1String("removeTree")) {
+        const QString id = args.value(QLatin1String("id")).toString();
+        if (id.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        BookmarkNode *node = bmResolve(manager, id);
+        if (!node)
+            return errReply(QStringLiteral("not-found"));
+        if (bmIsSpecial(manager, node))
+            return errReply(QStringLiteral("cannot-modify"));
+        BookmarkNode *parent = node->parent();
+        const QJsonObject removeInfo{
+            {QStringLiteral("parentId"), bmId(manager, parent)},
+            {QStringLiteral("index"),
+             parent->children().indexOf(node)},
+            {QStringLiteral("node"),
+             bmNodeJson(manager, node, true)}};
+        {
+            const BmApiSuppress suppress;
+            manager->removeBookmark(node);
+        }
+        bookmarksFanOut(QStringLiteral("bookmarks.onRemoved"),
+                        QJsonArray{id, removeInfo});
+        return okReply();
+    }
+
+    return errReply(QStringLiteral("unimplemented"));
 }
 
 // -------------------------------------------------------------------

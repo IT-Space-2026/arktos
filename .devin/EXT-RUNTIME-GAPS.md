@@ -38,7 +38,7 @@ matching every member of the namespace (or a dotted sub-path such as
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
 # stores this tree already has.  They stay in this block — still
-# typed today — but are queued: bookmarks -> MD21, history -> MD22,
+# typed today — but are queued: history -> MD22,
 # cookies -> MD23, downloads -> MD24, sessions -> MD25,
 # tabGroups -> MD26, topSites -> MD27, browsingData -> MD28,
 # dns -> MD29, system -> MD30, privacy -> MD31, userScripts -> MD32,
@@ -47,7 +47,6 @@ matching every member of the namespace (or a dotted sub-path such as
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
-chrome.bookmarks.*: unsupported
 chrome.browsingData.*: unsupported
 chrome.certificateProvider.*: unsupported
 chrome.chromeOs.*: unsupported
@@ -135,6 +134,19 @@ chrome.webRequest.*: unsupported
 chrome.scripting.*: unsupported
 # --- domain refusals — correct replies, kept visible ---------------
 chrome.alarms.create: invalid-argument
+# MD21: chrome.bookmarks is served over the RC05 store — 'bookmarks'
+# permission gates every member (no-permission undeclared); the rest
+# are the op's correct verdicts (bad ids, fixed roots, leaf parents,
+# the store's url-scheme gate, empty-folder-only remove).
+chrome.bookmarks.*: no-permission
+chrome.bookmarks.*: invalid-argument
+chrome.bookmarks.*: not-found
+chrome.bookmarks.*: cannot-modify
+chrome.bookmarks.*: invalid-parent
+chrome.bookmarks.*: scheme-refused
+chrome.bookmarks.*: create-refused
+chrome.bookmarks.*: folder-not-empty
+chrome.bookmarks.*: no-store
 chrome.action.setIcon: invalid-image-data
 chrome.action.setIcon: invalid-path
 chrome.browserAction.setIcon: invalid-image-data

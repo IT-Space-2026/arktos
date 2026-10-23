@@ -4128,6 +4128,79 @@
     }
     installSidebarAction();
 
+    // --- chrome.bookmarks ---------------------------------------------
+    // MD21: Chrome exposes the object to every extension — the grant
+    // is enforced per call, so an extension that never declared
+    // 'bookmarks' still sees the namespace and hears the backend's
+    // typed no-permission.  Every member rides the bridge over the
+    // RC05 store; node ids "0"/"1"/"2" name root/bar/menu like Chrome
+    // and every other id is a store-handle serial the backend hands
+    // out.
+    function installBookmarks() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.bookmarks; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var bmNs = {
+            __arktosShim: true,
+            // Deprecated-but-readable Chrome constants.
+            MAX_WRITE_OPERATIONS_PER_HOUR: 1000000,
+            MAX_SUSTAINED_WRITE_OPERATIONS_PER_MINUTE: 1000000,
+            onCreated: makeEvent('bookmarks.onCreated'),
+            onRemoved: makeEvent('bookmarks.onRemoved'),
+            onChanged: makeEvent('bookmarks.onChanged'),
+            onMoved: makeEvent('bookmarks.onMoved'),
+            onChildrenReordered:
+                makeEvent('bookmarks.onChildrenReordered'),
+            onImportBegan: makeEvent('bookmarks.onImportBegan'),
+            onImportEnded: makeEvent('bookmarks.onImportEnded')
+        };
+        var bmArgs = {
+            get: function (a) {
+                return typeof a[0] === 'string'
+                    ? { id: a[0] } : { ids: a[0] };
+            },
+            getChildren: function (a) { return { id: a[0] }; },
+            getRecent: function (a) { return { count: a[0] }; },
+            getTree: function () { return {}; },
+            getSubTree: function (a) { return { id: a[0] }; },
+            search: function (a) { return { query: a[0] }; },
+            create: function (a) { return { props: a[0] || {} }; },
+            move: function (a) {
+                return { id: a[0], destination: a[1] || {} };
+            },
+            update: function (a) {
+                return { id: a[0], changes: a[1] || {} };
+            },
+            remove: function (a) { return { id: a[0] }; },
+            removeTree: function (a) { return { id: a[0] }; }
+        };
+        for (var mk in bmArgs) {
+            (function (m, map) {
+                bmNs[m] = function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('bookmarks', m, map(a));
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mk, bmArgs[mk]);
+        }
+        installNs('bookmarks', bmNs);
+    }
+    installBookmarks();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -4380,7 +4453,7 @@
     // on* properties yield real shim events whose registrations are
     // noted.  Nothing claims to work that doesn't.
     var unsupportedNames = [
-        'windows', 'cookies', 'bookmarks', 'identity', 'gcm',
+        'windows', 'cookies', 'identity', 'gcm',
         'nativeMessaging', 'privacy', 'topSites', 'history',
         'scripting', 'offscreen', 'omnibox', 'devtools',
         'fontSettings', 'tabGroups', 'userScripts',

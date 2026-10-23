@@ -37,6 +37,8 @@
 #include <qlistwidget.h>
 #include <qpushbutton.h>
 
+#include "bookmarksmanager.h"
+#include "bookmarknode.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserpaths.h"
@@ -109,6 +111,7 @@ private slots:
     void extensionAllowedAccess();
     void extensionManagementRead();
     void extensionManagementMutations();
+    void extensionBookmarks();
     void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
@@ -481,12 +484,12 @@ void tst_ExtensionManager::inspectManifest_data()
     QTest::newRow("permission classes")
         << QByteArray("{\"manifest_version\":3,\"name\":\"perms\","
                       "\"version\":\"1.0\","
-                      "\"permissions\":[\"bookmarks\",\"webRequest\","
+                      "\"permissions\":[\"topSites\",\"webRequest\","
                       "\"cookies\",\"nativeMessaging\"],"
                       "\"host_permissions\":[\"<all_urls>\","
                       "\"*://*.example.com/*\"]}")
         << true << 3 << QStringLiteral("perms") << false
-        << (QStringList() << QStringLiteral("bookmarks"))
+        << (QStringList() << QStringLiteral("topSites"))
         << (QStringList() << QStringLiteral("webRequest"))
         // ER19: webRequest is runtime-served — it leaves the fatal
         // set (and stays in 'unverified' for honest wording).
@@ -522,16 +525,17 @@ void tst_ExtensionManager::inspectManifest_data()
         << QStringList() << QStringList();
     // ER19: runtime-served 'unsupported' members migrate to
     // 'unverified' — the honest tier is "partially supported", not
-    // "will not work".  'bookmarks' is genuinely dead and stays.
+    // "will not work".  'cookies' is genuinely dead and stays.
     QTest::newRow("runtime-served apis migrate")
         << QByteArray("{\"manifest_version\":3,\"name\":\"served\","
                       "\"version\":\"1.0\","
                       "\"permissions\":[\"notifications\",\"tabs\","
-                      "\"bookmarks\"]}")
+                      "\"bookmarks\",\"cookies\"]}")
         << true << 3 << QStringLiteral("served") << false
-        << (QStringList() << QStringLiteral("bookmarks"))
+        << (QStringList() << QStringLiteral("cookies"))
         << (QStringList() << QStringLiteral("notifications")
-                          << QStringLiteral("tabs"))
+                          << QStringLiteral("tabs")
+                          << QStringLiteral("bookmarks"))
         << QStringList()
         << QStringList() << QStringList();
     QTest::newRow("fatal core api optional")
@@ -1291,7 +1295,7 @@ void tst_ExtensionManager::runtimeHealthRegrade()
         root, QStringLiteral("tst-regrade"), QStringLiteral("1.0.0"),
         QString(), {QStringLiteral("scripting"),
                     QStringLiteral("notifications"),
-                    QStringLiteral("bookmarks")});
+                    QStringLiteral("cookies")});
     QVERIFY(!dir.isEmpty());
 
     // Runtime armed (the suite's normal env — pin it so a stray
@@ -1304,13 +1308,13 @@ void tst_ExtensionManager::runtimeHealthRegrade()
         ExtensionManager::inspectManifest(dir);
     QVERIFY(served.valid);
     // scripting leaves fatalMissing and was always 'unverified';
-    // notifications migrates unsupported -> unverified; bookmarks is
+    // notifications migrates unsupported -> unverified; cookies is
     // genuinely dead and stays the missingApis marker.
     QVERIFY(served.fatalMissing.isEmpty());
     QVERIFY(served.unverified.contains(QLatin1String("scripting")));
     QVERIFY(served.unverified.contains(QLatin1String("notifications")));
     QVERIFY(!served.unsupported.contains(QLatin1String("notifications")));
-    QVERIFY(served.unsupported.contains(QLatin1String("bookmarks")));
+    QVERIFY(served.unsupported.contains(QLatin1String("cookies")));
     // Regraded: the same extension that EXT21 condemned is
     // Limited-or-better — its remaining gaps are honest, not fatal.
     QCOMPARE(ExtensionManager::classifyHealth(
@@ -1386,13 +1390,13 @@ void tst_ExtensionManager::backgroundHealthProbe()
         root, QStringLiteral("tst-health-live"),
         QStringLiteral("1.0.0"));
     // Dead: same manifest shape but the worker throws at eval —
-    // Bitwarden's failure mode (Chromium status 15).  'bookmarks' is
+    // Bitwarden's failure mode (Chromium status 15).  'topSites' is
     // the unsupported-permission marker: the hosted runtime does not
     // serve it (ER19), so it stays in missingApis either way.
     const QString deadDir = writeExtension(
         root, QStringLiteral("tst-health-dead"),
         QStringLiteral("1.0.0"), QString(),
-        {QStringLiteral("bookmarks")});
+        {QStringLiteral("topSites")});
     QVERIFY(!liveDir.isEmpty() && !deadDir.isEmpty());
     {
         QFile dead(deadDir + QLatin1String("/sw.js"));
@@ -1435,9 +1439,9 @@ void tst_ExtensionManager::backgroundHealthProbe()
     const ExtensionManager::ExtensionInfo dead = infoFor(deadId);
     QVERIFY(!dead.healthReason.isEmpty());
     QVERIFY(dead.healthReason.contains(QLatin1String("background")));
-    // "bookmarks" is unsupported even with the hosted runtime armed
+    // "topSites" is unsupported even with the hosted runtime armed
     // — the reason names the missing surface, not just the crash.
-    QVERIFY(dead.missingApis.contains(QLatin1String("bookmarks")));
+    QVERIFY(dead.missingApis.contains(QLatin1String("topSites")));
 
     manager->removeExtension(liveId);
     manager->removeExtension(deadId);
@@ -8137,6 +8141,378 @@ void tst_ExtensionManager::extensionManagementMutations()
     QDir(dir).removeRecursively();
     QDir(dirB).removeRecursively();
     QDir(dirC).removeRecursively();
+}
+
+// MD21 — chrome.bookmarks served over the RC05 store.  A dedicated
+// temp persona is bound as the ambient manager — the backend's
+// BookmarksManager::instance() then resolves exactly this tree —
+// and the leg drives the full member surface: the fixed "0"/"1"/"2"
+// ids, create/move/update/remove/removeTree through the manager's
+// undoable ops (the C++ tree stays in lockstep), Chrome's error
+// vocabulary for refused ops, the 'bookmarks' permission gate, and
+// the on* fan-out a bare backend hears on pushEvent.
+void tst_ExtensionManager::extensionBookmarks()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // A dedicated temp persona becomes the ambient profile — the
+    // backend's BookmarksManager::instance() resolves exactly this
+    // tree.  Binding it flushes the previous ambient manager's file
+    // and marks that view stale (the store's designed single-binding
+    // hand-off); the ambient id restores on exit and the persona
+    // dir goes with it.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstextbm%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    BookmarksManager *manager = BookmarksManager::instance();
+    QVERIFY(manager);
+    QCOMPARE(manager->profileId(), profileId);
+    auto unbind = qScopeGuard([prevId, profileId]() {
+        BookmarksManager::releaseFor(profileId);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+
+    // A fresh persona loads the bundled defaults into the menu —
+    // strip both fixed folders so the assertions name only what this
+    // leg created.
+    for (BookmarkNode *top :
+         {manager->toolbar(), manager->menu()}) {
+        while (!top->children().isEmpty())
+            manager->removeBookmark(top->children().first());
+    }
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extbm-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-bm\","
+                "\"version\":\"1.0\",\"permissions\":[\"bookmarks\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0021"),
+        QStringLiteral("tst-bm"), dir);
+    QSignalSpy events(&backend, &ExtensionShimBackend::pushEvent);
+    auto invoke = [&](const QString &m, const QJsonObject &args) {
+        return backend.invoke(QStringLiteral("bookmarks"), m, args);
+    };
+
+    // getTree — root "0" carries the fixed "1"/"2" folders; folders
+    // carry no url and no dates are fabricated for a store that does
+    // not keep them.
+    QJsonObject reply = invoke(QStringLiteral("getTree"),
+                               QJsonObject());
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonArray tree = reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(tree.size(), 1);
+    const QJsonObject root = tree.at(0).toObject();
+    QCOMPARE(root.value(QLatin1String("id")).toString(),
+             QStringLiteral("0"));
+    QCOMPARE(root.value(QLatin1String("type")).toString(),
+             QStringLiteral("folder"));
+    QVERIFY(!root.contains(QLatin1String("url")));
+    QVERIFY(!root.contains(QLatin1String("dateAdded")));
+    const QJsonArray tops = root.value(QLatin1String("children")).toArray();
+    QCOMPARE(tops.size(), 2);
+    QCOMPARE(tops.at(0).toObject().value(QLatin1String("id")).toString(),
+             QStringLiteral("1"));
+    QCOMPARE(tops.at(1).toObject().value(QLatin1String("id")).toString(),
+             QStringLiteral("2"));
+
+    // create — a folder under "2", then a bookmark and a second
+    // folder inside it; every op lands through the undoable manager
+    // commands so the C++ tree reflects each one.
+    reply = invoke(QStringLiteral("create"), QJsonObject{
+        {QStringLiteral("props"), QJsonObject{
+            {QStringLiteral("parentId"), QStringLiteral("2")},
+            {QStringLiteral("title"), QStringLiteral("Faves")}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject folder =
+            reply.value(QLatin1String("result")).toObject();
+    const QString folderId = folder.value(QLatin1String("id")).toString();
+    QVERIFY(folderId != QLatin1String("0")
+            && folderId != QLatin1String("1")
+            && folderId != QLatin1String("2"));
+    QCOMPARE(folder.value(QLatin1String("type")).toString(),
+             QStringLiteral("folder"));
+    QCOMPARE(folder.value(QLatin1String("parentId")).toString(),
+             QStringLiteral("2"));
+    QCOMPARE(folder.value(QLatin1String("index")).toInt(), 0);
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onCreated")),
+             1);
+    QCOMPARE(manager->menu()->children().size(), 1);
+    QCOMPARE(manager->menu()->children().first()->title,
+             QStringLiteral("Faves"));
+
+    reply = invoke(QStringLiteral("create"), QJsonObject{
+        {QStringLiteral("props"), QJsonObject{
+            {QStringLiteral("parentId"), folderId},
+            {QStringLiteral("title"), QStringLiteral("Arktos")},
+            {QStringLiteral("url"),
+             QStringLiteral("https://arktos-browser.com")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QString bmId = reply.value(QLatin1String("result"))
+            .toObject().value(QLatin1String("id")).toString();
+    QVERIFY(!bmId.isEmpty());
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onCreated")),
+             2);
+
+    reply = invoke(QStringLiteral("create"), QJsonObject{
+        {QStringLiteral("props"), QJsonObject{
+            {QStringLiteral("parentId"), folderId},
+            {QStringLiteral("index"), 0},
+            {QStringLiteral("title"), QStringLiteral("Sub")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QString subId = reply.value(QLatin1String("result"))
+            .toObject().value(QLatin1String("id")).toString();
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onCreated")),
+             3);
+
+    // get — single and array forms share one reply shape; unknown
+    // ids answer not-found, malformed arg shapes invalid-argument.
+    reply = invoke(QStringLiteral("get"),
+                   QJsonObject{{QStringLiteral("id"), bmId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonArray got = reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(got.size(), 1);
+    QCOMPARE(got.at(0).toObject().value(QLatin1String("title")).toString(),
+             QStringLiteral("Arktos"));
+    QCOMPARE(got.at(0).toObject().value(QLatin1String("parentId"))
+                 .toString(), folderId);
+    QCOMPARE(got.at(0).toObject().value(QLatin1String("index")).toInt(),
+             1);
+    reply = invoke(QStringLiteral("get"), QJsonObject{
+        {QStringLiteral("ids"), QJsonArray{
+            QStringLiteral("1"), folderId}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 2);
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("999999")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // getChildren — insertion order is the sibling order; leaf nodes
+    // answer an empty list rather than not-found.
+    reply = invoke(QStringLiteral("getChildren"),
+                   QJsonObject{{QStringLiteral("id"), folderId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonArray kids =
+            reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(kids.size(), 2);
+    QCOMPARE(kids.at(0).toObject().value(QLatin1String("title")).toString(),
+             QStringLiteral("Sub"));
+    QCOMPARE(kids.at(1).toObject().value(QLatin1String("title")).toString(),
+             QStringLiteral("Arktos"));
+    reply = invoke(QStringLiteral("getChildren"),
+                   QJsonObject{{QStringLiteral("id"), bmId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("getChildren"), QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("bogus")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // getSubTree — children serialize recursively.
+    reply = invoke(QStringLiteral("getSubTree"),
+                   QJsonObject{{QStringLiteral("id"), folderId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonObject subTree = reply.value(QLatin1String("result"))
+            .toArray().at(0).toObject();
+    QCOMPARE(subTree.value(QLatin1String("id")).toString(), folderId);
+    QCOMPARE(subTree.value(QLatin1String("children"))
+                 .toArray().size(), 2);
+
+    // update — title/url writes land in the store and report through
+    // onChanged's changeInfo; roots refuse, folder urls refuse, and
+    // the scheme gate still runs through the store's insert policy.
+    reply = invoke(QStringLiteral("update"), QJsonObject{
+        {QStringLiteral("id"), bmId},
+        {QStringLiteral("changes"), QJsonObject{
+            {QStringLiteral("title"),
+             QStringLiteral("Arktos browser")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onChanged")),
+             1);
+    reply = invoke(QStringLiteral("get"),
+                   QJsonObject{{QStringLiteral("id"), bmId}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray()
+             .at(0).toObject().value(QLatin1String("title")).toString(),
+             QStringLiteral("Arktos browser"));
+    QCOMPARE(invoke(QStringLiteral("update"), QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("1")},
+                 {QStringLiteral("changes"), QJsonObject{
+                     {QStringLiteral("title"), QStringLiteral("x")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("cannot-modify"));
+    QCOMPARE(invoke(QStringLiteral("update"), QJsonObject{
+                 {QStringLiteral("id"), folderId},
+                 {QStringLiteral("changes"), QJsonObject{
+                     {QStringLiteral("url"), QStringLiteral("http://x")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("update"), QJsonObject{
+                 {QStringLiteral("id"), bmId},
+                 {QStringLiteral("changes"), QJsonObject{
+                     {QStringLiteral("url"),
+                      QStringLiteral("javascript:alert(1)")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("scheme-refused"));
+
+    // search — string terms AND across title+url, quoted terms keep
+    // their spaces, the object form narrows by verbatim title /
+    // trailing-slash-tolerant url / containing-folder title.
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QStringLiteral("arktos")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+    QCOMPARE(reply.value(QLatin1String("result")).toArray()
+             .at(0).toObject().value(QLatin1String("id")).toString(),
+             bmId);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("url"),
+             QStringLiteral("https://arktos-browser.com/")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("query"), QStringLiteral("arktos")},
+            {QStringLiteral("folder"), QStringLiteral("Faves")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QStringLiteral("nomatchxyz")}});
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+
+    // getRecent — the newest store serials first, bookmarks only.
+    reply = invoke(QStringLiteral("getRecent"),
+                   QJsonObject{{QStringLiteral("count"), 5}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonArray recent =
+            reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(recent.size(), 1);
+    QCOMPARE(recent.at(0).toObject().value(QLatin1String("id")).toString(),
+             bmId);
+
+    // move — the refused shapes first, then a real reparent that
+    // keeps the node's id (the store handle never changes) and
+    // reports old/new placement through onMoved.
+    QCOMPARE(invoke(QStringLiteral("move"), QJsonObject{
+                 {QStringLiteral("id"), folderId},
+                 {QStringLiteral("destination"), QJsonObject{
+                     {QStringLiteral("parentId"), subId}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("move"), QJsonObject{
+                 {QStringLiteral("id"), bmId},
+                 {QStringLiteral("destination"), QJsonObject{
+                     {QStringLiteral("parentId"), bmId}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-parent"));
+    QCOMPARE(invoke(QStringLiteral("move"), QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("0")},
+                 {QStringLiteral("destination"), QJsonObject{
+                     {QStringLiteral("index"), 0}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("cannot-modify"));
+    reply = invoke(QStringLiteral("move"), QJsonObject{
+        {QStringLiteral("id"), folderId},
+        {QStringLiteral("destination"), QJsonObject{
+            {QStringLiteral("parentId"), QStringLiteral("1")},
+            {QStringLiteral("index"), 0}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("parentId")).toString(),
+             QStringLiteral("1"));
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onMoved")), 1);
+    QCOMPARE(manager->toolbar()->children().size(), 1);
+    QCOMPARE(manager->toolbar()->children().first()->title,
+             QStringLiteral("Faves"));
+    QJsonObject moveInfo;
+    for (const QVariantList &entry : events) {
+        if (entry.at(0).toString()
+                == QLatin1String("bookmarks.onMoved"))
+            moveInfo = entry.at(1).toJsonObject()
+                    .value(QLatin1String("__args")).toArray()
+                    .at(1).toObject();
+    }
+    QCOMPARE(moveInfo.value(QLatin1String("oldParentId")).toString(),
+             QStringLiteral("2"));
+    QCOMPARE(moveInfo.value(QLatin1String("parentId")).toString(),
+             QStringLiteral("1"));
+
+    // remove — leaf only, the non-empty folder refuses until
+    // removeTree takes the whole subtree.
+    QCOMPARE(invoke(QStringLiteral("remove"), QJsonObject{
+                 {QStringLiteral("id"), folderId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("folder-not-empty"));
+    reply = invoke(QStringLiteral("remove"),
+                   QJsonObject{{QStringLiteral("id"), bmId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onRemoved")),
+             1);
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("id"), bmId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(invoke(QStringLiteral("remove"), QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("1")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("cannot-modify"));
+
+    reply = invoke(QStringLiteral("removeTree"),
+                   QJsonObject{{QStringLiteral("id"), folderId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onRemoved")),
+             2);
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("id"), folderId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QVERIFY(manager->toolbar()->children().isEmpty());
+
+    // The manifest gate is per-context: a sibling backend without
+    // 'bookmarks' hears no-permission on reads and writes alike.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extbmb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-bm-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0022"),
+        QStringLiteral("tst-bm-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("bookmarks"),
+                 QStringLiteral("get"),
+                 QJsonObject{{QStringLiteral("id"), QStringLiteral("0")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(QStringLiteral("bookmarks"),
+                 QStringLiteral("create"),
+                 QJsonObject{{QStringLiteral("props"), QJsonObject{
+                     {QStringLiteral("title"), QStringLiteral("x")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
 }
 
 // MD18 — chrome.runtime lifecycle ops.  reload rides the manager's
