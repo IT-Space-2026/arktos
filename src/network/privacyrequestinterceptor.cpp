@@ -21,11 +21,15 @@
 #include "profilesettings.h"
 
 #include "adblockrequestinterceptor.h"
+#include "browserpaths.h"
+#include "browserprofile.h"
 #include "extensionrequestwatcher.h"
 #include "navigationpolicy.h"
 #include "scriptcontrolmanager.h"
 
 #include <qatomic.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
 #include <qmutex.h>
 #include <qsettings.h>
 #include <qwebengineprofile.h>
@@ -33,6 +37,8 @@
 
 #if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
+#include <arktos_core.h>
+#include "rustcorebridge.h"
 #include "sitedecisionstore.h"
 #endif
 
@@ -220,6 +226,7 @@ PrivacyRequestInterceptor::PrivacyRequestInterceptor(AdBlockNetwork *network,
     : QWebEngineUrlRequestInterceptor(profile)
     , m_adBlock(new AdBlockRequestInterceptor(network, this))
     , m_scope(downgradeScope(profile))
+    , m_profileId(BrowserProfile::profileIdFor(profile))
     // ER11: extension request observation is a normal-profile feed —
     // off-the-record browsing hosts no extensions, so its traffic
     // must never reach an extension context.
@@ -243,7 +250,12 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     const PolicyRequest req =
         buildRequest(info, m_scope, /*torMode=*/false,
                      RefererEngineDefault);
-    const PolicyVerdict verdict = NavigationPolicy::evaluate(req);
+    PolicyVerdict verdict = NavigationPolicy::evaluate(req);
+    // MD05: the verdict's Sec-GPC bit came off the process-global
+    // policy snapshot — re-resolve it against THIS profile's own
+    // privacy store (rc_privacy_gpc, generation-cached).  When no
+    // facade answers the bit stands untouched.
+    verdict.sendGpc = sendGpcForProfile(verdict.sendGpc);
     // ER11: announce the request to observe-only webRequest listeners
     // BEFORE the verdict applies — Chrome's onBeforeRequest fires for
     // requests other features later drop — and pair a policy block
@@ -267,33 +279,83 @@ void PrivacyRequestInterceptor::loadSettings()
     settings.beginGroup(QLatin1String("privacy"));
 
     NavigationPolicy::Snapshot snap;
-    snap.httpsFirst = settings.value(QLatin1String("httpsFirst"), true).toBool();
-    snap.httpsOnly = settings.value(QLatin1String("httpsOnly"), true).toBool();
-    snap.refererPolicy = storedRefererPolicy();
-    snap.securityLevel = qBound(
-        int(PrivacyRequestInterceptor::Standard),
-        settings.value(QLatin1String("securityLevel"),
-                       int(PrivacyRequestInterceptor::Standard)).toInt(),
-        int(PrivacyRequestInterceptor::Safest));
-    snap.blockPings = settings.value(QLatin1String("blockPings"), true).toBool();
-    snap.blockRemoteFonts =
-        settings.value(QLatin1String("blockRemoteFonts"), false).toBool();
-    snap.blockPrefetch =
-        settings.value(QLatin1String("blockPrefetch"), true).toBool();
-    snap.blockThirdPartyWebSockets =
-        settings.value(QLatin1String("blockThirdPartyWebSockets"), false).toBool();
-    // POL04: privacy/urlCleaning is the canonical toggle (Settings >
-    // Privacy "Clean tracking links"); the SEC17-era
-    // stripTrackingParams key is the legacy alias an older profile
-    // may still carry.
-    snap.stripTrackingParams = settings.value(
-        QLatin1String("urlCleaning"),
-        settings.value(QLatin1String("stripTrackingParams"), true))
-        .toBool();
-    snap.domainBlocklist =
-        settings.value(QLatin1String("domainBlocklist"), true).toBool();
-    snap.gpcSignal =
-        settings.value(QLatin1String("gpcSignal"), true).toBool();
+    bool haveFlags = false;
+#if defined(ARKTOS_RUSTCORE)
+    // MD05: the privacy/* toggles are persona rows in the bound
+    // profile's settings store — resolve them through the privacy
+    // module so every adapter reads the same bytes; the direct
+    // ProfileSettings consult below stays the no-bridge fallback.
+    const QJsonObject pf = privacyStoreCall(
+        BrowserPaths::activeProfileId(),
+        {{QLatin1String("op"), QLatin1String("flags")}});
+    if (!pf.isEmpty()) {
+        haveFlags = true;
+        snap.httpsFirst =
+            pf.value(QLatin1String("https_first")).toBool(true);
+        snap.httpsOnly =
+            pf.value(QLatin1String("https_only")).toBool(true);
+        snap.refererPolicy = qBound(
+            0, pf.value(QLatin1String("referer_policy")).toInt(1), 3);
+        snap.securityLevel = qBound(
+            int(PrivacyRequestInterceptor::Standard),
+            pf.value(QLatin1String("security_level")).toInt(0),
+            int(PrivacyRequestInterceptor::Safest));
+        snap.blockPings =
+            pf.value(QLatin1String("block_pings")).toBool(true);
+        snap.blockRemoteFonts =
+            pf.value(QLatin1String("block_remote_fonts")).toBool(false);
+        snap.blockPrefetch =
+            pf.value(QLatin1String("block_prefetch")).toBool(true);
+        snap.blockThirdPartyWebSockets =
+            pf.value(QLatin1String("block_third_party_ws")).toBool(false);
+        snap.stripTrackingParams =
+            pf.value(QLatin1String("strip_tracking_params")).toBool(true);
+        snap.domainBlocklist =
+            pf.value(QLatin1String("domain_blocklist")).toBool(true);
+        snap.gpcSignal =
+            pf.value(QLatin1String("gpc_signal")).toBool(true);
+    }
+    // MD06: the persona's merged urlclean ruleset (profile override
+    // or the shared global set, extraParams folded in) rides the
+    // snapshot — rc_policy_load_snapshot parses it once, so the
+    // request path never re-reads the profile store.  An empty
+    // answer keeps the process-global urlstrip set.
+    const QJsonObject uc = urlcleanStoreCall(
+        BrowserPaths::activeProfileId(),
+        {{QLatin1String("op"), QLatin1String("clean_policy")}});
+    if (uc.contains(QLatin1String("ruleset")))
+        snap.urlCleanRuleset =
+            uc.value(QLatin1String("ruleset")).toObject();
+#endif
+    if (!haveFlags) {
+        snap.httpsFirst = settings.value(QLatin1String("httpsFirst"), true).toBool();
+        snap.httpsOnly = settings.value(QLatin1String("httpsOnly"), true).toBool();
+        snap.refererPolicy = storedRefererPolicy();
+        snap.securityLevel = qBound(
+            int(PrivacyRequestInterceptor::Standard),
+            settings.value(QLatin1String("securityLevel"),
+                           int(PrivacyRequestInterceptor::Standard)).toInt(),
+            int(PrivacyRequestInterceptor::Safest));
+        snap.blockPings = settings.value(QLatin1String("blockPings"), true).toBool();
+        snap.blockRemoteFonts =
+            settings.value(QLatin1String("blockRemoteFonts"), false).toBool();
+        snap.blockPrefetch =
+            settings.value(QLatin1String("blockPrefetch"), true).toBool();
+        snap.blockThirdPartyWebSockets =
+            settings.value(QLatin1String("blockThirdPartyWebSockets"), false).toBool();
+        // POL04: privacy/urlCleaning is the canonical toggle (Settings >
+        // Privacy "Clean tracking links"); the SEC17-era
+        // stripTrackingParams key is the legacy alias an older profile
+        // may still carry.
+        snap.stripTrackingParams = settings.value(
+            QLatin1String("urlCleaning"),
+            settings.value(QLatin1String("stripTrackingParams"), true))
+            .toBool();
+        snap.domainBlocklist =
+            settings.value(QLatin1String("domainBlocklist"), true).toBool();
+        snap.gpcSignal =
+            settings.value(QLatin1String("gpcSignal"), true).toBool();
+    }
 #if defined(ARKTOS_RUSTCORE)
     // SITED01: one-shot import — replay the legacy exception list into
     // the Rust store and retire the key after the writes land.
@@ -349,8 +411,121 @@ QString PrivacyRequestInterceptor::downgradeScope(
         + QString::number(reinterpret_cast<quintptr>(profile));
 }
 
+// MD05: one granular call into rustcore's privacy module — the
+// per-persona privacy-policy store view (the privacy/* toggles,
+// the Sec-GPC bit, the tracker-strip flag and the unified adblock
+// read).  The profile-bound AcPrivacy is minted per call like
+// AcDlwpolicy — cheap, and a fresh settings open per op reads the
+// file as committed, so a settings-dialog save mid-process is
+// honored.  An empty object means no facade answered — callers
+// then run their local QSettings consult, so an FFI failure can
+// never silently flip a protection.
+QJsonObject PrivacyRequestInterceptor::privacyStoreCall(
+        const QString &profileId, const QJsonObject &request)
+{
+#if defined(ARKTOS_RUSTCORE)
+    AcPrivacy *h = nullptr;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->privacy(profileId);
+    if (!h)
+        return QJsonObject();
+    const QByteArray json =
+        QJsonDocument(request).toJson(QJsonDocument::Compact);
+    char *raw = ac_privacy_call(
+        h, reinterpret_cast<const uint8_t *>(json.constData()),
+        size_t(json.size()));
+    ac_privacy_close(h);
+    if (!raw)
+        return QJsonObject();
+    QByteArray out = QByteArray::fromRawData(raw, int(strlen(raw)));
+    out.detach();
+    rc_string_free(raw);
+    return QJsonDocument::fromJson(out).object();
+#else
+    Q_UNUSED(profileId);
+    Q_UNUSED(request);
+    return QJsonObject();
+#endif
+}
+
+// MD06: one granular call into rustcore's urlclean module — the
+// per-persona URL-sanitize policy (the editable ruleset override,
+// the copy-path toggle, the clean_policy composite).  Same shape as
+// privacyStoreCall: a profile-bound AcUrlclean is minted per call,
+// and an empty object means no facade answered — the caller keeps
+// its local consult, so an FFI failure can never silently flip a
+// cleaning decision.
+QJsonObject PrivacyRequestInterceptor::urlcleanStoreCall(
+        const QString &profileId, const QJsonObject &request)
+{
+#if defined(ARKTOS_RUSTCORE)
+    AcUrlclean *h = nullptr;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->urlclean(profileId);
+    if (!h)
+        return QJsonObject();
+    const QByteArray json =
+        QJsonDocument(request).toJson(QJsonDocument::Compact);
+    char *raw = ac_urlclean_call(
+        h, reinterpret_cast<const uint8_t *>(json.constData()),
+        size_t(json.size()));
+    ac_urlclean_close(h);
+    if (!raw)
+        return QJsonObject();
+    QByteArray out = QByteArray::fromRawData(raw, int(strlen(raw)));
+    out.detach();
+    rc_string_free(raw);
+    return QJsonDocument::fromJson(out).object();
+#else
+    Q_UNUSED(profileId);
+    Q_UNUSED(request);
+    return QJsonObject();
+#endif
+}
+
+bool PrivacyRequestInterceptor::sendGpcForProfile(bool verdictBit)
+{
+#if defined(ARKTOS_RUSTCORE)
+    // Cache the per-persona answer against the verdict-state
+    // generation — a privacy-toggle save pushes a fresh policy
+    // snapshot (bumping the generation), so the bound profile's
+    // settings.json is re-read at most once per generation here
+    // instead of once per request.
+    const quint64 generation = ac_policy_eval_generation();
+    {
+        const QMutexLocker lock(&m_gpcLock);
+        if (m_gpcGen == generation)
+            return m_gpcSend;
+    }
+    int answer = -1;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        AcPrivacy *h = bridge->privacy(m_profileId);
+        if (h) {
+            answer = ac_privacy_gpc(h, /*tor_mode=*/0);
+            ac_privacy_close(h);
+        }
+    }
+    if (answer < 0)
+        return verdictBit;
+    const QMutexLocker lock(&m_gpcLock);
+    m_gpcSend = (answer == 1);
+    m_gpcGen = generation;
+    return m_gpcSend;
+#else
+    return verdictBit;
+#endif
+}
+
 int PrivacyRequestInterceptor::storedRefererPolicy()
 {
+#if defined(ARKTOS_RUSTCORE)
+    const QJsonObject r = privacyStoreCall(
+        BrowserPaths::activeProfileId(),
+        {{QLatin1String("op"), QLatin1String("flag")},
+         {QLatin1String("name"), QLatin1String("referer_policy")}});
+    if (r.contains(QLatin1String("value")))
+        return qBound(0, r.value(QLatin1String("value")).toInt(), 3);
+#endif
     ProfileSettings settings;
     settings.beginGroup(QLatin1String("privacy"));
     // REF01: the PRIV01 bool folds into the level selector — an old
@@ -435,7 +610,24 @@ bool PrivacyRequestInterceptor::gpcSignalEnabled()
 
 bool PrivacyRequestInterceptor::storedGpcSignal()
 {
-    ProfileSettings settings;
+    return gpcSignalEnabledForProfile(QString());
+}
+
+bool PrivacyRequestInterceptor::gpcSignalEnabledForProfile(
+        const QString &profileId)
+{
+    const QString pid = BrowserPaths::isProfileId(profileId)
+        ? profileId : BrowserPaths::activeProfileId();
+#if defined(ARKTOS_RUSTCORE)
+    // MD05: the persona's own privacy store answers — the ambient
+    // profile's row would mislead a second persona's engine profile
+    // (installGpcSignal serves whichever profile it is handed).
+    const QJsonObject r = privacyStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("gpc")}});
+    if (r.contains(QLatin1String("send")))
+        return r.value(QLatin1String("send")).toBool();
+#endif
+    ProfileSettings settings(pid);
     settings.beginGroup(QLatin1String("privacy"));
     const bool on = settings.value(QLatin1String("gpcSignal"), true).toBool();
     settings.endGroup();

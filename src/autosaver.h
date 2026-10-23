@@ -67,6 +67,7 @@
 #include <qobject.h>
 #include <qbasictimer.h>
 #include <qelapsedtimer.h>
+#include <qstring.h>
 
 /*
     This class will call the save() slot on the parent object when the parent changes.
@@ -79,9 +80,32 @@ class AutoSaver : public QObject
     Q_OBJECT
 
 public:
+    // MD08: the change classes the session domain's dirty-on-what
+    // policy gates — the resolved set's "dirty_on" map keys off the
+    // same names the rustcore sesspolicy module answers.
+    enum DirtyKind {
+        DirtyTabs = 0,
+        DirtyChrome,
+        DirtySidebar,
+        DirtyLifecycle
+    };
+
     AutoSaver(QObject *parent);
     ~AutoSaver();
     void saveIfNeccessary();
+
+    // MD08: opts this saver into the session snapshot policy — the
+    // profile whose "session/" rows decide the debounce timing and
+    // which change classes dirty the session.  Only the session
+    // saver (BrowserMainWindow's) sets it; every other owner keeps
+    // the compiled-in behavior with no policy consult at all.
+    void setSessionProfile(const QString &profileId);
+
+    // The kind-aware entry — consults the bound profile's policy
+    // when setSessionProfile ran, then debounces like
+    // changeOccurred() always did.  changeOccurred() itself is the
+    // tabs kind (its connect sites were all tab-change driven).
+    void changeOccurredFor(DirtyKind kind);
 
 public slots:
     void changeOccurred();
@@ -92,6 +116,7 @@ protected:
 private:
     QBasicTimer m_timer;
     QElapsedTimer m_firstChange;
+    QString m_sessionProfile;
 
 };
 

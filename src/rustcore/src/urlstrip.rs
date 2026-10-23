@@ -52,7 +52,7 @@ const BUILTIN_RULES: &str = include_str!("../data/urlstrip-rules.json");
 /// Query-parameter name matcher.  A trailing `*` in the rule text is
 /// a prefix match ("utm_*" catches utm_source, utm_anything); anything
 /// else is an exact name so "si" cannot eat "simple".
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Pattern {
     Exact(String),
     Prefix(String),
@@ -76,6 +76,16 @@ impl Pattern {
             Pattern::Prefix(p) => name.starts_with(p.as_str()),
         }
     }
+
+    /// The rule text back — Prefix spells "name*", Exact the bare
+    /// name.  urlclean's "params" op reports the effective strip
+    /// list in the same spelling the JSON ruleset takes.
+    fn rule_text(&self) -> String {
+        match self {
+            Pattern::Exact(n) => n.clone(),
+            Pattern::Prefix(p) => format!("{p}*"),
+        }
+    }
 }
 
 /// Host matcher for scoped/unwrap rules (POL04).  "example.com"
@@ -85,7 +95,7 @@ impl Pattern {
 /// Deliberately heuristic: no public-suffix list, so "amazon.*" also
 /// catches lookalike hosts like amazon.com.evil.example — stripping a
 /// known tracker name there is harmless.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum HostPattern {
     Suffix(String),
     TldWildcard(String),
@@ -122,7 +132,7 @@ impl HostPattern {
 /// POL04: params that are trackers only on the listed domains —
 /// "ref" is an Amazon affiliate id but a functional parameter on
 /// countless other sites, so it only strips where scoped.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ScopedParams {
     hosts: Vec<HostPattern>,
     params: Vec<Pattern>,
@@ -132,7 +142,7 @@ struct ScopedParams {
 /// query parameter's percent-decoded value is the real destination.
 /// The whole original URL is replaced by that target (the wrapper's
 /// own tracking params — sa, ved, h, s — die with it).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct UnwrapRule {
     hosts: Vec<HostPattern>,
     path: String,
@@ -142,18 +152,43 @@ struct UnwrapRule {
 /// Per-site carve-out: an empty keep list exempts the host from
 /// stripping entirely; a non-empty list names params that survive
 /// while the rest still strip.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Exception {
     host: String,
     keep: Vec<Pattern>,
 }
 
-#[derive(Debug)]
+/// MD06: Clone so the urlclean module can derive a per-profile set
+/// from the shared global one (a profile ruleset + the legacy
+/// urlcleaner/extraParams merge produce owned values; the common
+/// no-override case still shares the Arc).
+#[derive(Debug, Clone)]
 pub struct RuleSet {
     params: Vec<Pattern>,
     scoped: Vec<ScopedParams>,
     unwrap: Vec<UnwrapRule>,
     exceptions: Vec<Exception>,
+}
+
+impl RuleSet {
+    /// MD06: append extra strip patterns (the legacy
+    /// urlcleaner/extraParams user list) to the global param table —
+    /// compile keeps the same trim/lower/prefix rules the JSON lane
+    /// applies.
+    pub(crate) fn extend_params<I, S>(&mut self, extra: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.params
+            .extend(extra.into_iter().filter_map(|s| Pattern::compile(s.as_ref())));
+    }
+
+    /// The global param table spelled back as rule text — the
+    /// "params" op's effective-list answer.
+    pub(crate) fn param_rules(&self) -> Vec<String> {
+        self.params.iter().map(Pattern::rule_text).collect()
+    }
 }
 
 /// The active ruleset — Arc'd so a strip in flight on the IO thread
@@ -166,7 +201,9 @@ fn parse_patterns(v: &Value) -> Vec<Pattern> {
         .unwrap_or_default()
 }
 
-fn parse_rules(text: &str) -> RcResult<RuleSet> {
+/// MD06: urlclean parses per-profile ruleset documents through the
+/// same validator — one grammar, one error contract.
+pub(crate) fn parse_rules(text: &str) -> RcResult<RuleSet> {
     let bad = |msg: String| Fail {
         status: RcStatus::Corrupt,
         msg,
@@ -259,13 +296,33 @@ fn parse_rules(text: &str) -> RcResult<RuleSet> {
 /// never disarm the strip.  The DirCache rebuilds it once when the
 /// data dir arrives late (rc_set_data_dir after first use) — the
 /// same staleness rule blocklist/tranco apply.
-fn active_rules() -> Arc<RuleSet> {
+/// MD06: urlclean inherits the shared Arc when a profile carries no
+/// override — no second parse, no divergence from the data-dir
+/// override/refresh lane.
+pub(crate) fn active_rules() -> Arc<RuleSet> {
     RULES.get_or_load(|dir| {
         load_from_disk(dir).unwrap_or_else(|_| {
             parse_rules(BUILTIN_RULES)
                 .expect("vendored urlstrip rules must parse")
         })
     })
+}
+
+/// The raw text behind the active global ruleset for
+/// ruleset_get's source reporting: ("override", text) when the
+/// data-dir file exists and parses, ("builtin", vendored) otherwise
+/// — mirroring load_from_disk's fallback so the reported source is
+/// the one actually in force.
+pub(crate) fn ruleset_source() -> (&'static str, String) {
+    if let Some(dir) = data_dir() {
+        match std::fs::read_to_string(dir.join(OVERRIDE_FILE)) {
+            Ok(text) if parse_rules(&text).is_ok() => {
+                return ("override", text);
+            }
+            _ => {}
+        }
+    }
+    ("builtin", BUILTIN_RULES.to_owned())
 }
 
 fn load_from_disk(dir: Option<&Path>) -> RcResult<RuleSet> {
@@ -322,26 +379,16 @@ pub fn strip(url: &str) -> String {
         .unwrap_or_else(|| url.to_owned())
 }
 
-/// POL04: the request-pipeline entry.  `navigation` gates redirect
-/// unwrapping to top-level navigations — a subresource hop may depend
-/// on the redirector's own response, while a link click never does.
-/// `is_exempt` carries the per-site opt-outs the shield panel learns
-/// (an exempt host's URLs pass through untouched, and an exempt
-/// unwrap target is never adopted — the redirector hop stands).
-pub fn strip_for_request(
-    url: &str,
-    navigation: bool,
-    is_exempt: &dyn Fn(&str) -> bool,
-) -> Option<CleanOutcome> {
-    clean_url(&active_rules(), url, navigation, is_exempt)
-}
-
 /// Bound on chained unwrapping — a real chain like l.facebook.com ->
 /// t.co still resolves while a self-referential rule pair cannot
 /// loop.
 const MAX_UNWRAP_HOPS: usize = 3;
 
-fn clean_url(
+/// MD06: urlclean runs the same surgery against its own resolved
+/// (per-profile or shared-global) ruleset, and policy::strip_target
+/// calls this directly so the snapshot's per-persona ruleset can win
+/// over the shared one.
+pub(crate) fn clean_url(
     rules: &RuleSet,
     url: &str,
     allow_unwrap: bool,

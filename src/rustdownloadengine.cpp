@@ -31,6 +31,12 @@
 #include "privacyrequestinterceptor.h"
 #include "sandboxmanager.h"
 
+#if defined(ARKTOS_RUSTCORE)
+#include "rustcorebridge.h"
+
+#include <arktos_core.h>
+#endif
+
 #include <qcoreapplication.h>
 #include <qdatetime.h>
 #include <qdir.h>
@@ -387,6 +393,45 @@ bool RustDownloadEngine::isSelected()
 
 bool RustDownloadEngine::canHandle(const QUrl &url)
 {
+#if defined(ARKTOS_RUSTCORE)
+    // MD04: the claim gate — selection key, http(s) floor and the
+    // tor managed-SOCKS rule — is a dlwpolicy decision now.  The
+    // caller supplies the live process facts the module cannot see
+    // (engine availability, tor mode, the effective proxy type);
+    // an absent answer falls through to the local gate.  The
+    // settings key is the active persona's — same scope
+    // isSelected() binds below.
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        if (AcDlwpolicy *h =
+                bridge->dlwpolicy(BrowserPaths::activeProfileId())) {
+            const QJsonObject req{
+                {QLatin1String("op"), QLatin1String("engine_claim")},
+                {QLatin1String("scheme"), url.scheme()},
+                {QLatin1String("engine_available"), isAvailable()},
+                {QLatin1String("tor_mode"),
+                 BrowserApplication::isTorMode()},
+                {QLatin1String("proxy_socks5"),
+                 QNetworkProxy::applicationProxy().type()
+                     == QNetworkProxy::Socks5Proxy},
+            };
+            const QByteArray json =
+                QJsonDocument(req).toJson(QJsonDocument::Compact);
+            char *raw = ac_dlw_call(
+                h, reinterpret_cast<const uint8_t *>(json.constData()),
+                size_t(json.size()));
+            ac_dlwpolicy_close(h);
+            if (raw) {
+                QByteArray out = QByteArray::fromRawData(
+                    raw, int(strlen(raw)));
+                out.detach();
+                rc_string_free(raw);
+                const QJsonObject r =
+                    QJsonDocument::fromJson(out).object();
+                if (r.contains(QLatin1String("claim")))
+                    return r.value(QLatin1String("claim")).toBool();
+            }
+        }
+#endif
     // DLACC06: the single claim gate — the engine must be selected
     // (rust is the default; an explicit "builtin" pick opts out).
     if (!isSelected())

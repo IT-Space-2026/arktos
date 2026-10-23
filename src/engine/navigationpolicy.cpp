@@ -35,10 +35,16 @@
 // ============================================================
 
 #include <rustcore.h>
+#include <arktos_core.h>
+
+#include "browserpaths.h"
+#include "rustcorebridge.h"
 
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
+
+#include <cstring>
 
 namespace Engine {
 
@@ -214,6 +220,10 @@ void NavigationPolicy::loadSnapshot(const Snapshot &s)
     QJsonArray cleanExceptions;
     for (const QString &h : s.urlCleanExceptions) cleanExceptions.append(h);
     m[QStringLiteral("urlclean_exceptions")] = cleanExceptions;
+    // MD06: the persona's merged urlclean ruleset rides the same
+    // snapshot — parsed once here (per push), never per request.
+    if (!s.urlCleanRuleset.isEmpty())
+        m[QStringLiteral("urlclean_ruleset")] = s.urlCleanRuleset;
     const QByteArray body = jsonBytes(m);
     rc_policy_load_snapshot(
         reinterpret_cast<const uint8_t *>(body.constData()),
@@ -569,6 +579,46 @@ QUrl NavigationPolicy::strippedUrl(const QUrl &url)
             && scheme != QLatin1String("https")))
         return url;
     const QByteArray encoded = url.toEncoded();
+    // MD06: the per-persona urlclean module answers first — purpose
+    // "nav" gates on the same privacy/urlCleaning row the pipeline
+    // snapshot carries, and a caller-side site exemption passes
+    // through as it does there.  The process-global rc_urlstrip
+    // stays the fallback so a missing bridge can never stop the
+    // strip.
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        if (AcUrlclean *h =
+                bridge->urlclean(BrowserPaths::activeProfileId())) {
+            const QJsonObject request{
+                {QLatin1String("op"), QLatin1String("clean")},
+                {QLatin1String("url"), QString::fromUtf8(encoded)},
+                {QLatin1String("purpose"), QLatin1String("nav")},
+                {QLatin1String("exempt"), isUrlCleanExempt(url.host())},
+            };
+            const QByteArray json = jsonBytes(request);
+            char *raw = ac_urlclean_call(
+                h, reinterpret_cast<const uint8_t *>(json.constData()),
+                size_t(json.size()));
+            ac_urlclean_close(h);
+            if (raw) {
+                QByteArray out = QByteArray::fromRawData(
+                    raw, int(strlen(raw)));
+                out.detach();
+                rc_string_free(raw);
+                const QJsonObject r =
+                    QJsonDocument::fromJson(out).object();
+                if (r.contains(QLatin1String("enabled"))) {
+                    if (!r.value(QLatin1String("enabled")).toBool())
+                        return url;
+                    const QByteArray cleaned = r
+                        .value(QLatin1String("url")).toString().toUtf8();
+                    if (cleaned.isEmpty() || cleaned == encoded)
+                        return url;
+                    const QUrl result = QUrl::fromEncoded(cleaned);
+                    return result.isValid() ? result : url;
+                }
+            }
+        }
+    }
     char *out = rc_urlstrip(encoded.constData());
     if (!out)
         return url;

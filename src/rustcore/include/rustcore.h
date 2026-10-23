@@ -258,6 +258,58 @@ char *rc_policy_evaluate(const uint8_t *jsonUtf8, size_t len);
 int rc_policy_cookie_filter(const uint8_t *jsonUtf8, size_t len);
 char *rc_policy_call(const uint8_t *jsonUtf8, size_t len);
 
+/* MD03: the SEC05 web-permission broker's decision layer — the
+ * feature tables (never-prompted captures/clipboard/fonts vs the
+ * ask-capable notifications/geolocation/mouse-lock), the
+ * security-origin key normalization, the remembered-decision
+ * consult and the session-scoped answer map.  Durable rows live in
+ * sitedecisions.json's "webperm" kind under the anchored data dir;
+ * the Qt manager keeps the prompt queue and the engine's
+ * grant()/deny() — this surface only answers questions.
+ *
+ * rc_perm_call: generic granular endpoint {"op":..., params} ->
+ *   JSON result.  Ops: decide (feature gate -> stored -> session ->
+ *   ask), stored (mid-queue recheck), resolve (session-record
+ *   always; persist on remember && !otr), remove (row + both
+ *   session variants), clear (kind + session map), feature_class,
+ *   key_for, session_clear.  NULL on error — callers fail toward
+ *   their own local consult, never a silent grant.
+ *   rc_string_free() the result. */
+char *rc_perm_call(const uint8_t *jsonUtf8, size_t len);
+
+/* MD02: the acceptNavigationRequest-time verdicts — interstitial
+ * carrier classification, the browser-handled scheme allowlist, the
+ * SEC02 external-handoff gate, per-profile scheme/nav-block
+ * overrides, the abp-subscribe rewrite, the staged-pdf viewer
+ * clamp, the file: directory reroute, the CONT04 container divert
+ * and the sanitize-on-view pdf claim — phase-scoped so the Qt
+ * page's kept gates stay in their exact order.  MD09 folds the
+ * pop-up gate in too: the createWindow consult (enabled / shaped /
+ * gesture / scheme floor / suffix-matched allow list) plus the
+ * exception-record ops — persistent rows are sitedecisions.json's
+ * "popup" kind, the session overlay is process-global.  The Qt
+ * side keeps all execution — nonce resolution, tor holds, tab
+ * spawning, dialogs, window/probe creation.
+ *
+ * rc_nav_decide: one navigation manifest (JSON; {"url","type",
+ *   "is_main_frame", "current_url", "current_is_managed",
+ *   "target_is_dir", "target_is_managed", "otr", "container",
+ *   "pdf_viewer", "pdf_sanitize", "gesture", "phase"}) -> verdict
+ *   JSON.  Phases: "pre" | "mid" | "claim"; an absent/unknown phase
+ *   runs all three and reports the first non-continue verdict.
+ *   NULL on malformed input — the adapter fails OPEN (treat NULL
+ *   as "continue", never as a block).
+ *
+ * rc_nav_call: generic granular endpoint {"op":..., params} ->
+ *   JSON result.  Ops: decide, browser_scheme, scheme_class,
+ *   rate_limit_interstitial, untrusted_input, page_link,
+ *   staged_viewer, nav_rule, popup_decide, popup_is_allowed,
+ *   popup_allow, popup_remove, popup_list, popup_clear,
+ *   popup_clear_session.  NULL on error — rc_string_free() the
+ *   result. */
+char *rc_nav_decide(const uint8_t *jsonUtf8, size_t len);
+char *rc_nav_call(const uint8_t *jsonUtf8, size_t len);
+
 /* PERF01: monotonic verdict-state generation — bumped by every
  * mutation that could change an evaluate() verdict (snapshot loads,
  * downgrade/allowance writes, urlstrip + blocklist swaps, data-dir
@@ -685,6 +737,47 @@ RcStatus rc_session_set_restoring(int on);
 int      rc_session_restoring(void);
 
 #define RC_SESSION_STATE_FILE "session.state"
+
+typedef struct RcSettings RcSettings;
+
+/* --- session snapshot/restore policy (MD08) -----------------------------
+ * The session pipeline's decision layer — a read-only typed view
+ * over the bound profile's settings store ("session/" prefix).
+ * `h` is the bound profile's RcSettings (rc_settings_open, or the
+ * ac_session_policy per-op open); NULL is legal for the "defaults"
+ * op only — the other reads degrade to the compiled-in constants on
+ * an absent store, except "stale" which genuinely needs the dir.
+ * Manifest grammar:
+ *   {"op":"defaults"}                 -> the resolved default set
+ *   {"op":"policy"}                   -> the whole resolved set
+ *   {"op":"snapshot"}                 -> {"interval_ms","maxwait_ms"}
+ *   {"op":"dirty","kind":<k>}         -> {"dirty":b,"kind":k}; kinds
+ *                                        "tabs"|"chrome"|"sidebar"|
+ *                                        "lifecycle", unknown kinds
+ *                                        answer true (parity with
+ *                                        the old every-change-dirty)
+ *   {"op":"retention"}                -> {"max_age_days","max_windows",
+ *                                        "max_tabs_per_window"}
+ *                                        (0 = no limit)
+ *   {"op":"stale"}                    -> {"stale":b,"age_ms":n|null,
+ *                                        "max_age_days":n} — reads
+ *                                        session.dat's mtime under
+ *                                        the bound scope
+ *   {"op":"restore"}                  -> {"startup_default":int,
+ *                                        "crash_restore":"ask"|
+ *                                        "always"|"never"}
+ * Store keys: session/snapshotIntervalMs, session/snapshotMaxWaitMs,
+ * session/dirtyOn{Tabs,Chrome,Sidebar,Lifecycle}, session/maxAgeDays,
+ * session/maxWindows, session/maxTabsPerWindow, session/crashRestore,
+ * session/startupModeDefault — all optional; the compiled-in
+ * constants (3000/15000 ms, every class dirty, no caps, "ask",
+ * StartPageStartup) are the defaults so a missing or mistyped row
+ * can never change behavior.  NULL return on malformed input or a
+ * store-required op without one — the caller keeps its compiled-in
+ * consult, never guesses.  Read-only: no change topic is emitted.
+ * Free the result with rc_string_free(). */
+char    *rc_sesspolicy_call(const RcSettings *h,
+                            const uint8_t *json, size_t len);
 
 /* --- DEVT03 devtools client ----------------------------------------
  *
@@ -1187,6 +1280,98 @@ RcStatus rc_containers_remove(RcSettings *h, const char *id);
 char *rc_containers_namespace(const char *data_root,
                               const char *profile_id,
                               const char *container_id);
+
+/* ------------------------------------------------------------------ */
+/* MD04: download-interception policy (dlwpolicy)                     */
+/*                                                                     */
+/* The DownloadManager's decision layer — a typed specialization    */
+/* over the profile scope's settings store like the container       */
+/* registry, so every op runs on an RcSettings handle bound to the  */
+/* owning persona.  The suggested-name sanitizer, the dangerous-    */
+/* extension/executable-mime threat tables, the save-as prompt      */
+/* gate, the external-handler handoff, the rustdl engine claim,     */
+/* the finished-row removal verdict, the per-profile rule view and  */
+/* the download history records live here.                          */
+/*                                                                     */
+/* The legacy downloadmanager/* keys read from the bound profile's  */
+/* settings.json (Qt still owns their writes); facade-authored      */
+/* rules (always_save_mimes, blocked_extensions) and the record     */
+/* list live in downloads.json beside it — records_list falls back  */
+/* to the legacy download_N_* keys while that file is absent, so    */
+/* pre-move history is never stranded.  The dialogs, the QProcess   */
+/* handoff and the filesystem execution stay caller-side — this     */
+/* surface only answers questions.                                  */
+/*                                                                     */
+/* rc_dlw_call: generic granular endpoint {"op":..., params} ->     */
+/*   JSON result.  `h` is the bound profile's RcSettings            */
+/*   (rc_settings_open, or the ac_dlw_call per-op open); NULL is    */
+/*   legal for the pure ops (sanitize_name, threat, external_argv)  */
+/*   — store-bound ops then error rather than guess rules.  Ops:    */
+/*   verdict, external_gate, engine_claim, row_remove, rules,       */
+/*   rule_get, rule_set, records_list, records_save, records_clear. */
+/*   NULL on error — callers fail toward their own local consult.   */
+/*   rc_string_free() the result.                                   */
+char *rc_dlw_call(RcSettings *h, const uint8_t *jsonUtf8, size_t len);
+
+/* ------------------------------------------------------------------ */
+/* MD05: privacy policy store view (privacy)                          */
+/*                                                                     */
+/* The per-persona privacy/* flag reads — a typed specialization    */
+/* over the profile scope's settings store like dlwpolicy, so every */
+/* op runs on an RcSettings bound to the owning persona.  The       */
+/* request interceptors' snapshot reads, the PRIV08 Sec-GPC         */
+/* decision and the unified tracker-strip/adblock policy read live  */
+/* here; the Qt writers keep owning the keys and all execution      */
+/* (setHttpHeader, script insertion, dialogs).                      */
+/*                                                                     */
+/* rc_privacy_call: generic granular endpoint {"op":..., params} -> */
+/*   JSON result.  `h` is the bound profile's RcSettings            */
+/*   (rc_settings_open, or the ac_privacy_call per-op open); NULL   */
+/*   is legal only for the pure "defaults" op — store-bound ops     */
+/*   error rather than guess a toggle.  Ops: flags (the whole       */
+/*   typed set), flag (one named row), gpc (the Sec-GPC decision    */
+/*   with the tor_mode fold), verdict ({gpc,strip,adblock} — the    */
+/*   unified read the tracker-strip and adblock consumers share),   */
+/*   defaults.  NULL on error — callers keep their local consult.   */
+/*   rc_string_free() the result.                                   */
+/*                                                                     */
+/* rc_privacy_gpc: the request-time Sec-GPC decision on the bound   */
+/*   store — 1 send "Sec-GPC: 1", 0 don't, -1 error (a -1 keeps the */
+/*   caller's verdict-bit fallback).  tor_mode != 0 answers 1       */
+/*   unconditionally — the tor pipeline's uniform-constant rule.    */
+char *rc_privacy_call(RcSettings *h, const uint8_t *jsonUtf8,
+                      size_t len);
+int   rc_privacy_gpc(RcSettings *h, int tor_mode);
+
+/* ------------------------------------------------------------------ */
+/* MD06: URL-sanitize policy (urlclean)                                 */
+/*                                                                     */
+/* The per-profile URL-cleaning decision layer — a typed             */
+/* specialization over the profile scope's settings store plus its   */
+/* own profiles/<id>/urlclean.json, the same two-tier split          */
+/* dlwpolicy made: the legacy urlcleaner/extraParams key is only     */
+/* ever READ through the bound store (Qt keeps the writes — no       */
+/* import step strands a pre-move user's list), while the            */
+/* facade-authored ruleset override (the urlstrip grammar —          */
+/* params/scoped/unwrap/exceptions) and the copy-path toggle live    */
+/* in urlclean.json.  The nav-path enable stays the privacy module's  */
+/* urlCleaning/stripTrackingParams read; the copy path defaults ON.  */
+/*                                                                     */
+/* rc_urlclean_call: generic granular endpoint {"op":..., params} -> */
+/*   JSON result.  `h` is the bound profile's RcSettings             */
+/*   (rc_settings_open, or the ac_urlclean_call per-op open); NULL   */
+/*   is legal only for the pure "defaults" op — store-bound ops      */
+/*   error rather than guess a toggle.  Ops: clean (url, purpose     */
+/*   copy|nav, exempt, unwrap -> {url,changed,removed,unwrapped,     */
+/*   enabled}), enabled, set_enabled (purpose copy only — the nav    */
+/*   key is Qt-owned), params, ruleset_get, ruleset_set,             */
+/*   ruleset_reset, clean_policy (the snapshot-facing composite:     */
+/*   toggles + the merged ruleset doc the loader embeds as           */
+/*   "urlclean_ruleset"), defaults.  Mutating ops emit the           */
+/*   "urlclean" change topic.  NULL on error — callers keep their    */
+/*   local consult.  rc_string_free() the result.                    */
+char *rc_urlclean_call(RcSettings *h, const uint8_t *jsonUtf8,
+                       size_t len);
 
 /* ------------------------------------------------------------------ */
 /* RC20: update-check policy + manifest parse                          */

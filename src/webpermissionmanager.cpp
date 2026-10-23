@@ -29,7 +29,50 @@
 #include <qwebenginepage.h>
 
 #if defined(ARKTOS_RUSTCORE)
+#include "rustcorebridge.h"
 #include "sitedecisionstore.h"
+
+#include <arktos_core.h>
+
+#include <qjsondocument.h>
+#include <qjsonobject.h>
+
+#include <string.h>
+
+// MD03: one granular call into rustcore's permpolicy module — the
+// broker's decision layer (feature tables, origin-key normalization,
+// remembered + session verdict pipeline) lives there now; this
+// manager keeps the modal queue and the engine resolves.  The
+// default-bound AcPolicy is minted exactly like SiteDecisionStore's
+// PolicyAccess (permission decisions are persona-independent,
+// MPROF02); with no bridge serving yet the legacy rc_* spelling runs
+// under the same explicit default anchor.  A NULL verdict maps to an
+// empty object — callers then run the local consult, so an FFI
+// failure can never silently grant or deny.
+static QJsonObject permPolicyCall(const QJsonObject &request)
+{
+    AcPolicy *h = nullptr;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->policy(QString());
+    if (!h)
+        rustCoreEnsureDataDirFor(QLatin1String("default"));
+    const QByteArray json =
+        QJsonDocument(request).toJson(QJsonDocument::Compact);
+    char *raw = h
+        ? ac_perm_call(h,
+                       reinterpret_cast<const uint8_t *>(json.constData()),
+                       size_t(json.size()))
+        : rc_perm_call(
+              reinterpret_cast<const uint8_t *>(json.constData()),
+              size_t(json.size()));
+    ac_policy_close(h);
+    if (!raw)
+        return QJsonObject();
+    QByteArray out = QByteArray::fromRawData(raw, int(strlen(raw)));
+    out.detach();
+    rc_string_free(raw);
+    return QJsonDocument::fromJson(out).object();
+}
 
 // SITED01: one-shot import of the legacy "webpermissions" QSettings
 // group.  Every origin/type row is replayed into the Rust store; the
@@ -173,15 +216,29 @@ QString WebPermissionManager::typeDescription(QWebEnginePermission::PermissionTy
 QString WebPermissionManager::keyFor(const QUrl &origin,
         QWebEnginePermission::PermissionType type)
 {
+    const QMetaEnum metaEnum = permissionTypeEnum();
+    const char *key = metaEnum.valueToKey(static_cast<int>(type));
+    const QString typeName = QLatin1String(key ? key : "Unsupported");
+#if defined(ARKTOS_RUSTCORE)
+    // MD03: the normalization lives in permpolicy now — every write
+    // path must key identically to the store consults, so the facade
+    // owns the spelling.  An FFI hiccup falls through to the local
+    // computation, which produces the same bytes by construction.
+    const QString derived = permPolicyCall({
+        {QLatin1String("op"), QLatin1String("key_for")},
+        {QLatin1String("origin"), QString::fromUtf8(origin.toEncoded())},
+        {QLatin1String("type"), typeName},
+    }).value(QLatin1String("key")).toString();
+    if (!derived.isEmpty())
+        return derived;
+#endif
     QUrl o = origin;
     o.setUserInfo(QString());
     o.setPath(QString());
     o.setQuery(QString());
     o.setFragment(QString());
-    const QMetaEnum metaEnum = permissionTypeEnum();
-    const char *key = metaEnum.valueToKey(static_cast<int>(type));
     return QString::fromUtf8(o.toEncoded().toPercentEncoding())
-        + QLatin1Char('/') + QLatin1String(key ? key : "Unsupported");
+        + QLatin1Char('/') + typeName;
 }
 
 QList<WebPermissionManager::Entry> WebPermissionManager::entries() const
@@ -253,28 +310,50 @@ void WebPermissionManager::removeEntry(const QUrl &origin,
         QWebEnginePermission::PermissionType type)
 {
 #if defined(ARKTOS_RUSTCORE)
-    SiteDecisionStore::remove(SiteDecisionStore::KindWebPermission,
-                              keyFor(origin, type));
+    // The facade removes the persistent row AND both session
+    // variants in one op; the local path is the FFI-failure
+    // fallback.
+    const QMetaEnum metaEnum = permissionTypeEnum();
+    const char *key = metaEnum.valueToKey(static_cast<int>(type));
+    const QJsonObject r = permPolicyCall({
+        {QLatin1String("op"), QLatin1String("remove")},
+        {QLatin1String("origin"), QString::fromUtf8(origin.toEncoded())},
+        {QLatin1String("type"), QLatin1String(key ? key : "Unsupported")},
+    });
+    if (r.isEmpty()) {
+        SiteDecisionStore::remove(SiteDecisionStore::KindWebPermission,
+                                  keyFor(origin, type));
+        m_sessionDecisions.remove(sessionKeyFor(origin, type, false));
+        m_sessionDecisions.remove(sessionKeyFor(origin, type, true));
+    }
 #else
     ProfileSettings settings;
     settings.beginGroup(QLatin1String("webpermissions"));
     settings.remove(keyFor(origin, type));
     settings.endGroup();
-#endif
     m_sessionDecisions.remove(sessionKeyFor(origin, type, false));
     m_sessionDecisions.remove(sessionKeyFor(origin, type, true));
+#endif
     emit changed();
 }
 
 void WebPermissionManager::clearEntries()
 {
 #if defined(ARKTOS_RUSTCORE)
-    SiteDecisionStore::clear(SiteDecisionStore::KindWebPermission);
+    // "clear" empties the kind and the whole session map behind the
+    // facade; the local pair is the FFI-failure fallback.
+    const QJsonObject r = permPolicyCall({
+        {QLatin1String("op"), QLatin1String("clear")},
+    });
+    if (r.isEmpty()) {
+        SiteDecisionStore::clear(SiteDecisionStore::KindWebPermission);
+        m_sessionDecisions.clear();
+    }
 #else
     ProfileSettings settings;
     settings.remove(QLatin1String("webpermissions"));
-#endif
     m_sessionDecisions.clear();
+#endif
     emit changed();
 }
 
@@ -289,8 +368,25 @@ bool WebPermissionManager::storedDecision(const QUrl &origin,
         QWebEnginePermission::PermissionType type, bool *granted,
         bool offTheRecord) const
 {
-    const QString key = keyFor(origin, type);
 #if defined(ARKTOS_RUSTCORE)
+    // MD03: persistent-row-then-session consult lives in permpolicy —
+    // the facade answer is authoritative; the local reads below are
+    // the FFI-failure fallback.
+    const QMetaEnum metaEnum = permissionTypeEnum();
+    const char *typeKey = metaEnum.valueToKey(static_cast<int>(type));
+    const QJsonObject r = permPolicyCall({
+        {QLatin1String("op"), QLatin1String("stored")},
+        {QLatin1String("origin"), QString::fromUtf8(origin.toEncoded())},
+        {QLatin1String("type"), QLatin1String(typeKey ? typeKey : "Unsupported")},
+        {QLatin1String("otr"), offTheRecord},
+    });
+    if (!r.isEmpty()) {
+        if (!r.value(QLatin1String("found")).toBool())
+            return false;
+        *granted = r.value(QLatin1String("granted")).toBool();
+        return true;
+    }
+    const QString key = keyFor(origin, type);
     QString stored;
     if (SiteDecisionStore::get(SiteDecisionStore::KindWebPermission,
                                key, &stored)) {
@@ -298,6 +394,7 @@ bool WebPermissionManager::storedDecision(const QUrl &origin,
         return true;
     }
 #else
+    const QString key = keyFor(origin, type);
     ProfileSettings settings;
     settings.beginGroup(QLatin1String("webpermissions"));
     if (settings.contains(key)) {
@@ -338,17 +435,44 @@ void WebPermissionManager::handleRequest(QWidget *parent,
         QWebEnginePermission::PermissionType type, bool offTheRecord,
         const std::function<void(bool)> &resolve)
 {
-    // Never prompt for the dangerous surface: capture devices, screen
-    // capture, clipboard, font enumeration and anything unmapped.
-    if (isDenied(type) || !isPromptable(type)) {
-        resolve(false);
-        return;
-    }
+#if defined(ARKTOS_RUSTCORE)
+    // MD03: the whole verdict pipeline — feature gate, remembered
+    // row, session answer — is one permpolicy consult.  Only "ask"
+    // reaches the prompt queue below; an FFI failure falls through
+    // to the same gates spelled locally (the feature table is a
+    // compiled-in security boundary in both places).
+    const QMetaEnum metaEnum = permissionTypeEnum();
+    const char *typeKey = metaEnum.valueToKey(static_cast<int>(type));
+    const QJsonObject verdict = permPolicyCall({
+        {QLatin1String("op"), QLatin1String("decide")},
+        {QLatin1String("origin"), QString::fromUtf8(origin.toEncoded())},
+        {QLatin1String("type"), QLatin1String(typeKey ? typeKey : "Unsupported")},
+        {QLatin1String("otr"), offTheRecord},
+    });
+    if (!verdict.isEmpty()) {
+        const QString action =
+            verdict.value(QLatin1String("action")).toString();
+        if (action == QLatin1String("deny")
+            || action == QLatin1String("allow")) {
+            resolve(action == QLatin1String("allow"));
+            return;
+        }
+    } else
+#endif
+    {
+        // Never prompt for the dangerous surface: capture devices,
+        // screen capture, clipboard, font enumeration and anything
+        // unmapped.
+        if (isDenied(type) || !isPromptable(type)) {
+            resolve(false);
+            return;
+        }
 
-    bool granted = false;
-    if (storedDecision(origin, type, &granted, offTheRecord)) {
-        resolve(granted);
-        return;
+        bool granted = false;
+        if (storedDecision(origin, type, &granted, offTheRecord)) {
+            resolve(granted);
+            return;
+        }
     }
 
     Pending pending;
@@ -415,12 +539,35 @@ void WebPermissionManager::showNextPrompt()
         // Always remember for the session — without it a page looping
         // requestPermission() would spam modals.  Persisting is opt-in
         // via the checkbox and never happens for off-the-record pages.
-        m_sessionDecisions.insert(
-            sessionKeyFor(pending.origin, pending.type,
-                          pending.offTheRecord),
-            allow);
-        if (remember->isChecked() && !pending.offTheRecord)
-            setEntry(pending.origin, pending.type, allow);
+#if defined(ARKTOS_RUSTCORE)
+        const QMetaEnum metaEnum = permissionTypeEnum();
+        const char *typeKey =
+            metaEnum.valueToKey(static_cast<int>(pending.type));
+        const QJsonObject rec = permPolicyCall({
+            {QLatin1String("op"), QLatin1String("resolve")},
+            {QLatin1String("origin"),
+             QString::fromUtf8(pending.origin.toEncoded())},
+            {QLatin1String("type"),
+             QLatin1String(typeKey ? typeKey : "Unsupported")},
+            {QLatin1String("granted"), allow},
+            {QLatin1String("remember"), remember->isChecked()},
+            {QLatin1String("otr"), pending.offTheRecord},
+        });
+        if (!rec.isEmpty()) {
+            if (rec.value(QLatin1String("persisted")).toBool())
+                emit changed();
+        } else
+#endif
+        {
+            // FFI failure (or a no-rust build): record locally, same
+            // rules — session always, persistent on opt-in.
+            m_sessionDecisions.insert(
+                sessionKeyFor(pending.origin, pending.type,
+                              pending.offTheRecord),
+                allow);
+            if (remember->isChecked() && !pending.offTheRecord)
+                setEntry(pending.origin, pending.type, allow);
+        }
     }
     m_inPrompt = false;
 }

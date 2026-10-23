@@ -33,14 +33,38 @@ Rules for the agent working this file:
 | ID | Task | Status | Attempts | Notes |
 |----|------|--------|----------|-------|
 | MD01 | Domains audit — inventory Qt-side decision logic + move/keep table | done | 0 | MW-DOMAINS.md: full move/keep audit of webpage/webview/locationbar/downloadmanager/webpermissionmanager/network interceptors/GPC/popup/session/urlclean/scriptcontrol/extension surfaces; verified file:line against tree |
-| MD02 | rustcore `navpolicy` — acceptNavigationRequest decisions + FFI + adoption | pending | 0 | scheme allowlist, blocked-nav, external-protocol handoff, target=_blank/popup gate; WebPage::acceptNavigationRequest becomes decision consumer; parity autotest vs current Qt behavior |
-| MD03 | rustcore `permpolicy` — WebPermissionManager decisions per-profile + FFI | pending | 0 | notification/geo/clipboard/pointerlock/media etc verdict store + defaults; Qt permission dialogs keep UI, decisions via facade; tst_parity green |
-| MD04 | rustcore `dlwpolicy` — download interception policy (auto/save-as/block, mime) | pending | 0 | verdict from request headers+suggested name+mime rules; DownloadManager adopts via facade; per-profile rules store |
-| MD05 | rustcore `privacy` — GPC header decision + tracker-strip unified in policy store | pending | 0 | GPC enabled per profile -> Sec-GPC decision via facade at request-intercept time; unify w/ existing tracking/adblock policy reads |
-| MD06 | rustcore `urlclean` — tracking-param strip / URL sanitize for nav + clipboard | pending | 0 | ruleset-driven param stripping (utm_* etc); consumed on navigation + copy-link; per-profile on/off in policy store |
-| MD07 | Extension dispatch gaps — remaining chrome.* surfaces behind shim dispatch | pending | 0 | audit EXT-RUNTIME-GAPS.md first; move unimplemented-but-feasible APIs behind ExtensionShimBackend dispatch; honest unsupported list updated |
-| MD08 | Session snapshot policy — autosaver/dirty-tracking decisions into sessions module | pending | 0 | snapshot interval, dirty thresholds, restore-policy decisions via AcSession; Qt timers keep firing, policy from facade |
-| MD09 | Popup-block decision — WebView popup gate unified into navpolicy | pending | 0 | gesture-required / allowlist / always-ask policy through navpolicy facade; parity with current WebPage popup behavior |
+| MD02 | rustcore `navpolicy` — acceptNavigationRequest decisions + FFI + adoption | blocked | 5 | blocked:exceeded 5 restarts |
+| MD03 | rustcore `permpolicy` — WebPermissionManager decisions per-profile + FFI | blocked | 5 | blocked:exceeded 5 restarts |
+| MD04 | rustcore `dlwpolicy` — download interception policy (auto/save-as/block, mime) | blocked | 5 | blocked:exceeded 5 restarts |
+| MD05 | rustcore `privacy` — GPC header decision + tracker-strip unified in policy store | blocked | 5 | blocked:exceeded 5 restarts |
+| MD06 | rustcore `urlclean` — tracking-param strip / URL sanitize for nav + clipboard | blocked | 5 | blocked:exceeded 5 restarts |
+| MD07 | Extension dispatch gaps — remaining chrome.* surfaces behind shim dispatch | blocked | 5 | blocked:exceeded 5 restarts |
+| MD08 | Session snapshot policy — autosaver/dirty-tracking decisions into sessions module | blocked | 5 | blocked:exceeded 5 restarts |
+| MD09 | Popup-block decision — WebView popup gate unified into navpolicy | done | 4 | popup gate unified behind navpolicy popup_decide + record ops via ac_nav_call/rc_nav_call (ABI v11); PopupBlocker consults facade w/ FFI-failure local fallback; verified cargo 431/431, make -j2 clean, tst_popupblocker 10/10 offscreen, acprobe OK incl popup legs, no-rust TU clean |
+| MD10 | tabs core ops + tabObject honesty — remove/reload/duplicate/move/highlight/goBack/goForward/discard + real pinned/discarded/groupId + query filters | pending | 0 | TabWidget isTabPinned/sleepTab/closeTab/moveTabTo/tabGroupId all exist; dispatch-only |
+| MD11 | tabs zoom + captureVisibleTab — get/setZoom(+Settings) + view grab -> dataUrl | pending | 0 | zoomFactor + grab(); capture gated by seesUrls coverage like shapedTab |
+| MD12 | tabs.connect — long-lived Port to a tab's page agent over ER02 relay | pending | 0 | bridge-level like tabs.sendMessage; Port lifecycle + disconnect |
+| MD13 | windows fidelity — populate tabs array, real state, update/create geometry+drawAttention | pending | 0 | get/getAll/getCurrent/getLastFocused populate; update width/height/left/top/state/drawAttention |
+| MD14 | action.setIcon — record bundle-path/imageData into ActionState for EXT08 strip | pending | 0 | remove JS typed stub; icon pipeline = record only, strip renders |
+| MD15 | extension.isAllowedFileSchemeAccess/isAllowedIncognitoAccess — honest booleans | pending | 0 | replace fillNs typed stubs; answer real config values (likely false) |
+| MD16 | management read ops — getAll/get + permissionWarnings over ExtensionManager | pending | 0 | extensions() -> ExtensionInfo shape shared with getSelf |
+| MD17 | management mutations — setEnabled/uninstall/uninstallSelf, 'management'-gated | pending | 0 | setExtensionEnabled/removeExtension; onEnabled/onDisabled/onUninstalled events |
+| MD18 | runtime lifecycle — reload, requestUpdateCheck, real setUninstallURL | pending | 0 | ExtensionManager reload + checkForUpdates/updateResultFor |
+| MD19 | storage extras — getKeys, setAccessLevel, sync persistence, quota bounds | pending | 0 | sync currently aliases session memory; persist like local + note |
+| MD20 | alarms edge parity — MV3 30s period floor w/ note, unnamed defaults, getAll order | pending | 0 | thin parity row over invokeAlarms |
+| MD21 | chrome.bookmarks.* over rustcore RC05 store | pending | 0 | get/getChildren/getRecent/getTree/getSubTree/search/create/move/update/remove/removeTree + on* events |
+| MD22 | chrome.history.* over rustcore RC04 store | pending | 0 | search/getVisits/addUrl/deleteUrl/deleteRange/deleteAll + onVisited/onVisitRemoved |
+| MD23 | chrome.cookies.* over RC15 store + engine cookie store | pending | 0 | get/getAll/getAllCookieStores/set/remove + onChanged |
+| MD24 | chrome.downloads.* subset over DownloadManager | pending | 0 | download/search/pause/resume/cancel/open/show/showDefaultFolder/erase/removeFile + onCreated/onChanged/onErased; shelf ops typed |
+| MD25 | chrome.sessions minimal — getDevices honest empty, recentlyClosed/restore over undo stack | pending | 0 | per-window closed-tab stack needs a read API |
+| MD26 | chrome.tabGroups.* over TABGRP machinery | pending | 0 | get/query/update/move/ungroup + tabObject.groupId + events |
+| MD27 | chrome.topSites.get — history most-visited | pending | 0 | hosts table order by visit count |
+| MD28 | chrome.browsingData subset over ClearPrivateData | pending | 0 | remove/removeHistory/removeCookies/removeDownloads/removeCache/removeFormData/settings |
+| MD29 | chrome.dns.resolve — QHostInfo | pending | 0 | async lookup -> {address[]} or typed failure |
+| MD30 | chrome.system subset — memory/cpu/display/storage honest answers | pending | 0 | QSysInfo/QScreen/QStorageInfo; per-sub-ns permission gates |
+| MD31 | chrome.privacy subset — map servable ChromeSetting members to real settings | pending | 0 | e.g. thirdPartyCookiesAllowed -> cookie policy; unserved stay typed |
+| MD32 | chrome.userScripts.* over ER09 registry machinery | pending | 0 | register/unregister/getScripts/update/configureWorld |
+| MD33 | chrome.fontSettings subset — getFontList/getFont/default sizes | pending | 0 | QFontDatabase + engine font settings; set* writes real defaults or typed |
 
 ## Task details
 
@@ -122,3 +146,201 @@ read policy via facade instead of hardcoded/QSettings-scattered values.
 Popup gate: unify WebPage createWindow policy + WebView popup handling
 through navpolicy verdict (gesture-required default, per-host allowlist
 in permpolicy store, ask-mode). Parity autotest.
+
+### MD10
+chrome.tabs core ops + state honesty.  Implement in invokeTabs
+(extensionshimbackend.cpp:662) + tabsNs (extshim.js:2320): remove
+(TabWidget::closeTab), reload, duplicate, highlight, move
+(moveTabTo / strip reorder), goBack/goForward, discard (SLEEP01
+sleepTab — sleeping IS Chrome's discarded state), deprecated
+getAllInWindow/getSelected aliases.  tabObject stops hardcoding
+pinned/audible/discarded/mutedInfo/groupId (:626-636) — read
+isTabPinned (tabwidget.cpp:712), sleep state, tabGroupId
+(tabwidget.h:290); extend query filters (pinned, audible, muted,
+discarded, highlighted, autoDiscardable, groupId, windowType).
+Verify: tst_extensionmanager leg driving each op on a temp-profile
+window + gap-list entries removed for served members.
+
+### MD11
+chrome.tabs zoom + captureVisibleTab.  getZoom/setZoom via
+WebView/QWebEngineView zoomFactor per tabId; get/setZoomSettings
+record scope/mode honestly.  captureVisibleTab grabs the view to
+data:image/png;base64 — gated by the same seesUrls host-coverage
+check shapedTab applies (extension must hold 'tabs'/activeTab or
+host coverage, else typed no-permission).  Verify: leg asserts zoom
+roundtrip and a non-empty dataUrl for a covered tab, refusal for an
+uncovered one.
+
+### MD12
+chrome.tabs.connect — long-lived Port between the extension context
+and a tab's page agent over the ER02 relay machinery
+tabs.sendMessage already uses (extensionbackgroundhost.cpp:157).
+Port needs postMessage/onMessage/onDisconnect both directions and
+host-coverage gating identical to sendMessage.  Verify: parity leg —
+open port, exchange messages, disconnect propagates.
+
+### MD13
+chrome.windows fidelity.  invokeWindows (extensionshimbackend.cpp:
+971): populate=true returns the tabs array on get/getCurrent/
+getLastFocused/getAll (create already does, :1058-1067); real
+window.state (isMinimized/isMaximized/isFullScreen instead of
+hardcoded "normal" :964); update accepts width/height/left/top/
+drawAttention/state; create honours the same geometry props.
+Verify: leg asserts populate shape + a geometry roundtrip.
+
+### MD14
+chrome.action/browserAction.setIcon.  Path details resolve to
+bundle-relative files under m_extensionPath (same hygiene
+openOptionsPage applies); imageData is raw RGBA.  Record into
+ActionState + ExtensionInfo so the EXT08 action strip can render;
+remove the JS typed stub (extshim.js:2261).  Removes the two
+`*.setIcon` gap entries when landed.  Verify: leg asserts ActionState
+carries the icon and getIcon readers see it.
+
+### MD15
+chrome.extension.isAllowedFileSchemeAccess /
+isAllowedIncognitoAccess — answer honest booleans (Arktos hosts
+extensions on the normal profile and never grants file: scheme, so
+both answer false today — that IS the truth; wire through invoke so
+a future capability surfaces honestly).  Replaces fillNs typed stubs
+(extshim.js:3760-3762); removes two gap entries.  Verify: leg asserts
+{ok:true,false} for both.
+
+### MD16
+chrome.management read ops.  invokeManagement gains getAll/get over
+ExtensionManager::extensions() (extensionmanager.h:268) shaping the
+same ExtensionInfo getSelf already builds (:1626-1772), plus
+getPermissionWarningsById/getPermissionWarningsByManifest answering
+honest warning strings derived from the permission list.  Gated:
+'management' declared -> served; undeclared -> no-permission
+(unchanged).  Verify: leg enumerates the fixture extension.
+
+### MD17
+chrome.management mutations.  setEnabled/uninstall/uninstallSelf via
+ExtensionManager::setExtensionEnabled/removeExtension
+(extensionmanager.h:283-284), 'management'-permission gated; fire
+management.onEnabled/onDisabled/onUninstalled through pushEvent.
+Verify: leg toggles the fixture extension off and on.
+
+### MD18
+chrome.runtime lifecycle ops.  reload -> ExtensionManager unload+load
+of the calling extension (replaces typed unsupported at
+extensionshimbackend.cpp:1942); requestUpdateCheck ->
+ExtensionManager::checkForUpdates/updateResultFor answering Chrome's
+{status,version} shape; setUninstallURL persists the url and
+removeExtension opens it.  Verify: leg asserts requestUpdateCheck
+status vocabulary and uninstall-url roundtrip on a temp profile.
+
+### MD19
+chrome.storage extras.  invokeStorage (:364): <area>.getKeys,
+setAccessLevel recorded (TRUSTED/UNTRUSTED_CONTEXTS note), 'sync'
+stops aliasing the in-memory session store (storeFor :274-285) and
+persists like 'local' with a no-cloud-sync note; QUOTA_BYTES /
+QUOTA_BYTES_PER_ITEM constants + enforcement bounds matching Chrome.
+Verify: leg asserts sync survives a backend respawn on temp profile.
+
+### MD20
+chrome.alarms edge parity.  invokeAlarms (:534): enforce Chrome's MV3
+30s periodInMinutes floor with a recorded note (today any period
+spins), unnamed alarms get Chrome's generated name, getAll answers
+in a deterministic order, create() on an existing name replaces like
+Chrome.  Verify: legs assert floor-clamp note + order stability.
+
+### MD21
+chrome.bookmarks.* served over the rustcore RC05 bookmarks store
+(src/rustcore/src/bookmarks.rs) through the facade/FFI lane the C++
+BookmarkNode wrappers already use: get/getChildren/getRecent/
+getTree/getSubTree/search/create/move/update/remove/removeTree +
+onCreated/onRemoved/onChanged/onMoved events via pushEvent.
+'bookmarks' manifest permission gates the namespace.  Removes the
+dead-namespace entry when landed.  Verify: parity leg against a
+temp-profile bookmark tree.
+
+### MD22
+chrome.history.* over the RC04 store (history.rs) +
+HistoryManager signals: search/getVisits/addUrl/deleteUrl/
+deleteRange/deleteAll + onVisited/onVisitRemoved events.
+'history' permission gates.  Deletes must run the same retention/
+icons path HistoryManager::checkForExpired uses.  Verify: leg
+records a visit, searches it, deletes it.
+
+### MD23
+chrome.cookies.* over the RC15 store (cookies.rs) as the persistent
+mirror + QWebEngineCookieStore for live set/remove: get/getAll/
+getAllCookieStores/set/remove + onChanged.  'cookies' permission +
+host coverage for the url gate.  Verify: leg sets + gets a cookie on
+a covered host in a temp profile.
+
+### MD24
+chrome.downloads.* subset over DownloadManager records: download
+(route through the same policy path DownloadManager uses), search,
+pause/resume/cancel/open/show/showDefaultFolder/erase/removeFile +
+onCreated/onChanged/onErased events.  getFileIcon answers a type
+icon or typed unsupported; setShelfEnabled/drag typed (no shelf).
+'downloads' permission gates.  Verify: leg downloads a fixture url,
+searches it, cancels one.
+
+### MD25
+chrome.sessions minimal.  getDevices answers the honest empty list
+(no sync), MAX_SESSION_RESULTS constant; getRecentlyClosed/restore
+over TabWidget's per-window closed-tab undo stack — expose a read
+API (hasRecentlyClosedTabs/openLastTab exist; need enumerated
+records + restore-by-index).  'sessions' permission gates.  Verify:
+leg closes a tab, sees it in getRecentlyClosed, restores it.
+
+### MD26
+chrome.tabGroups.* over the TABGRP machinery (tabwidget.h:284-326):
+get/query/update/move/ungroup, tabObject.groupId filled (rides
+MD10's honesty change — land a fallback if MD10 is pending), the
+four on* events via pushEvent.  'tabGroups' permission gates.
+Verify: leg creates a group via update(), queries it, ungroups.
+
+### MD27
+chrome.topSites.get — history most-visited hosts from the RC04
+store (same host/suggest table the location completer ranks).
+No permission gate in Chrome.  Verify: leg asserts a visited host
+appears.
+
+### MD28
+chrome.browsingData subset.  remove() + removeHistory/removeCookies/
+removeDownloads/removeCache/removeFormData/settings mapped onto the
+ClearPrivateData machinery — 'browsingData' permission gated.
+Unserved dataTypes keep typed unsupported inside the removal set,
+never silently skipped.  Verify: leg asserts removeHistory empties a
+temp-profile history.
+
+### MD29
+chrome.dns.resolve — QHostInfo::lookupHost, 'dns' permission gated;
+answers {addresses:[...]} or a typed resolution failure.  Verify:
+leg resolves localhost on a temp profile.
+
+### MD30
+chrome.system subset.  system.memory.getInfo (QSysInfo capacity),
+system.cpu.getInfo (arch/numProcessors — no per-core time if not
+honestly measurable), system.display.getInfo (QScreen geometry/depth),
+system.storage.getInfo (QStorageInfo on the profile root).  Each
+sub-namespace gated by its 'system.*' permission like Chrome.
+Verify: legs assert honest non-empty shapes.
+
+### MD31
+chrome.privacy subset — ChromeSetting-shaped objects for members
+with a real mapping (e.g. websites.thirdPartyCookiesAllowed ->
+cookie-filter policy, network.networkPredictionEnabled -> prefetch
+setting if one exists); get/set respect 'privacy' permission;
+unservable members keep typed unsupported.  Verify: leg roundtrips
+one mapped setting on a temp profile.
+
+### MD32
+chrome.userScripts.* over the ER09 registration machinery:
+register/unregister/getScripts/update answering the MV3 shapes
+(ids, matches, js, runAt) + configureWorld recorded honestly.
+'userScripts' permission gated.  Verify: leg registers a script and
+lists it.
+
+### MD33
+chrome.fontSettings subset.  getFontList via QFontDatabase, getFont/
+getDefaultFontSize/getDefaultFixedFontSize answering real engine
+defaults; set*/clear* write the real default settings where an
+honest mapping exists, typed unsupported otherwise.  'fontSettings'
+permission gates.  Verify: leg asserts getFontList non-empty and a
+default-size read.

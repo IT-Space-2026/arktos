@@ -133,6 +133,52 @@
 //!     rules (stable/beta vs draft/prerelease), and the
 //!     last-check/snooze/skipped state as typed helpers over the
 //!     GLOBAL settings scope.  The network fetch stays Qt-side.
+//!   * navpolicy (MD02): the acceptNavigationRequest-time verdicts —
+//!     scheme classification vs the browser-handled allowlist, the
+//!     SEC02 external-handoff gate with per-profile scheme overrides,
+//!     per-profile blocked hosts, the abp-subscribe rewrite, the
+//!     staged-pdf viewer clamp, the file: directory reroute, the
+//!     CONT04 container divert and the sanitize-on-view pdf claim —
+//!     phase-scoped so the Qt page's kept gates stay in their exact
+//!     order; the override rules live in the bound profile's
+//!     sitedecisions.json ("nav-scheme"/"nav-block" kinds).
+//!   * permpolicy (MD03): the SEC05 permission-broker verdicts — the
+//!     hard-deny/ask-capable feature tables, the security-origin key
+//!     normalization, and the remembered+session decision pipeline
+//!     behind rc_perm_call.  Durable rows are sitedecisions.json's
+//!     "webperm" kind; session answers are process-global and
+//!     OTR-namespaced.  Dialogs stay Qt-side.
+//!   * dlwpolicy (MD04): the download-interception verdicts — the
+//!     suggested-name sanitizer, the dangerous-extension/executable-
+//!     mime threat tables, the save-as gate, the external-handler
+//!     handoff, the rustdl engine claim, the finished-row removal
+//!     verdict and the download history records behind rc_dlw_call.
+//!     Legacy downloadmanager/* keys read from the bound profile's
+//!     settings.json; facade-authored rules and records live in
+//!     downloads.json beside it.  Dialogs, QProcess and the
+//!     filesystem stay Qt-side.
+//!   * privacy (MD05): the per-profile privacy-policy store view —
+//!     the typed privacy/* flag reads (incl. the referer-bool
+//!     migration and the urlCleaning/stripTrackingParams alias), the
+//!     per-persona Sec-GPC decision the interceptors consult at
+//!     request time, and the unified {gpc,strip,adblock} verdict the
+//!     tracker-strip and adblock policy reads share.  Read-only over
+//!     the bound scope's settings.json — Qt keeps the writes and all
+//!     execution.
+//!   * urlclean (MD06): the per-profile URL-sanitize policy — the
+//!     editable ruleset override (profiles/<id>/urlclean.json, the
+//!     urlstrip grammar), the copy-path toggle, the nav-path toggle
+//!     read shared with the privacy module, the legacy
+//!     urlcleaner/extraParams merge, and the clean_policy composite
+//!     the snapshot loader ships to policy::strip_target.  The
+//!     clipboard write and the redirect application stay Qt-side.
+//!   * sesspolicy (MD08): the session snapshot/restore policy —
+//!     the AutoSaver debounce + ceiling, the dirty-on-what class
+//!     gate, the retention caps (max age / windows / tabs), the
+//!     crash-restore answer and the startup-mode fallback, typed
+//!     reads over the bound profile's "session/" settings rows.
+//!     Read-only; the timers, the restore prompt and the manifest
+//!     truncation stay Qt-side.
 //!   * notes (RC21): the per-profile side-panel note list —
 //!     profiles/<id>/notes.json in the C++ writer's compact
 //!     sorted-key JSON shape, row-addressed CRUD preserving the
@@ -150,6 +196,7 @@ mod confusables_table;
 mod containers;
 mod cookies;
 mod cred;
+mod dlwpolicy;
 mod error;
 mod extverify;
 mod facade;
@@ -157,6 +204,7 @@ mod history;
 mod icons;
 mod inifmt;
 mod lookalike;
+mod navpolicy;
 mod notes;
 mod notify;
 mod omnibox;
@@ -165,12 +213,15 @@ mod palette;
 mod parsers;
 mod pdfdoc;
 mod pdfsanitize;
+mod permpolicy;
 mod policy;
+mod privacy;
 mod profiles;
 mod profilevault;
 mod qrcode;
 mod readability;
 mod session;
+mod sesspolicy;
 mod settings;
 mod sitedecisions;
 mod sitetrust;
@@ -179,6 +230,7 @@ mod tlsprobe;
 mod torctl;
 mod tranco;
 mod updates;
+mod urlclean;
 mod urlstrip;
 mod useragent;
 mod util;
@@ -188,7 +240,7 @@ mod util;
 mod ffi_surface;
 
 use std::ffi::CString;
-use std::os::raw::{c_char, c_void};
+use std::os::raw::{c_char, c_int, c_void};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
@@ -1171,6 +1223,337 @@ pub unsafe extern "C" fn rc_policy_call(
         }
     }))
     .unwrap_or(ptr::null_mut())
+}
+
+// ---- navigation-request policy (MD02) ----------------------------------
+// The acceptNavigationRequest-time verdicts: scheme classification, the
+// external-handoff gate, per-profile scheme/host overrides, the abp
+// rewrite, the staged-pdf clamp, the file-dir reroute, the container
+// divert and the pdf claim.  The Qt page marshals a manifest per consult
+// phase and applies the verdict; all execution stays shell-side.
+
+/// Evaluates one navigation manifest (JSON) and returns the verdict as
+/// a JSON string — see navpolicy.rs for the phase/verdict grammar.
+/// NULL on malformed input or panic — the adapter must fail open
+/// (treat NULL as "continue", never as a block).
+/// Free the result with rc_string_free().
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_nav_decide(
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => {
+                let verdict = navpolicy::decide(&manifest);
+                util::to_c_string(verdict.to_string())
+            }
+            None => {
+                error::set_error("bad nav manifest");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Generic granular navpolicy endpoint — JSON in {"op":..., params},
+/// JSON out.  Ops: decide, browser_scheme, scheme_class,
+/// rate_limit_interstitial, untrusted_input, page_link, staged_viewer,
+/// nav_rule, plus the MD09 popup-gate ops (popup_decide,
+/// popup_is_allowed, popup_allow, popup_remove, popup_list,
+/// popup_clear, popup_clear_session).  NULL on error — see
+/// rc_last_error_message().  Free the result with rc_string_free().
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_nav_call(
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let (result, mutated) = catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match navpolicy::call_json(&manifest) {
+                Ok(result) => {
+                    let mutated = result
+                        .get("mutated")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false);
+                    (util::to_c_string(result.to_string()), mutated)
+                }
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    (ptr::null_mut(), false)
+                }
+            },
+            None => {
+                error::set_error("bad nav call payload");
+                (ptr::null_mut(), false)
+            }
+        }
+    }))
+    .unwrap_or((ptr::null_mut(), false));
+    if mutated {
+        notify::emit("sitedecisions");
+    }
+    result
+}
+
+// ---- web-permission policy (MD03) --------------------------------------
+// The SEC05 broker's decision layer: the feature tables, the origin
+// key normalization, the remembered+session pipeline.  Durable rows
+// are sitedecisions.json's "webperm" kind (the anchored dir's file,
+// like every store consumer); the modal queue and the engine's
+// grant()/deny() stay Qt-side.
+
+/// Generic granular permpolicy endpoint — JSON in {"op":..., params},
+/// JSON out.  Ops: decide, stored, resolve, remove, clear,
+/// feature_class, key_for, session_clear — see permpolicy.rs.
+/// NULL on error — see rc_last_error_message(); a caller that cannot
+/// get a verdict must fail toward its own local consult (never a
+/// silent grant).  Free the result with rc_string_free().
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_perm_call(
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let (result, mutated) = catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match permpolicy::call_json(&manifest) {
+                Ok(result) => {
+                    let mutated = result
+                        .get("mutated")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false);
+                    (util::to_c_string(result.to_string()), mutated)
+                }
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    (ptr::null_mut(), false)
+                }
+            },
+            None => {
+                error::set_error("bad perm call payload");
+                (ptr::null_mut(), false)
+            }
+        }
+    }))
+    .unwrap_or((ptr::null_mut(), false));
+    if mutated {
+        notify::emit("sitedecisions");
+    }
+    result
+}
+
+// ---- download-interception policy (MD04) ------------------------------
+// The DownloadManager's decision layer: the suggested-name sanitizer,
+// the dangerous-extension/executable-mime threat tables, the
+// save-as prompt gate, the external-handler handoff, the rustdl
+// engine claim, the finished-row removal verdict, the per-profile
+// rule view and the download history records.  The legacy
+// downloadmanager/* keys keep living in the bound profile's
+// settings.json (the C++ writers still own them); the facade-
+// authored rules and records live in downloads.json beside it.
+// The Qt manager keeps the dialogs, the QProcess handoff and the
+// filesystem execution — this surface only answers questions.
+
+/// Evaluates one download-policy manifest (JSON) and returns the
+/// verdict/result as a JSON string — see dlwpolicy.rs for the op
+/// grammar.  `h` is the bound profile's RcSettings (rc_settings_open
+/// or ac_dlw_call's per-op open); NULL is legal for the pure ops
+/// (sanitize_name, threat, external_argv) — store-bound ops then
+/// fail with a stashed error, never a guessed rule.  Mutating ops
+/// emit the "dlpolicy" change topic.  Free the result with
+/// rc_string_free().
+///
+/// # Safety
+/// `h` must come from rc_settings_open or be NULL; `json` must point
+/// to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_dlw_call(
+    h: *const settings::RcSettings,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let (result, mutated) = catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { h.as_ref() };
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match dlwpolicy::call_json(s, &manifest) {
+                Ok(result) => {
+                    let mutated = result
+                        .get("mutated")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false);
+                    (util::to_c_string(result.to_string()), mutated)
+                }
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    (ptr::null_mut(), false)
+                }
+            },
+            None => {
+                error::set_error("bad dlw call payload");
+                (ptr::null_mut(), false)
+            }
+        }
+    }))
+    .unwrap_or((ptr::null_mut(), false));
+    if mutated {
+        notify::emit("dlpolicy");
+    }
+    result
+}
+
+// ---- privacy policy store view (MD05) ---------------------------------
+// The per-persona privacy/* flag reads, the Sec-GPC decision the
+// request interceptors consult at request time, and the unified
+// {gpc,strip,adblock} verdict.  Read-only — the Qt writers own the
+// keys; this surface only answers questions.
+
+/// Evaluates one privacy manifest (JSON) against the bound profile's
+/// settings store — see privacy.rs for the op grammar (flags, flag,
+/// gpc, verdict; "defaults" is the only NULL-store-legal op).  NULL
+/// on malformed input, a missing store or panic — the adapter must
+/// keep its local consult, never guess a toggle.  Free the result
+/// with rc_string_free().
+///
+/// # Safety
+/// `h` must come from rc_settings_open or be NULL; `json` must point
+/// to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_privacy_call(
+    h: *const settings::RcSettings,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { h.as_ref() };
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match privacy::call_json(s, &manifest) {
+                Ok(result) => util::to_c_string(result.to_string()),
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    ptr::null_mut()
+                }
+            },
+            None => {
+                error::set_error("bad privacy call payload");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The per-profile Sec-GPC decision — 1 when the bound persona sends
+/// "Sec-GPC: 1" (its gpcSignal row, or unconditionally when
+/// tor_mode != 0), 0 when not, -1 on error.  The engine adapters
+/// call this at request time; a -1 keeps their verdict-bit
+/// fallback, never a phantom off/on flip.
+///
+/// # Safety
+/// `h` must come from rc_settings_open/ac_privacy or be NULL (which
+/// answers -1).
+#[no_mangle]
+pub unsafe extern "C" fn rc_privacy_gpc(
+    h: *const settings::RcSettings,
+    tor_mode: c_int,
+) -> c_int {
+    catch_unwind(AssertUnwindSafe(|| match unsafe { h.as_ref() } {
+        Some(s) => {
+            if privacy::gpc(s, tor_mode != 0) {
+                1
+            } else {
+                0
+            }
+        }
+        None => {
+            error::set_error("rc_privacy_gpc needs a bound profile store");
+            -1
+        }
+    }))
+    .unwrap_or(-1)
+}
+
+// ---- URL-sanitize policy (MD06) ---------------------------------------
+// The per-profile URL-cleaning decision layer: the editable ruleset
+// override (profiles/<id>/urlclean.json, urlstrip grammar), the
+// copy-path toggle, the nav-path toggle read shared with the privacy
+// module (privacy/urlCleaning stays Qt-owned), the legacy
+// urlcleaner/extraParams merge, and the clean_policy composite the
+// snapshot loader ships to policy::strip_target.  The clipboard
+// write and the redirect application stay caller-side — this surface
+// only answers questions.
+
+/// Evaluates one urlclean manifest (JSON) against the bound
+/// profile's stores — see urlclean.rs for the op grammar (clean,
+/// enabled, set_enabled, params, ruleset_get/set/reset,
+/// clean_policy; "defaults" is the only NULL-store-legal op).  NULL
+/// on malformed input, a missing store or panic — the adapter must
+/// keep its local consult, never guess a verdict.  Mutating ops emit
+/// the "urlclean" change topic.  Free the result with
+/// rc_string_free().
+///
+/// # Safety
+/// `h` must come from rc_settings_open or be NULL; `json` must point
+/// to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_urlclean_call(
+    h: *const settings::RcSettings,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let (result, mutated) = catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { h.as_ref() };
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match urlclean::call_json(s, &manifest) {
+                Ok(result) => {
+                    let mutated = result
+                        .get("mutated")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false);
+                    (util::to_c_string(result.to_string()), mutated)
+                }
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    (ptr::null_mut(), false)
+                }
+            },
+            None => {
+                error::set_error("bad urlclean call payload");
+                (ptr::null_mut(), false)
+            }
+        }
+    }))
+    .unwrap_or((ptr::null_mut(), false));
+    if mutated {
+        // The nav pipeline reads the ruleset off the snapshot, so a
+        // ruleset write only lands at the next snapshot push — the
+        // generation bump still matters: memoized verdicts computed
+        // under the old set must never outlive it.
+        policy::bump_eval_generation();
+        notify::emit("urlclean");
+    }
+    result
 }
 
 // ---- Tranco rank table (TRUST04) -------------------------------------
@@ -2797,6 +3180,55 @@ pub unsafe extern "C" fn rc_session_set_restoring(on: i32) -> RcStatus {
 #[no_mangle]
 pub unsafe extern "C" fn rc_session_restoring() -> i32 {
     catch_unwind(AssertUnwindSafe(session::restoring)).unwrap_or(false) as i32
+}
+
+// ---- session snapshot/restore policy (MD08) ---------------------------
+// The session pipeline's decision layer: the AutoSaver debounce +
+// ceiling, the dirty-on-what class gate, the retention caps (snapshot
+// max age / window / tab counts), the crash-restore answer and the
+// startup-mode fallback.  Typed reads over the bound profile's
+// settings.json ("session/" prefix) — the Qt writers own the keys;
+// this surface only answers questions.  The timers, the restore
+// prompt and the manifest truncation all stay Qt-side.
+
+/// Evaluates one session-policy manifest (JSON) against the bound
+/// profile's settings store — see sesspolicy.rs for the op grammar
+/// (defaults, policy, snapshot, dirty, retention, stale, restore;
+/// "defaults" is the only NULL-store-legal op, and the other reads
+/// degrade to the compiled-in constants on an absent store — only
+/// "stale" genuinely needs the dir).  NULL on malformed input or
+/// panic — the caller keeps its compiled-in consult, never guesses.
+/// Read-only: no change topic is emitted.  Free the result with
+/// rc_string_free().
+///
+/// # Safety
+/// `h` must come from rc_settings_open or be NULL; `json` must point
+/// to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sesspolicy_call(
+    h: *const settings::RcSettings,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { h.as_ref() };
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match sesspolicy::call_json(s, &manifest) {
+                Ok(result) => util::to_c_string(result.to_string()),
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    ptr::null_mut()
+                }
+            },
+            None => {
+                error::set_error("bad sesspolicy call payload");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 // ---- omnibox (OMNI01) -------------------------------------------------

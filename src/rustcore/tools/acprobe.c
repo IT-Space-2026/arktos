@@ -101,7 +101,8 @@ int main(int argc, char **argv)
               (AC_CAP_SETTINGS | AC_CAP_PROFILES | AC_CAP_HISTORY |
                AC_CAP_BOOKMARKS | AC_CAP_POLICY | AC_CAP_SESSION |
                AC_CAP_COOKIES | AC_CAP_ICONS | AC_CAP_CONTAINERS |
-               AC_CAP_NOTES),
+               AC_CAP_NOTES | AC_CAP_DLPOLICY | AC_CAP_PRIVACY |
+               AC_CAP_URLCLEAN),
           "capabilities bitmask incomplete");
 
     CHECK(ac_init(NULL) == NULL, "ac_init(NULL) must fail");
@@ -287,6 +288,75 @@ int main(int argc, char **argv)
         CHECK(st && strstr(st, "\"level\""), "ac_sitetrust_lookup");
         if (st)
             ac_string_free(st);
+    }
+
+    /* ---- navpolicy popup gate (MD09) ------------------------------------
+     * ac_nav_call forwards rc_nav_call under the policy handle's
+     * profile anchor; the verdict JSON is the gate's contract:
+     * default deny on an unknown http(s) opener, session allow,
+     * clear back to deny, persistent allow via the anchored
+     * sitedecisions "popup" rows, remove back to deny. */
+    {
+        static const char decide[] =
+            "{\"op\":\"popup_decide\",\"url\":"
+            "\"https://probe-pop.example/\",\"shaped\":true,"
+            "\"enabled\":true}";
+        static const char allow_s[] =
+            "{\"op\":\"popup_allow\",\"host\":\"probe-pop.example\","
+            "\"persistent\":false}";
+        static const char allow_p[] =
+            "{\"op\":\"popup_allow\",\"host\":\"probe-pop.example\","
+            "\"persistent\":true}";
+        static const char is_allowed[] =
+            "{\"op\":\"popup_is_allowed\",\"host\":\"probe-pop.example\"}";
+        static const char clear_s[] = "{\"op\":\"popup_clear_session\"}";
+        static const char remove_p[] =
+            "{\"op\":\"popup_remove\",\"host\":\"probe-pop.example\"}";
+        char *v = ac_nav_call(p, (const uint8_t *)decide,
+                              sizeof(decide) - 1);
+        CHECK(v && strstr(v, "\"block\""), "popup default-block");
+        if (v)
+            ac_string_free(v);
+        v = ac_nav_call(p, (const uint8_t *)allow_s, sizeof(allow_s) - 1);
+        CHECK(v != NULL, "popup_allow session");
+        if (v)
+            ac_string_free(v);
+        v = ac_nav_call(p, (const uint8_t *)is_allowed,
+                        sizeof(is_allowed) - 1);
+        CHECK(v && strstr(v, "\"allowed\":true"),
+              "popup session-allowed");
+        if (v)
+            ac_string_free(v);
+        v = ac_nav_call(p, (const uint8_t *)decide, sizeof(decide) - 1);
+        CHECK(v && strstr(v, "\"allow\""), "popup session allow");
+        if (v)
+            ac_string_free(v);
+        v = ac_nav_call(p, (const uint8_t *)clear_s, sizeof(clear_s) - 1);
+        CHECK(v != NULL, "popup_clear_session");
+        if (v)
+            ac_string_free(v);
+        v = ac_nav_call(p, (const uint8_t *)decide, sizeof(decide) - 1);
+        CHECK(v && strstr(v, "\"block\""),
+              "popup clear restores deny");
+        if (v)
+            ac_string_free(v);
+        v = ac_nav_call(p, (const uint8_t *)allow_p, sizeof(allow_p) - 1);
+        CHECK(v != NULL, "popup_allow persistent");
+        if (v)
+            ac_string_free(v);
+        v = ac_nav_call(p, (const uint8_t *)decide, sizeof(decide) - 1);
+        CHECK(v && strstr(v, "\"allow\""), "popup persisted allow");
+        if (v)
+            ac_string_free(v);
+        v = ac_nav_call(p, (const uint8_t *)remove_p, sizeof(remove_p) - 1);
+        CHECK(v != NULL, "popup_remove");
+        if (v)
+            ac_string_free(v);
+        v = ac_nav_call(p, (const uint8_t *)decide, sizeof(decide) - 1);
+        CHECK(v && strstr(v, "\"block\""),
+              "popup remove restores deny");
+        if (v)
+            ac_string_free(v);
     }
 
     /* ---- session (RC13) ------------------------------------------------ */
@@ -722,6 +792,263 @@ int main(int argc, char **argv)
               strcmp(cb_last_profile, "work") == 0,
           "notes mutations stamp the bound profile");
 
+    /* ---- dlwpolicy (MD04) -------------------------------------------
+     * The download-interception decision layer: pure ops need no
+     * store, the bound profile's settings scope supplies the legacy
+     * downloadmanager/* keys, and the facade-authored rules +
+     * records live in profiles/<id>/downloads.json. */
+    AcDlwpolicy *dw = ac_dlwpolicy(core, "work");
+    AcDlwpolicy *dw_other = ac_dlwpolicy(core, "other");
+    CHECK(dw && dw_other, "ac_dlwpolicy accessors failed");
+    {
+        /* Pure op over the facade handle. */
+        static const char sn[] =
+            "{\"op\":\"sanitize_name\",\"suggested\":\"a/b/c.zip\"}";
+        char *r = ac_dlw_call(dw, (const uint8_t *)sn,
+                              sizeof(sn) - 1);
+        CHECK(r && strstr(r, "\"name\":\"c.zip\""),
+              "dlw sanitize_name");
+        if (r)
+            ac_string_free(r);
+        /* The threat table: a dangerous suffix warns. */
+        static const char th[] =
+            "{\"op\":\"threat\",\"file_name\":\"setup.exe\","
+            "\"mime\":\"text/plain\"}";
+        r = ac_dlw_call(dw, (const uint8_t *)th, sizeof(th) - 1);
+        CHECK(r && strstr(r, "\"warn\":true") &&
+                  strstr(r, "dangerous-extension"),
+              "dlw threat");
+        if (r)
+            ac_string_free(r);
+        /* A blocked-extension rule flips the verdict to block. */
+        static const char rs[] =
+            "{\"op\":\"rule_set\",\"key\":\"blocked_extensions\","
+            "\"value\":[\"scr\",\"bat\"]}";
+        r = ac_dlw_call(dw, (const uint8_t *)rs, sizeof(rs) - 1);
+        CHECK(r && strstr(r, "\"set\":true"), "dlw rule_set");
+        if (r)
+            ac_string_free(r);
+        static const char vd[] =
+            "{\"op\":\"verdict\",\"url\":\"https://h.invalid/f.scr\","
+            "\"mime\":\"application/octet-stream\","
+            "\"context\":\"download_request\"}";
+        r = ac_dlw_call(dw, (const uint8_t *)vd, sizeof(vd) - 1);
+        CHECK(r && strstr(r, "\"action\":\"block\""),
+              "dlw verdict blocks a listed extension");
+        if (r)
+            ac_string_free(r);
+        /* The other persona's empty store never blocks. */
+        r = ac_dlw_call(dw_other, (const uint8_t *)vd,
+                        sizeof(vd) - 1);
+        CHECK(r && strstr(r, "\"action\":\"download\""),
+              "dlw verdict is per-profile");
+        if (r)
+            ac_string_free(r);
+        /* Records round-trip through downloads.json. */
+        static const char recs[] =
+            "{\"op\":\"records_save\",\"records\":[{"
+            "\"url\":\"https://h.invalid/a\",\"location\":\"/tmp/a\","
+            "\"done\":true,\"size\":7}]}";
+        r = ac_dlw_call(dw, (const uint8_t *)recs, sizeof(recs) - 1);
+        CHECK(r && strstr(r, "\"saved\":1"), "dlw records_save");
+        if (r)
+            ac_string_free(r);
+        static const char rl[] = "{\"op\":\"records_list\"}";
+        r = ac_dlw_call(dw, (const uint8_t *)rl, sizeof(rl) - 1);
+        CHECK(r && strstr(r, "h.invalid/a") && strstr(r, "\"size\":7"),
+              "dlw records_list");
+        if (r)
+            ac_string_free(r);
+        {
+            char p[512];
+            struct stat st;
+            join_path(p, sizeof(p), root, "profiles/work",
+                      "downloads.json");
+            CHECK(stat(p, &st) == 0 && st.st_size > 0,
+                  "downloads.json written under profiles/work");
+        }
+        r = ac_dlw_call(dw_other, (const uint8_t *)rl,
+                        sizeof(rl) - 1);
+        CHECK(r && strstr(r, "\"records\":[]"),
+              "other profile sees no records");
+        if (r)
+            ac_string_free(r);
+        static const char rc_[] = "{\"op\":\"records_clear\"}";
+        r = ac_dlw_call(dw, (const uint8_t *)rc_, sizeof(rc_) - 1);
+        CHECK(r && strstr(r, "\"cleared\":true"),
+              "dlw records_clear");
+        if (r)
+            ac_string_free(r);
+    }
+    ac_dlwpolicy_close(dw);
+    ac_dlwpolicy_close(dw_other);
+    CHECK(strcmp(cb_last_module, "dlpolicy") == 0 &&
+              strcmp(cb_last_profile, "work") == 0,
+          "dlwpolicy mutations stamp the bound profile");
+
+    /* ---- privacy (MD05) ----------------------------------------------
+     * The per-persona privacy/* store view: the Sec-GPC decision and
+     * the unified {gpc,strip,adblock} verdict read the bound
+     * profile's settings scope; read-only, no topic emitted. */
+    AcPrivacy *pv = ac_privacy(core, "work");
+    AcPrivacy *pv_other = ac_privacy(core, "other");
+    CHECK(pv && pv_other, "ac_privacy accessors failed");
+    {
+        /* A pristine persona sends Sec-GPC; tor_mode sends
+         * unconditionally. */
+        CHECK(ac_privacy_gpc(pv, 0) == 1, "privacy gpc default on");
+        CHECK(ac_privacy_gpc(pv, 1) == 1, "privacy gpc tor constant");
+        /* The granular endpoint answers the flag set. */
+        static const char fl[] = "{\"op\":\"flags\"}";
+        char *r = ac_privacy_call(pv, (const uint8_t *)fl,
+                                  sizeof(fl) - 1);
+        CHECK(r && strstr(r, "\"gpc_signal\":true") &&
+                  strstr(r, "\"adblock_enabled\":true"),
+              "privacy flags");
+        if (r)
+            ac_string_free(r);
+        /* A persona write flips only that persona's answer. */
+        AcSettings *ws = ac_settings(core, "work");
+        CHECK(ws != NULL, "ac_settings for privacy leg");
+        CHECK(ac_settings_set_bool(ws, "privacy/gpcSignal", 0)
+                  == AC_OK,
+              "privacy write via settings lane");
+        CHECK(ac_privacy_gpc(pv, 0) == 0,
+              "privacy gpc follows the bound persona's row");
+        CHECK(ac_privacy_gpc(pv_other, 0) == 1,
+              "privacy gpc is per-profile");
+        static const char vd5[] = "{\"op\":\"verdict\"}";
+        r = ac_privacy_call(pv, (const uint8_t *)vd5,
+                            sizeof(vd5) - 1);
+        CHECK(r && strstr(r, "\"gpc\":false") &&
+                  strstr(r, "\"strip\":true"),
+              "privacy verdict folds strip+gpc");
+        if (r)
+            ac_string_free(r);
+        /* The pure defaults op needs no store. */
+        static const char df[] = "{\"op\":\"defaults\"}";
+        r = ac_privacy_call(NULL, (const uint8_t *)df,
+                            sizeof(df) - 1);
+        CHECK(r == NULL, "privacy NULL handle degrades");
+        r = ac_privacy_call(pv, (const uint8_t *)df,
+                            sizeof(df) - 1);
+        CHECK(r && strstr(r, "\"gpc_signal\":true"),
+              "privacy defaults");
+        if (r)
+            ac_string_free(r);
+        ac_settings_close(ws);
+    }
+    ac_privacy_close(pv);
+    ac_privacy_close(pv_other);
+
+    /* ---- urlclean (MD06) ---------------------------------------------
+     * The per-persona URL-sanitize policy: the copy/nav toggles, the
+     * editable profile ruleset (profiles/<id>/urlclean.json), the
+     * legacy urlcleaner/extraParams merge and the clean verdict. */
+    AcUrlclean *uc = ac_urlclean(core, "work");
+    AcUrlclean *uc_other = ac_urlclean(core, "other");
+    CHECK(uc && uc_other, "ac_urlclean accessors failed");
+    {
+        /* A pristine persona cleans with the vendored ruleset. */
+        static const char cl[] =
+            "{\"op\":\"clean\",\"url\":\"https://h.invalid/?"
+            "utm_source=x&id=1\",\"purpose\":\"copy\"}";
+        char *r = ac_urlclean_call(uc, (const uint8_t *)cl,
+                                   sizeof(cl) - 1);
+        CHECK(r && strstr(r, "\"changed\":true") &&
+                  strstr(r, "https://h.invalid/?id=1"),
+              "urlclean strips a tracker param");
+        if (r)
+            ac_string_free(r);
+        /* The legacy extraParams key merges into the strip set. */
+        AcSettings *ws = ac_settings(core, "work");
+        CHECK(ws != NULL, "ac_settings for urlclean leg");
+        CHECK(ac_settings_set_list(
+                  ws, "urlcleaner/extraParams",
+                  (const uint8_t *)"[\"partner\"]",
+                  sizeof("[\"partner\"]") - 1) == AC_OK,
+              "urlclean extraParams via settings lane");
+        static const char cl2[] =
+            "{\"op\":\"clean\",\"url\":\"https://h.invalid/?"
+            "partner=p&id=1\",\"purpose\":\"copy\"}";
+        r = ac_urlclean_call(uc, (const uint8_t *)cl2,
+                             sizeof(cl2) - 1);
+        CHECK(r && strstr(r, "https://h.invalid/?id=1"),
+              "urlclean merges extraParams");
+        if (r)
+            ac_string_free(r);
+        /* A profile ruleset replaces the global list. */
+        static const char rs[] =
+            "{\"op\":\"ruleset_set\",\"ruleset\":{\"version\":1,"
+            "\"params\":[\"only_this\"]}}";
+        r = ac_urlclean_call(uc, (const uint8_t *)rs, sizeof(rs) - 1);
+        CHECK(r && strstr(r, "\"set\":true"), "urlclean ruleset_set");
+        if (r)
+            ac_string_free(r);
+        r = ac_urlclean_call(uc, (const uint8_t *)cl, sizeof(cl) - 1);
+        CHECK(r && strstr(r, "\"changed\":false"),
+              "urlclean profile ruleset overrides global");
+        if (r)
+            ac_string_free(r);
+        {
+            char p[512];
+            struct stat st;
+            join_path(p, sizeof(p), root, "profiles/work",
+                      "urlclean.json");
+            CHECK(stat(p, &st) == 0 && st.st_size > 0,
+                  "urlclean.json written under profiles/work");
+        }
+        /* The other persona still strips with the global set. */
+        r = ac_urlclean_call(uc_other, (const uint8_t *)cl,
+                             sizeof(cl) - 1);
+        CHECK(r && strstr(r, "\"changed\":true"),
+              "urlclean ruleset is per-profile");
+        if (r)
+            ac_string_free(r);
+        /* The snapshot-facing composite carries the merged doc. */
+        static const char cp[] = "{\"op\":\"clean_policy\"}";
+        r = ac_urlclean_call(uc, (const uint8_t *)cp, sizeof(cp) - 1);
+        CHECK(r && strstr(r, "\"source\":\"profile\"") &&
+                  strstr(r, "only_this") && strstr(r, "partner"),
+              "urlclean clean_policy merges ruleset + extras");
+        if (r)
+            ac_string_free(r);
+        /* The copy toggle is facade-authored; the nav toggle stays
+         * Qt-owned and refuses the write. */
+        static const char se[] =
+            "{\"op\":\"set_enabled\",\"purpose\":\"copy\","
+            "\"value\":false}";
+        r = ac_urlclean_call(uc, (const uint8_t *)se, sizeof(se) - 1);
+        CHECK(r && strstr(r, "\"set\":true"), "urlclean set_enabled");
+        if (r)
+            ac_string_free(r);
+        r = ac_urlclean_call(uc, (const uint8_t *)cl2,
+                             sizeof(cl2) - 1);
+        CHECK(r && strstr(r, "\"enabled\":false"),
+              "urlclean copy toggle gates the verdict");
+        if (r)
+            ac_string_free(r);
+        static const char sne[] =
+            "{\"op\":\"set_enabled\",\"purpose\":\"nav\","
+            "\"value\":false}";
+        r = ac_urlclean_call(uc, (const uint8_t *)sne,
+                             sizeof(sne) - 1);
+        CHECK(r == NULL,
+              "urlclean refuses to write the Qt-owned nav toggle");
+        static const char rr[] = "{\"op\":\"ruleset_reset\"}";
+        r = ac_urlclean_call(uc, (const uint8_t *)rr, sizeof(rr) - 1);
+        CHECK(r && strstr(r, "\"reset\":true"),
+              "urlclean ruleset_reset");
+        if (r)
+            ac_string_free(r);
+        ac_settings_close(ws);
+    }
+    ac_urlclean_close(uc);
+    ac_urlclean_close(uc_other);
+    CHECK(strcmp(cb_last_module, "urlclean") == 0 &&
+              strcmp(cb_last_profile, "work") == 0,
+          "urlclean mutations stamp the bound profile");
+
     /* ---- close-out ---------------------------------------------------- */
     ac_settings_close(gs);
     ac_settings_close(ps);
@@ -740,6 +1067,9 @@ int main(int argc, char **argv)
     ac_icons_close(NULL);
     ac_containers_close(NULL);
     ac_notes_close(NULL);
+    ac_dlwpolicy_close(NULL);
+    ac_privacy_close(NULL);
+    ac_urlclean_close(NULL);
     ac_shutdown(core);
     ac_shutdown(NULL);
 

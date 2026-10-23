@@ -69,6 +69,17 @@
 #ifdef ARKTOS_RUSTDL
 #include "rustdownloadengine.h"
 #endif
+#if defined(ARKTOS_RUSTCORE)
+#include "rustcorebridge.h"
+
+#include <arktos_core.h>
+
+#include <qjsonarray.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
+
+#include <string.h>
+#endif
 
 #include <math.h>
 
@@ -101,6 +112,53 @@
 #include <qdebug.h>
 
 //#define DOWNLOADMANAGER_DEBUG
+
+#if defined(ARKTOS_RUSTCORE)
+// MD04: one granular call into rustcore's dlwpolicy module — the
+// download-interception decision layer (suggested-name sanitizer,
+// threat tables, save-as prompt gate, external-handler handoff,
+// rustdl engine claim, finished-row removal, history records and the
+// per-profile rule view) lives there now; this manager keeps the
+// dialogs, the QProcess handoff, the engine accept() and the
+// filesystem.  The profile-bound AcDlwpolicy is minted per call —
+// cheap, and it means a settings change lands without a stale cached
+// document.  Pure ops (sanitize_name/threat/external_argv) need no
+// store, so the rc_* spelling keeps them working before the bridge
+// is up.  A NULL verdict maps to an empty object — callers then run
+// the local consult, so an FFI failure can never silently grant or
+// block.
+static QJsonObject dlwPolicyCall(const QString &profileId,
+                                 const QJsonObject &request)
+{
+    AcDlwpolicy *h = nullptr;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->dlwpolicy(profileId);
+    const bool pure = [&request] {
+        const QString op = request.value(QLatin1String("op")).toString();
+        return op == QLatin1String("sanitize_name")
+            || op == QLatin1String("threat")
+            || op == QLatin1String("external_argv");
+    }();
+    if (!h && !pure)
+        return QJsonObject();
+    const QByteArray json =
+        QJsonDocument(request).toJson(QJsonDocument::Compact);
+    char *raw = h
+        ? ac_dlw_call(h,
+                      reinterpret_cast<const uint8_t *>(json.constData()),
+                      size_t(json.size()))
+        : rc_dlw_call(nullptr,
+                      reinterpret_cast<const uint8_t *>(json.constData()),
+                      size_t(json.size()));
+    ac_dlwpolicy_close(h);
+    if (!raw)
+        return QJsonObject();
+    QByteArray out = QByteArray::fromRawData(raw, int(strlen(raw)));
+    out.detach();
+    rc_string_free(raw);
+    return QJsonDocument::fromJson(out).object();
+}
+#endif
 
 /*!
     DownloadItem is a widget that is displayed in the download manager list.
@@ -197,10 +255,27 @@ DownloadItem::DownloadItem(Engine::DownloadRequest *download, bool requestFileNa
     updateDetails();
 
     if (!requestFileName) {
-        ProfileSettings settings(m_manager
-            ? m_manager->profileId() : BrowserPaths::activeProfileId());
-        settings.beginGroup(QLatin1String("downloadmanager"));
-        m_requestFileName = settings.value(QLatin1String("alwaysPromptForFileName"), false).toBool();
+        const QString pid = m_manager
+            ? m_manager->profileId() : BrowserPaths::activeProfileId();
+        bool haveRule = false;
+#if defined(ARKTOS_RUSTCORE)
+        // MD04: the prompt gate is a dlwpolicy rule read — the same
+        // bound-profile settings bytes ProfileSettings reads.
+        const QJsonObject r = dlwPolicyCall(pid, {
+            {QLatin1String("op"), QLatin1String("rule_get")},
+            {QLatin1String("key"), QLatin1String("always_prompt")},
+        });
+        if (r.contains(QLatin1String("found"))) {
+            m_requestFileName =
+                r.value(QLatin1String("value")).toBool(false);
+            haveRule = true;
+        }
+#endif
+        if (!haveRule) {
+            ProfileSettings settings(pid);
+            settings.beginGroup(QLatin1String("downloadmanager"));
+            m_requestFileName = settings.value(QLatin1String("alwaysPromptForFileName"), false).toBool();
+        }
     }
 
     init();
@@ -408,6 +483,17 @@ void DownloadItem::getFileName()
 
 QString DownloadItem::sanitizeFileName(const QString &suggestedName)
 {
+#if defined(ARKTOS_RUSTCORE)
+    // MD04: the sanitizer is a dlwpolicy pure op — same algorithm,
+    // decided in the module.  An absent answer falls through to the
+    // local copy.
+    const QJsonObject r = dlwPolicyCall(QString(), {
+        {QLatin1String("op"), QLatin1String("sanitize_name")},
+        {QLatin1String("suggested"), suggestedName},
+    });
+    if (r.contains(QLatin1String("name")))
+        return r.value(QLatin1String("name")).toString();
+#endif
     // The suggested name arrives from an untrusted server or URL —
     // keep only the last path component, checking both separators so
     // a Windows-style "..\name" cannot traverse either.
@@ -502,9 +588,31 @@ bool DownloadItem::isExecutableMimeType(const QString &mimeType)
 bool DownloadItem::confirmSafeToSave(const QString &fileName)
 {
     const QString name = QFileInfo(fileName).fileName();
-    const bool dangerousName = isDangerousExtension(name);
     const QString mime = mimeType();
-    if (!dangerousName && !isExecutableMimeType(mime))
+    // MD04: the threat verdict comes from dlwpolicy — the warn
+    // dialog itself stays here.
+    bool dangerousName = false;
+    bool executableMime = false;
+    bool haveThreat = false;
+#if defined(ARKTOS_RUSTCORE)
+    const QJsonObject t = dlwPolicyCall(
+        m_manager ? m_manager->profileId()
+                  : BrowserPaths::activeProfileId(), {
+        {QLatin1String("op"), QLatin1String("threat")},
+        {QLatin1String("file_name"), name},
+        {QLatin1String("mime"), mime},
+    });
+    if (t.contains(QLatin1String("warn"))) {
+        dangerousName = t.value(QLatin1String("dangerous_name")).toBool();
+        executableMime = t.value(QLatin1String("executable_mime")).toBool();
+        haveThreat = true;
+    }
+#endif
+    if (!haveThreat) {
+        dangerousName = isDangerousExtension(name);
+        executableMime = isExecutableMimeType(mime);
+    }
+    if (!dangerousName && !executableMime)
         return true;
 
     QString text;
@@ -1407,12 +1515,31 @@ DownloadManager::DownloadManager(const QString &profileId, QWidget *parent)
     , m_removePolicy(Never)
     , m_requestFileNameNext(false)
 {
-    ProfileSettings settings(m_profileId);
-    settings.beginGroup(QLatin1String("downloadmanager"));
     QString defaultLocation = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     if (defaultLocation.isEmpty())
         defaultLocation = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    setDownloadDirectory(settings.value(QLatin1String("downloadDirectory"), defaultLocation).toString());
+    bool haveDir = false;
+#if defined(ARKTOS_RUSTCORE)
+    // MD04: the stored directory is a dlwpolicy rule read — the same
+    // bound-profile settings bytes; an absent answer falls through
+    // to the local ProfileSettings read.
+    {
+        const QJsonObject r = dlwPolicyCall(m_profileId, {
+            {QLatin1String("op"), QLatin1String("rule_get")},
+            {QLatin1String("key"), QLatin1String("download_directory")},
+        });
+        if (r.contains(QLatin1String("found"))) {
+            setDownloadDirectory(r.value(QLatin1String("value"))
+                .toString(defaultLocation));
+            haveDir = true;
+        }
+    }
+#endif
+    if (!haveDir) {
+        ProfileSettings settings(m_profileId);
+        settings.beginGroup(QLatin1String("downloadmanager"));
+        setDownloadDirectory(settings.value(QLatin1String("downloadDirectory"), defaultLocation).toString());
+    }
 
     load();
 }
@@ -1503,6 +1630,31 @@ bool DownloadManager::allowQuit()
 
 bool DownloadManager::externalDownload(const QUrl &url)
 {
+#if defined(ARKTOS_RUSTCORE)
+    // MD04: the handoff gate (enabled flag, scheme floor, argv split)
+    // is decided in dlwpolicy — the module returns the argv it
+    // composed (program tokens + the encoded url) and Qt only runs
+    // the process.  An absent answer falls through to the local gate.
+    const QJsonObject g = dlwPolicyCall(BrowserPaths::activeProfileId(), {
+        {QLatin1String("op"), QLatin1String("external_gate")},
+        {QLatin1String("scheme"), url.scheme()},
+        {QLatin1String("url"),
+         QString::fromUtf8(url.toEncoded())},
+    });
+    if (!g.isEmpty()) {
+        if (!g.value(QLatin1String("handoff")).toBool())
+            return false;
+        QStringList args;
+        for (const QJsonValue &a
+                 : g.value(QLatin1String("args")).toArray())
+            args << a.toString();
+        if (args.isEmpty())
+            return false;
+        // startDetached takes an argv list — no shell is involved,
+        // so a crafted url cannot inject arguments or metachars.
+        return QProcess::startDetached(args.takeFirst(), args);
+    }
+#endif
     // Static helper with no page context — reads the active persona's
     // downloadmanager/external* keys like the pre-MPROF02 code did.
     ProfileSettings settings(BrowserPaths::activeProfileId());
@@ -1620,6 +1772,34 @@ void DownloadManager::handleDownloadRequested(Engine::DownloadRequest *download)
         }
     }
 
+#if defined(ARKTOS_RUSTCORE)
+    // MD04: the interception verdict is dlwpolicy's — the engine has
+    // already classified this as a download (context
+    // "download_request"), so the only answer that changes behavior
+    // here is "block" (a profile blocked-extension rule).  "ask" is
+    // already expressed by m_requestFileName, "external" by the gate
+    // below, and an absent answer proceeds like the pre-module flow.
+    {
+        const QJsonObject v = dlwPolicyCall(m_profileId, {
+            {QLatin1String("op"), QLatin1String("verdict")},
+            {QLatin1String("url"),
+             QString::fromUtf8(download->url().toEncoded())},
+            {QLatin1String("mime"), download->mimeType()},
+            {QLatin1String("suggested_name"),
+             download->suggestedFileName()},
+            {QLatin1String("context"),
+             QLatin1String("download_request")},
+            {QLatin1String("save_as"), m_requestFileNameNext},
+        });
+        if (v.value(QLatin1String("action")).toString()
+            == QLatin1String("block")) {
+            download->cancel();
+            m_requestFileNameNext = false;
+            return;
+        }
+    }
+#endif
+
     if (externalDownload(download->url())) {
         download->cancel();
         return;
@@ -1710,13 +1890,32 @@ void DownloadManager::updateRow(DownloadItem *item)
     // provider's pixmap; request it at native size anyway).
     item->fileIcon->setPixmap(icon.pixmap(24, 24));
 
+    // MD04: the finished-row removal verdict is a dlwpolicy decision
+    // (OTR-finished or a SuccessFullDownload policy hit); the model
+    // removal itself stays here.  An absent answer runs the local
+    // consult.
     bool remove = false;
-    if (!item->downloading() && item->m_offTheRecord)
-        remove = true;
+    bool haveVerdict = false;
+#if defined(ARKTOS_RUSTCORE)
+    const QJsonObject r = dlwPolicyCall(m_profileId, {
+        {QLatin1String("op"), QLatin1String("row_remove")},
+        {QLatin1String("downloading"), item->downloading()},
+        {QLatin1String("otr"), item->m_offTheRecord},
+        {QLatin1String("downloaded_ok"), item->downloadedSuccessfully()},
+    });
+    if (r.contains(QLatin1String("remove"))) {
+        remove = r.value(QLatin1String("remove")).toBool();
+        haveVerdict = true;
+    }
+#endif
+    if (!haveVerdict) {
+        if (!item->downloading() && item->m_offTheRecord)
+            remove = true;
 
-    if (item->downloadedSuccessfully()
-        && removePolicy() == DownloadManager::SuccessFullDownload) {
-        remove = true;
+        if (item->downloadedSuccessfully()
+            && removePolicy() == DownloadManager::SuccessFullDownload) {
+            remove = true;
+        }
     }
     if (remove)
         m_model->removeRow(row);
@@ -1746,6 +1945,40 @@ void DownloadManager::save() const
     settings.setValue(QLatin1String("removeDownloadsPolicy"), QLatin1String(removePolicyEnum.valueToKey(m_removePolicy)));
     if (m_removePolicy == Exit)
         return;
+
+#if defined(ARKTOS_RUSTCORE)
+    // MD04: the record list is persisted by dlwpolicy — same rows,
+    // into the profile's downloads.json.  The OTR exclusion stays a
+    // write-side rule (SEC07): off-the-record items never reach the
+    // manifest.  An FFI failure falls through to the legacy
+    // download_N_* keys below — the store stays readable either way.
+    {
+        QJsonArray rows;
+        for (int i = 0; i < m_downloads.count(); ++i) {
+            const DownloadItem *item = m_downloads.at(i);
+            if (item->m_offTheRecord)
+                continue;
+            rows.append(QJsonObject{
+                {QLatin1String("url"),
+                 QString::fromUtf8(item->m_url.toEncoded())},
+                {QLatin1String("location"), item->m_outputFileName},
+                {QLatin1String("done"), item->downloadedSuccessfully()},
+                {QLatin1String("started"),
+                 item->m_startedTime.toString(Qt::ISODateWithMs)},
+                {QLatin1String("finished"),
+                 item->m_finishedTime.toString(Qt::ISODateWithMs)},
+                {QLatin1String("size"),
+                 qMax(item->bytesTotal(), item->m_bytesReceived)},
+            });
+        }
+        const QJsonObject r = dlwPolicyCall(m_profileId, {
+            {QLatin1String("op"), QLatin1String("records_save")},
+            {QLatin1String("records"), rows},
+        });
+        if (r.contains(QLatin1String("saved")))
+            return;
+    }
+#endif
 
     int saved = 0;
     for (int i = 0; i < m_downloads.count(); ++i) {
@@ -1779,10 +2012,85 @@ void DownloadManager::save() const
 
 void DownloadManager::load()
 {
+    QMetaEnum removePolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("RemovePolicy"));
+    bool havePolicy = false;
+#if defined(ARKTOS_RUSTCORE)
+    // MD04: the policy + record reads go through dlwpolicy — the
+    // module serves records from the profile's downloads.json and
+    // falls back to the legacy download_N_* settings keys while that
+    // file is absent, so pre-move history is never stranded.  An FFI
+    // failure runs the local consult.
+    {
+        const QJsonObject r = dlwPolicyCall(m_profileId, {
+            {QLatin1String("op"), QLatin1String("rule_get")},
+            {QLatin1String("key"), QLatin1String("remove_policy")},
+        });
+        if (r.contains(QLatin1String("found"))) {
+            const QByteArray value = r.value(QLatin1String("value"))
+                .toString(QLatin1String("Never")).toUtf8();
+            m_removePolicy = removePolicyEnum.keyToValue(value) == -1
+                ? Never
+                : static_cast<RemovePolicy>(removePolicyEnum.keyToValue(value));
+            havePolicy = true;
+        }
+        const QJsonObject rec = dlwPolicyCall(m_profileId, {
+            {QLatin1String("op"), QLatin1String("records_list")},
+        });
+        if (rec.contains(QLatin1String("records"))) {
+            for (const QJsonValue &row
+                     : rec.value(QLatin1String("records")).toArray()) {
+                const QJsonObject o = row.toObject();
+                const QUrl url = QUrl(
+                    o.value(QLatin1String("url")).toString());
+                const QString fileName =
+                    o.value(QLatin1String("location")).toString();
+                const bool done =
+                    o.value(QLatin1String("done")).toBool(true);
+                if (!url.isEmpty() && !fileName.isEmpty()) {
+                    DownloadItem *item = new DownloadItem(
+                        static_cast<Engine::DownloadRequest*>(nullptr),
+                        false, this);
+                    item->m_outputFileName = fileName;
+                    item->fileNameLabel->setText(QFileInfo(item->m_outputFileName).fileName());
+                    item->setAccessibleName(item->fileNameLabel->text());
+                    item->m_url = url;
+                    item->m_startedTime = QDateTime::fromString(
+                        o.value(QLatin1String("started")).toString());
+                    item->m_finishedTime = QDateTime::fromString(
+                        o.value(QLatin1String("finished")).toString());
+                    item->m_restoredTotalBytes =
+                        o.value(QLatin1String("size")).toInteger(-1);
+                    item->stopButton->setVisible(false);
+                    item->stopButton->setEnabled(false);
+                    item->tryAgainButton->setVisible(!done);
+                    item->tryAgainButton->setEnabled(!done);
+                    item->progressBar->setVisible(false);
+                    // A restored card shows what is known but has no
+                    // live speed series — omit the graph outright.
+                    item->downloadGraph->setVisible(false);
+                    item->updateDetails();
+                    addItem(item);
+                }
+            }
+            if (!havePolicy) {
+                // Records answered but the policy read did not — still
+                // finish the consult locally for a sane m_removePolicy.
+                ProfileSettings settings(m_profileId);
+                settings.beginGroup(QLatin1String("downloadmanager"));
+                const QByteArray value = settings.value(
+                    QLatin1String("removeDownloadsPolicy"),
+                    QLatin1String("Never")).toByteArray();
+                m_removePolicy = removePolicyEnum.keyToValue(value) == -1
+                    ? Never
+                    : static_cast<RemovePolicy>(removePolicyEnum.keyToValue(value));
+            }
+            return;
+        }
+    }
+#endif
     ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("downloadmanager"));
     QByteArray value = settings.value(QLatin1String("removeDownloadsPolicy"), QLatin1String("Never")).toByteArray();
-    QMetaEnum removePolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("RemovePolicy"));
     m_removePolicy = removePolicyEnum.keyToValue(value) == -1 ?
                         Never :
                         static_cast<RemovePolicy>(removePolicyEnum.keyToValue(value));

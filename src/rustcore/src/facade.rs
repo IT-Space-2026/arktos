@@ -29,7 +29,7 @@
 
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::os::raw::{c_char, c_void};
+use std::os::raw::{c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::{LazyLock, Mutex};
@@ -41,7 +41,11 @@ use crate::{bookmarks, icons, notes, notify, profiles, settings, util};
 /// on every ABI-affecting addition; never renumber existing symbols
 /// or enum values.  v3 added AcCookies (RC15).  v4 added AcIcons
 /// (RC16).  v5 added AcContainers (RC19).  v6 added AcNotes (RC21).
-pub const AC_API_VERSION: u32 = 6;
+/// v7 added AcDlwpolicy (MD04).  v8 added AcPrivacy (MD05).
+/// v9 added AcUrlclean (MD06).  v10 added session policy queries to
+/// AcSession (MD08).  v11 added the navpolicy endpoints on AcPolicy
+/// (MD02 surface; MD09 popup gate).
+pub const AC_API_VERSION: u32 = 11;
 
 const AC_CAP_SETTINGS: u64 = 0x01;
 const AC_CAP_PROFILES: u64 = 0x02;
@@ -53,6 +57,9 @@ const AC_CAP_COOKIES: u64 = 0x40;
 const AC_CAP_ICONS: u64 = 0x80;
 const AC_CAP_CONTAINERS: u64 = 0x100;
 const AC_CAP_NOTES: u64 = 0x200;
+const AC_CAP_DLPOLICY: u64 = 0x400;
+const AC_CAP_PRIVACY: u64 = 0x800;
+const AC_CAP_URLCLEAN: u64 = 0x1000;
 const AC_CAP_ALL: u64 = AC_CAP_SETTINGS
     | AC_CAP_PROFILES
     | AC_CAP_HISTORY
@@ -62,7 +69,10 @@ const AC_CAP_ALL: u64 = AC_CAP_SETTINGS
     | AC_CAP_COOKIES
     | AC_CAP_ICONS
     | AC_CAP_CONTAINERS
-    | AC_CAP_NOTES;
+    | AC_CAP_NOTES
+    | AC_CAP_DLPOLICY
+    | AC_CAP_PRIVACY
+    | AC_CAP_URLCLEAN;
 
 const DEFAULT_PROFILE: &str = "default";
 
@@ -106,6 +116,9 @@ enum Live {
     Icons(usize),
     Containers(usize),
     Notes(usize),
+    Dlwpolicy(usize),
+    Privacy(usize),
+    Urlclean(usize),
 }
 
 impl Live {
@@ -120,7 +133,10 @@ impl Live {
             | Live::Cookies(p)
             | Live::Icons(p)
             | Live::Containers(p)
-            | Live::Notes(p) => p,
+            | Live::Notes(p)
+            | Live::Dlwpolicy(p)
+            | Live::Privacy(p)
+            | Live::Urlclean(p) => p,
         }
     }
 }
@@ -170,9 +186,18 @@ pub struct AcPolicy {
 /// RC13: the session store is fully path-explicit — no process-global
 /// anchor at all, so the handle only needs its bound dir; every op
 /// resolves profiles/<id>/session.dat + session.state under it.
+/// MD08: the handle also carries the binding (profile + data root)
+/// so the policy queries can open a short-lived RcSettings on the
+/// bound scope per call — the AcDlwpolicy shape: a fresh open reads
+/// the file as committed, honoring keys the C++ ProfileSettings
+/// mirror wrote mid-process.
 pub struct AcSession {
     /// profiles/<id> — mkpath'd at bind time like every bound dir.
     dir: CString,
+    /// The effective profile id — the rc_settings_open id argument.
+    profile: String,
+    /// The core's data root — the rc_settings_open root argument.
+    root: CString,
 }
 
 /// RC15: the cookie database is process-global behind the open-path
@@ -210,6 +235,51 @@ pub struct AcIcons {
 /// is honored, and ours reach it the same way.
 pub struct AcContainers {
     /// The effective profile id — stamped on "containers"
+    /// notifications.
+    profile: String,
+    /// The core's data root — the rc_settings_open root argument.
+    root: CString,
+}
+
+/// MD04: the download-policy module is a typed specialization over
+/// the profile scope's settings store plus its own downloads.json
+/// beside it — the same short-lived-open shape as AcContainers, so
+/// the handle carries only the binding (profile + data root).  Every
+/// op opens a fresh RcSettings on the bound scope, forwards to
+/// dlwpolicy::call_json and closes it — a fresh open per call reads
+/// the file as committed, so keys the C++ ProfileSettings mirror
+/// wrote mid-process are honored (and our own downloads.json stays
+/// out of the shared-doc staleness trap entirely).
+pub struct AcDlwpolicy {
+    /// The effective profile id — stamped on "dlpolicy"
+    /// notifications.
+    profile: String,
+    /// The core's data root — the rc_settings_open root argument.
+    root: CString,
+}
+
+/// MD05: the privacy-policy store view is a read-only typed
+/// specialization over the profile scope's settings store — the
+/// same binding-only shape as AcDlwpolicy, so the handle carries
+/// just the profile + data root and every op opens a fresh
+/// RcSettings on the bound scope (reads the file as committed — a
+/// settings-dialog save mid-process is honored).
+pub struct AcPrivacy {
+    /// The effective profile id.
+    profile: String,
+    /// The core's data root — the rc_settings_open root argument.
+    root: CString,
+}
+
+/// MD06: the URL-sanitize policy store is a typed specialization
+/// over the profile scope's settings store plus its own
+/// urlclean.json beside it — the same binding-only shape as
+/// AcDlwpolicy, so the handle carries just the profile + data root
+/// and every op opens a fresh RcSettings on the bound scope (reads
+/// the file as committed — an extraParams edit mid-process is
+/// honored).
+pub struct AcUrlclean {
+    /// The effective profile id — stamped on "urlclean"
     /// notifications.
     profile: String,
     /// The core's data root — the rc_settings_open root argument.
@@ -319,6 +389,15 @@ unsafe fn free_live(live: Live) {
         Live::Notes(p) => unsafe {
             crate::rc_notes_close(p as *mut crate::notes::RcNotes)
         },
+        Live::Dlwpolicy(p) => {
+            drop(unsafe { Box::from_raw(p as *mut AcDlwpolicy) })
+        }
+        Live::Privacy(p) => {
+            drop(unsafe { Box::from_raw(p as *mut AcPrivacy) })
+        }
+        Live::Urlclean(p) => {
+            drop(unsafe { Box::from_raw(p as *mut AcUrlclean) })
+        }
     }
 }
 
@@ -761,7 +840,18 @@ pub unsafe extern "C" fn ac_session(
                 return ptr::null_mut();
             }
         };
-        let h = Box::into_raw(Box::new(AcSession { dir: dir_c }));
+        let root_c = match CString::new(root.to_string_lossy().into_owned()) {
+            Ok(c) => c,
+            Err(_) => {
+                error::set_error("data root is not UTF-8");
+                return ptr::null_mut();
+            }
+        };
+        let h = Box::into_raw(Box::new(AcSession {
+            dir: dir_c,
+            profile: eff,
+            root: root_c,
+        }));
         track(core, Live::Session(h as usize));
         h
     }))
@@ -891,6 +981,104 @@ pub unsafe extern "C" fn ac_containers(
     .unwrap_or(ptr::null_mut())
 }
 
+/// Binds the download-policy surface of `profile_id` (MD04) — the
+/// persona whose "downloadmanager" settings group the ops read and
+/// whose downloads.json they own.  No open step (ops open the
+/// scope's settings store per call), so the handle is always minted
+/// on a valid core.
+///
+/// # Safety
+/// `profile_id` must be NUL-terminated UTF-8 or NULL.  Free with
+/// ac_dlwpolicy_close; the handle dies with its core.
+#[no_mangle]
+pub unsafe extern "C" fn ac_dlwpolicy(
+    core: *mut AcCore,
+    profile_id: *const c_char,
+) -> *mut AcDlwpolicy {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let core = match core_ref(core) {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let eff = bound_profile(profile_id);
+        let h = Box::into_raw(Box::new(AcDlwpolicy {
+            profile: eff,
+            root: core.root.clone(),
+        }));
+        track(core, Live::Dlwpolicy(h as usize));
+        h
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Binds the privacy-policy store view of `profile_id` (MD05) — the
+/// persona whose "privacy" settings group the ops read.  No open
+/// step (ops open the scope's settings store per call), so the
+/// handle is always minted on a valid core.
+///
+/// # Safety
+/// `profile_id` must be NUL-terminated UTF-8 or NULL.  Free with
+/// ac_privacy_close; the handle dies with its core.
+#[no_mangle]
+pub unsafe extern "C" fn ac_privacy(
+    core: *mut AcCore,
+    profile_id: *const c_char,
+) -> *mut AcPrivacy {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let core = match core_ref(core) {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let eff = bound_profile(profile_id);
+        let h = Box::into_raw(Box::new(AcPrivacy {
+            profile: eff,
+            root: core.root.clone(),
+        }));
+        track(core, Live::Privacy(h as usize));
+        h
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Binds the URL-sanitize policy surface of `profile_id` (MD06) —
+/// the persona whose "urlcleaner" settings group the ops read and
+/// whose urlclean.json they own.  No open step (ops open the
+/// scope's settings store per call), so the handle is always minted
+/// on a valid core.
+///
+/// # Safety
+/// `profile_id` must be NUL-terminated UTF-8 or NULL.  Free with
+/// ac_urlclean_close; the handle dies with its core.
+#[no_mangle]
+pub unsafe extern "C" fn ac_urlclean(
+    core: *mut AcCore,
+    profile_id: *const c_char,
+) -> *mut AcUrlclean {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let core = match core_ref(core) {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let eff = bound_profile(profile_id);
+        let h = Box::into_raw(Box::new(AcUrlclean {
+            profile: eff,
+            root: core.root.clone(),
+        }));
+        track(core, Live::Urlclean(h as usize));
+        h
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 /// Binds the notes store of `profile_id` — profiles/<id>/notes.json
 /// (RC21).  The returned handle IS an RcNotes minted by
 /// rc_notes_open, so rc_notes_* calls on it stay legal (and the
@@ -988,6 +1176,9 @@ ac_close!(ac_session_close, AcSession);
 ac_close!(ac_cookies_close, AcCookies);
 ac_close!(ac_icons_close, AcIcons);
 ac_close!(ac_containers_close, AcContainers);
+ac_close!(ac_dlwpolicy_close, AcDlwpolicy);
+ac_close!(ac_privacy_close, AcPrivacy);
+ac_close!(ac_urlclean_close, AcUrlclean);
 
 /// Releases a notes handle — flushes a dirty store first (the
 /// rc_notes_close contract); NULL-tolerant and also legal on a
@@ -1474,6 +1665,25 @@ ac_val_op!(ac_policy_cookie_filter, AcPolicy, ensure_policy,
 ac_ptr_op!(ac_policy_call, AcPolicy, ensure_policy,
     rc_policy_call(json: *const u8, len: usize));
 
+// MD03: the permission-broker granular endpoint — forwards
+// rc_perm_call under this handle's profile anchor (the webperm rows
+// live in the bound dir's sitedecisions.json; the persona-
+// independent callers bind "default" exactly like the plain
+// SiteDecisionStore overloads do).
+ac_ptr_op!(ac_perm_call, AcPolicy, ensure_policy,
+    rc_perm_call(json: *const u8, len: usize));
+
+// MD02/MD09: the navigation-policy endpoints — forwards
+// rc_nav_decide / rc_nav_call under this handle's profile anchor
+// (the "nav-scheme"/"nav-block"/"container"/"popup" rows live in the
+// bound dir's sitedecisions.json; the persona-independent kinds —
+// popup included — are consulted on a "default"-bound handle
+// exactly like the plain SiteDecisionStore overloads).
+ac_ptr_op!(ac_nav_decide, AcPolicy, ensure_policy,
+    rc_nav_decide(json: *const u8, len: usize));
+ac_ptr_op!(ac_nav_call, AcPolicy, ensure_policy,
+    rc_nav_call(json: *const u8, len: usize));
+
 /// The verdict-state generation counter — process-global, no handle
 /// needed (the rc spelling applies verbatim).
 #[no_mangle]
@@ -1758,6 +1968,60 @@ pub unsafe extern "C" fn ac_session_restoring(h: *const AcSession) -> i32 {
         Ok(h) => crate::session::restoring_in(&sess_dir(h)) as i32,
         Err(_) => 0,
     }
+}
+
+/// MD08: the session snapshot/restore policy endpoint — forwards the
+/// manifest to rc_sesspolicy_call under this handle's profile anchor.
+/// Same grammar as rustcore.h's rc_sesspolicy_call:
+/// {"op":"defaults"|"policy"|"snapshot"|"dirty"|"retention"|"stale"|
+/// "restore", ...}.  Each call opens a fresh RcSettings on the bound
+/// scope (the AcDlwpolicy per-op-open shape — reads the file as
+/// committed) so a mid-process settings write is honored; "defaults"
+/// skips the open entirely.  NULL + stashed error on failure — the
+/// caller keeps its compiled-in consult.  Free the result with
+/// ac_string_free().
+///
+/// # Safety
+/// `h` must come from ac_session; `json` points to `len` readable
+/// UTF-8 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ac_session_policy(
+    h: *const AcSession,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let h = match unsafe { h.as_ref() } {
+        Some(h) => h,
+        None => {
+            error::set_error("bad session handle");
+            return ptr::null_mut();
+        }
+    };
+    let pure = unsafe { util::bytes(json, len) }
+        .and_then(|d| serde_json::from_slice::<serde_json::Value>(d).ok())
+        .and_then(|m| {
+            m.get("op")
+                .and_then(|x| x.as_str())
+                .map(|op| op == "defaults")
+        })
+        .unwrap_or(false);
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let s = if pure {
+            ptr::null_mut()
+        } else {
+            let pid = match CString::new(h.profile.as_str()) {
+                Ok(p) => p,
+                Err(_) => return ptr::null_mut(),
+            };
+            unsafe { crate::rc_settings_open(h.root.as_ptr(), pid.as_ptr()) }
+        };
+        let raw = unsafe { crate::rc_sesspolicy_call(s, json, len) };
+        if !s.is_null() {
+            unsafe { crate::rc_settings_close(s) }
+        }
+        raw
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 // ---- cookies (RC15) ----------------------------------------------------
@@ -2249,6 +2513,249 @@ pub unsafe extern "C" fn ac_containers_namespace(
     unsafe {
         crate::rc_containers_namespace(h.root.as_ptr(), pid.as_ptr(), container_id)
     }
+}
+
+// ---- download-interception policy (MD04) ------------------------------
+//
+// The handle binds the persona; each call opens a short-lived
+// RcSettings on the bound scope (the containers_open shape — a
+// fresh open reads the file as committed, so the ProfileSettings
+// mirror's mid-process writes are honored) and forwards the
+// manifest to dlwpolicy::call_json.  Pure ops (sanitize_name,
+// threat, external_argv) skip the open entirely.  Mutating results
+// ("mutated":true) emit the "dlpolicy" topic stamped with the bound
+// profile.
+
+/// Ops that never touch the store — the settings open is skipped
+/// for them.
+fn dlw_pure_op(v: &serde_json::Value) -> bool {
+    matches!(
+        v.get("op").and_then(|x| x.as_str()).unwrap_or(""),
+        "sanitize_name" | "threat" | "external_argv"
+    )
+}
+
+/// The download-policy granular endpoint — forwards the manifest to
+/// rc_dlw_call under this handle's profile anchor.  Same grammar as
+/// rustcore.h's rc_dlw_call: {"op":"verdict"|"external_gate"|
+/// "engine_claim"|"row_remove"|"rules"|"rule_get"|"rule_set"|
+/// "records_list"|"records_save"|"records_clear"|"sanitize_name"|
+/// "threat"|"external_argv", ...}.  NULL + stashed error on failure;
+/// free the result with ac_string_free().
+///
+/// # Safety
+/// `h` must come from ac_dlwpolicy; `json` points to `len` readable
+/// UTF-8 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ac_dlw_call(
+    h: *const AcDlwpolicy,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let h = match unsafe { h.as_ref() } {
+        Some(h) => h,
+        None => {
+            error::set_error("bad dlwpolicy handle");
+            return ptr::null_mut();
+        }
+    };
+    let manifest = match unsafe { util::bytes(json, len) }
+        .and_then(|d| serde_json::from_slice::<serde_json::Value>(d).ok())
+    {
+        Some(m) => m,
+        None => {
+            error::set_error("bad dlw call payload");
+            return ptr::null_mut();
+        }
+    };
+    // The bound profile stamps the "dlpolicy" topic on the scoped
+    // lane — the hint must be live while rc_dlw_call runs (its own
+    // emit fires inside, like every forwarded op).
+    let _hint = notify::profile_hint(&h.profile);
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut store_open: Option<*mut settings::RcSettings> = None;
+        let s = if dlw_pure_op(&manifest) {
+            ptr::null_mut()
+        } else {
+            let pid = match CString::new(h.profile.as_str()) {
+                Ok(p) => p,
+                Err(_) => return ptr::null_mut(),
+            };
+            let s = unsafe { crate::rc_settings_open(h.root.as_ptr(), pid.as_ptr()) };
+            if s.is_null() {
+                return ptr::null_mut();
+            }
+            store_open = Some(s);
+            s
+        };
+        let raw = unsafe { crate::rc_dlw_call(s, json, len) };
+        if let Some(s) = store_open {
+            unsafe { crate::rc_settings_close(s) }
+        }
+        raw
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+// ---- privacy policy store view (MD05) ------------------------------
+//
+// The handle binds the persona; each call opens a short-lived
+// RcSettings on the bound scope (the AcDlwpolicy shape — a fresh
+// open reads the file as committed, so keys the C++ ProfileSettings
+// mirror wrote mid-process are honored) and forwards the manifest
+// to privacy::call_json.  The module is read-only — nothing emits a
+// topic.
+
+/// Opens the bound profile's settings store for one op — NULL
+/// stores the error and leaves the caller to keep its local
+/// consult.
+fn privacy_open(h: &AcPrivacy) -> *mut settings::RcSettings {
+    let pid = match CString::new(h.profile.as_str()) {
+        Ok(p) => p,
+        Err(_) => {
+            error::set_error("bad privacy profile binding");
+            return ptr::null_mut();
+        }
+    };
+    unsafe { crate::rc_settings_open(h.root.as_ptr(), pid.as_ptr()) }
+}
+
+/// The privacy-policy granular endpoint — forwards the manifest to
+/// rc_privacy_call under this handle's profile anchor.  Same grammar
+/// as rustcore.h's rc_privacy_call: {"op":"flags"|"flag"|"gpc"|
+/// "verdict"|"defaults", ...}.  NULL + stashed error on failure;
+/// free the result with ac_string_free().
+///
+/// # Safety
+/// `h` must come from ac_privacy; `json` points to `len` readable
+/// UTF-8 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ac_privacy_call(
+    h: *const AcPrivacy,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let h = match unsafe { h.as_ref() } {
+        Some(h) => h,
+        None => {
+            error::set_error("bad privacy handle");
+            return ptr::null_mut();
+        }
+    };
+    let pure = unsafe { util::bytes(json, len) }
+        .and_then(|d| serde_json::from_slice::<serde_json::Value>(d).ok())
+        .and_then(|m| {
+            m.get("op")
+                .and_then(|x| x.as_str())
+                .map(|op| op == "defaults")
+        })
+        .unwrap_or(false);
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let s = if pure {
+            ptr::null_mut()
+        } else {
+            privacy_open(h)
+        };
+        let raw = unsafe { crate::rc_privacy_call(s, json, len) };
+        if !s.is_null() {
+            unsafe { crate::rc_settings_close(s) }
+        }
+        raw
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The request-time Sec-GPC decision on the bound persona — the
+/// engine adapters' "just ask" spelling of rc_privacy_gpc: 1 send
+/// "Sec-GPC: 1", 0 don't, -1 on error (the caller keeps its
+/// verdict-bit fallback).  tor_mode != 0 answers 1 unconditionally.
+///
+/// # Safety
+/// `h` must come from ac_privacy.
+#[no_mangle]
+pub unsafe extern "C" fn ac_privacy_gpc(
+    h: *const AcPrivacy,
+    tor_mode: c_int,
+) -> c_int {
+    let h = match unsafe { h.as_ref() } {
+        Some(h) => h,
+        None => {
+            error::set_error("bad privacy handle");
+            return -1;
+        }
+    };
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let s = privacy_open(h);
+        let r = unsafe { crate::rc_privacy_gpc(s, tor_mode) };
+        if !s.is_null() {
+            unsafe { crate::rc_settings_close(s) }
+        }
+        r
+    }))
+    .unwrap_or(-1)
+}
+
+// ---- URL-sanitize policy (MD06) ---------------------------------------
+//
+// The handle binds the persona; each call opens a short-lived
+// RcSettings on the bound scope (the AcDlwpolicy shape — a fresh
+// open reads the file as committed, so an extraParams or ruleset
+// edit mid-process is honored) and forwards the manifest to
+// urlclean::call_json.  Mutating results emit the "urlclean" topic
+// stamped with the bound profile.
+
+/// The urlclean granular endpoint — forwards the manifest to
+/// rc_urlclean_call under this handle's profile anchor.  Same
+/// grammar as rustcore.h's rc_urlclean_call: {"op":"clean"|
+/// "enabled"|"set_enabled"|"params"|"ruleset_get"|"ruleset_set"|
+/// "ruleset_reset"|"clean_policy"|"defaults", ...}.  NULL + stashed
+/// error on failure; free the result with ac_string_free().
+///
+/// # Safety
+/// `h` must come from ac_urlclean; `json` points to `len` readable
+/// UTF-8 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ac_urlclean_call(
+    h: *const AcUrlclean,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let h = match unsafe { h.as_ref() } {
+        Some(h) => h,
+        None => {
+            error::set_error("bad urlclean handle");
+            return ptr::null_mut();
+        }
+    };
+    let pure = unsafe { util::bytes(json, len) }
+        .and_then(|d| serde_json::from_slice::<serde_json::Value>(d).ok())
+        .and_then(|m| {
+            m.get("op")
+                .and_then(|x| x.as_str())
+                .map(|op| op == "defaults")
+        })
+        .unwrap_or(false);
+    let _hint = notify::profile_hint(&h.profile);
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let s = if pure {
+            ptr::null_mut()
+        } else {
+            let pid = match CString::new(h.profile.as_str()) {
+                Ok(p) => p,
+                Err(_) => return ptr::null_mut(),
+            };
+            unsafe { crate::rc_settings_open(h.root.as_ptr(), pid.as_ptr()) }
+        };
+        if s.is_null() && !pure {
+            return ptr::null_mut();
+        }
+        let raw = unsafe { crate::rc_urlclean_call(s, json, len) };
+        if !s.is_null() {
+            unsafe { crate::rc_settings_close(s) }
+        }
+        raw
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 // ---- notes (RC21) ----------------------------------------------------------

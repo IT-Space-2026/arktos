@@ -1074,6 +1074,104 @@ static void sessionClearFor(const QString &persona)
     else
         rc_session_clear();
 }
+
+// MD08: one granular call into rustcore's sesspolicy module — the
+// session snapshot/restore decision layer (debounce timing,
+// dirty-on-what, retention caps, crash-restore, startup fallback)
+// lives there now; this file keeps the timers, the prompt and the
+// manifest truncation.  The profile-bound AcSession is minted per
+// call — cheap, and a mid-process settings write lands without a
+// stale cached document.  With no bridge serving the rc_* spelling
+// runs against a bound RcSettings (an empty id binds "default" like
+// every other store consumer).  An empty verdict means "run the
+// compiled-in consult" — an FFI failure can never silently change
+// session behavior.
+static QJsonObject sessionPolicyCall(const QString &persona,
+                                     const QJsonObject &request)
+{
+    AcSession *h = nullptr;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->session(persona);
+    RcSettings *s = nullptr;
+    if (!h) {
+        const QByteArray root = BrowserPaths::dataRoot().toUtf8();
+        const QByteArray id = persona.isEmpty()
+            ? QByteArrayLiteral("default") : persona.toUtf8();
+        s = rc_settings_open(root.constData(), id.constData());
+        if (!s)
+            return QJsonObject();
+    }
+    const QByteArray json =
+        QJsonDocument(request).toJson(QJsonDocument::Compact);
+    char *raw = h
+        ? ac_session_policy(h,
+                            reinterpret_cast<const uint8_t *>(json.constData()),
+                            size_t(json.size()))
+        : rc_sesspolicy_call(s,
+                             reinterpret_cast<const uint8_t *>(json.constData()),
+                             size_t(json.size()));
+    ac_session_close(h);
+    if (s)
+        rc_settings_close(s);
+    if (!raw)
+        return QJsonObject();
+    QByteArray out = QByteArray::fromRawData(raw, int(strlen(raw)));
+    out.detach();
+    rc_string_free(raw);
+    return QJsonDocument::fromJson(out).object();
+}
+
+// MD08: the persona's session.dat aged past session/maxAgeDays —
+// stale files are skipped on restore but never deleted (the user's
+// snapshot stays on disk; only the auto-restore stops offering it).
+// A failed consult reads "not stale" — fail toward restoring.
+static bool sessionStaleFor(const QString &persona)
+{
+    const QJsonObject verdict = sessionPolicyCall(
+        persona, QJsonObject{
+            {QLatin1String("op"), QLatin1String("stale")}});
+    return verdict.value(QLatin1String("stale")).toBool(false);
+}
+
+// MD08: the retention caps — the facade answers the numbers, the
+// truncation stays here (execution is Qt's).  max_windows drops
+// trailing window records, max_tabs_per_window drops trailing tab
+// records and clamps the saved current index; a skipped "private"
+// marker on a window whose tabs all truncated away stays honest —
+// the rust store strips all-empty windows on encode regardless.
+static void applySessionCaps(const QString &persona,
+                             QJsonArray *windows)
+{
+    const QJsonObject caps = sessionPolicyCall(
+        persona, QJsonObject{
+            {QLatin1String("op"), QLatin1String("retention")}});
+    if (caps.isEmpty())
+        return;
+    const int maxWindows =
+        caps.value(QLatin1String("max_windows")).toInt(0);
+    if (maxWindows > 0) {
+        while (windows->size() > maxWindows)
+            windows->removeLast();
+    }
+    const int maxTabs =
+        caps.value(QLatin1String("max_tabs_per_window")).toInt(0);
+    if (maxTabs <= 0)
+        return;
+    for (qsizetype i = 0; i < windows->size(); ++i) {
+        QJsonObject win = windows->at(i).toObject();
+        QJsonArray tabs = win.value(QLatin1String("tabs")).toArray();
+        if (tabs.size() <= maxTabs)
+            continue;
+        while (tabs.size() > maxTabs)
+            tabs.removeLast();
+        const int current =
+            win.value(QLatin1String("current")).toInt(0);
+        win.insert(QLatin1String("current"),
+                   qBound(0, current, tabs.size() - 1));
+        win.insert(QLatin1String("tabs"), tabs);
+        (*windows)[i] = win;
+    }
+}
 #endif // ARKTOS_RUSTCORE
 
 void BrowserApplication::saveSession()
@@ -1132,11 +1230,15 @@ void BrowserApplication::saveSession()
     }
     bool allSaved = true;
     for (const QString &persona : std::as_const(boundIds)) {
-        const QJsonArray windows = windowsByPersona.value(persona);
+        QJsonArray windows = windowsByPersona.value(persona);
         if (windows.isEmpty()) {
             sessionClearFor(persona);
             continue;
         }
+        // MD08: the retention caps — session/maxWindows +
+        // session/maxTabsPerWindow truncate the snapshot before the
+        // store ever sees it (no caps configured = no-op).
+        applySessionCaps(persona, &windows);
         QJsonObject root;
         // Manifest schema v1 — the per-window "profile" key is an
         // optional extension the rust core preserves verbatim.
@@ -1243,9 +1345,14 @@ bool BrowserApplication::canRestoreSession() const
 {
 #ifdef ARKTOS_RUSTCORE
     // RC13: any persona's session.dat counts — the manifests live
-    // per-profile now, not only on the primary persona.
-    if (!sessionStoreProfileIds().isEmpty())
-        return true;
+    // per-profile now, not only on the primary persona.  MD08: a
+    // file the session/maxAgeDays policy aged out doesn't count —
+    // it stays on disk, the restore just stops offering it.
+    const QStringList boundIds = sessionStoreProfileIds();
+    for (const QString &persona : boundIds) {
+        if (!sessionStaleFor(persona))
+            return true;
+    }
 #endif
     return !m_lastSession.isEmpty();
 }
@@ -1282,10 +1389,30 @@ bool BrowserApplication::restoreLastSession()
         ProfileSettings settings;
         settings.beginGroup(QLatin1String("MainWindow"));
         if (settings.value(QLatin1String("restoring"), false).toBool()) {
-            QMessageBox::StandardButton result = QMessageBox::question(nullptr, tr("Restore failed"),
-                tr("Arktos crashed while trying to restore this session.  Should I try again?"), QMessageBox::Yes | QMessageBox::No);
-            if (result == QMessageBox::No)
+            // MD08: the crash-restore answer comes from the facade —
+            // "always" retries silently, "never" drops the crashed
+            // snapshot, "ask" (the default, and any failed consult)
+            // keeps the prompt.  Bound to the primary persona: the
+            // restore decision is app-level across all manifests.
+            QString crashPolicy = QLatin1String("ask");
+#if defined(ARKTOS_RUSTCORE)
+            const QJsonObject restore = sessionPolicyCall(
+                QStringLiteral("default"),
+                QJsonObject{
+                    {QLatin1String("op"), QLatin1String("restore")}});
+            const QString r =
+                restore.value(QLatin1String("crash_restore")).toString();
+            if (!r.isEmpty())
+                crashPolicy = r;
+#endif
+            if (crashPolicy == QLatin1String("never"))
                 return false;
+            if (crashPolicy != QLatin1String("always")) {
+                QMessageBox::StandardButton result = QMessageBox::question(nullptr, tr("Restore failed"),
+                    tr("Arktos crashed while trying to restore this session.  Should I try again?"), QMessageBox::Yes | QMessageBox::No);
+                if (result == QMessageBox::No)
+                    return false;
+            }
         }
     }
 #ifdef ARKTOS_RUSTCORE
@@ -1300,6 +1427,10 @@ bool BrowserApplication::restoreLastSession()
         QJsonArray windows;
         const QStringList storeIds = sessionStoreProfileIds();
         for (const QString &persona : storeIds) {
+            // MD08: a session.dat the maxAgeDays policy aged out is
+            // skipped, never deleted — the snapshot stays on disk.
+            if (sessionStaleFor(persona))
+                continue;
             QByteArray manifest;
             if (!sessionLoadFor(persona, &manifest, &sawCorrupt))
                 continue;
@@ -1861,6 +1992,22 @@ int BrowserApplication::startupMode()
             return StartPageStartup;
         }
     }
+#if defined(ARKTOS_RUSTCORE)
+    // MD08: the no-preference fallback is a policy answer too —
+    // session/startupModeDefault on the ambient persona, resolved by
+    // the facade (StartPageStartup when unset or unreachable, same
+    // as the compiled-in value it replaces).
+    const QJsonObject restore = sessionPolicyCall(
+        BrowserPaths::activeProfileId(),
+        QJsonObject{
+            {QLatin1String("op"), QLatin1String("restore")}});
+    if (restore.contains(QLatin1String("startup_default"))) {
+        return qBound(0,
+            restore.value(QLatin1String("startup_default")).toInt(
+                int(StartPageStartup)),
+            int(SpecificPagesStartup));
+    }
+#endif
     return StartPageStartup;
 }
 

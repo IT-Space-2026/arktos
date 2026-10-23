@@ -25,6 +25,20 @@
 
 #include <iterator>
 
+#if defined(ARKTOS_RUSTCORE)
+#include "browserpaths.h"
+#include "navigationpolicy.h"
+#include "rustcorebridge.h"
+
+#include <rustcore.h>
+#include <arktos_core.h>
+
+#include <qjsondocument.h>
+#include <qjsonobject.h>
+
+#include <cstring>
+#endif
+
 // Curated defaults — marketing/analytics click identifiers and
 // campaign parameters observed across Google, Meta, Microsoft,
 // Mailchimp, HubSpot, Yandex, Twitter/X, LinkedIn, TikTok and the
@@ -97,6 +111,51 @@ QUrl UrlCleaner::cleanedUrl(const QUrl &url)
     if ((scheme != QLatin1String("http") && scheme != QLatin1String("https"))
             || !url.hasQuery())
         return url;
+
+#if defined(ARKTOS_RUSTCORE)
+    // MD06: the per-persona urlclean module decides — the profile's
+    // editable ruleset (or the shared global one), the legacy
+    // extraParams merge and the copy-path toggle live behind
+    // ac_urlclean_call now; this file's compiled table stays the
+    // fallback so a bridge/FFI failure can never silently skip
+    // cleaning.  The shield panel's per-site exemption is passed in
+    // as the caller-side input it always was for the request
+    // pipeline.
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        if (AcUrlclean *h =
+                bridge->urlclean(BrowserPaths::activeProfileId())) {
+            const QJsonObject request{
+                {QLatin1String("op"), QLatin1String("clean")},
+                {QLatin1String("url"),
+                 QString::fromUtf8(url.toEncoded())},
+                {QLatin1String("purpose"), QLatin1String("copy")},
+                {QLatin1String("exempt"),
+                 Engine::NavigationPolicy::isUrlCleanExempt(url.host())},
+            };
+            const QByteArray json =
+                QJsonDocument(request).toJson(QJsonDocument::Compact);
+            char *raw = ac_urlclean_call(
+                h, reinterpret_cast<const uint8_t *>(json.constData()),
+                size_t(json.size()));
+            ac_urlclean_close(h);
+            if (raw) {
+                QByteArray out =
+                    QByteArray::fromRawData(raw, int(std::strlen(raw)));
+                out.detach();
+                rc_string_free(raw);
+                const QJsonObject r =
+                    QJsonDocument::fromJson(out).object();
+                if (r.contains(QLatin1String("enabled"))) {
+                    if (!r.value(QLatin1String("enabled")).toBool())
+                        return url;
+                    const QUrl result = QUrl::fromEncoded(
+                        r.value(QLatin1String("url")).toString().toUtf8());
+                    return result.isValid() ? result : url;
+                }
+            }
+        }
+    }
+#endif
 
     const QUrlQuery query(url);
     const QList<QPair<QString, QString> > items =

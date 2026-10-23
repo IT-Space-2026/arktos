@@ -35,6 +35,15 @@ matching every member of the namespace (or a dotted sub-path such as
 
 ```gaps
 # --- dead namespaces: no Arktos surface exists ---------------------
+# MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
+# namespaces turned out to be servable through dispatch/state over
+# stores this tree already has.  They stay in this block — still
+# typed today — but are queued: bookmarks -> MD21, history -> MD22,
+# cookies -> MD23, downloads -> MD24, sessions -> MD25,
+# tabGroups -> MD26, topSites -> MD27, browsingData -> MD28,
+# dns -> MD29, system -> MD30, privacy -> MD31, userScripts -> MD32,
+# fontSettings -> MD33.  Entries leave the declared set only when the
+# row lands the implementation.
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
@@ -86,6 +95,13 @@ chrome.userScripts.*: unsupported
 chrome.vpnProvider.*: unsupported
 chrome.wallpaper.*: unsupported
 # --- served namespaces, deliberately unserved members --------------
+# MD07 queued carve-outs (still typed today — entries stay):
+#   tabs unserved members -> MD10 ops/state, MD11 zoom+capture,
+#     MD12 connect; windows extras -> MD13; action/browserAction
+#     .setIcon -> MD14; extension.isAllowed* -> MD15; management
+#     read ops -> MD16, mutations -> MD17; runtime reload /
+#     requestUpdateCheck / setUninstallURL -> MD18; storage
+#     getKeys/setAccessLevel/sync/quota -> MD19; alarms edges -> MD20.
 # tabs/windows members beyond the implemented set are typed stubs;
 # sendMessage frameId!=0 is unsupported (page agent lives in the main
 # frame only).
@@ -163,6 +179,17 @@ chrome.windows.getLastFocused: no-window
 chrome.windows.remove: not-found
 chrome.windows.update: not-found
 ```
+
+## Feasibility triage (MD07)
+
+`.devin/EXT-DISPATCH-AUDIT.md` classifies every entry above:
+`queued -> MDnn` means the surface is servable through shim dispatch
+plus Qt/rustcore state we already have (no new engine JS APIs); the
+rest stay unsupported with reasons (ChromeOS surfaces, external
+services, blocking interception, missing UI surfaces like
+sidePanel/omnibox).  A queued entry is removed from the fenced block
+only by the run that lands it — until then the typed error is the
+honest answer and the test contract stands.
 
 ## Out of scope by design
 

@@ -33,6 +33,9 @@ struct AcBookmarks;
 struct AcPolicy;
 struct AcSession;
 struct AcIcons;
+struct AcDlwpolicy;
+struct AcPrivacy;
+struct AcUrlclean;
 struct RcNotes;
 struct RcSettings;
 struct RcProfiles;
@@ -103,6 +106,15 @@ public:
     AcPolicy *policy(const QString &profileId = QString());
     AcSession *session(const QString &profileId = QString());
     AcIcons *icons(const QString &profileId = QString());
+    // MD04: the download-interception policy handle — ac_dlw_call
+    // drives it; release with ac_dlwpolicy_close.
+    AcDlwpolicy *dlwpolicy(const QString &profileId = QString());
+    // MD05: the per-persona privacy-policy store view — ac_privacy_call
+    // and ac_privacy_gpc drive it; release with ac_privacy_close.
+    AcPrivacy *privacy(const QString &profileId = QString());
+    // MD06: the per-persona URL-sanitize policy — ac_urlclean_call
+    // drives it; release with ac_urlclean_close.
+    AcUrlclean *urlclean(const QString &profileId = QString());
     // AcNotes — the facade typedef of RcNotes (arktos_core.h).
     RcNotes *notes(const QString &profileId = QString());
 

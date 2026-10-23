@@ -2588,7 +2588,7 @@ fn facade_init_and_accessors() {
     let croot = cs(&root);
 
     // housekeeping
-    assert_eq!(crate::facade::ac_api_version(), 6);
+    assert_eq!(crate::facade::ac_api_version(), 11);
     assert_ne!(crate::facade::ac_capabilities(), 0);
 
     // rejected configs fail clean with a stashed error
@@ -4107,4 +4107,635 @@ fn notes_surface() {
     assert_eq!(unsafe { crate::facade::ac_notes_is_persistent(an) }, 1);
     unsafe { crate::facade::ac_notes_close(an) };
     unsafe { crate::facade::ac_shutdown(core) };
+}
+
+// MD04: the download-interception decision layer over the C ABI —
+// pure ops on a NULL store, the store-bound ops on a profile-bound
+// settings handle, the records/rules lanes, and the facade spelling.
+#[test]
+fn dlwpolicy_surface() {
+    let _g = guard();
+    let root = tmpdir("dlwpolicy");
+    let croot = cs(&root);
+    let pid = cs("work");
+
+    // Pure ops answer on a NULL store; store-bound ops refuse.
+    let pure = b"{\"op\":\"sanitize_name\",\"suggested\":\"a/b/c.zip\"}";
+    let got = take_str(unsafe {
+        crate::rc_dlw_call(ptr::null(), pure.as_ptr(), pure.len())
+    })
+    .unwrap();
+    assert!(got.contains("\"name\":\"c.zip\""));
+    let bound = b"{\"op\":\"records_list\"}";
+    assert!(unsafe {
+        crate::rc_dlw_call(ptr::null(), bound.as_ptr(), bound.len())
+    }
+    .is_null());
+
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!h.is_null());
+    // Bad payloads degrade, never crash.
+    assert!(unsafe {
+        crate::rc_dlw_call(h, ptr::null(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_dlw_call(h, b"nope".as_ptr(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_dlw_call(h, b"{\"op\":\"bogus\"}".as_ptr(), 15)
+    }
+    .is_null());
+
+    // A verdict composes over the profile's rules — a blocked
+    // extension authored through the facade lane blocks.
+    let set = b"{\"op\":\"rule_set\",\"key\":\"blocked_extensions\",\"value\":[\"exe\"]}";
+    let r = take_str(unsafe {
+        crate::rc_dlw_call(h, set.as_ptr(), set.len())
+    })
+    .unwrap();
+    assert!(r.contains("\"mutated\":true"));
+    let verd = b"{\"op\":\"verdict\",\"url\":\"https://h/f.exe\"}";
+    let v = take_str(unsafe {
+        crate::rc_dlw_call(h, verd.as_ptr(), verd.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"action\":\"block\""));
+
+    // The records lane round-trips and clears.
+    let save = b"{\"op\":\"records_save\",\"records\":[{\"url\":\"https://h/a\",\"location\":\"/tmp/a\",\"done\":true,\"size\":7}]}";
+    let r = take_str(unsafe {
+        crate::rc_dlw_call(h, save.as_ptr(), save.len())
+    })
+    .unwrap();
+    assert!(r.contains("\"saved\":1"));
+    let l = take_str(unsafe {
+        crate::rc_dlw_call(h, bound.as_ptr(), bound.len())
+    })
+    .unwrap();
+    assert!(l.contains("\"url\":\"https://h/a\""));
+    assert!(std::path::Path::new(&format!("{root}/profiles/work/downloads.json")).exists());
+    let clr = b"{\"op\":\"records_clear\"}";
+    let r = take_str(unsafe {
+        crate::rc_dlw_call(h, clr.as_ptr(), clr.len())
+    })
+    .unwrap();
+    assert!(r.contains("\"cleared\":true"));
+    unsafe { crate::rc_settings_close(h) };
+
+    // The facade spelling on the same profile — one store, two lanes.
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+    let ah = unsafe { crate::facade::ac_dlwpolicy(core, pid.as_ptr()) };
+    assert!(!ah.is_null());
+    let v = take_str(unsafe {
+        crate::facade::ac_dlw_call(ah, verd.as_ptr(), verd.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"action\":\"block\""));
+    let l = take_str(unsafe {
+        crate::facade::ac_dlw_call(ah, bound.as_ptr(), bound.len())
+    })
+    .unwrap();
+    assert!(l.contains("\"records\":[]"));
+    unsafe { crate::facade::ac_dlwpolicy_close(ah) };
+    // A NULL facade handle degrades.
+    assert!(unsafe {
+        crate::facade::ac_dlw_call(ptr::null(), pure.as_ptr(), pure.len())
+    }
+    .is_null());
+    unsafe { crate::facade::ac_shutdown(core) };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// MD05: the privacy-policy store view over the C ABI — the pure
+// "defaults" op on a NULL store, the bound-profile flags/gpc/
+// verdict lanes, the int gpc surface, and the facade spelling.
+#[test]
+fn privacy_surface() {
+    let _g = guard();
+    let root = tmpdir("privacy");
+    let croot = cs(&root);
+    let pid = cs("work");
+
+    // "defaults" answers on a NULL store; store-bound ops refuse.
+    let pure = b"{\"op\":\"defaults\"}";
+    let got = take_str(unsafe {
+        crate::rc_privacy_call(ptr::null(), pure.as_ptr(), pure.len())
+    })
+    .unwrap();
+    assert!(got.contains("\"gpc_signal\":true"));
+    let bound = b"{\"op\":\"flags\"}";
+    assert!(unsafe {
+        crate::rc_privacy_call(ptr::null(), bound.as_ptr(), bound.len())
+    }
+    .is_null());
+    assert_eq!(
+        unsafe { crate::rc_privacy_gpc(ptr::null_mut(), 0) },
+        -1
+    );
+
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!h.is_null());
+    // Bad payloads degrade, never crash.
+    assert!(unsafe {
+        crate::rc_privacy_call(h, ptr::null(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_privacy_call(h, b"nope".as_ptr(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_privacy_call(h, b"{\"op\":\"bogus\"}".as_ptr(), 15)
+    }
+    .is_null());
+
+    // A pristine persona: every fail-on toggle true, gpc sends,
+    // the unified verdict folds all three reads.
+    let f = take_str(unsafe {
+        crate::rc_privacy_call(h, bound.as_ptr(), bound.len())
+    })
+    .unwrap();
+    assert!(f.contains("\"gpc_signal\":true"));
+    assert!(f.contains("\"strip_tracking_params\":true"));
+    assert!(f.contains("\"adblock_enabled\":true"));
+    assert_eq!(unsafe { crate::rc_privacy_gpc(h, 0) }, 1);
+    let verd = b"{\"op\":\"verdict\"}";
+    let v = take_str(unsafe {
+        crate::rc_privacy_call(h, verd.as_ptr(), verd.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"gpc\":true"));
+
+    // A per-profile write flips only that persona's answer — and
+    // tor_mode overrides either way.
+    let gpckey = cs("privacy/gpcSignal");
+    let set = unsafe {
+        crate::rc_settings_set_bool(h, gpckey.as_ptr(), 0)
+    };
+    assert_eq!(set, RcStatus::Ok);
+    assert_eq!(unsafe { crate::rc_privacy_gpc(h, 0) }, 0);
+    assert_eq!(unsafe { crate::rc_privacy_gpc(h, 1) }, 1);
+    let gq = b"{\"op\":\"gpc\"}";
+    let g = take_str(unsafe {
+        crate::rc_privacy_call(h, gq.as_ptr(), gq.len())
+    })
+    .unwrap();
+    assert!(g.contains("\"send\":false"));
+    unsafe { crate::rc_settings_close(h) };
+
+    // The facade spelling on the same profile — one store, two
+    // lanes.
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+    let ah = unsafe { crate::facade::ac_privacy(core, pid.as_ptr()) };
+    assert!(!ah.is_null());
+    assert_eq!(unsafe { crate::facade::ac_privacy_gpc(ah, 0) }, 0);
+    assert_eq!(unsafe { crate::facade::ac_privacy_gpc(ah, 1) }, 1);
+    let other = unsafe {
+        crate::facade::ac_privacy(core, cs("other").as_ptr())
+    };
+    assert_eq!(unsafe { crate::facade::ac_privacy_gpc(other, 0) }, 1);
+    let vf = take_str(unsafe {
+        crate::facade::ac_privacy_call(ah, verd.as_ptr(), verd.len())
+    })
+    .unwrap();
+    assert!(vf.contains("\"gpc\":false"));
+    unsafe { crate::facade::ac_privacy_close(ah) };
+    unsafe { crate::facade::ac_privacy_close(other) };
+    // NULL facade handles degrade.
+    assert!(unsafe {
+        crate::facade::ac_privacy_call(ptr::null(), pure.as_ptr(), pure.len())
+    }
+    .is_null());
+    assert_eq!(unsafe { crate::facade::ac_privacy_gpc(ptr::null(), 0) }, -1);
+    unsafe { crate::facade::ac_shutdown(core) };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// MD06: the per-persona URL-sanitize policy over the C ABI — the
+// pure "defaults" op on a NULL store, the bound-profile clean /
+// ruleset / toggle lanes, the legacy extraParams merge, and the
+// facade spelling.
+#[test]
+fn urlclean_surface() {
+    let _g = guard();
+    let root = tmpdir("urlclean");
+    let croot = cs(&root);
+    let pid = cs("work");
+
+    // "defaults" answers on a NULL store; store-bound ops refuse.
+    let pure = b"{\"op\":\"defaults\"}";
+    let got = take_str(unsafe {
+        crate::rc_urlclean_call(ptr::null(), pure.as_ptr(), pure.len())
+    })
+    .unwrap();
+    assert!(got.contains("\"copy_enabled\":true"));
+    let bound = b"{\"op\":\"clean\",\"url\":\"https://a/?utm_source=x\"}";
+    assert!(unsafe {
+        crate::rc_urlclean_call(ptr::null(), bound.as_ptr(), bound.len())
+    }
+    .is_null());
+
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!h.is_null());
+    // Bad payloads degrade, never crash.
+    assert!(unsafe {
+        crate::rc_urlclean_call(h, ptr::null(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_urlclean_call(h, b"nope".as_ptr(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_urlclean_call(h, b"{\"op\":\"bogus\"}".as_ptr(), 15)
+    }
+    .is_null());
+
+    // A pristine persona cleans with the vendored ruleset.
+    let v = take_str(unsafe {
+        crate::rc_urlclean_call(h, bound.as_ptr(), bound.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"changed\":true"));
+    assert!(v.contains("https://a/\""));
+
+    // The legacy extraParams list merges on top of the ruleset.
+    let extras = cs("urlcleaner/extraParams");
+    let list = b"[\"partner\",\"session*\"]";
+    assert_eq!(
+        unsafe {
+            crate::rc_settings_set_list(h, extras.as_ptr(),
+                                        list.as_ptr(), list.len())
+        },
+        RcStatus::Ok
+    );
+    let e = b"{\"op\":\"clean\",\"url\":\"https://a/?partner=p&id=1\",\"purpose\":\"copy\"}";
+    let v = take_str(unsafe {
+        crate::rc_urlclean_call(h, e.as_ptr(), e.len())
+    })
+    .unwrap();
+    assert!(v.contains("https://a/?id=1"));
+
+    // A per-profile ruleset override replaces the global list;
+    // urlclean.json lands under the bound profile dir.
+    let set = b"{\"op\":\"ruleset_set\",\"ruleset\":{\"version\":1,\"params\":[\"only_this\"]}}";
+    let r = take_str(unsafe {
+        crate::rc_urlclean_call(h, set.as_ptr(), set.len())
+    })
+    .unwrap();
+    assert!(r.contains("\"mutated\":true"));
+    assert!(std::path::Path::new(&format!("{root}/profiles/work/urlclean.json")).exists());
+    let v = take_str(unsafe {
+        crate::rc_urlclean_call(h, bound.as_ptr(), bound.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"changed\":false"));
+    // The composite the snapshot loader embeds.
+    let cp = b"{\"op\":\"clean_policy\"}";
+    let v = take_str(unsafe {
+        crate::rc_urlclean_call(h, cp.as_ptr(), cp.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"source\":\"profile\""));
+    assert!(v.contains("only_this"));
+    assert!(v.contains("partner"));
+    let rs = b"{\"op\":\"ruleset_reset\"}";
+    let r = take_str(unsafe {
+        crate::rc_urlclean_call(h, rs.as_ptr(), rs.len())
+    })
+    .unwrap();
+    assert!(r.contains("\"reset\":true"));
+
+    // The copy toggle is facade-authored; the nav toggle stays
+    // Qt-owned and refuses the write.
+    let se = b"{\"op\":\"set_enabled\",\"purpose\":\"copy\",\"value\":false}";
+    let r = take_str(unsafe {
+        crate::rc_urlclean_call(h, se.as_ptr(), se.len())
+    })
+    .unwrap();
+    assert!(r.contains("\"mutated\":true"));
+    let v = take_str(unsafe {
+        crate::rc_urlclean_call(h, e.as_ptr(), e.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"enabled\":false"));
+    let sne = b"{\"op\":\"set_enabled\",\"purpose\":\"nav\",\"value\":false}";
+    assert!(unsafe {
+        crate::rc_urlclean_call(h, sne.as_ptr(), sne.len())
+    }
+    .is_null());
+    unsafe { crate::rc_settings_close(h) };
+
+    // The facade spelling on the same profile — one store, two
+    // lanes.
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+    let ah = unsafe { crate::facade::ac_urlclean(core, pid.as_ptr()) };
+    assert!(!ah.is_null());
+    let v = take_str(unsafe {
+        crate::facade::ac_urlclean_call(ah, e.as_ptr(), e.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"enabled\":false"));
+    let other = unsafe {
+        crate::facade::ac_urlclean(core, cs("other").as_ptr())
+    };
+    let v = take_str(unsafe {
+        crate::facade::ac_urlclean_call(other, bound.as_ptr(), bound.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"changed\":true"));
+    unsafe { crate::facade::ac_urlclean_close(ah) };
+    unsafe { crate::facade::ac_urlclean_close(other) };
+    // A NULL facade handle degrades.
+    assert!(unsafe {
+        crate::facade::ac_urlclean_call(ptr::null(), pure.as_ptr(), pure.len())
+    }
+    .is_null());
+    unsafe { crate::facade::ac_shutdown(core) };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// MD08: the session snapshot/restore policy view over the C ABI —
+// the pure "defaults" op on a NULL store, the bound-profile reads
+// (snapshot timing, dirty classes, retention, staleness, restore
+// answers), and the facade spelling on the AcSession handle.
+#[test]
+fn sesspolicy_surface() {
+    let _g = guard();
+    let root = tmpdir("sesspolicy");
+    let croot = cs(&root);
+    let pid = cs("work");
+
+    // "defaults" answers on a NULL store; "stale" refuses without
+    // a bound dir; the other reads degrade to the compiled-in
+    // constants rather than guessing.
+    let pure = b"{\"op\":\"defaults\"}";
+    let got = take_str(unsafe {
+        crate::rc_sesspolicy_call(ptr::null(), pure.as_ptr(), pure.len())
+    })
+    .unwrap();
+    assert!(got.contains("\"interval_ms\":3000"));
+    assert!(got.contains("\"maxwait_ms\":15000"));
+    assert!(got.contains("\"crash_restore\":\"ask\""));
+    assert!(got.contains("\"startup_default\":2"));
+    let stale = b"{\"op\":\"stale\"}";
+    assert!(unsafe {
+        crate::rc_sesspolicy_call(ptr::null(), stale.as_ptr(), stale.len())
+    }
+    .is_null());
+    let snap = b"{\"op\":\"snapshot\"}";
+    let got = take_str(unsafe {
+        crate::rc_sesspolicy_call(ptr::null(), snap.as_ptr(), snap.len())
+    })
+    .unwrap();
+    assert!(got.contains("\"interval_ms\":3000"));
+
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!h.is_null());
+    // Bad payloads degrade, never crash.
+    assert!(unsafe {
+        crate::rc_sesspolicy_call(h, ptr::null(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_sesspolicy_call(h, b"nope".as_ptr(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_sesspolicy_call(h, b"{\"op\":\"bogus\"}".as_ptr(), 15)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_sesspolicy_call(h, b"{\"op\":\"dirty\"}".as_ptr(), 14)
+    }
+    .is_null());
+
+    // A pristine persona: every dirty class on, no staleness.
+    let dk = b"{\"op\":\"dirty\",\"kind\":\"chrome\"}";
+    let v = take_str(unsafe {
+        crate::rc_sesspolicy_call(h, dk.as_ptr(), dk.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"dirty\":true"));
+    let v = take_str(unsafe {
+        crate::rc_sesspolicy_call(h, stale.as_ptr(), stale.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"stale\":false"));
+
+    // A per-profile write flips only that persona's answer.
+    let chrome_key = cs("session/dirtyOnChrome");
+    assert_eq!(
+        unsafe { crate::rc_settings_set_bool(h, chrome_key.as_ptr(), 0) },
+        RcStatus::Ok
+    );
+    let v = take_str(unsafe {
+        crate::rc_sesspolicy_call(h, dk.as_ptr(), dk.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"dirty\":false"));
+    let tabs_kind = b"{\"op\":\"dirty\",\"kind\":\"tabs\"}";
+    let v = take_str(unsafe {
+        crate::rc_sesspolicy_call(h, tabs_kind.as_ptr(), tabs_kind.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"dirty\":true"));
+    unsafe { crate::rc_settings_close(h) };
+
+    // The facade spelling on the same profile — one store, two
+    // lanes, and "defaults" never opens the store.
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+    let ah = unsafe { crate::facade::ac_session(core, pid.as_ptr()) };
+    assert!(!ah.is_null());
+    let v = take_str(unsafe {
+        crate::facade::ac_session_policy(ah, dk.as_ptr(), dk.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"dirty\":false"));
+    let v = take_str(unsafe {
+        crate::facade::ac_session_policy(ah, pure.as_ptr(), pure.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"interval_ms\":3000"));
+    let other = unsafe { crate::facade::ac_session(core, cs("other").as_ptr()) };
+    let v = take_str(unsafe {
+        crate::facade::ac_session_policy(other, dk.as_ptr(), dk.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"dirty\":true"));
+    unsafe { crate::facade::ac_session_close(ah) };
+    unsafe { crate::facade::ac_session_close(other) };
+    // A NULL facade handle degrades.
+    assert!(unsafe {
+        crate::facade::ac_session_policy(ptr::null(), pure.as_ptr(), pure.len())
+    }
+    .is_null());
+    unsafe { crate::facade::ac_shutdown(core) };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// MD02/MD09: the navigation-policy endpoints over the C ABI — the
+// phased decide manifest, the granular ops (predicates + the popup
+// gate's decide/record surface), and the facade spellings on
+// AcPolicy.  The popup matrix mirrors tst_popupblocker.
+#[test]
+fn navpolicy_surface() {
+    let _g = guard();
+    let root = tmpdir("navpolicy");
+    let croot = cs(&root);
+    // The persona-independent anchor — the dir must exist for the
+    // persisted popup rows (atomic_write never mkpaths).
+    std::fs::create_dir_all(format!("{root}/profiles/default")).unwrap();
+    init(&format!("{root}/profiles/default"));
+
+    // rc_nav_decide: bad payloads degrade to NULL (the adapter
+    // fails open), a phased manifest answers a verdict.
+    assert!(unsafe { crate::rc_nav_decide(ptr::null(), 4) }.is_null());
+    assert!(unsafe { crate::rc_nav_decide(b"nope".as_ptr(), 4) }.is_null());
+    let m = br#"{"url":"mailto:a@b.c","is_main_frame":true}"#;
+    let v = take_str(unsafe {
+        crate::rc_nav_decide(m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"action\":\"ask\""));
+    let m = br#"{"url":"https://e.example/","is_main_frame":true}"#;
+    let v = take_str(unsafe {
+        crate::rc_nav_decide(m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"action\":\"continue\""));
+
+    // rc_nav_call: bad payloads degrade, the predicates answer.
+    assert!(unsafe { crate::rc_nav_call(ptr::null(), 4) }.is_null());
+    assert!(unsafe { crate::rc_nav_call(b"nope".as_ptr(), 4) }.is_null());
+    assert!(unsafe {
+        crate::rc_nav_call(b"{\"op\":\"bogus\"}".as_ptr(), 15)
+    }
+    .is_null());
+    let m = br#"{"op":"browser_scheme","scheme":"https"}"#;
+    let v = take_str(unsafe {
+        crate::rc_nav_call(m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert_eq!(v, "true");
+
+    // ---- popup gate parity (the tst_popupblocker matrix) ----
+    let decide = |url: &str, enabled: bool| -> String {
+        let m = format!(
+            "{{\"op\":\"popup_decide\",\"url\":\"{url}\",\"shaped\":true,\"enabled\":{enabled}}}"
+        );
+        take_str(unsafe {
+            crate::rc_nav_call(m.as_ptr(), m.len())
+        })
+        .unwrap()
+    };
+    // Enabled + shaped + http(s) gates; the flag and the scheme
+    // floor allow everything else.
+    assert!(decide("http://example.com/", true).contains("\"block\""));
+    assert!(decide("https://example.com/", true).contains("\"block\""));
+    assert!(decide("http://example.com/", false)
+        .contains("\"allow\""));
+    for u in [
+        "file:///tmp/x.html",
+        "about:blank",
+        "data:text/html,x",
+        "qrc:/x.html",
+    ] {
+        assert!(decide(u, true).contains("\"allow\""), "{u}");
+    }
+
+    // popup_allow/persist -> decide allows, subdomains cover,
+    // siblings never; popup_remove scrubs; popup_list enumerates.
+    let allow = |host: &str, persistent: bool| -> String {
+        let m = format!(
+            "{{\"op\":\"popup_allow\",\"host\":\"{host}\",\"persistent\":{persistent}}}"
+        );
+        take_str(unsafe {
+            crate::rc_nav_call(m.as_ptr(), m.len())
+        })
+        .unwrap()
+    };
+    allow("example.com", true);
+    assert!(decide("http://example.com/", true).contains("\"allow\""));
+    assert!(decide("http://www.example.com/", true)
+        .contains("\"allow\""));
+    assert!(decide("http://notexample.com/", true)
+        .contains("\"block\""));
+    // Session overlay matches but never lists.
+    allow("session.test", false);
+    assert!(decide("http://www.session.test/", true)
+        .contains("\"allow\""));
+    let m = b"{\"op\":\"popup_list\"}";
+    let v = take_str(unsafe {
+        crate::rc_nav_call(m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("example.com"));
+    assert!(!v.contains("session.test"));
+    // popup_clear_session drops the overlay only.
+    let m = b"{\"op\":\"popup_clear_session\"}";
+    let v = take_str(unsafe {
+        crate::rc_nav_call(m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"cleared\":true"));
+    assert!(decide("http://session.test/", true).contains("\"block\""));
+    assert!(decide("http://example.com/", true).contains("\"allow\""));
+    // popup_remove scrubs the persistent row.
+    let m = br#"{"op":"popup_remove","host":"example.com"}"#;
+    let v = take_str(unsafe {
+        crate::rc_nav_call(m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"removed_persistent\":true"));
+    assert!(decide("http://example.com/", true).contains("\"block\""));
+
+    // The facade spellings on a "default"-bound AcPolicy — the
+    // persona-independent anchor the Qt adapter uses.
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+    let ah = unsafe { crate::facade::ac_policy(core, cs("default").as_ptr()) };
+    assert!(!ah.is_null());
+    let m = b"{\"op\":\"popup_list\"}";
+    let v = take_str(unsafe {
+        crate::facade::ac_nav_call(ah, m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"hosts\":[]"));
+    let a = br#"{"op":"popup_allow","host":"facade.example","persistent":true}"#;
+    let v = take_str(unsafe {
+        crate::facade::ac_nav_call(ah, a.as_ptr(), a.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"recorded\":true"));
+    assert!(decide("http://facade.example/", true).contains("\"allow\""));
+    let m = br#"{"url":"https://e.example/","is_main_frame":true}"#;
+    let v = take_str(unsafe {
+        crate::facade::ac_nav_decide(ah, m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"action\":\"continue\""));
+    unsafe { crate::facade::ac_policy_close(ah) };
+    // NULL facade handles degrade.
+    assert!(unsafe {
+        crate::facade::ac_nav_call(ptr::null(), m.as_ptr(), m.len())
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::facade::ac_nav_decide(ptr::null(), m.as_ptr(), m.len())
+    }
+    .is_null());
+    unsafe { crate::facade::ac_shutdown(core) };
+    let _ = std::fs::remove_dir_all(&root);
 }

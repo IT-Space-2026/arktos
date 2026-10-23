@@ -214,6 +214,33 @@ RcNotes *RustCoreBridge::notes(const QString &profileId)
                     id.isEmpty() ? nullptr : id.constData());
 }
 
+AcDlwpolicy *RustCoreBridge::dlwpolicy(const QString &profileId)
+{
+    if (m_core == nullptr)
+        return nullptr;
+    const QByteArray id = profileId.toUtf8();
+    return ac_dlwpolicy(m_core,
+                        id.isEmpty() ? nullptr : id.constData());
+}
+
+AcPrivacy *RustCoreBridge::privacy(const QString &profileId)
+{
+    if (m_core == nullptr)
+        return nullptr;
+    const QByteArray id = profileId.toUtf8();
+    return ac_privacy(m_core,
+                      id.isEmpty() ? nullptr : id.constData());
+}
+
+AcUrlclean *RustCoreBridge::urlclean(const QString &profileId)
+{
+    if (m_core == nullptr)
+        return nullptr;
+    const QByteArray id = profileId.toUtf8();
+    return ac_urlclean(m_core,
+                       id.isEmpty() ? nullptr : id.constData());
+}
+
 void rustCoreEnsureDataDir()
 {
     // Cheap and idempotent — call per operation so test-mode

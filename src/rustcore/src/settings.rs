@@ -298,6 +298,18 @@ impl RcSettings {
         }
     }
 
+    /// The directory this scope's settings.json lives in —
+    /// <root>/profiles/<id>/ for a profile scope, <root> for the
+    /// global scope — so typed specializations (RC19 containers,
+    /// MD04 dlwpolicy) can anchor sibling stores beside it.
+    pub fn scope_dir(&self) -> PathBuf {
+        self.lock()
+            .file
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default()
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }

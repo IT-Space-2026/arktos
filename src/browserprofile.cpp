@@ -706,7 +706,12 @@ void installGpcSignal(QWebEngineProfile *profile)
             scripts->remove(script);
     }
 
-    if (!PrivacyRequestInterceptor::storedGpcSignal()
+    // MD05: the toggle is persona data — the script follows the
+    // profile's OWN privacy store (gpcSignalEnabledForProfile
+    // resolves profileIdFor(profile) through rc_privacy_gpc), not
+    // the ambient profile's row storedGpcSignal() used to read.
+    if (!PrivacyRequestInterceptor::gpcSignalEnabledForProfile(
+            profileIdFor(profile))
         && profile != s_torProfile)
         return;
 

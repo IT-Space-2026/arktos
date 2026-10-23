@@ -56,8 +56,14 @@ extern "C" {
  * v3 adds the AcCookies module (RC15).
  * v4 adds the AcIcons module (RC16).
  * v5 adds the AcContainers module (RC19).
- * v6 adds the AcNotes module (RC21). */
-#define AC_API_VERSION 6u
+ * v6 adds the AcNotes module (RC21).
+ * v7 adds the AcDlwpolicy module (MD04).
+ * v8 adds the AcPrivacy module (MD05).
+ * v9 adds the AcUrlclean module (MD06).
+ * v10 adds session policy queries to AcSession (MD08).
+ * v11 adds the navpolicy endpoints on AcPolicy (MD02 surface;
+ * MD09 popup gate). */
+#define AC_API_VERSION 11u
 
 /* ac_capabilities() bits — one per module. */
 #define AC_CAP_SETTINGS   0x01ull
@@ -70,6 +76,9 @@ extern "C" {
 #define AC_CAP_ICONS      0x80ull
 #define AC_CAP_CONTAINERS 0x100ull
 #define AC_CAP_NOTES      0x200ull
+#define AC_CAP_DLPOLICY   0x400ull
+#define AC_CAP_PRIVACY    0x800ull
+#define AC_CAP_URLCLEAN   0x1000ull
 
 /* AcStatus and AcBuffer are the RC02–RC06 types verbatim — the
  * facade shares their spelling so mixed ac_/rc_ code compiles
@@ -102,6 +111,9 @@ typedef struct AcSession    AcSession;
 typedef struct AcCookies    AcCookies;
 typedef struct AcIcons      AcIcons;
 typedef struct AcContainers AcContainers;
+typedef struct AcDlwpolicy  AcDlwpolicy;
+typedef struct AcPrivacy    AcPrivacy;
+typedef struct AcUrlclean   AcUrlclean;
 typedef RcSettings AcSettings;
 typedef RcProfiles AcProfiles;
 typedef RcNotes AcNotes;
@@ -109,7 +121,7 @@ typedef RcNotes AcNotes;
 /* Change notification, one per AcCore.  `module` is a stable topic
  * ("settings", "profiles", "history", "bookmarks", "sitedec",
  * "policy", "uaspoof", "cookies", "icons", "containers",
- * "notes");
+ * "dlpolicy", "notes", "urlclean");
  * `profile_id` is the bound
  * profile that
  * changed or NULL for global/unscoped mutations.  Both pointers are
@@ -162,6 +174,9 @@ AcSession   *ac_session(AcCore *core, const char *profile_id);
 AcCookies   *ac_cookies(AcCore *core, const char *profile_id);
 AcIcons     *ac_icons(AcCore *core, const char *profile_id);
 AcContainers *ac_containers(AcCore *core, const char *profile_id);
+AcDlwpolicy *ac_dlwpolicy(AcCore *core, const char *profile_id);
+AcPrivacy   *ac_privacy(AcCore *core, const char *profile_id);
+AcUrlclean  *ac_urlclean(AcCore *core, const char *profile_id);
 AcNotes     *ac_notes(AcCore *core, const char *profile_id);
 
 void ac_settings_close(AcSettings *h);
@@ -173,6 +188,9 @@ void ac_session_close(AcSession *h);
 void ac_cookies_close(AcCookies *h);
 void ac_icons_close(AcIcons *h);
 void ac_containers_close(AcContainers *h);
+void ac_dlwpolicy_close(AcDlwpolicy *h);
+void ac_privacy_close(AcPrivacy *h);
+void ac_urlclean_close(AcUrlclean *h);
 void ac_notes_close(AcNotes *h);
 
 /* ---- settings (RC02) --------------------------------------------------- */
@@ -302,6 +320,32 @@ char    *ac_policy_call(const AcPolicy *h,
                         const uint8_t *json, size_t len);
 uint64_t ac_policy_eval_generation(void);
 
+/* MD03: the web-permission broker's granular endpoint — forwards
+ * rc_perm_call under this handle's profile anchor (the "webperm"
+ * rows live in the bound dir's sitedecisions.json; persona-
+ * independent callers bind "default" like the plain SiteDecisionStore
+ * overloads).  Same manifest grammar as rustcore.h's rc_perm_call:
+ * {"op":"decide"|"stored"|"resolve"|"remove"|"clear"|
+ *  "feature_class"|"key_for"|"session_clear", ...}. */
+char    *ac_perm_call(const AcPolicy *h,
+                      const uint8_t *json, size_t len);
+
+/* MD02/MD09: the navigation-policy endpoints — forward
+ * rc_nav_decide / rc_nav_call under this handle's profile anchor
+ * (the "nav-scheme"/"nav-block"/"container"/"popup" rows live in the
+ * bound dir's sitedecisions.json; persona-independent kinds —
+ * popup included — are consulted on a "default"-bound handle like
+ * the plain SiteDecisionStore overloads).  Same manifest grammars
+ * as rustcore.h: ac_nav_decide takes the phased navigation
+ * manifest; ac_nav_call takes {"op":..., params} including the
+ * MD09 popup-gate ops (popup_decide / popup_is_allowed /
+ * popup_allow / popup_remove / popup_list / popup_clear /
+ * popup_clear_session). */
+char    *ac_nav_decide(const AcPolicy *h,
+                       const uint8_t *json, size_t len);
+char    *ac_nav_call(const AcPolicy *h,
+                     const uint8_t *json, size_t len);
+
 int      ac_blocklist_check(const AcPolicy *h, const char *host);
 AcStatus ac_blocklist_load(const AcPolicy *h, const uint8_t *text,
                            size_t len);
@@ -354,6 +398,19 @@ int      ac_session_crash_count(const AcSession *h);
 AcStatus ac_session_last_exit(AcSession *h, AcBuffer *out);
 AcStatus ac_session_set_restoring(AcSession *h, int on);
 int      ac_session_restoring(const AcSession *h);
+
+/* MD08: the session snapshot/restore policy queries — the AutoSaver
+ * debounce + ceiling, the dirty-on-what class gate, the retention
+ * caps (max age / windows / tabs), the crash-restore answer and the
+ * startup-mode fallback, read from the bound profile's "session/"
+ * settings rows.  Same manifest grammar as rustcore.h's
+ * rc_sesspolicy_call: {"op":"defaults"|"policy"|"snapshot"|"dirty"|
+ * "retention"|"stale"|"restore", ...}.  NULL + stashed error on
+ * failure — the caller keeps its compiled-in consult, never
+ * guesses.  Read-only: fires no change callbacks.  Free the result
+ * with ac_string_free(). */
+char    *ac_session_policy(const AcSession *h,
+                           const uint8_t *json, size_t len);
 
 /* ---- cookies: per-profile cookie database (RC15) --------------------
  *
@@ -563,6 +620,80 @@ AcStatus ac_notes_remove(AcNotes *h, int64_t row, int64_t count);
 AcStatus ac_notes_sync(AcNotes *h);
 int      ac_notes_is_persistent(const AcNotes *h); /* 0 on volatile */
 int      ac_notes_is_dirty(const AcNotes *h);
+
+/* ---- dlwpolicy: download-interception decisions + records (MD04) --
+ *
+ * The DownloadManager's decision layer — a typed specialization over
+ * the bound profile's settings store plus its own
+ * profiles/<id>/downloads.json (the ac_containers_* open-per-call
+ * shape: ops read the file as committed, so keys the C++
+ * ProfileSettings mirror wrote mid-process are honored).  The legacy
+ * downloadmanager/ keys stay Qt-authored and are only READ here;
+ * the facade-authored rule lists and the download history records
+ * live in downloads.json — records_list falls back to the legacy
+ * download_N_* keys while that file is absent, so pre-move history
+ * is never stranded.  Dialogs, the QProcess handoff and the
+ * filesystem execution stay caller-side.  Mutations emit "dlpolicy"
+ * stamped with the bound profile.
+ *
+ * ac_dlw_call: the granular endpoint — same manifest grammar as
+ * rustcore.h's rc_dlw_call: {"op":"verdict"|"external_gate"|
+ * "engine_claim"|"row_remove"|"rules"|"rule_get"|"rule_set"|
+ * "records_list"|"records_save"|"records_clear"|"sanitize_name"|
+ * "threat"|"external_argv", ...}.  NULL + stashed error on failure;
+ * free the result with ac_string_free().
+ */
+char    *ac_dlw_call(const AcDlwpolicy *h,
+                     const uint8_t *json, size_t len);
+
+/* ---- privacy: per-persona privacy-policy reads (MD05) ------------
+ *
+ * The request interceptors' privacy/ toggle reads — a read-only
+ * typed view over the bound profile's settings store (the
+ * ac_dlwpolicy per-op-open shape: every call reads the file as
+ * committed, so keys the C++ ProfileSettings mirror wrote
+ * mid-process are honored).  Qt keeps the writes and all
+ * execution — setHttpHeader, script insertion, dialogs; this
+ * surface only answers questions.
+ *
+ * ac_privacy_call: the granular endpoint — same manifest grammar as
+ * rustcore.h's rc_privacy_call: {"op":"flags"|"flag"|"gpc"|
+ * "verdict"|"defaults", ...}.  NULL + stashed error on failure;
+ * free the result with ac_string_free().
+ *
+ * ac_privacy_gpc: the request-time Sec-GPC decision on the bound
+ * persona — 1 send "Sec-GPC: 1", 0 don't, -1 on error (the caller
+ * keeps its verdict-bit fallback).  tor_mode != 0 answers 1
+ * unconditionally — the tor pipeline's uniform-constant rule.
+ */
+char    *ac_privacy_call(const AcPrivacy *h,
+                         const uint8_t *json, size_t len);
+int      ac_privacy_gpc(const AcPrivacy *h, int tor_mode);
+
+/* ---- urlclean: per-persona URL-sanitize policy (MD06) ------------
+ *
+ * The URL-cleaning decision layer — a typed specialization over the
+ * bound profile's settings store plus its own
+ * profiles/<id>/urlclean.json (the ac_dlwpolicy per-op-open shape:
+ * every call reads the file as committed, so keys the C++
+ * ProfileSettings mirror wrote mid-process are honored).  The
+ * legacy urlcleaner/extraParams key stays Qt-authored and is only
+ * READ here — merged into the effective strip set, never moved —
+ * while the editable ruleset override (the urlstrip grammar) and
+ * the copy-path toggle live in urlclean.json.  The clipboard write,
+ * the shield-panel tally and the redirect application stay
+ * caller-side; the nav pipeline takes the merged ruleset off the
+ * policy snapshot rather than calling per request.  Mutations emit
+ * "urlclean" stamped with the bound profile.
+ *
+ * ac_urlclean_call: the granular endpoint — same manifest grammar
+ * as rustcore.h's rc_urlclean_call: {"op":"clean"|"enabled"|
+ * "set_enabled"|"params"|"ruleset_get"|"ruleset_set"|
+ * "ruleset_reset"|"clean_policy"|"defaults", ...}.  NULL + stashed
+ * error on failure; free the result with ac_string_free().
+ */
+char    *ac_urlclean_call(const AcUrlclean *h,
+                          const uint8_t *json, size_t len);
 
 #ifdef __cplusplus
 }
