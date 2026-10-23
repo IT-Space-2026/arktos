@@ -98,10 +98,10 @@ chrome.wallpaper.*: unsupported
 # MD07 queued carve-outs (still typed today — entries stay):
 #   tabs unserved members -> MD10 ops/state, MD11 zoom+capture,
 #     MD12 connect; management read ops -> MD16, mutations -> MD17;
-#     storage getKeys/setAccessLevel/sync/quota -> MD19;
 #     alarms edges -> MD20.
 # (extension.isAllowed* left with MD15 — invokeExtension answers the
-#  honest capability verdicts now.)
+#  honest capability verdicts now; storage getKeys/setAccessLevel/
+#  sync-persistence/quota landed with MD19.)
 # tabs members beyond the implemented set are typed stubs;
 # sendMessage frameId!=0 is unsupported (page agent lives in the main
 # frame only).
@@ -170,6 +170,8 @@ chrome.scripting.*: no-such-file
 chrome.scripting.*: not-found
 chrome.storage.managed.*: read-only
 chrome.storage.*: invalid-area
+chrome.storage.*: invalid-argument
+chrome.storage.*: quota-exceeded
 chrome.tabs.captureVisibleTab: capture-failed
 chrome.tabs.captureVisibleTab: invalid-argument
 chrome.tabs.captureVisibleTab: no-permission

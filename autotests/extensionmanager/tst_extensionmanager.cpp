@@ -91,6 +91,7 @@ private slots:
     void chromePageChurn();
     void relayPortChurn();
     void extensionShimBackend();
+    void extensionStorageExtras();
     void extensionTabsOps();
     void extensionTabsZoomCapture();
     void extensionMessageRelay();
@@ -2850,6 +2851,196 @@ void tst_ExtensionManager::extensionShimBackend()
         .value(QLatin1String("ok")).toBool());
 
     // Clean the persisted store dir for the test id.
+    QDir(BrowserPaths::dataFilePath(
+        QStringLiteral("extstorage")) + QLatin1Char('/') + id)
+        .removeRecursively();
+    QDir(dir).removeRecursively();
+}
+
+// MD19 — chrome.storage extras.  getKeys/setAccessLevel ride the
+// same dispatch as get/set; 'sync' persists under extstorage/ like
+// 'local' (no cloud sync — a recorded note says so); and Chrome's
+// quota bounds (sync QUOTA_BYTES_PER_ITEM 8192 / QUOTA_BYTES 102400
+// / MAX_ITEMS 512, local+session 10 MB) refuse oversized writes
+// atomically with a typed quota-exceeded.
+void tst_ExtensionManager::extensionStorageExtras()
+{
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extstore-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile manifestFile(dir + QLatin1String("/manifest.json"));
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly));
+        manifestFile.write(
+            "{\"manifest_version\":3,\"name\":\"tst-store\","
+            "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        manifestFile.close();
+    }
+    const QString id = QStringLiteral("tstmockextensionid0099");
+
+    ExtensionShimBackend backend(id, QStringLiteral("tst-store"), dir);
+
+    // --- sync round trip, no longer the session map ---------------
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.set"),
+        QJsonObject{{QStringLiteral("items"),
+                     QJsonObject{{QStringLiteral("k"), 1},
+                                 {QStringLiteral("name"),
+                                  QStringLiteral("v")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toObject()
+            .value(QLatin1String("changes")).toObject()
+            .value(QLatin1String("k")).toObject()
+            .contains(QLatin1String("newValue")));
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.get"),
+        QJsonObject{{QStringLiteral("keys"), QStringLiteral("k")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("k")).toInt(), 1);
+    QVERIFY(backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("session.set"),
+        QJsonObject{{QStringLiteral("items"),
+                     QJsonObject{{QStringLiteral("k"), 9}}}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.get"),
+        QJsonObject{{QStringLiteral("keys"), QStringLiteral("k")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("k")).toInt(), 1);
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("session.get"),
+        QJsonObject{{QStringLiteral("keys"),
+                     QStringLiteral("name")}});
+    QVERIFY(!reply.value(QLatin1String("result")).toObject()
+            .contains(QLatin1String("name")));
+
+    // --- getKeys ---------------------------------------------------
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.getKeys"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QStringList keys;
+    for (const QJsonValue &v
+         : reply.value(QLatin1String("result")).toArray())
+        keys.append(v.toString());
+    keys.sort();
+    QCOMPARE(keys, (QStringList{QLatin1String("k"),
+                                QLatin1String("name")}));
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("managed.getKeys"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 0);
+    // The dedicated managed store never aliases a sibling area.
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("managed.get"),
+        QJsonObject{{QStringLiteral("keys"), QJsonValue::Null}});
+    QVERIFY(reply.value(QLatin1String("result")).toObject().isEmpty());
+
+    // --- setAccessLevel recorded ------------------------------------
+    reply = backend.invoke(
+        QStringLiteral("storage"),
+        QStringLiteral("session.setAccessLevel"),
+        QJsonObject{{QStringLiteral("accessLevel"),
+                     QStringLiteral("TRUSTED_AND_UNTRUSTED_CONTEXTS")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    // Chrome's {accessLevel: level} object spelling lands the same.
+    reply = backend.invoke(
+        QStringLiteral("storage"),
+        QStringLiteral("session.setAccessLevel"),
+        QJsonObject{{QStringLiteral("accessLevel"),
+                     QJsonObject{{QStringLiteral("accessLevel"),
+                                  QStringLiteral("TRUSTED_CONTEXTS")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("storage"),
+        QStringLiteral("local.setAccessLevel"),
+        QJsonObject{{QStringLiteral("accessLevel"),
+                     QStringLiteral("BOGUS")}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    bool sawAccessLevel = false, sawNoSync = false;
+    for (const QString &n : backend.notes()) {
+        if (n.contains(QLatin1String("TRUSTED_AND_UNTRUSTED_CONTEXTS")))
+            sawAccessLevel = true;
+        if (n.contains(QLatin1String("no cloud sync")))
+            sawNoSync = true;
+    }
+    QVERIFY(sawAccessLevel);
+    QVERIFY(sawNoSync);
+
+    // --- quota bounds ------------------------------------------------
+    // sync per-item cap: key length + JSON value over 8192 bytes.
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.set"),
+        QJsonObject{{QStringLiteral("items"),
+                     QJsonObject{{QStringLiteral("big"),
+                                  QString(9000, QLatin1Char('x'))}}}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("quota-exceeded"));
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.get"),
+        QJsonObject{{QStringLiteral("keys"), QStringLiteral("big")}});
+    QVERIFY(!reply.value(QLatin1String("result")).toObject()
+            .contains(QLatin1String("big")));
+    // sync total cap: under-item-size items whose sum crosses 100KB.
+    QJsonObject many;
+    for (int i = 0; i < 20; ++i)
+        many.insert(QStringLiteral("f%1").arg(i),
+                    QString(7000, QLatin1Char('y')));
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.set"),
+        QJsonObject{{QStringLiteral("items"), many}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("quota-exceeded"));
+    // MAX_ITEMS: one call carrying more than 512 distinct keys.
+    QJsonObject flood;
+    for (int i = 0; i < 513; ++i)
+        flood.insert(QStringLiteral("i%1").arg(i), i);
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.set"),
+        QJsonObject{{QStringLiteral("items"), flood}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("quota-exceeded"));
+    // local's 10 MB ceiling is enforced the same way.
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("local.set"),
+        QJsonObject{{QStringLiteral("items"),
+                     QJsonObject{{QStringLiteral("huge"),
+                                  QString(11 * 1024 * 1024,
+                                          QLatin1Char('z'))}}}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("quota-exceeded"));
+
+    // --- sync survives a backend respawn ----------------------------
+    QVERIFY(QFile::exists(
+        BrowserPaths::dataFilePath(QStringLiteral("extstorage"))
+        + QLatin1Char('/') + id + QLatin1String("/sync.json")));
+    {
+        ExtensionShimBackend again(id, QStringLiteral("tst-store"),
+                                   dir);
+        reply = again.invoke(
+            QStringLiteral("storage"), QStringLiteral("sync.get"),
+            QJsonObject{{QStringLiteral("keys"),
+                         QStringLiteral("name")}});
+        QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("name")).toString(),
+                 QStringLiteral("v"));
+        reply = again.invoke(
+            QStringLiteral("storage"), QStringLiteral("sync.getKeys"),
+            QJsonObject());
+        QCOMPARE(reply.value(QLatin1String("result")).toArray()
+                 .size(), 2);
+        // session stays volatile — the respawn sees none of it.
+        reply = again.invoke(
+            QStringLiteral("storage"), QStringLiteral("session.get"),
+            QJsonObject{{QStringLiteral("keys"),
+                         QStringLiteral("k")}});
+        QVERIFY(!reply.value(QLatin1String("result")).toObject()
+                .contains(QLatin1String("k")));
+    }
+
     QDir(BrowserPaths::dataFilePath(
         QStringLiteral("extstorage")) + QLatin1Char('/') + id)
         .removeRecursively();

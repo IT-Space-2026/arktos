@@ -263,6 +263,34 @@ void applyWindowProps(BrowserMainWindow *window,
         QApplication::alert(window);
 }
 
+// MD19 — Chrome's published storage quota bounds, measured the way
+// Chrome measures them: the key's length plus the JSON
+// stringification of the value, per item.
+constexpr qint64 kSyncQuotaBytesPerItem = 8192;
+constexpr int kSyncMaxItems = 512;
+
+qint64 storageQuotaBytes(const QString &area)
+{
+    if (area == QLatin1String("sync"))
+        return 102400;          // sync.QUOTA_BYTES
+    return 10485760;            // local + session (MV3 10 MB)
+}
+
+qint64 jsonValueBytes(const QJsonValue &value)
+{
+    return QJsonDocument(QJsonArray{value})
+            .toJson(QJsonDocument::Compact).size() - 2;
+}
+
+qint64 storeBytesUsed(const QJsonObject &store)
+{
+    qint64 total = 0;
+    for (auto it = store.constBegin(); it != store.constEnd(); ++it)
+        total += it.key().toUtf8().size()
+            + jsonValueBytes(it.value());
+    return total;
+}
+
 // getInfo.windowTypes — every Arktos browser window is "normal",
 // so a filter naming only other types matches nothing.
 bool windowTypeMatch(const QJsonObject &getInfo)
@@ -303,6 +331,8 @@ ExtensionShimBackend::~ExtensionShimBackend()
     }
     if (m_localDirty)
         flushLocalStore();
+    if (m_syncDirty)
+        flushSyncStore();
     // The items die with their owner — Chrome clears an extension's
     // context menus when its background context ends.  A respawn's
     // replacement backend already claimed the slot: leave it.
@@ -394,10 +424,14 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
 }
 
 // -------------------------------------------------------------------
-// chrome.storage — per-extension host-side store.  'local' persists
-// as JSON under <data>/extstorage/<id>/ (QSaveFile atomic write);
-// 'session' is in-memory like the real area.  Mutations answer the
-// WebExtensions change record so the shim can fire onChanged.
+// chrome.storage — per-extension host-side store.  'local' and
+// 'sync' persist as JSON under <data>/extstorage/<id>/ (QSaveFile
+// atomic write); 'sync' roams through the user's account on Chrome —
+// Arktos has no sync service, so the honest answer is profile-local
+// persistence plus a recorded note (MD19).  'session' is in-memory
+// like the real area; 'managed' is a never-written read-only store.
+// Mutations answer the WebExtensions change record so the shim can
+// fire onChanged.
 // -------------------------------------------------------------------
 
 QString ExtensionShimBackend::storageDir() const
@@ -416,33 +450,82 @@ QString ExtensionShimBackend::storageDir() const
         QStringLiteral("extstorage")) + QLatin1Char('/') + safe;
 }
 
+QJsonObject ExtensionShimBackend::loadStoreFile(const QString &area) const
+{
+    // The read cap sits just above the 10 MB local-area quota — a
+    // legitimately filled store must never refuse to load back.
+    QFile file(storageDir() + QLatin1Char('/') + area
+               + QLatin1String(".json"));
+    if (file.size() <= 12 * 1024 * 1024
+            && file.open(QIODevice::ReadOnly))
+        return QJsonDocument::fromJson(file.readAll()).object();
+    return QJsonObject();
+}
+
+void ExtensionShimBackend::flushStoreFile(const QString &area,
+                                          const QJsonObject &store)
+{
+    QDir dir;
+    if (!dir.mkpath(storageDir()))
+        return;
+    QSaveFile file(storageDir() + QLatin1Char('/') + area
+                   + QLatin1String(".json"));
+    if (!file.open(QIODevice::WriteOnly))
+        return;
+    file.write(QJsonDocument(store).toJson(QJsonDocument::Compact));
+    file.commit();
+}
+
 QJsonObject &ExtensionShimBackend::storeFor(const QString &area)
 {
-    if (area == QLatin1String("local") && !m_localLoaded) {
-        m_localLoaded = true;
-        QFile file(storageDir() + QLatin1String("/local.json"));
-        if (file.size() <= 8 * 1024 * 1024 && file.open(QIODevice::ReadOnly))
-            m_storeLocal =
-                QJsonDocument::fromJson(file.readAll()).object();
+    if (area == QLatin1String("local")) {
+        if (!m_localLoaded) {
+            m_localLoaded = true;
+            m_storeLocal = loadStoreFile(QStringLiteral("local"));
+        }
+        return m_storeLocal;
     }
-    return area == QLatin1String("local") ? m_storeLocal
-                                          : m_storeSession;
+    if (area == QLatin1String("sync")) {
+        if (!m_syncLoaded) {
+            m_syncLoaded = true;
+            m_storeSync = loadStoreFile(QStringLiteral("sync"));
+            recordNote(QStringLiteral(
+                "chrome.storage.sync: persisted under extstorage/ "
+                "profile-local — Arktos has no cloud sync, the area "
+                "does not roam"));
+        }
+        return m_storeSync;
+    }
+    if (area == QLatin1String("managed"))
+        return m_storeManaged;
+    return m_storeSession;
+}
+
+void ExtensionShimBackend::persistArea(const QString &area)
+{
+    if (area == QLatin1String("local")) {
+        m_localDirty = true;
+        flushLocalStore();
+    } else if (area == QLatin1String("sync")) {
+        m_syncDirty = true;
+        flushSyncStore();
+    }
 }
 
 void ExtensionShimBackend::flushLocalStore()
 {
     if (!m_localLoaded)
         return;
-    QDir dir;
-    if (!dir.mkpath(storageDir()))
-        return;
-    QSaveFile file(storageDir() + QLatin1String("/local.json"));
-    if (!file.open(QIODevice::WriteOnly))
-        return;
-    file.write(QJsonDocument(m_storeLocal)
-                   .toJson(QJsonDocument::Compact));
-    file.commit();
+    flushStoreFile(QStringLiteral("local"), m_storeLocal);
     m_localDirty = false;
+}
+
+void ExtensionShimBackend::flushSyncStore()
+{
+    if (!m_syncLoaded)
+        return;
+    flushStoreFile(QStringLiteral("sync"), m_storeSync);
+    m_syncDirty = false;
 }
 
 // WebExtensions get() key shapes: null → whole store, string → one
@@ -573,20 +656,74 @@ QJsonObject ExtensionShimBackend::invokeStorage(const QString &method,
         return okReply(QJsonDocument(picked)
                            .toJson(QJsonDocument::Compact).size());
     }
+    if (op == QLatin1String("getKeys")) {
+        QJsonArray keys;
+        for (auto it = store.constBegin(); it != store.constEnd();
+                ++it)
+            keys.append(it.key());
+        return okReply(keys);
+    }
+    if (op == QLatin1String("setAccessLevel")) {
+        // Chrome takes {accessLevel: AccessLevel}; accept the bare
+        // string too — both spellings reach us over the bridge.
+        const QJsonValue raw =
+            args.value(QStringLiteral("accessLevel"));
+        const QString level = raw.isObject()
+            ? raw.toObject().value(QStringLiteral("accessLevel"))
+                .toString()
+            : raw.toString();
+        if (level != QLatin1String("TRUSTED_CONTEXTS")
+                && level != QLatin1String(
+                    "TRUSTED_AND_UNTRUSTED_CONTEXTS"))
+            return errReply(QStringLiteral("invalid-argument"));
+        if (m_storageAccessLevels.value(area) != level) {
+            m_storageAccessLevels.insert(area, level);
+            recordNote(QStringLiteral(
+                "chrome.storage.%1.setAccessLevel(%2) recorded — "
+                "Chrome scopes TRUSTED/UNTRUSTED_CONTEXTS reads on "
+                "the session area; the bridge store serves every "
+                "context of this extension regardless")
+                    .arg(area, level));
+        }
+        return okReply();
+    }
     if (op == QLatin1String("set")) {
         if (area == QLatin1String("managed"))
             return errReply(QStringLiteral("read-only"));
         const QJsonObject items =
             args.value(QStringLiteral("items")).toObject();
+        // MD19 — Chrome's quota bounds, enforced before the write
+        // lands (the call fails atomically like Chrome): sync caps
+        // each item at QUOTA_BYTES_PER_ITEM (8192) and the area at
+        // MAX_ITEMS (512); every writable area enforces its
+        // QUOTA_BYTES ceiling (sync 102400, local/session 10485760).
+        if (area == QLatin1String("sync")) {
+            for (auto it = items.constBegin(); it != items.constEnd();
+                    ++it) {
+                if (it.key().toUtf8().size()
+                        + jsonValueBytes(it.value())
+                    > kSyncQuotaBytesPerItem)
+                    return errReply(QStringLiteral("quota-exceeded"));
+            }
+            int count = store.size();
+            for (auto it = items.constBegin(); it != items.constEnd();
+                    ++it) {
+                if (!store.contains(it.key()))
+                    ++count;
+            }
+            if (count > kSyncMaxItems)
+                return errReply(QStringLiteral("quota-exceeded"));
+        }
+        QJsonObject merged = store;
+        for (auto it = items.constBegin(); it != items.constEnd(); ++it)
+            merged.insert(it.key(), it.value());
+        if (storeBytesUsed(merged) > storageQuotaBytes(area))
+            return errReply(QStringLiteral("quota-exceeded"));
         QJsonObject result;
         result.insert(QStringLiteral("changes"),
                       changesForSet(store, items));
-        for (auto it = items.constBegin(); it != items.constEnd(); ++it)
-            store.insert(it.key(), it.value());
-        if (area == QLatin1String("local")) {
-            m_localDirty = true;
-            flushLocalStore();
-        }
+        store = merged;
+        persistArea(area);
         return okReply(result);
     }
     if (op == QLatin1String("remove")) {
@@ -606,10 +743,7 @@ QJsonObject ExtensionShimBackend::invokeStorage(const QString &method,
                       changesForRemove(store, keys));
         for (const QString &key : keys)
             store.remove(key);
-        if (area == QLatin1String("local")) {
-            m_localDirty = true;
-            flushLocalStore();
-        }
+        persistArea(area);
         return okReply(result);
     }
     if (op == QLatin1String("clear")) {
@@ -622,10 +756,7 @@ QJsonObject ExtensionShimBackend::invokeStorage(const QString &method,
         result.insert(QStringLiteral("changes"),
                       changesForRemove(store, keys));
         store = QJsonObject();
-        if (area == QLatin1String("local")) {
-            m_localDirty = true;
-            flushLocalStore();
-        }
+        persistArea(area);
         return okReply(result);
     }
     return errReply(QStringLiteral("unimplemented"));

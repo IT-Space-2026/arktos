@@ -45,10 +45,14 @@ class QWebEngineProfile;
 //
 // What lives here and why:
 //   storage.*    — per-extension JSON store under
-//                  <data>/extstorage/<id>/ (local persists, session
-//                  is in-memory); the page keeps real chrome.storage
-//                  when present, this backs contexts without bindings;
-//                  the 'storage' manifest permission gates the
+//                  <data>/extstorage/<id>/ (local + sync persist
+//                  profile-local — no cloud sync roams sync, session
+//                  is in-memory, managed is read-only); Chrome's
+//                  quota bounds and the getKeys/setAccessLevel
+//                  extras are enforced/recorded host-side (MD19);
+//                  the page keeps real chrome.storage when present,
+//                  this backs contexts without bindings; the
+//                  'storage' manifest permission gates the
 //                  namespace (ER16)
 //   alarms.*     — QTimer-backed alarms so onAlarm really fires (the
 //                  hosted page's binding is present-but-inert);
@@ -296,10 +300,16 @@ private:
     static QJsonObject ok(const QJsonValue &result = QJsonValue());
     static QJsonObject err(const QString &code);
 
-    // storage area helpers — 'local' persists under extstorage/, the
-    // rest are in-memory for this host's lifetime.
+    // storage area helpers — 'local' and 'sync' persist under
+    // extstorage/, 'session' is in-memory, 'managed' a never-written
+    // read-only store.
     QJsonObject &storeFor(const QString &area);
+    QJsonObject loadStoreFile(const QString &area) const;
+    void flushStoreFile(const QString &area,
+                        const QJsonObject &store);
+    void persistArea(const QString &area);
     void flushLocalStore();
+    void flushSyncStore();
     QString storageDir() const;
     QJsonObject changesForSet(const QJsonObject &store,
                               const QJsonObject &items) const;
@@ -313,9 +323,18 @@ private:
     QString m_extensionPath;
 
     QJsonObject m_storeLocal;
+    QJsonObject m_storeSync;
     QJsonObject m_storeSession;
+    QJsonObject m_storeManaged;
     bool m_localLoaded = false;
     bool m_localDirty = false;
+    bool m_syncLoaded = false;
+    bool m_syncDirty = false;
+    // MD19: the recorded setAccessLevel level per storage area —
+    // Chrome scopes TRUSTED/UNTRUSTED_CONTEXTS on the session area;
+    // the bridge store serves every context of the extension either
+    // way, so the level is honest bookkeeping, not a gate.
+    QHash<QString, QString> m_storageAccessLevels;
 
     struct Alarm {
         QString name;

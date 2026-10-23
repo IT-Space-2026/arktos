@@ -718,7 +718,8 @@
     // Re-assert every shim surface the engine may have redefined.
     // Idempotent by construction — a no-op when nothing was swapped.
     var tabsProxyRef = null, tabsNsRef = null;
-    var bridgeLocalRef = null, bridgeSessionRef = null;
+    var bridgeLocalRef = null, bridgeSessionRef = null,
+        bridgeSyncRef = null;
     var wrappedOnMessageRef = null, shimSendMessageRef = null;
     var shimConnectRef = null;
     var offscreenNsRef = null;   // ER10 — member-identity re-assert
@@ -843,6 +844,9 @@
             if (bridgeSessionRef && st.session !== bridgeSessionRef)
                 safeSet(st, 'session', bridgeSessionRef,
                         'chrome.storage.session');
+            if (bridgeSyncRef && st.sync !== bridgeSyncRef)
+                safeSet(st, 'sync', bridgeSyncRef,
+                        'chrome.storage.sync');
         }
         var rt2 = chrome.runtime;
         if (rt2 && typeof rt2 === 'object') {
@@ -1825,6 +1829,22 @@
             .catch(function () {});
     }
 
+    // MD19 — Chrome's published area quotas, mirrored onto the
+    // bridge-backed areas; the host enforces the same bounds.
+    var STORAGE_AREA_QUOTAS = {
+        local: { QUOTA_BYTES: 10485760 },
+        sync: {
+            QUOTA_BYTES: 102400,
+            QUOTA_BYTES_PER_ITEM: 8192,
+            MAX_ITEMS: 512,
+            MAX_WRITE_OPERATIONS_PER_HOUR: 1800,
+            MAX_WRITE_OPERATIONS_PER_MINUTE: 120,
+            MAX_SUSTAINED_WRITE_OPERATIONS_PER_MINUTE: 1000000
+        },
+        session: { QUOTA_BYTES: 10485760 },
+        managed: {}
+    };
+
     function bridgeStorageArea(areaName) {
         var areaEvent = makeEvent('storage.' + areaName + '.onChanged');
         function afterMutate(result) {
@@ -1836,7 +1856,7 @@
                 return;
             storageChangedPost(areaName, changes);
         }
-        return {
+        var area = {
             get: function (keys, cb) {
                 var p = call('storage', areaName + '.get',
                              { keys: keys === undefined ? null : keys });
@@ -1887,11 +1907,34 @@
                            function () { cb(0); });
                 return p;
             },
-            setAccessLevel: function (level, cb) {
-                return okCall(undefined, cb);
+            getKeys: function (cb) {
+                var p = call('storage', areaName + '.getKeys', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v || []); },
+                           function (e) {
+                               answerCb(cb, [],
+                                        e && e.message || String(e));
+                           });
+                return p;
+            },
+            setAccessLevel: function (accessLevel, cb) {
+                var p = call('storage', areaName + '.setAccessLevel',
+                             { accessLevel: accessLevel });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                           });
+                return p.then(function () {});
             },
             onChanged: areaEvent
         };
+        var quotas = STORAGE_AREA_QUOTAS[areaName];
+        if (quotas)
+            for (var q in quotas)
+                area[q] = quotas[q];
+        return area;
     }
     shim.storageArea = bridgeStorageArea;   // test seam
 
@@ -2102,11 +2145,29 @@
         } else {
             adoptRealArea('session');
         }
+        // MD19: sync persists through the bridge like local — there
+        // is no cloud sync in Arktos, so the honest answer is a
+        // profile-local store, not the volatile session map.
+        if (!chrome.storage.sync
+                || typeof chrome.storage.sync.get !== 'function') {
+            bridgeSyncRef = bridgeStorageArea('sync');
+            if (safeSet(chrome.storage, 'sync', bridgeSyncRef,
+                        'chrome.storage.sync'))
+                note('chrome.storage.sync: bridge-backed store '
+                     + 'persisted profile-local — no cloud sync in '
+                     + 'Arktos, the area does not roam');
+        } else {
+            adoptRealArea('sync');
+        }
         if (!chrome.storage.managed) {
             safeSet(chrome.storage, 'managed', {
                 get: function (keys, cb) {
                     touch('chrome.storage.managed.get');
                     return okCall({}, cb);
+                },
+                getKeys: function (cb) {
+                    touch('chrome.storage.managed.getKeys');
+                    return okCall([], cb);
                 },
                 onChanged: makeEvent('storage.managed.onChanged')
             }, 'chrome.storage.managed');
