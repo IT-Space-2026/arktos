@@ -163,7 +163,7 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 
 | Site | Verdict | Notes / Needs |
 |------|---------|---------------|
-| `contextMenuRequested` :538 | thin | MS04-style menu model: reopen-enable (session stack), pin toggle label (session), container submenu rows + rules (ac_containers + private/tor gate), sleep/wake + free-memory enable (engine state keep / policy thin), group rows (session).  Menu build keep. |
+| `contextMenuRequested` :538 | done | MS10: tabbarcontroller.{h,cpp} `contextMenuModel(env)` owns entry set/order/enabled/checked/label-variant (reopen-enable, pin label, container rows + rules + private/tor gate, sleep/wake + free-memory, group rows); tabbar.cpp renders the model — menu build/exec/strings keep. env legs: containers ride the rc_containers_-backed settings store; closed-stack/pin/group reads are per-run state serialized via the AcSession manifest (MS08); private/tor mode legs pending a context facade. |
 | `decodeArktosTabDrag`/`beginTabDragSession`/`endTabDragSession` :139-156 | keep | drag codec/session — drag/drop stays Qt. |
 | `mouseDoubleClickEvent`/`mousePressEvent`/`mouseMoveEvent`/`mouseReleaseEvent`/`wheelEvent` :865-1478 | keep | drag, tear-off, rename-edit, scroll input. |
 | `dragEnterEvent`/`dragMoveEvent`/`dragLeaveEvent`/`dropEvent`/`insertIndexForDrop` :1327-1466 | keep | drop accept + insert index (input). |
@@ -299,9 +299,8 @@ instances and manager-owned stores that haven't been facade-bound.
   keeps menu build/exec/strings; engine-adapter hover sink
   (browsermainwindow.cpp:642) consumes the same verdict.  env inputs
   still Qt-legged (thin-blocked): CONT07 gate → MD02, private/tor
-  availability → context + MB04 caps.  tabbar.cpp:538 menu model is
-  the same shape (still open — no MS row yet covers it; the tab-bar
-  context menu verdicts map to MS08 session/ac_containers inputs).
+  availability → context + MB04 caps.  MS10 applied the same shape to
+  tabbar.cpp:538 — TabBarController owns the strip menu model.
 - **MS05 zoom/find/print/devtools caps** (~5 sites): browsermainwindow.cpp
   :1733, :3521-3581, webview zoom :1062-1149 — all `needs:task:MB04`.
 - **MS06 capability chrome** (~6 sites): browsermainwindow.cpp:2510,

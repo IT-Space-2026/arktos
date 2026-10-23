@@ -74,6 +74,7 @@ private slots:
     void freeMemoryMenuEntries();
     void contextMenuGroupEntries();
     void contextMenuContainerEntries();
+    void contextMenuModel();
     void chipsPaint();
     void tabMouseAndDragEvents();
     void groupDropAffordance();
@@ -1314,6 +1315,166 @@ void tst_TabBar::contextMenuContainerEntries()
                           savedDisplay);
     else
         settings.remove(QLatin1String("tabs/containerDisplay"));
+}
+
+// MS10: the controller's decision surface in isolation — entry set,
+// order, enabled/checked/label-variant flags across the env matrix
+// (the exec'd-menu legs above prove the widget renders it verbatim).
+void tst_TabBar::contextMenuModel()
+{
+    using Id = TabBarController::MenuEntry::Id;
+    auto find = [](const QList<TabBarController::MenuEntry> &model,
+                   Id id) -> const TabBarController::MenuEntry * {
+        for (const TabBarController::MenuEntry &e : model) {
+            if (e.id == id)
+                return &e;
+        }
+        return nullptr;
+    };
+
+    // Empty-strip click: strip-level rows only — no per-tab entries,
+    // Reopen gated on the closed stack, FreeBackgroundTabs on >1 tab.
+    TabBarController::ContextMenuEnv env;
+    env.tabCount = 1;
+    QList<TabBarController::MenuEntry> model =
+        TabBarController::contextMenuModel(env);
+    QVERIFY(!find(model, Id::DuplicateTab));
+    QVERIFY(!find(model, Id::SleepWakeTab));
+    QVERIFY(!find(model, Id::ReopenInContainerSubmenu));
+    QVERIFY(!find(model, Id::AddToGroupSubmenu));
+    QVERIFY(!find(model, Id::CloseTab));
+    QVERIFY(find(model, Id::NewTab));
+    QVERIFY(find(model, Id::RecentlyClosedTabs));
+    QVERIFY(find(model, Id::ReloadAllTabs));
+    QVERIFY(find(model, Id::BookmarkAllTabs));
+    QVERIFY(find(model, Id::IconOnlyTabs));
+    QVERIFY(!find(model, Id::ReopenClosedTab)->enabled);
+    QVERIFY(!find(model, Id::FreeBackgroundTabs)->enabled);
+
+    env.hasRecentlyClosedTabs = true;
+    env.tabCount = 3;
+    model = TabBarController::contextMenuModel(env);
+    QVERIFY(find(model, Id::ReopenClosedTab)->enabled);
+    QVERIFY(find(model, Id::FreeBackgroundTabs)->enabled);
+
+    // A plain background tab: container submenu rows with the
+    // default-context row checked, the CONT04 pick-list for an
+    // http host, Sleep enabled (not current), no group rows.
+    env.onTab = true;
+    env.tabIndex = 1;
+    env.siteHost = QLatin1String("example.com");
+    TabBarController::ContextMenuEnv::Container work;
+    work.id = QLatin1String("work");
+    work.name = QLatin1String("Work");
+    work.color = QColor(Qt::green);
+    env.containers << work;
+    env.canFreeMemory = true;
+    model = TabBarController::contextMenuModel(env);
+    const TabBarController::MenuEntry *reopenIn =
+        find(model, Id::ReopenInContainerSubmenu);
+    QVERIFY(reopenIn);
+    QCOMPARE(reopenIn->children.first().id, Id::ContainerItem);
+    QVERIFY(reopenIn->children.first().key.isEmpty());
+    QVERIFY(reopenIn->children.first().checked);
+    QCOMPARE(reopenIn->children.at(1).key, work.id);
+    QVERIFY(!reopenIn->children.at(1).checked);
+    QVERIFY(find(reopenIn->children, Id::NewContainer));
+    QVERIFY(find(reopenIn->children, Id::ManageContainers));
+    const TabBarController::MenuEntry *alwaysIn =
+        find(model, Id::AlwaysInContainerSubmenu);
+    QVERIFY(alwaysIn);
+    QVERIFY(!find(model, Id::AlwaysInThisContainer));
+    QCOMPARE(alwaysIn->children.count(), 1);
+    QCOMPARE(alwaysIn->children.first().payload,
+             QLatin1String("example.com"));
+    const TabBarController::MenuEntry *sleep =
+        find(model, Id::SleepWakeTab);
+    QVERIFY(sleep->enabled);
+    QVERIFY(!sleep->flag);
+    const TabBarController::MenuEntry *free =
+        find(model, Id::FreeTabMemory);
+    QVERIFY(free->enabled);
+    QVERIFY(!free->flag);
+    QVERIFY(find(model, Id::AddToGroupSubmenu));
+    QVERIFY(!find(model, Id::ToggleGroupCollapsed));
+
+    // A container-bound tab swaps the pick-list for the flat
+    // in-this-container checkbox (unchecked while the host's rule
+    // points elsewhere, checked when it claims the tab's container).
+    env.currentContainerId = work.id;
+    env.siteRuleContainerId = QLatin1String("other");
+    model = TabBarController::contextMenuModel(env);
+    const TabBarController::MenuEntry *always =
+        find(model, Id::AlwaysInThisContainer);
+    QVERIFY(always);
+    QVERIFY(always->checkable);
+    QVERIFY(!always->checked);
+    QCOMPARE(always->key, work.id);
+    QVERIFY(!find(model, Id::AlwaysInContainerSubmenu));
+    env.siteRuleContainerId = work.id;
+    model = TabBarController::contextMenuModel(env);
+    QVERIFY(find(model, Id::AlwaysInThisContainer)->checked);
+
+    // The private/tor gate hides the whole container block — an
+    // off-the-record tab can never move to persistent storage.
+    env.privateMode = true;
+    model = TabBarController::contextMenuModel(env);
+    QVERIFY(!find(model, Id::ReopenInContainerSubmenu));
+    QVERIFY(!find(model, Id::AlwaysInThisContainer));
+    QVERIFY(!find(model, Id::AlwaysInContainerSubmenu));
+    env.privateMode = false;
+    env.tabPrivate = true;
+    model = TabBarController::contextMenuModel(env);
+    QVERIFY(!find(model, Id::ReopenInContainerSubmenu));
+    env.tabPrivate = false;
+    env.torMode = true;
+    model = TabBarController::contextMenuModel(env);
+    QVERIFY(!find(model, Id::ReopenInContainerSubmenu));
+    env.torMode = false;
+
+    // SLEEP01/MEM08 flags: sleeping flips SleepWake to the Wake
+    // variant and keeps Free enabled; the current tab disables Sleep
+    // and marks Free as the reload variant.
+    env.tabSleeping = true;
+    model = TabBarController::contextMenuModel(env);
+    QVERIFY(find(model, Id::SleepWakeTab)->flag);
+    QVERIFY(find(model, Id::SleepWakeTab)->enabled);
+    QVERIFY(find(model, Id::FreeTabMemory)->enabled);
+    QVERIFY(!find(model, Id::FreeTabMemory)->flag);
+    env.tabSleeping = false;
+    env.isCurrentTab = true;
+    env.canFreeMemory = false;
+    model = TabBarController::contextMenuModel(env);
+    QVERIFY(!find(model, Id::SleepWakeTab)->enabled);
+    QVERIFY(!find(model, Id::FreeTabMemory)->enabled);
+    env.canFreeMemory = true;
+    model = TabBarController::contextMenuModel(env);
+    QVERIFY(find(model, Id::FreeTabMemory)->enabled);
+    QVERIFY(find(model, Id::FreeTabMemory)->flag);
+
+    // Pin flag + grouped rows: the group block replaces the
+    // Add-submenu with collapse/rename/color/remove/ungroup/close.
+    env.tabPinned = true;
+    env.groupId = QLatin1String("g1");
+    env.groupName = QLatin1String("Stuff");
+    env.groupCollapsed = true;
+    env.groupColor = QColor(Qt::blue);
+    env.groupPalette << QColor(Qt::blue) << QColor(Qt::red);
+    model = TabBarController::contextMenuModel(env);
+    QVERIFY(find(model, Id::TogglePin)->flag);
+    QVERIFY(find(model, Id::ToggleGroupCollapsed)->flag);
+    QCOMPARE(find(model, Id::RenameGroup)->text,
+             QLatin1String("Stuff"));
+    const TabBarController::MenuEntry *colors =
+        find(model, Id::GroupColorSubmenu);
+    QVERIFY(colors);
+    QCOMPARE(colors->children.count(), 2);
+    QVERIFY(colors->children.first().checked);
+    QVERIFY(!colors->children.at(1).checked);
+    QVERIFY(find(model, Id::RemoveFromGroup));
+    QVERIFY(find(model, Id::Ungroup));
+    QVERIFY(find(model, Id::CloseGroup));
+    QVERIFY(!find(model, Id::AddToGroupSubmenu));
 }
 
 // paintEvent's container chips, group rails/pills/collapsed chip and

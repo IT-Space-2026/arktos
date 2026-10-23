@@ -154,6 +154,7 @@ HEADERS += \
     $$PWD/statusbarwidgets.h \
     $$PWD/streamingutils.h \
     $$PWD/tabbar.h \
+    $$PWD/tabbarcontroller.h \
     $$PWD/tabpositionpicker.h \
     $$PWD/tabpreview.h \
     $$PWD/themepicker.h \
@@ -248,6 +249,7 @@ SOURCES += \
     $$PWD/sourceviewer.cpp \
     $$PWD/statusbarwidgets.cpp \
     $$PWD/tabbar.cpp \
+    $$PWD/tabbarcontroller.cpp \
     $$PWD/tabpositionpicker.cpp \
     $$PWD/tabpreview.cpp \
     $$PWD/themepicker.cpp \

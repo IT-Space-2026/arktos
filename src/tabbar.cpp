@@ -535,6 +535,298 @@ void TabBar::selectTabAction()
     setCurrentIndex(index);
 }
 
+// MS10: renders one row of the controller's context-menu model —
+// the ids map to the existing slots/lambdas and the strings are
+// produced here (paint); which rows exist and their enabled/checked/
+// label-variant state was decided by
+// TabBarController::contextMenuModel.
+void TabBar::addContextMenuEntry(QMenu *menu,
+        const TabBarController::MenuEntry &entry,
+        TabWidget *tabWidget)
+{
+    using Id = TabBarController::MenuEntry::Id;
+    QAction *action = nullptr;
+    const int index = entry.index;
+    switch (entry.id) {
+    case Id::Separator:
+        menu->addSeparator();
+        return;
+    case Id::NewTab:
+        menu->addAction(tabWidget->newTabAction());
+        return;
+    case Id::ReopenClosedTab:
+        // TABS05: undo-close — 'Reopen' pops the newest record, the
+        // History-menu submenu lists the whole stack.  The shortcut
+        // shown here is display-only; the real binding lives on the
+        // TabWidget.
+        action = menu->addAction(
+            tr("Reopen Closed Tab"), tabWidget,
+            [tabWidget]() { tabWidget->openLastTab(); });
+        action->setShortcut(QKeySequence(
+            Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_T));
+        break;
+    case Id::RecentlyClosedTabs:
+        menu->addAction(tabWidget->recentlyClosedTabsAction());
+        return;
+    case Id::DuplicateTab:
+        action = menu->addAction(tr("Duplicate Tab"), this,
+                                 QOverload<>::of(&TabBar::cloneTab));
+        action->setData(index);
+        break;
+    case Id::TogglePin:
+        // TABS04: pin/unpin — the toggle carries no default shortcut
+        // (Ctrl+P et al. stay untouched).
+        menu->addAction(entry.flag ? tr("Unpin Tab") : tr("Pin Tab"),
+                        this, [tabWidget, index]() {
+            tabWidget->setTabPinned(index,
+                                    !tabWidget->isTabPinned(index));
+        });
+        return;
+    case Id::RenameTab:
+        // TABS12: rename — the same inline editor double-click opens;
+        // committing empty text clears the override and the live page
+        // title returns.
+        menu->addAction(tr("Re&name Tab..."), this,
+                        [this, index]() { editTabTitle(index); });
+        return;
+    case Id::ReopenInContainerSubmenu: {
+        // CONT02: "Reopen in Container" moves the tab's page onto
+        // another container's profile.
+        QMenu *sub = menu->addMenu(tr("Reopen in Con&tainer"));
+        for (const TabBarController::MenuEntry &child : entry.children)
+            addContextMenuEntry(sub, child, tabWidget);
+        return;
+    }
+    case Id::ContainerItem:
+        if (entry.key.isEmpty()) {
+            action = menu->addAction(tr("&No Container"), this,
+                    [this, index]() {
+                emit reopenInContainer(index, QString());
+            });
+        } else {
+            action = menu->addAction(
+                ContainerManager::colorIcon(entry.color),
+                SafeText::menu(entry.text));
+            connect(action, &QAction::triggered, this,
+                    [this, index, id = entry.key]() {
+                emit reopenInContainer(index, id);
+            });
+        }
+        break;
+    case Id::NewContainer:
+        menu->addAction(tr("New &Container..."), this,
+                [this, index]() {
+            const QString id = ContainerManager::instance()
+                ->createContainerInteractive(this);
+            if (!id.isEmpty())
+                emit reopenInContainer(index, id);
+        });
+        return;
+    case Id::ManageContainers:
+        menu->addAction(tr("&Manage Containers..."), this,
+                        [tabWidget]() { tabWidget->manageContainers(); });
+        return;
+    case Id::AlwaysInThisContainer:
+        // CONT04: a host->container rule WebPage enforces at
+        // navigation time — checking claims the site for the current
+        // tab's container (a rule pointing anywhere else counts as
+        // unchecked; flipping it re-homes the claim here).
+        action = menu->addAction(
+            tr("Always Open This Site in &This Container"));
+        connect(action, &QAction::triggered, this,
+                [host = entry.payload, current = entry.key](bool on) {
+            ContainerManager *rules = ContainerManager::instance();
+            if (on)
+                rules->setSiteRule(host, current);
+            else
+                rules->removeSiteRule(host);
+        });
+        break;
+    case Id::AlwaysInContainerSubmenu: {
+        QMenu *sub = menu->addMenu(
+            tr("Always Open Site in Con&tainer"));
+        for (const TabBarController::MenuEntry &child : entry.children)
+            addContextMenuEntry(sub, child, tabWidget);
+        return;
+    }
+    case Id::AlwaysInContainerItem:
+        // Assigning the rule also moves this tab so it lands in the
+        // right context immediately.
+        action = menu->addAction(
+            ContainerManager::colorIcon(entry.color),
+            SafeText::menu(entry.text));
+        connect(action, &QAction::triggered, this,
+                [this, index, host = entry.payload,
+                 id = entry.key](bool on) {
+            ContainerManager *rules = ContainerManager::instance();
+            if (on) {
+                rules->setSiteRule(host, id);
+                emit reopenInContainer(index, id);
+            } else {
+                rules->removeSiteRule(host);
+            }
+        });
+        break;
+    case Id::SleepWakeTab:
+        // SLEEP01: the engine discards the page while the slot keeps
+        // its title and favicon.
+        action = menu->addAction(
+            entry.flag ? tr("Wake Tab") : tr("Sleep Tab"));
+        connect(action, &QAction::triggered, this,
+                [this, index, sleeping = entry.flag]() {
+            if (sleeping)
+                emit wakeTab(index);
+            else
+                emit sleepTab(index);
+        });
+        break;
+    case Id::FreeTabMemory:
+        // MEM08: the manual flush — the current tab's entry is a
+        // discard+reactivate, labeled as the reload the user sees.
+        action = menu->addAction(
+            entry.flag ? tr("Reload && Free Memory")
+                       : tr("Free Memory"));
+        connect(action, &QAction::triggered, this,
+                [this, index]() { emit freeTabMemory(index); });
+        break;
+    case Id::AddToGroupSubmenu: {
+        // TABGRP01: an ungrouped tab — new group or any existing one.
+        QMenu *sub = menu->addMenu(tr("Add Tab to &Group"));
+        for (const TabBarController::MenuEntry &child : entry.children)
+            addContextMenuEntry(sub, child, tabWidget);
+        return;
+    }
+    case Id::NewGroupItem:
+        menu->addAction(tr("&New Group"), this,
+                        [tabWidget, index]() {
+            tabWidget->createTabGroup(index);
+        });
+        return;
+    case Id::GroupItem:
+        menu->addAction(
+            ContainerManager::colorIcon(entry.color),
+            SafeText::menu(entry.text.isEmpty()
+                           ? tr("Unnamed Group") : entry.text),
+            this, [tabWidget, index, gid = entry.key]() {
+            tabWidget->addTabToGroup(index, gid);
+        });
+        return;
+    case Id::ToggleGroupCollapsed: {
+        const QString gid = entry.key;
+        menu->addAction(entry.flag ? tr("&Expand Group")
+                                   : tr("&Collapse Group"),
+                        this, [tabWidget, gid]() {
+            const bool collapsed = tabWidget->tabGroupIsCollapsed(gid);
+            tabWidget->setTabGroupCollapsed(gid, !collapsed);
+        });
+        return;
+    }
+    case Id::RenameGroup: {
+        const QString gid = entry.key;
+        const QString name = entry.text;
+        menu->addAction(tr("R&ename Group..."), this,
+                        [this, tabWidget, gid, name]() {
+            bool ok = false;
+            const QString entered = QInputDialog::getText(
+                this, tr("Rename Tab Group"), tr("Group &name:"),
+                QLineEdit::Normal, name, &ok);
+            if (ok)
+                tabWidget->renameTabGroup(gid, entered);
+        });
+        return;
+    }
+    case Id::GroupColorSubmenu: {
+        QMenu *sub = menu->addMenu(tr("Group &Color"));
+        static const char *const colorNames[] = {
+            QT_TR_NOOP("Blue"), QT_TR_NOOP("Turquoise"),
+            QT_TR_NOOP("Green"), QT_TR_NOOP("Yellow"),
+            QT_TR_NOOP("Orange"), QT_TR_NOOP("Red"),
+            QT_TR_NOOP("Pink"), QT_TR_NOOP("Purple")
+        };
+        int colorIndex = 0;
+        for (const TabBarController::MenuEntry &child : entry.children) {
+            QAction *swatch = sub->addAction(
+                ContainerManager::colorIcon(child.color),
+                tr(colorNames[colorIndex++ % 8]));
+            swatch->setCheckable(child.checkable);
+            swatch->setChecked(child.checked);
+            const QColor color = child.color;
+            const QString gid = child.key;
+            connect(swatch, &QAction::triggered, this,
+                    [tabWidget, gid, color]() {
+                tabWidget->setTabGroupColor(gid, color);
+            });
+        }
+        return;
+    }
+    case Id::GroupColorItem:
+        return; // only meaningful inside GroupColorSubmenu's children
+    case Id::RemoveFromGroup:
+        menu->addAction(tr("Remove Tab from Group"), this,
+                        [tabWidget, index]() {
+            tabWidget->removeTabFromGroup(index);
+        });
+        return;
+    case Id::Ungroup: {
+        const QString gid = entry.key;
+        menu->addAction(tr("U&ngroup"), this,
+                        [tabWidget, gid]() {
+            tabWidget->ungroupTabs(gid);
+        });
+        return;
+    }
+    case Id::CloseGroup: {
+        // TABGRP02: destructive close of the whole group — every
+        // member (a collapsed group's hidden ones included) goes
+        // through the normal close path so undo still works.
+        const QString gid = entry.key;
+        menu->addAction(tr("Close &Group"), this,
+                        [tabWidget, gid]() {
+            tabWidget->closeTabGroup(gid);
+        });
+        return;
+    }
+    case Id::CloseTab:
+        action = menu->addAction(tr("&Close Tab"), QKeySequence::Close,
+                                this, QOverload<>::of(&TabBar::closeTab));
+        action->setData(index);
+        break;
+    case Id::CloseOtherTabs:
+        action = menu->addAction(tr("Close &Other Tabs"), this,
+                                QOverload<>::of(&TabBar::closeOtherTabs));
+        action->setData(index);
+        break;
+    case Id::ReloadTab:
+        action = menu->addAction(tr("Reload Tab"), QKeySequence::Refresh,
+                                this, QOverload<>::of(&TabBar::reloadTab));
+        action->setData(index);
+        break;
+    case Id::ReloadAllTabs:
+        menu->addAction(tr("Reload All Tabs"), this,
+                        &TabBar::reloadAllTabs);
+        return;
+    case Id::FreeBackgroundTabs:
+        // MEM08: the window-level leg — every discardable background
+        // tab goes through the same sleep path; the handler reports
+        // the count.
+        action = menu->addAction(
+            tr("Free Memory in &Background Tabs"), this,
+            [this]() { emit freeBackgroundTabsMemory(); });
+        break;
+    case Id::BookmarkAllTabs:
+        menu->addAction(tabWidget->bookmarkTabsAction());
+        return;
+    case Id::IconOnlyTabs:
+        menu->addAction(m_iconOnlyTabsAction);
+        return;
+    }
+    if (action) {
+        action->setEnabled(entry.enabled);
+        action->setCheckable(entry.checkable);
+        action->setChecked(entry.checked);
+    }
+}
+
 void TabBar::contextMenuRequested(const QPoint &position)
 {
     hideTabPreview();
@@ -542,299 +834,85 @@ void TabBar::contextMenuRequested(const QPoint &position)
     if (containerStripHeight() > 0
         && position.y() < containerStripHeight())
         return;
-    QMenu menu;
     TabWidget *tabWidget = qobject_cast<TabWidget*>(parentWidget());
     if (!tabWidget)
         return;
 
-    menu.addAction(tabWidget->newTabAction());
+    // MS10: the entry set + enabled/label state is the controller's
+    // model — this method only gathers the environment inputs and
+    // renders it.  Facade-bound where a surface exists today (the
+    // container registry reads ride the settings store rc_containers_*
+    // operates on); the closed-stack/pin/group reads are per-run
+    // widget state that serializes through the AcSession manifest
+    // (MS08), and the private/tor gate keeps its mode legs until a
+    // context facade surface lands.
+    TabBarController::ContextMenuEnv env;
+    env.hasRecentlyClosedTabs = tabWidget->hasRecentlyClosedTabs();
+    env.tabCount = tabWidget->count();
 
-    // TABS05: undo-close — 'Reopen' pops the newest record, the
-    // History-menu submenu lists the whole stack.  The shortcut shown
-    // here is display-only; the real binding lives on the TabWidget.
-    QAction *reopenAction = menu.addAction(
-        tr("Reopen Closed Tab"), tabWidget,
-        [tabWidget]() { tabWidget->openLastTab(); });
-    reopenAction->setShortcut(QKeySequence(
-        Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_T));
-    reopenAction->setEnabled(tabWidget->hasRecentlyClosedTabs());
-    menu.addAction(tabWidget->recentlyClosedTabsAction());
-    menu.addSeparator();
+    const int index = tabAt(stripPos(position));
+    env.onTab = (index != -1);
+    env.tabIndex = index;
+    if (env.onTab) {
+        env.tabPinned = tabWidget->isTabPinned(index);
+        env.isCurrentTab = index == tabWidget->currentIndex();
+        env.privateMode = BrowserApplication::isPrivate();
+        env.torMode = BrowserApplication::isTorMode();
+        env.tabPrivate = tabWidget->isTabPrivate(index);
+        const WebView *tabView = tabWidget->webView(index);
+        env.tabSleeping = tabWidget->isTabSleeping(index);
+        env.canFreeMemory = tabView && tabView->enginePage()
+            && !tabView->url().isEmpty();
 
-    int index = tabAt(stripPos(position));
-    if (-1 != index) {
-        QAction *action = menu.addAction(tr("Duplicate Tab"),
-                                         this, QOverload<>::of(&TabBar::cloneTab));
-        action->setData(index);
-
-        // TABS04: pin/unpin — the toggle carries no default shortcut
-        // (Ctrl+P et al. stay untouched).
-        menu.addAction(tabWidget->isTabPinned(index)
-                       ? tr("Unpin Tab") : tr("Pin Tab"),
-                       this, [tabWidget, index]() {
-            tabWidget->setTabPinned(index,
-                                    !tabWidget->isTabPinned(index));
-        });
-
-        // TABS12: rename — the same inline editor double-click opens;
-        // committing empty text clears the override and the live page
-        // title returns.
-        menu.addAction(tr("Re&name Tab..."), this,
-                       [this, index]() { editTabTitle(index); });
-
-        // CONT02: "Reopen in Container" moves the tab's page onto
-        // another container's profile.  Off-the-record tabs hide the
-        // submenu — a private tab (window-global or PTAB01's per-tab
-        // kind) can never move to persistent storage, and tor has no
-        // containers at all.
-        if (!BrowserApplication::isPrivate()
-            && !BrowserApplication::isTorMode()
-            && !tabWidget->isTabPrivate(index)) {
-            QMenu *containersMenu = menu.addMenu(tr("Reopen in Con&tainer"));
-            const QString current = tabWidget->containerIdForTab(index);
+        // CONT02/CONT04: the registry reads only matter when the
+        // private/tor gate lets the block render — keep the gather
+        // inside the same gate so private mode never touches the
+        // store (parity with the inlined code this replaces).
+        if (!env.privateMode && !env.torMode && !env.tabPrivate) {
+            env.currentContainerId = tabWidget->containerIdForTab(index);
             ContainerManager *manager = ContainerManager::instance();
-            QAction *entry = containersMenu->addAction(tr("&No Container"),
-                this, [this, index]() {
-                emit reopenInContainer(index, QString());
-            });
-            entry->setCheckable(true);
-            entry->setChecked(current.isEmpty());
-            const QList<ContainerManager::Container> containers =
-                manager->containers();
-            for (const ContainerManager::Container &container : containers) {
-                entry = containersMenu->addAction(
-                    ContainerManager::colorIcon(container.color),
-                    SafeText::menu(container.name));
-                entry->setCheckable(true);
-                entry->setChecked(container.id == current);
-                const QString id = container.id;
-                connect(entry, &QAction::triggered, this,
-                        [this, index, id]() {
-                    emit reopenInContainer(index, id);
-                });
+            for (const ContainerManager::Container &container
+                 : manager->containers()) {
+                TabBarController::ContextMenuEnv::Container row;
+                row.id = container.id;
+                row.name = container.name;
+                row.color = container.color;
+                env.containers << row;
             }
-            containersMenu->addSeparator();
-            containersMenu->addAction(tr("New &Container..."),
-                this, [this, index]() {
-                const QString id = ContainerManager::instance()
-                    ->createContainerInteractive(this);
-                if (!id.isEmpty())
-                    emit reopenInContainer(index, id);
-            });
-            containersMenu->addAction(tr("&Manage Containers..."),
-                this, [tabWidget]() { tabWidget->manageContainers(); });
-
-            // CONT04: "Always open this site in <container>" — a
-            // host->container rule WebPage enforces at navigation
-            // time.  Only meaningful for host-bearing web pages; a
-            // container tab offers the rule as a checkbox on itself,
-            // a default tab picks the container the site belongs to
-            // (assigning also moves this tab so it lands in the right
-            // context immediately).
-            const WebView *tabView = tabWidget->webView(index);
             const QString tabScheme = tabView ? tabView->url().scheme()
                                               : QString();
-            const QString host =
+            env.siteHost =
                 (tabScheme == QLatin1String("http")
                  || tabScheme == QLatin1String("https"))
                     ? tabView->url().host() : QString();
-            if (!host.isEmpty()) {
-                const QString ruled = manager->containerIdForHost(host);
-                if (!current.isEmpty()) {
-                    menu.addSeparator();
-                    QAction *always = menu.addAction(
-                        tr("Always Open This Site in &This Container"));
-                    always->setCheckable(true);
-                    // Ruled into this container — or anywhere else —
-                    // either way checking it claims the site for the
-                    // current tab's container.
-                    always->setChecked(ruled == current);
-                    connect(always, &QAction::triggered, this,
-                            [host, current](bool on) {
-                        ContainerManager *rules =
-                            ContainerManager::instance();
-                        if (on)
-                            rules->setSiteRule(host, current);
-                        else
-                            rules->removeSiteRule(host);
-                    });
-                } else if (!containers.isEmpty()) {
-                    menu.addSeparator();
-                    QMenu *alwaysMenu = menu.addMenu(
-                        tr("Always Open Site in Con&tainer"));
-                    for (const ContainerManager::Container &container
-                         : containers) {
-                        QAction *entry = alwaysMenu->addAction(
-                            ContainerManager::colorIcon(container.color),
-                            SafeText::menu(container.name));
-                        entry->setCheckable(true);
-                        entry->setChecked(ruled == container.id);
-                        const QString id = container.id;
-                        connect(entry, &QAction::triggered, this,
-                                [this, index, host, id](bool on) {
-                            ContainerManager *rules =
-                                ContainerManager::instance();
-                            if (on) {
-                                rules->setSiteRule(host, id);
-                                emit reopenInContainer(index, id);
-                            } else {
-                                rules->removeSiteRule(host);
-                            }
-                        });
-                    }
-                }
-            }
+            if (!env.siteHost.isEmpty())
+                env.siteRuleContainerId =
+                    manager->containerIdForHost(env.siteHost);
         }
 
-        // SLEEP01: Sleep/Wake — the engine discards the page while
-        // the slot keeps its title and favicon.  Sleeping the visible
-        // tab is impossible, so the entry disables on the current
-        // index; Wake shows in its place on a suspended tab.
-        const bool sleeping = tabWidget->isTabSleeping(index);
-        QAction *sleepAction = menu.addAction(
-            sleeping ? tr("Wake Tab") : tr("Sleep Tab"));
-        sleepAction->setEnabled(sleeping
-                                || index != tabWidget->currentIndex());
-        connect(sleepAction, &QAction::triggered, this,
-                [this, index, sleeping]() {
-            if (sleeping)
-                emit wakeTab(index);
-            else
-                emit sleepTab(index);
-        });
-
-        // MEM08: the manual flush.  A background tab discards through
-        // the SLEEP01 path; the current tab can't stay discarded while
-        // visible, so its entry is a discard+reactivate — labeled as
-        // the reload the user will see.  A slept tab's renderer is
-        // already gone; the entry stays live so the click reports
-        // that instead of pretending to do work.
-        const WebView *flushView = tabWidget->webView(index);
-        QAction *freeAction = menu.addAction(
-            !sleeping && index == tabWidget->currentIndex()
-                ? tr("Reload && Free Memory")
-                : tr("Free Memory"));
-        freeAction->setEnabled(
-            sleeping
-            || (flushView && flushView->enginePage()
-                && !flushView->url().isEmpty()));
-        connect(freeAction, &QAction::triggered, this,
-                [this, index]() { emit freeTabMemory(index); });
-
-        // TABGRP01: tab groups — an ungrouped tab gets "Add Tab to
-        // Group" (new group or any existing one); a grouped tab gets
-        // the group-level actions plus a way out.
-        const QString groupId = tabWidget->tabGroupId(index);
-        menu.addSeparator();
-        if (groupId.isEmpty()) {
-            QMenu *groupMenu = menu.addMenu(tr("Add Tab to &Group"));
-            groupMenu->addAction(tr("&New Group"), this,
-                                 [tabWidget, index]() {
-                tabWidget->createTabGroup(index);
-            });
-            const QStringList existing = tabWidget->tabGroupIds();
-            if (!existing.isEmpty()) {
-                groupMenu->addSeparator();
-                for (const QString &gid : existing) {
-                    const QString name = tabWidget->tabGroupName(gid);
-                    groupMenu->addAction(
-                        ContainerManager::colorIcon(
-                            tabWidget->tabGroupColor(gid)),
-                        SafeText::menu(name.isEmpty()
-                                       ? tr("Unnamed Group") : name),
-                        this, [tabWidget, index, gid]() {
-                        tabWidget->addTabToGroup(index, gid);
-                    });
-                }
+        env.groupId = tabWidget->tabGroupId(index);
+        if (env.groupId.isEmpty()) {
+            for (const QString &gid : tabWidget->tabGroupIds()) {
+                TabBarController::ContextMenuEnv::Group row;
+                row.id = gid;
+                row.name = tabWidget->tabGroupName(gid);
+                row.color = tabWidget->tabGroupColor(gid);
+                env.groups << row;
             }
         } else {
-            const QString name = tabWidget->tabGroupName(groupId);
-            menu.addAction(tabWidget->tabGroupIsCollapsed(groupId)
-                           ? tr("&Expand Group")
-                           : tr("&Collapse Group"),
-                           this, [tabWidget, groupId]() {
-                const bool collapsed =
-                    tabWidget->tabGroupIsCollapsed(groupId);
-                tabWidget->setTabGroupCollapsed(groupId, !collapsed);
-            });
-            menu.addAction(tr("R&ename Group..."), this,
-                           [this, tabWidget, groupId, name]() {
-                bool ok = false;
-                const QString entered = QInputDialog::getText(
-                    this, tr("Rename Tab Group"), tr("Group &name:"),
-                    QLineEdit::Normal, name, &ok);
-                if (ok)
-                    tabWidget->renameTabGroup(groupId, entered);
-            });
-            QMenu *colorMenu = menu.addMenu(tr("Group &Color"));
-            const QList<QColor> palette =
-                ContainerManager::defaultColors();
-            static const char *const colorNames[] = {
-                QT_TR_NOOP("Blue"), QT_TR_NOOP("Turquoise"),
-                QT_TR_NOOP("Green"), QT_TR_NOOP("Yellow"),
-                QT_TR_NOOP("Orange"), QT_TR_NOOP("Red"),
-                QT_TR_NOOP("Pink"), QT_TR_NOOP("Purple")
-            };
-            const QColor current = tabWidget->tabGroupColor(groupId);
-            for (int i = 0; i < palette.count(); ++i) {
-                QAction *entry = colorMenu->addAction(
-                    ContainerManager::colorIcon(palette.at(i)),
-                    tr(colorNames[i % 8]));
-                entry->setCheckable(true);
-                entry->setChecked(palette.at(i) == current);
-                const QColor color = palette.at(i);
-                connect(entry, &QAction::triggered, this,
-                        [tabWidget, groupId, color]() {
-                    tabWidget->setTabGroupColor(groupId, color);
-                });
-            }
-            menu.addSeparator();
-            menu.addAction(tr("Remove Tab from Group"), this,
-                           [tabWidget, index]() {
-                tabWidget->removeTabFromGroup(index);
-            });
-            menu.addAction(tr("U&ngroup"), this,
-                           [tabWidget, groupId]() {
-                tabWidget->ungroupTabs(groupId);
-            });
-            // TABGRP02: destructive close of the whole group — every
-            // member (a collapsed group's hidden ones included) goes
-            // through the normal close path so undo still works.
-            menu.addAction(tr("Close &Group"), this,
-                           [tabWidget, groupId]() {
-                tabWidget->closeTabGroup(groupId);
-            });
+            env.groupName = tabWidget->tabGroupName(env.groupId);
+            env.groupCollapsed =
+                tabWidget->tabGroupIsCollapsed(env.groupId);
+            env.groupColor = tabWidget->tabGroupColor(env.groupId);
+            env.groupPalette = ContainerManager::defaultColors();
         }
-
-        menu.addSeparator();
-
-        action = menu.addAction(tr("&Close Tab"), QKeySequence::Close,
-                                this, QOverload<>::of(&TabBar::closeTab));
-        action->setData(index);
-
-        action = menu.addAction(tr("Close &Other Tabs"),
-                                this, QOverload<>::of(&TabBar::closeOtherTabs));
-        action->setData(index);
-
-        menu.addSeparator();
-
-        action = menu.addAction(tr("Reload Tab"), QKeySequence::Refresh,
-                                this, QOverload<>::of(&TabBar::reloadTab));
-        action->setData(index);
     }
-    menu.addAction(tr("Reload All Tabs"), this, &TabBar::reloadAllTabs);
-    // MEM08: the window-level leg — every discardable background tab
-    // goes through the same sleep path; the handler reports the count.
-    QAction *freeAll = menu.addAction(
-        tr("Free Memory in &Background Tabs"), this,
-        [this]() { emit freeBackgroundTabsMemory(); });
-    freeAll->setEnabled(tabWidget->count() > 1);
-    menu.addSeparator();
-    menu.addAction(tabWidget->bookmarkTabsAction());
-    // TABS09: the icon-only view toggle is a strip-level entry — it
-    // is offered whether or not the click landed on a tab.
-    menu.addSeparator();
-    menu.addAction(m_iconOnlyTabsAction);
+
+    QMenu menu;
+    const QList<TabBarController::MenuEntry> model =
+        TabBarController::contextMenuModel(env);
+    for (const TabBarController::MenuEntry &entry : model)
+        addContextMenuEntry(&menu, entry, tabWidget);
     menu.exec(QCursor::pos());
 }
 
