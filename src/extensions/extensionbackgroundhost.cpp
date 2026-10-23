@@ -174,6 +174,10 @@ QJsonObject ChromeBridge::invoke(const QString &ns,
     // browser.contentScripts.* to chrome.contentScripts.*).
     if (ns == QLatin1String("contentScripts"))
         return invokeContentScripts(method, args);
+    // MD32: chrome.userScripts — the MV3 user-script surface over
+    // the same ER09 registry (its own api key + spec shapes).
+    if (ns == QLatin1String("userScripts"))
+        return invokeUserScripts(method, args);
     // ER10: chrome.offscreen — context-scoped like tabs.sendMessage:
     // the async createDocument resolves onto THIS bridge's hostEvent.
     if (ns == QLatin1String("offscreen"))
@@ -3225,6 +3229,12 @@ void ChromeBridge::pollExecResult(const QString &execId, int slot,
 //   browser.contentScripts.* to in a Chromium-shaped context (no API
 //   permission exists for it; the per-match host-coverage check is
 //   the gate, exactly like the MV2 model).
+//   chrome.userScripts.register / unregister / getScripts / update
+//   (MD32) — the MV3 user-script surface: RegisteredUserScript specs
+//   whose js[] carries {file}|{code} ExtensionFileSource objects,
+//   gated on the declared 'userScripts' permission.  Registration
+//   ids share one keyspace across all three fronts — a cross-surface
+//   duplicate refuses rather than aliasing two armed scripts.
 //
 // A normalized spec arms as a profile-level QWebEngineScript in the
 // shared AgentWorldId realm — same world, same wrapper, same
@@ -3333,10 +3343,14 @@ bool hostPermCoversPattern(const QString &hp, const QString &reg)
 // RegisteredContentScript knows paths only, so inline code there is
 // a typed invalid-argument, never a silent accept.  ({file} objects
 // still pass on MV3 — the registry's own normalized spec shape
-// round-trips through updateContentScripts.)
+// round-trips through updateContentScripts.)  MD32: strictObjects
+// is the userScripts ExtensionFileSource contract — {file}|{code}
+// objects ONLY (bare path strings are a typed invalid-argument),
+// with {code} allowed by the real API.
 QJsonArray normalizeRegEntries(const QJsonArray &entries,
                                const QString &extensionPath,
-                               bool allowCode, QString *error)
+                               bool allowCode, bool strictObjects,
+                               QString *error)
 {
     QJsonArray out;
     const QDir dir(extensionPath);
@@ -3345,6 +3359,10 @@ QJsonArray normalizeRegEntries(const QJsonArray &entries,
         QString file;
         QString code;
         if (v.isString()) {
+            if (strictObjects) {
+                *error = QStringLiteral("invalid-argument");
+                return QJsonArray();
+            }
             file = v.toString();
         } else if (v.isObject()) {
             const QJsonObject o = v.toObject();
@@ -3404,18 +3422,21 @@ QJsonObject normalizeRegSpec(const QString &api,
                              QString *error, QStringList *notes)
 {
     const bool mv3 = api == QLatin1String("scripting");
+    const bool userScripts = api == QLatin1String("userScripts");
     QString id = raw.value(QStringLiteral("id")).toString();
     if (id.isEmpty()) {
-        if (mv3) {   // Chrome requires a caller id.
+        if (mv3 || userScripts) {   // Chrome requires a caller id.
             *error = QStringLiteral("invalid-argument");
             return QJsonObject();
         }
         id = fallbackId;
     }
 
-    // Firefox extras we cannot serve: glob lists (a different
-    // matcher, not translateable into match patterns) and container
-    // scoping.
+    // Extras we cannot serve on either non-scripting front: glob
+    // lists (a different matcher, not translateable into match
+    // patterns) and, on the Firefox shape only, container scoping.
+    // (RegisteredUserScript DOES declare includeGlobs/excludeGlobs —
+    // they still refuse typed rather than silently half-matching.)
     if (!mv3) {
         if (!raw.value(QStringLiteral("includeGlobs")).toArray()
                  .isEmpty()
@@ -3424,8 +3445,9 @@ QJsonObject normalizeRegSpec(const QString &api,
             *error = QStringLiteral("unsupported");
             return QJsonObject();
         }
-        if (!raw.value(QStringLiteral("cookieStoreId"))
-                 .isUndefined()) {
+        if (!userScripts
+                && !raw.value(QStringLiteral("cookieStoreId"))
+                        .isUndefined()) {
             *error = QStringLiteral("unsupported");
             return QJsonObject();
         }
@@ -3475,16 +3497,22 @@ QJsonObject normalizeRegSpec(const QString &api,
     }
 
     QString entryError;
+    // userScripts' js[] is ExtensionFileSource[] — {file}|{code}
+    // objects only, inline code allowed by the real API.  css[] is
+    // not part of RegisteredUserScript at all — Chrome ignores the
+    // unknown member, so it never reaches the normalized spec.
     const QJsonArray js = normalizeRegEntries(
         raw.value(QStringLiteral("js")).toArray(), extensionPath,
-        !mv3, &entryError);
+        !mv3, userScripts, &entryError);
     if (!entryError.isEmpty()) {
         *error = entryError;
         return QJsonObject();
     }
-    const QJsonArray css = normalizeRegEntries(
-        raw.value(QStringLiteral("css")).toArray(), extensionPath,
-        !mv3, &entryError);
+    const QJsonArray css = userScripts
+        ? QJsonArray()
+        : normalizeRegEntries(
+              raw.value(QStringLiteral("css")).toArray(),
+              extensionPath, !mv3, false, &entryError);
     if (!entryError.isEmpty()) {
         *error = entryError;
         return QJsonObject();
@@ -3498,18 +3526,48 @@ QJsonObject normalizeRegSpec(const QString &api,
         *error = QStringLiteral("invalid-argument");
         return QJsonObject();
     }
-    const QString world = raw.value(QStringLiteral("world"))
-        .toString(QStringLiteral("ISOLATED"));
-    if (world != QLatin1String("ISOLATED")
-            && world != QLatin1String("MAIN")) {
-        *error = QStringLiteral("invalid-argument");
-        return QJsonObject();
-    }
-    if (world == QLatin1String("MAIN"))
+    QString world;
+    if (userScripts) {
+        // RegisteredUserScript's ExecutionWorld is USER_SCRIPT
+        // (default) | MAIN — no ISOLATED vocabulary.  Both collapse
+        // onto the shared agent realm here; the approximation is a
+        // recorded note like the scripting front's.
+        world = raw.value(QStringLiteral("world"))
+            .toString(QStringLiteral("USER_SCRIPT"));
+        if (world != QLatin1String("USER_SCRIPT")
+                && world != QLatin1String("MAIN")) {
+            *error = QStringLiteral("invalid-argument");
+            return QJsonObject();
+        }
         notes->append(QStringLiteral(
-            "chrome.%1 register: world:'MAIN' approximated by the "
-            "shared isolated realm — more isolation, same chrome "
-            "binding").arg(api));
+            "chrome.userScripts register: world:'%1' approximated by "
+            "the shared agent realm — every user-script world is "
+            "that one realm here").arg(world));
+        const QJsonValue worldId = raw.value(QStringLiteral("worldId"));
+        if (!worldId.isUndefined()) {
+            if (!worldId.isString() && !worldId.isDouble()) {
+                *error = QStringLiteral("invalid-argument");
+                return QJsonObject();
+            }
+            notes->append(QStringLiteral(
+                "chrome.userScripts register: worldId recorded but "
+                "per-world realms collapse onto the shared agent "
+                "realm"));
+        }
+    } else {
+        world = raw.value(QStringLiteral("world"))
+            .toString(QStringLiteral("ISOLATED"));
+        if (world != QLatin1String("ISOLATED")
+                && world != QLatin1String("MAIN")) {
+            *error = QStringLiteral("invalid-argument");
+            return QJsonObject();
+        }
+        if (world == QLatin1String("MAIN"))
+            notes->append(QStringLiteral(
+                "chrome.%1 register: world:'MAIN' approximated by "
+                "the shared isolated realm — more isolation, same "
+                "chrome binding").arg(api));
+    }
     if (raw.value(QStringLiteral("matchAboutBlank")).toBool()
             || raw.value(QStringLiteral("matchOriginAsFallback"))
                    .toBool())
@@ -3530,20 +3588,69 @@ QJsonObject normalizeRegSpec(const QString &api,
     spec.insert(QStringLiteral("matchAboutBlank"),
                 raw.value(QStringLiteral("matchAboutBlank"))
                     .toBool());
+    spec.insert(QStringLiteral("matchOriginAsFallback"),
+                raw.value(QStringLiteral("matchOriginAsFallback"))
+                    .toBool());
     spec.insert(QStringLiteral("runAt"), runAt);
     spec.insert(QStringLiteral("world"), world);
-    spec.insert(QStringLiteral("persistAcrossSessions"),
-                raw.value(QStringLiteral("persistAcrossSessions"))
-                    .toBool(true));
+    if (userScripts) {
+        // RegisteredUserScript extras — recorded verbatim for the
+        // getScripts echo (worldId was validated above).
+        if (raw.contains(QStringLiteral("worldId")))
+            spec.insert(QStringLiteral("worldId"),
+                        raw.value(QStringLiteral("worldId")));
+        if (raw.contains(QStringLiteral("requireUserInput")))
+            spec.insert(QStringLiteral("requireUserInput"),
+                        raw.value(QStringLiteral("requireUserInput")));
+        // Chrome persists registered user scripts unconditionally —
+        // there is no persistAcrossSessions member on this surface.
+        spec.insert(QStringLiteral("persistAcrossSessions"), true);
+    } else {
+        spec.insert(QStringLiteral("persistAcrossSessions"),
+                    raw.value(QStringLiteral("persistAcrossSessions"))
+                        .toBool(true));
+    }
     return spec;
 }
 
 // The get* echo.  MV3 answers Chrome's RegisteredContentScript
 // shape (js/css back to plain path strings — {code} can only exist
 // on the MV2 api); MV2 answers the spec fields plus the id the
-// handle needs.
+// handle needs; MD32's userScripts front answers Chrome's
+// RegisteredUserScript shape — js[] stays {file}|{code} objects and
+// there is no css/persistAcrossSessions member.
 QJsonObject regEcho(const QString &api, const QJsonObject &spec)
 {
+    if (api == QLatin1String("userScripts")) {
+        QJsonObject echo;
+        echo.insert(QStringLiteral("id"),
+                    spec.value(QStringLiteral("id")));
+        echo.insert(QStringLiteral("matches"),
+                    spec.value(QStringLiteral("matches")));
+        echo.insert(QStringLiteral("excludeMatches"),
+                    spec.value(QStringLiteral("excludeMatches")));
+        echo.insert(QStringLiteral("js"),
+                    spec.value(QStringLiteral("js")));
+        echo.insert(QStringLiteral("allFrames"),
+                    spec.value(QStringLiteral("allFrames")));
+        echo.insert(QStringLiteral("matchAboutBlank"),
+                    spec.value(QStringLiteral("matchAboutBlank")));
+        echo.insert(QStringLiteral("matchOriginAsFallback"),
+                    spec.value(
+                        QStringLiteral("matchOriginAsFallback")));
+        echo.insert(QStringLiteral("runAt"),
+                    spec.value(QStringLiteral("runAt")));
+        echo.insert(QStringLiteral("world"),
+                    spec.value(QStringLiteral("world")));
+        if (spec.contains(QStringLiteral("worldId")))
+            echo.insert(QStringLiteral("worldId"),
+                        spec.value(QStringLiteral("worldId")));
+        if (spec.contains(QStringLiteral("requireUserInput")))
+            echo.insert(QStringLiteral("requireUserInput"),
+                        spec.value(
+                            QStringLiteral("requireUserInput")));
+        return echo;
+    }
     if (api == QLatin1String("contentScripts")) {
         QJsonObject echo = spec;
         echo.remove(QStringLiteral("api"));
@@ -3847,7 +3954,9 @@ QJsonObject ExtensionBackgroundRuntime::registerContentScripts(
     persistRegisteredScripts(extensionId);
 
     QJsonObject result;
-    if (api != QLatin1String("scripting"))
+    // The Firefox-shape register resolves a handle id; the MV3
+    // fronts resolve void.
+    if (api == QLatin1String("contentScripts"))
         result.insert(QStringLiteral("id"),
                       normalized.first()
                           .value(QStringLiteral("id")));
@@ -3861,7 +3970,8 @@ QJsonObject ExtensionBackgroundRuntime::registerContentScripts(
 }
 
 QJsonObject ExtensionBackgroundRuntime::unregisterContentScripts(
-        const QString &extensionId, const QStringList &ids)
+        const QString &extensionId, const QStringList &ids,
+        const QString &api)
 {
     auto it = m_regScripts.find(extensionId);
     if (it == m_regScripts.end() || it.value().isEmpty()) {
@@ -3870,17 +3980,26 @@ QJsonObject ExtensionBackgroundRuntime::unregisterContentScripts(
         return ids.isEmpty() ? regOk()
                              : regErr(QStringLiteral("not-found"));
     }
+    // The registry keyspace is shared but each front owns its own
+    // ids — an unfiltered unregister drops only THIS api's specs,
+    // and an id living under another front answers not-found.
     if (ids.isEmpty()) {   // no filter -> unregister everything
         const QStringList all = it.value().keys();
-        for (const QString &id : all)
+        for (const QString &id : all) {
+            if (it->value(id).value(QStringLiteral("api"))
+                    .toString() != api)
+                continue;
             disarmRegisteredScripts(extensionId, id);
-        it->clear();
+            it->remove(id);
+        }
         persistRegisteredScripts(extensionId);
         return regOk();
     }
     // Atomic like register — a missing id fails the whole call.
     for (const QString &id : ids) {
-        if (!it->contains(id))
+        if (!it->contains(id)
+                || it->value(id).value(QStringLiteral("api"))
+                       .toString() != api)
             return regErr(QStringLiteral("not-found"));
     }
     for (const QString &id : ids) {
@@ -3912,13 +4031,13 @@ QJsonArray ExtensionBackgroundRuntime::registeredContentScripts(
 
 QJsonObject ExtensionBackgroundRuntime::updateContentScripts(
         const QString &extensionId, const QString &extensionPath,
-        const QJsonArray &scripts)
+        const QJsonArray &scripts, const QString &api)
 {
     if (scripts.isEmpty())
         return regOk();
     auto it = m_regScripts.find(extensionId);
     // Validate the whole batch: every entry must name an existing
-    // MV3 registration.
+    // registration on THIS front.
     QList<QJsonObject> merged;
     for (const QJsonValue &v : scripts) {
         const QJsonObject patch = v.toObject();
@@ -3928,11 +4047,11 @@ QJsonObject ExtensionBackgroundRuntime::updateContentScripts(
             return regErr(QStringLiteral("invalid-argument"));
         if (it == m_regScripts.end() || !it->contains(id)
                 || it->value(id).value(QStringLiteral("api"))
-                       .toString() != QLatin1String("scripting"))
+                       .toString() != api)
             return regErr(QStringLiteral("not-found"));
         QJsonObject spec = it->value(id);
         // Chrome updates only the provided fields.
-        static const QStringList updatable = {
+        QStringList updatable = {
             QStringLiteral("allFrames"), QStringLiteral("css"),
             QStringLiteral("excludeMatches"), QStringLiteral("js"),
             QStringLiteral("matchAboutBlank"),
@@ -3940,6 +4059,9 @@ QJsonObject ExtensionBackgroundRuntime::updateContentScripts(
             QStringLiteral("matches"),
             QStringLiteral("persistAcrossSessions"),
             QStringLiteral("runAt"), QStringLiteral("world")};
+        if (api == QLatin1String("userScripts"))
+            updatable += {QStringLiteral("worldId"),
+                          QStringLiteral("requireUserInput")};
         for (const QString &key : updatable) {
             if (patch.contains(key))
                 spec.insert(key, patch.value(key));
@@ -3955,7 +4077,7 @@ QJsonObject ExtensionBackgroundRuntime::updateContentScripts(
     for (const QJsonObject &spec : merged) {
         QString error;
         const QJsonObject revalidated = normalizeRegSpec(
-            QStringLiteral("scripting"), spec, coverage,
+            api, spec, coverage,
             extensionPath, QString(), &error, &notes);
         if (!error.isEmpty())
             return regErr(error);
@@ -4019,7 +4141,8 @@ QJsonObject ChromeBridge::invokeScriptRegistration(
                  args.value(QStringLiteral("filter")).toObject()
                      .value(QStringLiteral("ids")).toArray())
             ids.append(v.toString());
-        return runtime->unregisterContentScripts(m_extensionId, ids);
+        return runtime->unregisterContentScripts(
+            m_extensionId, ids, QStringLiteral("scripting"));
     }
     if (method == QLatin1String("getRegisteredContentScripts")) {
         QStringList ids;
@@ -4035,7 +4158,8 @@ QJsonObject ChromeBridge::invokeScriptRegistration(
         if (!value.isArray())
             return err(QStringLiteral("invalid-argument"));
         return runtime->updateContentScripts(
-            m_extensionId, m_extensionPath, value.toArray());
+            m_extensionId, m_extensionPath, value.toArray(),
+            QStringLiteral("scripting"));
     }
     return err(QStringLiteral("unimplemented"));
 }
@@ -4082,7 +4206,8 @@ QJsonObject ChromeBridge::invokeContentScripts(
         if (id.isEmpty())
             return err(QStringLiteral("invalid-argument"));
         return runtime->unregisterContentScripts(
-            m_extensionId, QStringList{id});
+            m_extensionId, QStringList{id},
+            QStringLiteral("contentScripts"));
     }
     if (method == QLatin1String("getScripts")) {
         return ok(runtime->registeredContentScripts(
@@ -4090,6 +4215,164 @@ QJsonObject ChromeBridge::invokeContentScripts(
             QStringList()));
     }
     return err(QStringLiteral("unimplemented"));
+}
+
+// MD32 — chrome.userScripts: the MV3 user-script front of the ER09
+// registry.  Chrome exposes it only under the declared 'userScripts'
+// permission (plus a user-facing scripts toggle Chrome carries —
+// the install-time consent + grant are the gate here).  Spec shapes
+// differ from scripting's: js[] is ExtensionFileSource[] ({file}|
+// {code} objects — inline code allowed), there is no css member, the
+// world vocabulary is USER_SCRIPT|MAIN with an optional worldId, and
+// registrations always persist across sessions.  World config ops
+// record Chrome's WorldProperties (worldId -> {messaging}) so a
+// script probing getWorldConfigurations reads back what it set.
+QJsonObject ChromeBridge::invokeUserScripts(const QString &method,
+                                            const QJsonObject &args)
+{
+    auto ok = [](const QJsonValue &v = QJsonValue()) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), true);
+        if (!v.isUndefined())
+            o.insert(QStringLiteral("result"), v);
+        return o;
+    };
+    auto err = [](const QString &code) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"), code);
+        return o;
+    };
+    if (!m_backend)
+        return err(QStringLiteral("backend-gone"));
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    if (!runtime->hasExtensionPermission(
+            m_extensionId, QStringLiteral("userScripts")))
+        return err(QStringLiteral("no-permission"));
+
+    if (method == QLatin1String("register")) {
+        const QJsonValue value = args.value(QStringLiteral("scripts"));
+        if (!value.isArray())
+            return err(QStringLiteral("invalid-argument"));
+        return runtime->registerContentScripts(
+            m_extensionId, m_extensionPath, value.toArray(),
+            QStringLiteral("userScripts"));
+    }
+    if (method == QLatin1String("unregister")) {
+        QStringList ids;
+        for (const QJsonValue &v :
+                 args.value(QStringLiteral("filter")).toObject()
+                     .value(QStringLiteral("ids")).toArray())
+            ids.append(v.toString());
+        return runtime->unregisterContentScripts(
+            m_extensionId, ids, QStringLiteral("userScripts"));
+    }
+    if (method == QLatin1String("getScripts")) {
+        QStringList ids;
+        for (const QJsonValue &v :
+                 args.value(QStringLiteral("filter")).toObject()
+                     .value(QStringLiteral("ids")).toArray())
+            ids.append(v.toString());
+        return ok(runtime->registeredContentScripts(
+            m_extensionId, QStringLiteral("userScripts"), ids));
+    }
+    if (method == QLatin1String("update")) {
+        const QJsonValue value = args.value(QStringLiteral("scripts"));
+        if (!value.isArray())
+            return err(QStringLiteral("invalid-argument"));
+        return runtime->updateContentScripts(
+            m_extensionId, m_extensionPath, value.toArray(),
+            QStringLiteral("userScripts"));
+    }
+    if (method == QLatin1String("configureWorld")) {
+        const QJsonObject properties =
+            args.value(QStringLiteral("properties")).toObject();
+        return runtime->configureUserScriptWorld(
+            m_extensionId, properties);
+    }
+    if (method == QLatin1String("getWorldConfigurations"))
+        return ok(runtime->userScriptWorldConfigurations(
+            m_extensionId));
+    if (method == QLatin1String("resetWorldConfiguration"))
+        return runtime->resetUserScriptWorld(
+            m_extensionId, args.value(QStringLiteral("worldId")));
+    return err(QStringLiteral("unimplemented"));
+}
+
+QJsonObject ExtensionBackgroundRuntime::configureUserScriptWorld(
+        const QString &extensionId, const QJsonObject &properties)
+{
+    // Chrome's WorldProperties: {messaging?: bool, worldId?: str|num}.
+    const QJsonValue messaging =
+        properties.value(QStringLiteral("messaging"));
+    if (!messaging.isUndefined() && !messaging.isBool())
+        return regErr(QStringLiteral("invalid-argument"));
+    const QJsonValue worldId = properties.value(QStringLiteral("worldId"));
+    if (!worldId.isUndefined() && !worldId.isString()
+            && !worldId.isDouble())
+        return regErr(QStringLiteral("invalid-argument"));
+    QString key;
+    if (worldId.isString())
+        key = worldId.toString();
+    else if (worldId.isDouble())
+        key = QString::number(qint64(worldId.toDouble()));
+
+    ProfileSettings settings(regProfileId(extensionId));
+    const QString storeKey = QStringLiteral("extensions/userworlds/")
+        + extensionId;
+    QJsonObject worlds = QJsonDocument::fromJson(
+        settings.value(storeKey).toString().toUtf8()).object();
+    worlds.insert(key, properties);
+    settings.setValue(storeKey, QString::fromUtf8(
+        QJsonDocument(worlds).toJson(QJsonDocument::Compact)));
+    return regOk();
+}
+
+QJsonArray ExtensionBackgroundRuntime::userScriptWorldConfigurations(
+        const QString &extensionId) const
+{
+    ProfileSettings settings(regProfileId(extensionId));
+    const QJsonObject worlds = QJsonDocument::fromJson(
+        settings.value(QStringLiteral("extensions/userworlds/")
+                       + extensionId).toString().toUtf8()).object();
+    QJsonArray out;
+    for (const QJsonValue &v : worlds)
+        out.append(v);
+    return out;
+}
+
+QJsonObject ExtensionBackgroundRuntime::resetUserScriptWorld(
+        const QString &extensionId, const QJsonValue &worldId)
+{
+    // No argument resets every configured world; a string/number
+    // (or {worldId} object) resets just that one.
+    ProfileSettings settings(regProfileId(extensionId));
+    const QString storeKey = QStringLiteral("extensions/userworlds/")
+        + extensionId;
+    QJsonValue target = worldId;
+    if (target.isObject())
+        target = target.toObject().value(QStringLiteral("worldId"));
+    if (target.isUndefined() || target.isNull()) {
+        settings.remove(storeKey);
+        return regOk();
+    }
+    QString key;
+    if (target.isString())
+        key = target.toString();
+    else if (target.isDouble())
+        key = QString::number(qint64(target.toDouble()));
+    else
+        return regErr(QStringLiteral("invalid-argument"));
+    QJsonObject worlds = QJsonDocument::fromJson(
+        settings.value(storeKey).toString().toUtf8()).object();
+    worlds.remove(key);
+    if (worlds.isEmpty())
+        settings.remove(storeKey);
+    else
+        settings.setValue(storeKey, QString::fromUtf8(
+            QJsonDocument(worlds).toJson(QJsonDocument::Compact)));
+    return regOk();
 }
 
 // ER11 — observe-only chrome.webRequest.  The shim's event objects

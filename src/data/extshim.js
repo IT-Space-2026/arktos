@@ -3634,6 +3634,121 @@
         });
     }
 
+    // --- chrome.userScripts -----------------------------------------------
+    // MD32 — the MV3 user-script surface over the same host-side
+    // registry as the scripting/contentScripts fronts (its own
+    // 'userScripts' api key — the fronts never see each other's ids).
+    // RegisteredUserScript specs carry js[] ExtensionFileSource
+    // objects ({file}|{code}); every matches[] pattern is re-proved
+    // against host coverage BEFORE arming, and armed specs join the
+    // shared agent realm on the next matching navigation.  The
+    // declared 'userScripts' permission gates the namespace — Chrome
+    // additionally carries a user-facing scripts toggle that has no
+    // Arktos surface, so the grant + install consent are the gate.
+    // world:'USER_SCRIPT'/'MAIN' and worldId collapse onto the one
+    // agent realm — the approximation comes back in result.notes.
+    // configureWorld records Chrome's WorldProperties honestly;
+    // getWorldConfigurations/resetWorldConfiguration read and clear
+    // that record (the realm itself does not change shape).
+    if (typeof chrome !== 'undefined') {
+        installNs('userScripts', {
+            __arktosShim: true,
+            ExecutionWorld: { MAIN: 'MAIN', USER_SCRIPT: 'USER_SCRIPT' },
+            register: function (scripts, cb) {
+                touch('chrome.userScripts.register');
+                var p = call('userScripts', 'register', {
+                    scripts: Array.isArray(scripts) ? scripts : null
+                }).then(function (v) {
+                    if (v && v.notes)
+                        v.notes.forEach(function (n) { note(n); });
+                });
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p.then(function () {});
+            },
+            unregister: function (filter, cb) {
+                touch('chrome.userScripts.unregister');
+                var p = call('userScripts', 'unregister', {
+                    filter: { ids: filter && filter.ids || null }
+                }).then(function () {});
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            getScripts: function (filter, cb) {
+                touch('chrome.userScripts.getScripts');
+                var p = call('userScripts', 'getScripts', {
+                    filter: { ids: filter && filter.ids || null }
+                });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v || []); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            update: function (scripts, cb) {
+                touch('chrome.userScripts.update');
+                var p = call('userScripts', 'update', {
+                    scripts: Array.isArray(scripts) ? scripts : null
+                }).then(function (v) {
+                    if (v && v.notes)
+                        v.notes.forEach(function (n) { note(n); });
+                });
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p.then(function () {});
+            },
+            configureWorld: function (properties, cb) {
+                touch('chrome.userScripts.configureWorld');
+                var p = call('userScripts', 'configureWorld', {
+                    properties:
+                        (properties && typeof properties === 'object')
+                            ? properties : null
+                }).then(function () {});
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            getWorldConfigurations: function (cb) {
+                touch('chrome.userScripts.getWorldConfigurations');
+                var p = call('userScripts', 'getWorldConfigurations',
+                             {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v || []); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            resetWorldConfiguration: function (worldId, cb) {
+                touch('chrome.userScripts.resetWorldConfiguration');
+                var p = call('userScripts',
+                             'resetWorldConfiguration', {
+                    worldId: (worldId === undefined) ? null : worldId
+                }).then(function () {});
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            }
+        });
+    }
+
     // --- chrome.offscreen -------------------------------------------------
     // ER10 — one second-class host page per extension (Chrome's
     // single-document rule): the host spawns a hidden navigation-
@@ -5147,6 +5262,10 @@
                ['executeScript', 'insertCSS', 'removeCSS',
                 'registerContentScripts', 'getRegisteredContentScripts',
                 'unregisterContentScripts', 'updateContentScripts']);
+        fillNs('userScripts', [],
+               ['register', 'unregister', 'getScripts', 'update',
+                'configureWorld', 'getWorldConfigurations',
+                'resetWorldConfiguration']);
         fillNs('offscreen', [],
                ['createDocument', 'closeDocument', 'hasDocument']);
         fillNs('sidePanel', [],
@@ -5202,7 +5321,7 @@
         'windows', 'identity', 'gcm',
         'nativeMessaging',
         'scripting', 'offscreen', 'omnibox', 'devtools',
-        'fontSettings', 'userScripts',
+        'fontSettings',
         'declarativeNetRequest', 'declarativeContent',
         'management',
         'power', 'tts', 'enterprise', 'debugger',
@@ -5366,6 +5485,7 @@
         'chrome.scripting.registerContentScripts',
         'chrome.scripting.unregisterContentScripts',
         'chrome.contentScripts.register',
+        'chrome.userScripts.register', 'chrome.userScripts.getScripts',
         'chrome.offscreen.createDocument',
         'chrome.management.getSelf',
         'chrome.browsingData.remove',

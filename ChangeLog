@@ -954,6 +954,16 @@ UI:
   member (clear restores the value held before the extension took
   over). Members with no honest equivalent stay a typed unsupported
   rather than a fake toggle (MD31).
+- chrome.userScripts is live for extensions that declare the grant:
+  register/unregister/getScripts/update run through the same dynamic
+  content-script registry as chrome.scripting.registerContentScripts
+  — every match pattern is re-proven against the extension's host
+  coverage before the spec is armed, and registered scripts fire in
+  the extension's isolated agent world on the next matching
+  navigation, never the page's own world. configureWorld records
+  Chrome's world properties for getWorldConfigurations to echo back;
+  the glob matchers stay a typed unsupported rather than a
+  half-matched accept (MD32).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

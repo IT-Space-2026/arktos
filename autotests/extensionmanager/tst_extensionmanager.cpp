@@ -132,6 +132,7 @@ private slots:
     void extensionScripting();
     void extensionScriptCss();
     void extensionContentScriptRegistration();
+    void extensionUserScripts();
     void extensionNotifications();
     void extensionIdle();
     void extensionCommands();
@@ -13570,6 +13571,489 @@ void tst_ExtensionManager::extensionContentScriptRegistration()
                                                "*x*")}}}}})
                  .value(QLatin1String("error")).toString(),
              QStringLiteral("unsupported"));
+
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(id, false);
+    manager->setExtensionEnabled(idB, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(idB), 20000);
+    manager->removeExtension(id);
+    manager->removeExtension(idB);
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
+}
+
+// MD32 — chrome.userScripts over the ER09 registry: register /
+// unregister / getScripts / update plus the world-config members.
+// A fixture declaring 'userScripts' + loopback host coverage drives
+// the real calls from its hosted background: a registered spec
+// fires on the next matching navigation inside the shared agent
+// world (never the page's own world), update swaps its source,
+// unregister stops it, a disable/enable cycle re-arms the (always
+// persisted) spec, and configureWorld's record echoes back through
+// getWorldConfigurations.  The gate legs prove the 'userScripts'
+// permission gate, per-match host-coverage implication, and the
+// typed refusals (invalid-argument for missing ids/bare-string js,
+// bad-path/no-such-file, no-host-access, not-found, unsupported for
+// glob matchers) all BEFORE a byte is armed.
+void tst_ExtensionManager::extensionUserScripts()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extus-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-us\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\","
+                "\"userScripts\",\"scripting\"],\"host_permissions\":"
+                "[\"http://127.0.0.1/*\"],\"background\":"
+                "{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+        QFile a(dir + QLatin1String("/us_a.js"));
+        QVERIFY(a.open(QIODevice::WriteOnly));
+        a.write("window.__usA=(window.__usA||0)+1;\n");
+        a.close();
+        QFile b(dir + QLatin1String("/us_b.js"));
+        QVERIFY(b.open(QIODevice::WriteOnly));
+        b.write("window.__usB=(window.__usB||0)+1;\n");
+        b.close();
+    }
+    // The consent fixture: identical coverage, no 'userScripts'
+    // permission — every member must refuse.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extus-b-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-us-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+                "\"host_permissions\":[\"http://127.0.0.1/*\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dirB + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+        QFile a(dirB + QLatin1String("/us_a.js"));
+        QVERIFY(a.open(QIODevice::WriteOnly));
+        a.write("window.__usA=(window.__usA||0)+1;\n");
+        a.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-us")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *host = runtime->host(id);
+    QVERIFY(host && host->bridge());
+    ChromeBridge *bridge = host->bridge();
+
+    auto loadedB = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loadedB](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-us-b")
+                && info.error.isEmpty())
+            *loadedB = info.id;
+    });
+    manager->grantConsent(dirB);
+    manager->loadExtension(dirB);
+    QTRY_VERIFY_WITH_TIMEOUT(!loadedB->isEmpty(), 30000);
+    const QString idB = *loadedB;
+    manager->setExtensionEnabled(idB, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idB)
+            && runtime->host(idB)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *hostB = runtime->host(idB);
+    QVERIFY(hostB && hostB->bridge());
+    ChromeBridge *bridgeB = hostB->bridge();
+
+    auto eval = [](QWebEnginePage *page, const QString &source,
+                   quint32 worldId = 0) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(
+            source, worldId,
+            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const quint32 agentWorld =
+        ExtensionBackgroundRuntime::AgentWorldId;
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    QObject::connect(&server, &QTcpServer::newConnection,
+                     this, [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead,
+                         socket, [socket]() {
+            socket->readAll();
+            const QByteArray body =
+                "<html><head><title>us-target</title></head>"
+                "<body>us</body></html>";
+            socket->write(
+                "HTTP/1.1 200\r\nContent-Type: text/html\r\n"
+                "Content-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view = tw->webView(0);
+    QVERIFY(view && view->page());
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    auto navigate = [&](const QString &path) {
+        loadSpy.clear();
+        view->load(QUrl(base + path));
+        QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+    };
+
+    // --- register + getScripts (the MV3 shapes) -------------------
+    eval(host->page(), QStringLiteral(
+        "self.__u1=undefined;"
+        "chrome.userScripts.register([{id:'us1',"
+        "matches:['http://127.0.0.1/*'],js:[{file:'us_a.js'}],"
+        "runAt:'document_start'}])"
+        ".then(function(){self.__u1='ok';},"
+        "function(e){self.__u1='err:'+String(e&&e.message||e);});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral("self.__u1")).toString()
+            == QLatin1String("ok"),
+        20000);
+    eval(host->page(), QStringLiteral(
+        "self.__u2=undefined;"
+        "chrome.userScripts.getScripts()"
+        ".then(function(l){self.__u2=JSON.stringify(l);},"
+        "function(e){self.__u2='err';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !eval(host->page(), QStringLiteral("self.__u2")).isNull(),
+        20000);
+    const QJsonArray listed = QJsonDocument::fromJson(
+        eval(host->page(), QStringLiteral("self.__u2"))
+            .toString().toUtf8()).array();
+    QCOMPARE(listed.size(), 1);
+    QCOMPARE(listed.at(0).toObject()
+                 .value(QLatin1String("id")).toString(),
+             QStringLiteral("us1"));
+    // The echo keeps the ExtensionFileSource object shape and the
+    // USER_SCRIPT world vocabulary.
+    QCOMPARE(listed.at(0).toObject()
+                 .value(QLatin1String("js")).toArray().at(0)
+                 .toObject().value(QLatin1String("file")).toString(),
+             QStringLiteral("us_a.js"));
+    QCOMPARE(listed.at(0).toObject()
+                 .value(QLatin1String("world")).toString(),
+             QStringLiteral("USER_SCRIPT"));
+
+    // The fronts do not see each other's registrations — a
+    // scripting-front spec never surfaces in userScripts.getScripts.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("registerContentScripts"),
+                 QJsonObject{{QStringLiteral("scripts"), QJsonArray{
+                     QJsonObject{{QStringLiteral("id"),
+                                  QStringLiteral("sreg")},
+                                 {QStringLiteral("matches"),
+                                  QJsonArray{QStringLiteral(
+                                      "http://127.0.0.1/*")}},
+                                 {QStringLiteral("js"),
+                                  QJsonArray{QStringLiteral(
+                                      "us_b.js")}}}}}})
+                 .value(QLatin1String("ok")).toBool(),
+             true);
+    eval(host->page(), QStringLiteral(
+        "self.__u3=undefined;"
+        "chrome.userScripts.getScripts()"
+        ".then(function(l){self.__u3=JSON.stringify("
+        "l.map(function(s){return s.id;}));},"
+        "function(e){self.__u3='err';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !eval(host->page(), QStringLiteral("self.__u3")).isNull(),
+        20000);
+    QCOMPARE(eval(host->page(), QStringLiteral("self.__u3"))
+                 .toString(),
+             QStringLiteral("[\"us1\"]"));
+    bridge->invoke(
+        QStringLiteral("scripting"),
+        QStringLiteral("unregisterContentScripts"),
+        QJsonObject{{QStringLiteral("filter"),
+                     QJsonObject{{QStringLiteral("ids"),
+                                  QJsonArray{QStringLiteral(
+                                      "sreg")}}}}});
+
+    // --- the registered spec fires in the agent realm -------------
+    navigate(QStringLiteral("/us?r1"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral("window.__usA"),
+             agentWorld).toInt() == 1,
+        15000);
+    QCOMPARE(eval(view->page(), QStringLiteral("window.__usA"))
+                 .toInt(), 0);
+
+    // --- update swaps the spec's source ---------------------------
+    eval(host->page(), QStringLiteral(
+        "self.__u4=undefined;"
+        "chrome.userScripts.update([{id:'us1',"
+        "js:[{code:'window.__usB=(window.__usB||0)+1;'}]}])"
+        ".then(function(){self.__u4='ok';},"
+        "function(e){self.__u4='err:'+String(e&&e.message||e);});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral("self.__u4")).toString()
+            == QLatin1String("ok"),
+        20000);
+    navigate(QStringLiteral("/us?u1"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral("window.__usB"),
+             agentWorld).toInt() == 1,
+        15000);
+
+    // --- world config: recorded, echoable, resettable -------------
+    eval(host->page(), QStringLiteral(
+        "self.__w1=undefined;"
+        "chrome.userScripts.configureWorld("
+        "{messaging:true,worldId:'w1'})"
+        ".then(function(){self.__w1='ok';},"
+        "function(e){self.__w1='err';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral("self.__w1")).toString()
+            == QLatin1String("ok"),
+        20000);
+    eval(host->page(), QStringLiteral(
+        "self.__w2=undefined;"
+        "chrome.userScripts.getWorldConfigurations()"
+        ".then(function(l){self.__w2=JSON.stringify(l);},"
+        "function(e){self.__w2='err';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !eval(host->page(), QStringLiteral("self.__w2")).isNull(),
+        20000);
+    const QJsonArray worlds = QJsonDocument::fromJson(
+        eval(host->page(), QStringLiteral("self.__w2"))
+            .toString().toUtf8()).array();
+    QCOMPARE(worlds.size(), 1);
+    QCOMPARE(worlds.at(0).toObject()
+                 .value(QLatin1String("worldId")).toString(),
+             QStringLiteral("w1"));
+    QCOMPARE(worlds.at(0).toObject()
+                 .value(QLatin1String("messaging")).toBool(),
+             true);
+    eval(host->page(), QStringLiteral(
+        "self.__w3=undefined;"
+        "chrome.userScripts.resetWorldConfiguration('w1')"
+        ".then(function(){return "
+        "chrome.userScripts.getWorldConfigurations();})"
+        ".then(function(l){self.__w3=JSON.stringify(l);},"
+        "function(e){self.__w3='err';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !eval(host->page(), QStringLiteral("self.__w3")).isNull(),
+        20000);
+    QCOMPARE(eval(host->page(), QStringLiteral("self.__w3"))
+                 .toString(),
+             QStringLiteral("[]"));
+
+    // --- persistence: registered user scripts always re-arm -------
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    host = runtime->host(id);
+    bridge = host->bridge();
+    QVERIFY(runtime->registeredScriptSpecs(id)
+                .contains(QStringLiteral("us1")));
+    navigate(QStringLiteral("/us?p1"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral("window.__usB"),
+             agentWorld).toInt() == 1,
+        15000);
+
+    // --- unregister stops the next navigation ---------------------
+    eval(host->page(), QStringLiteral(
+        "self.__u5=undefined;"
+        "chrome.userScripts.unregister({ids:['us1']})"
+        ".then(function(){self.__u5='ok';},"
+        "function(e){self.__u5='err';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral("self.__u5")).toString()
+            == QLatin1String("ok"),
+        20000);
+    navigate(QStringLiteral("/us?r2"));
+    QTest::qWait(1500);
+    QCOMPARE(eval(view->page(), QStringLiteral("window.__usB"),
+                  agentWorld).toInt(), 0);
+
+    // --- the typed gates, direct-driven ---------------------------
+    const auto usReg = [bridge](const QJsonObject &spec) {
+        return bridge->invoke(
+            QStringLiteral("userScripts"),
+            QStringLiteral("register"),
+            QJsonObject{{QStringLiteral("scripts"),
+                         QJsonArray{spec}}});
+    };
+    // A caller id is required on the MV3 surface.
+    QCOMPARE(usReg(QJsonObject{
+                 {QStringLiteral("matches"),
+                  QJsonArray{QStringLiteral("http://127.0.0.1/*")}},
+                 {QStringLiteral("js"),
+                  QJsonArray{QJsonObject{
+                      {QStringLiteral("file"),
+                       QStringLiteral("us_a.js")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // js[] is ExtensionFileSource[] — bare path strings refuse.
+    QCOMPARE(usReg(QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("bad1")},
+                 {QStringLiteral("matches"),
+                  QJsonArray{QStringLiteral("http://127.0.0.1/*")}},
+                 {QStringLiteral("js"),
+                  QJsonArray{QStringLiteral("us_a.js")}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // Uncovered match pattern — refused before anything is armed.
+    QCOMPARE(usReg(QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("bad2")},
+                 {QStringLiteral("matches"),
+                  QJsonArray{QStringLiteral(
+                      "https://elsewhere.example/*")}},
+                 {QStringLiteral("js"),
+                  QJsonArray{QJsonObject{
+                      {QStringLiteral("file"),
+                       QStringLiteral("us_a.js")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+    QCOMPARE(usReg(QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("bad3")},
+                 {QStringLiteral("matches"),
+                  QJsonArray{QStringLiteral("http://127.0.0.1/*")}},
+                 {QStringLiteral("js"),
+                  QJsonArray{QJsonObject{
+                      {QStringLiteral("file"),
+                       QStringLiteral("../manifest.json")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("bad-path"));
+    QCOMPARE(usReg(QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("bad4")},
+                 {QStringLiteral("matches"),
+                  QJsonArray{QStringLiteral("http://127.0.0.1/*")}},
+                 {QStringLiteral("js"),
+                  QJsonArray{QJsonObject{
+                      {QStringLiteral("file"),
+                       QStringLiteral("missing.js")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-such-file"));
+    // includeGlobs is declared on the real shape but is a different
+    // matcher — typed unsupported, never half-matched.
+    QCOMPARE(usReg(QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("bad5")},
+                 {QStringLiteral("matches"),
+                  QJsonArray{QStringLiteral("http://127.0.0.1/*")}},
+                 {QStringLiteral("includeGlobs"),
+                  QJsonArray{QStringLiteral("*x*")}},
+                 {QStringLiteral("js"),
+                  QJsonArray{QJsonObject{
+                      {QStringLiteral("file"),
+                       QStringLiteral("us_a.js")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QVERIFY(!runtime->registeredScriptSpecs(id)
+                 .contains(QStringLiteral("bad5")));
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("userScripts"),
+                 QStringLiteral("unregister"),
+                 QJsonObject{{QStringLiteral("filter"),
+                              QJsonObject{{QStringLiteral("ids"),
+                                           QJsonArray{QStringLiteral(
+                                               "nope")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("userScripts"),
+                 QStringLiteral("update"),
+                 QJsonObject{{QStringLiteral("scripts"), QJsonArray{
+                     QJsonObject{{QStringLiteral("id"),
+                                  QStringLiteral("nope")},
+                                 {QStringLiteral("js"),
+                                  QJsonArray{QJsonObject{
+                                      {QStringLiteral("file"),
+                                       QStringLiteral(
+                                           "us_a.js")}}}}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("userScripts"),
+                 QStringLiteral("bogus"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // Consent gates: every member needs the 'userScripts' grant.
+    QCOMPARE(bridgeB->invoke(
+                 QStringLiteral("userScripts"),
+                 QStringLiteral("register"),
+                 QJsonObject{{QStringLiteral("scripts"), QJsonArray{
+                     QJsonObject{{QStringLiteral("id"),
+                                  QStringLiteral("bx")},
+                                 {QStringLiteral("matches"),
+                                  QJsonArray{QStringLiteral(
+                                      "http://127.0.0.1/*")}},
+                                 {QStringLiteral("js"),
+                                  QJsonArray{QJsonObject{
+                                      {QStringLiteral("file"),
+                                       QStringLiteral(
+                                           "us_a.js")}}}}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(bridgeB->invoke(
+                 QStringLiteral("userScripts"),
+                 QStringLiteral("configureWorld"),
+                 QJsonObject{{QStringLiteral("properties"),
+                              QJsonObject{{QStringLiteral("messaging"),
+                                           true}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
 
     window->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);

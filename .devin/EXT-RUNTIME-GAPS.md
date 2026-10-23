@@ -38,12 +38,12 @@ matching every member of the namespace (or a dotted sub-path such as
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
 # stores this tree already has.  They stay in this block — still
-# typed today — but are queued: userScripts -> MD32,
-# fontSettings -> MD33.  Entries leave the declared set only when
-# the row lands the implementation (downloads left with MD24,
-# sessions with MD25, tabGroups with MD26, topSites with MD27,
-# browsingData with MD28, dns with MD29, system with MD30,
-# privacy with MD31).
+# typed today — but are queued: fontSettings -> MD33.
+# Entries leave the declared set only when the row lands the
+# implementation (downloads left with MD24, sessions with MD25,
+# tabGroups with MD26, topSites with MD27, browsingData with MD28,
+# dns with MD29, system with MD30, privacy with MD31,
+# userScripts with MD32).
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
@@ -80,7 +80,6 @@ chrome.signedInDevices.*: unsupported
 chrome.systemIndicator.*: unsupported
 chrome.tabCapture.*: unsupported
 chrome.tts.*: unsupported
-chrome.userScripts.*: unsupported
 chrome.vpnProvider.*: unsupported
 chrome.wallpaper.*: unsupported
 # --- served namespaces, deliberately unserved members --------------
@@ -212,6 +211,26 @@ chrome.privacy.*: no-permission
 chrome.privacy.*: invalid-argument
 chrome.privacy.*: unsupported
 chrome.privacy.*: unimplemented
+# MD32: chrome.userScripts is served over the ER09 registration
+# machinery — 'userScripts' gates the namespace like Chrome's
+# declared grant (no-permission undeclared).  register/unregister/
+# getScripts/update plus configureWorld/getWorldConfigurations/
+# resetWorldConfiguration are live; RegisteredUserScript.js is
+# ExtensionFileSource[] ({file}|{code} objects — inline code
+# allowed), world:'USER_SCRIPT'/'MAIN' and worldId collapse onto
+# the shared agent realm (a recorded note, not a gap), and the
+# includeGlobs/excludeGlobs matchers Chrome declares stay typed
+# 'unsupported' (a different matcher).  The rest are the ops'
+# correct verdicts (missing/mistyped args, uncovered match patterns,
+# bad/missing bundle paths, unknown ids, unreachable members).
+chrome.userScripts.*: no-permission
+chrome.userScripts.*: invalid-argument
+chrome.userScripts.*: no-host-access
+chrome.userScripts.*: bad-path
+chrome.userScripts.*: no-such-file
+chrome.userScripts.*: not-found
+chrome.userScripts.*: unsupported
+chrome.userScripts.*: unimplemented
 # MD23: chrome.cookies is served over the RC15 persistent mirror
 # (reads) + QWebEngineCookieStore live jar (writes land both).
 # 'cookies' gates the namespace; url-bearing ops additionally need

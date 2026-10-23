@@ -459,6 +459,10 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
         ProfileSettings(BrowserProfile::profileIdFor(profile))
             .remove(QStringLiteral("extensions/regscripts/")
                     + plain.id);
+        // MD32: recorded user-script world configs die the same way.
+        ProfileSettings(BrowserProfile::profileIdFor(profile))
+            .remove(QStringLiteral("extensions/userworlds/")
+                    + plain.id);
         ExtensionBackgroundRuntime::instance()
             ->dropRegisteredScripts(plain.id);
         m_tamperedIds.remove(plain.id);
@@ -1258,6 +1262,7 @@ QStringList ExtensionManager::unsupportedPermissions()
         QStringLiteral("topSites"),
         QStringLiteral("tts"),
         QStringLiteral("ttsEngine"),
+        QStringLiteral("userScripts"),
         QStringLiteral("vpnProvider"),
         QStringLiteral("wallpaper"),
         QStringLiteral("webAuthenticationProxy"),
@@ -1354,6 +1359,10 @@ QStringList ExtensionManager::runtimeServes()
         // MD27: chrome.topSites serves get() off the RC04 hosts
         // rollup — the whole declared surface is live.
         QStringLiteral("topSites"),
+        // MD32: chrome.userScripts serves register/unregister/
+        // getScripts/update + the world-config members over the
+        // ER09 registry — glob matchers keep their typed verdicts.
+        QStringLiteral("userScripts"),
         QStringLiteral("webNavigation"),
         QStringLiteral("webRequest"),
         QStringLiteral("windows"),
