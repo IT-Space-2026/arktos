@@ -3354,6 +3354,28 @@ pub unsafe extern "C" fn rc_history_suggest(
     .unwrap_or(ptr::null_mut())
 }
 
+/// Most-visited hosts for chrome.topSites (MD27) — a JSON array
+/// `[{"host","url","title","visits","first_seen"}, ...]` ordered by
+/// visit count (descending, earliest first_seen breaking ties), each
+/// host's newest visit supplying the representative url/title.
+/// `limit` <= 0 picks the default 20.  NULL on error (store not
+/// open: rc_last_error_message).  Free with rc_string_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_history_top_hosts(
+    limit: i64,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match history::with(|h| h.top_hosts(limit)) {
+            Ok(json) => util::to_c_string(json),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 // ---- command palette (CPAL01) ------------------------------------------
 //
 // The palette's query -> ranked-items decision.  The row registry

@@ -62,8 +62,9 @@ extern "C" {
  * v9 adds the AcUrlclean module (MD06).
  * v10 adds session policy queries to AcSession (MD08).
  * v11 adds the navpolicy endpoints on AcPolicy (MD02 surface;
- * MD09 popup gate). */
-#define AC_API_VERSION 11u
+ * MD09 popup gate).
+ * v12 adds ac_hist_top_hosts (MD27 chrome.topSites). */
+#define AC_API_VERSION 12u
 
 /* ac_capabilities() bits — one per module. */
 #define AC_CAP_SETTINGS   0x01ull
@@ -258,6 +259,7 @@ AcStatus ac_hist_icon_get(const AcHistory *h, const char *host,
                           AcBuffer *out);
 AcStatus ac_hist_icon_clear(const AcHistory *h);
 char    *ac_hist_suggest(const AcHistory *h, const char *term, int64_t limit);
+char    *ac_hist_top_hosts(const AcHistory *h, int64_t limit);
 
 /* ---- bookmarks (RC05) ------------------------------------------------------ */
 

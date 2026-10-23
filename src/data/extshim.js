@@ -4573,6 +4573,37 @@
     }
     installTabGroups();
 
+    // --- chrome.topSites --------------------------------------------------
+    // MD27: Chrome's smallest namespace — get() alone, no events, no
+    // constants.  The 'topSites' grant is enforced per call by the
+    // backend (invokeTopSites), so the object is always installed;
+    // the ranked rows come off the RC04 hosts rollup.
+    function installTopSites() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.topSites; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var tsNs = { __arktosShim: true };
+        tsNs.get = function () {
+            var a = Array.prototype.slice.call(arguments);
+            var cb = null;
+            if (a.length && typeof a[a.length - 1] === 'function')
+                cb = a.pop();
+            var p = call('topSites', 'get', {});
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined,
+                                    e && e.message || String(e));
+                       });
+            return p;
+        };
+        installNs('topSites', tsNs);
+    }
+    installTopSites();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -4826,7 +4857,7 @@
     // noted.  Nothing claims to work that doesn't.
     var unsupportedNames = [
         'windows', 'identity', 'gcm',
-        'nativeMessaging', 'privacy', 'topSites',
+        'nativeMessaging', 'privacy',
         'scripting', 'offscreen', 'omnibox', 'devtools',
         'fontSettings', 'userScripts',
         'declarativeNetRequest', 'declarativeContent',

@@ -986,6 +986,11 @@ fn history_ffi_roundtrip() {
     let sugg = take_str(unsafe { crate::rc_history_suggest(u1.as_ptr(), 10) });
     assert!(sugg.unwrap_or_default().contains("http://one/"));
 
+    // Top-hosts ranking over the same store — the most-visited host
+    // leads with its newest visit as the representative entry.
+    let tops = take_str(unsafe { crate::rc_history_top_hosts(10) });
+    assert!(tops.unwrap_or_default().contains("one"));
+
     // Icon table.
     let host = cs("one");
     let png = b"\x89PNG fake";
@@ -2588,7 +2593,7 @@ fn facade_init_and_accessors() {
     let croot = cs(&root);
 
     // housekeeping
-    assert_eq!(crate::facade::ac_api_version(), 11);
+    assert_eq!(crate::facade::ac_api_version(), 12);
     assert_ne!(crate::facade::ac_capabilities(), 0);
 
     // rejected configs fail clean with a stashed error

@@ -664,6 +664,96 @@ impl HistoryStore {
         scored.truncate(limit);
         Ok(serde_json::to_string(&scored).unwrap_or_else(|_| "[]".into()))
     }
+
+    // ---- top sites (MD27 / chrome.topSites) --------------------------
+
+    /// The most-visited hosts ranked by recorded visit count — the
+    /// hosts rollup's ordering (visits descending, earliest first_seen
+    /// breaking ties so the list is stable between calls), each host
+    /// carrying its newest visit's url/title as the representative
+    /// entry the caller marshals.  `limit` <= 0 picks the default 20 —
+    /// the honest slice a top-sites surface shows.
+    pub fn top_hosts(&mut self, limit: i64) -> RcResult<String> {
+        self.ensure_hosts()?;
+        let limit = if limit <= 0 {
+            20usize
+        } else {
+            (limit as usize).min(1000)
+        };
+        let mut ranked: Vec<(String, i64, i64)> = Vec::new();
+        {
+            let conn = self.conn()?;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT host, first_seen, visits FROM hosts
+                     WHERE host <> ''
+                     ORDER BY visits DESC, first_seen ASC",
+                )
+                .map_err(|e| sql_fail("top hosts", e))?;
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                })
+                .map_err(|e| sql_fail("top hosts", e))?;
+            for row in rows {
+                ranked.push(row.map_err(|e| sql_fail("top hosts", e))?);
+                if ranked.len() >= limit {
+                    break;
+                }
+            }
+        }
+        // The rollup row has no representative url — the newest visit
+        // on the host supplies it (first hit in the newest-first
+        // scan), the same representative rule suggest() applies.
+        let mut needed: std::collections::HashSet<&str> =
+            ranked.iter().map(|r| r.0.as_str()).collect();
+        let mut repr: std::collections::HashMap<String, (String, String)> =
+            std::collections::HashMap::new();
+        if !needed.is_empty() {
+            let conn = self.conn()?;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT url, title FROM visits
+                     ORDER BY visited_at DESC, seq DESC",
+                )
+                .map_err(|e| sql_fail("top hosts", e))?;
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .map_err(|e| sql_fail("top hosts", e))?;
+            for row in rows {
+                let (url, title) =
+                    row.map_err(|e| sql_fail("top hosts", e))?;
+                let host = omnibox::url_host(&url).to_lowercase();
+                if needed.remove(host.as_str()) {
+                    repr.insert(host, (url, title));
+                    if needed.is_empty() {
+                        break;
+                    }
+                }
+            }
+        }
+        let out: Vec<serde_json::Value> = ranked
+            .into_iter()
+            .map(|(host, first_seen, visits)| {
+                let (url, title) =
+                    repr.get(&host).cloned().unwrap_or_default();
+                serde_json::json!({
+                    "host": host,
+                    "url": url,
+                    "title": title,
+                    "visits": visits,
+                    "first_seen": first_seen,
+                })
+            })
+            .collect();
+        Ok(serde_json::to_string(&out).unwrap_or_else(|_| "[]".into()))
+    }
 }
 
 #[cfg(test)]
@@ -900,6 +990,34 @@ mod tests {
         assert_eq!(r[0]["score"], 540);
         // limit truncates the marshal.
         assert_eq!(rows(&s.suggest("", 1, now).unwrap()).len(), 1);
+        std::fs::remove_dir_all(Path::new(&p).parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn top_hosts_ranks_by_visits_with_representative() {
+        let p = temp_db("tophosts");
+        let mut s = store_at(&p);
+        let now = 1_800_000_000_000i64;
+        // b: 3 visits, a: 1 — visit count decides, not recency.
+        s.add("http://b.example/one", "B one", now - 3000).unwrap();
+        s.add("http://b.example/two", "B two", now - 2000).unwrap();
+        s.add("http://b.example/newest", "B newest", now - 1000).unwrap();
+        s.add("http://a.example/", "A", now).unwrap();
+        let r: Vec<serde_json::Value> =
+            serde_json::from_str(&s.top_hosts(20).unwrap()).unwrap();
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0]["host"], "b.example");
+        assert_eq!(r[0]["visits"], 3);
+        // The newest visit on the host is the representative entry.
+        assert_eq!(r[0]["url"], "http://b.example/newest");
+        assert_eq!(r[0]["title"], "B newest");
+        assert_eq!(r[1]["host"], "a.example");
+        assert_eq!(r[1]["url"], "http://a.example/");
+        // limit truncates; the top host survives it.
+        let r: Vec<serde_json::Value> =
+            serde_json::from_str(&s.top_hosts(1).unwrap()).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0]["host"], "b.example");
         std::fs::remove_dir_all(Path::new(&p).parent().unwrap()).ok();
     }
 

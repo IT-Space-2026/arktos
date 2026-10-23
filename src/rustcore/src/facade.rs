@@ -44,8 +44,9 @@ use crate::{bookmarks, icons, notes, notify, profiles, settings, util};
 /// v7 added AcDlwpolicy (MD04).  v8 added AcPrivacy (MD05).
 /// v9 added AcUrlclean (MD06).  v10 added session policy queries to
 /// AcSession (MD08).  v11 added the navpolicy endpoints on AcPolicy
-/// (MD02 surface; MD09 popup gate).
-pub const AC_API_VERSION: u32 = 11;
+/// (MD02 surface; MD09 popup gate).  v12 added ac_hist_top_hosts
+/// (MD27 chrome.topSites).
+pub const AC_API_VERSION: u32 = 12;
 
 const AC_CAP_SETTINGS: u64 = 0x01;
 const AC_CAP_PROFILES: u64 = 0x02;
@@ -1356,6 +1357,8 @@ ac_status_op!(ac_hist_icon_get, AcHistory, ensure_hist,
 ac_status_op!(ac_hist_icon_clear, AcHistory, ensure_hist, rc_hist_icon_clear());
 ac_ptr_op!(ac_hist_suggest, AcHistory, ensure_hist,
     rc_history_suggest(term: *const c_char, limit: i64));
+ac_ptr_op!(ac_hist_top_hosts, AcHistory, ensure_hist,
+    rc_history_top_hosts(limit: i64));
 
 // ---- bookmarks (RC05) ------------------------------------------------------
 

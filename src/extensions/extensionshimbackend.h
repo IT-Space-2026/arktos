@@ -397,6 +397,12 @@ private:
                               const QJsonObject &args);
     void historyFanOut(const QString &name,
                        const QJsonArray &eventArgs);
+    // MD27: chrome.topSites over the RC04 hosts rollup — 'topSites'
+    // gates the namespace (Chrome requires the declared grant);
+    // get() answers the visit-count-ranked MostVisitedURL list, the
+    // only member Chrome publishes, and the namespace has no events.
+    QJsonObject invokeTopSites(const QString &method,
+                               const QJsonObject &args);
     // MD23: chrome.cookies — reads over the RC15 persistent mirror
     // (the jar's on-disk shadow, fed by the engine's cookie signals;
     // the C++ jar's live mirror is the no-rust read path), writes go

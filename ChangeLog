@@ -921,6 +921,11 @@ UI:
   while tabs.onUpdated's changeInfo.groupId tracks membership flips,
   and a collapsed group's hidden members stay in the tab list like
   Chrome's instead of reporting as closed (MD26).
+- chrome.topSites is live for extensions that declare the grant:
+  get() answers Chrome's MostVisitedURL list — the most-visited
+  hosts ranked by visit count off the same history rollup the
+  location completer ranks, each host's newest visit supplying the
+  entry's url and title (MD27).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

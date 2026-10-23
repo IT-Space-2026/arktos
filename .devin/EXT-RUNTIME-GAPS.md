@@ -38,11 +38,12 @@ matching every member of the namespace (or a dotted sub-path such as
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
 # stores this tree already has.  They stay in this block — still
-# typed today — but are queued: topSites -> MD27,
-# browsingData -> MD28, dns -> MD29, system -> MD30, privacy -> MD31,
+# typed today — but are queued: browsingData -> MD28,
+# dns -> MD29, system -> MD30, privacy -> MD31,
 # userScripts -> MD32, fontSettings -> MD33.  Entries leave the
 # declared set only when the row lands the implementation (downloads
-# left with MD24, sessions with MD25, tabGroups with MD26).
+# left with MD24, sessions with MD25, tabGroups with MD26,
+# topSites with MD27).
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
@@ -82,7 +83,6 @@ chrome.signedInDevices.*: unsupported
 chrome.system.*: unsupported
 chrome.systemIndicator.*: unsupported
 chrome.tabCapture.*: unsupported
-chrome.topSites.*: unsupported
 chrome.tts.*: unsupported
 chrome.userScripts.*: unsupported
 chrome.vpnProvider.*: unsupported
@@ -149,6 +149,12 @@ chrome.history.*: no-permission
 chrome.history.*: invalid-argument
 chrome.history.*: scheme-refused
 chrome.history.*: no-store
+# MD27: chrome.topSites is served over the RC04 hosts rollup —
+# 'topSites' gates the namespace like Chrome (no-permission
+# undeclared); get() is the only published member, so a bridge call
+# naming anything else is the typed unreachable-member verdict.
+chrome.topSites.*: no-permission
+chrome.topSites.*: unimplemented
 # MD23: chrome.cookies is served over the RC15 persistent mirror
 # (reads) + QWebEngineCookieStore live jar (writes land both).
 # 'cookies' gates the namespace; url-bearing ops additionally need

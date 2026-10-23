@@ -121,6 +121,7 @@ private slots:
     void extensionDownloads();
     void extensionSessions();
     void extensionTabGroups();
+    void extensionTopSites();
     void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
@@ -493,12 +494,12 @@ void tst_ExtensionManager::inspectManifest_data()
     QTest::newRow("permission classes")
         << QByteArray("{\"manifest_version\":3,\"name\":\"perms\","
                       "\"version\":\"1.0\","
-                      "\"permissions\":[\"topSites\",\"webRequest\","
+                      "\"permissions\":[\"gcm\",\"webRequest\","
                       "\"cookies\",\"nativeMessaging\"],"
                       "\"host_permissions\":[\"<all_urls>\","
                       "\"*://*.example.com/*\"]}")
         << true << 3 << QStringLiteral("perms") << false
-        << (QStringList() << QStringLiteral("topSites"))
+        << (QStringList() << QStringLiteral("gcm"))
         << (QStringList() << QStringLiteral("webRequest"))
         // ER19: webRequest is runtime-served — it leaves the fatal
         // set (and stays in 'unverified' for honest wording).
@@ -540,13 +541,14 @@ void tst_ExtensionManager::inspectManifest_data()
         << QByteArray("{\"manifest_version\":3,\"name\":\"served\","
                       "\"version\":\"1.0\","
                       "\"permissions\":[\"notifications\",\"tabs\","
-                      "\"bookmarks\",\"cookies\",\"gcm\"]}")
+                      "\"bookmarks\",\"cookies\",\"topSites\",\"gcm\"]}")
         << true << 3 << QStringLiteral("served") << false
         << (QStringList() << QStringLiteral("gcm"))
         << (QStringList() << QStringLiteral("notifications")
                           << QStringLiteral("tabs")
                           << QStringLiteral("bookmarks")
-                          << QStringLiteral("cookies"))
+                          << QStringLiteral("cookies")
+                          << QStringLiteral("topSites"))
         << QStringList()
         << QStringList() << QStringList();
     QTest::newRow("fatal core api optional")
@@ -1405,13 +1407,13 @@ void tst_ExtensionManager::backgroundHealthProbe()
         root, QStringLiteral("tst-health-live"),
         QStringLiteral("1.0.0"));
     // Dead: same manifest shape but the worker throws at eval —
-    // Bitwarden's failure mode (Chromium status 15).  'topSites' is
-    // the unsupported-permission marker: the hosted runtime does not
+    // Bitwarden's failure mode (Chromium status 15).  'gcm' is the
+    // unsupported-permission marker: the hosted runtime does not
     // serve it (ER19), so it stays in missingApis either way.
     const QString deadDir = writeExtension(
         root, QStringLiteral("tst-health-dead"),
         QStringLiteral("1.0.0"), QString(),
-        {QStringLiteral("topSites")});
+        {QStringLiteral("gcm")});
     QVERIFY(!liveDir.isEmpty() && !deadDir.isEmpty());
     {
         QFile dead(deadDir + QLatin1String("/sw.js"));
@@ -1454,9 +1456,9 @@ void tst_ExtensionManager::backgroundHealthProbe()
     const ExtensionManager::ExtensionInfo dead = infoFor(deadId);
     QVERIFY(!dead.healthReason.isEmpty());
     QVERIFY(dead.healthReason.contains(QLatin1String("background")));
-    // "topSites" is unsupported even with the hosted runtime armed
+    // "gcm" is unsupported even with the hosted runtime armed
     // — the reason names the missing surface, not just the crash.
-    QVERIFY(dead.missingApis.contains(QLatin1String("topSites")));
+    QVERIFY(dead.missingApis.contains(QLatin1String("gcm")));
 
     manager->removeExtension(liveId);
     manager->removeExtension(deadId);
@@ -10260,6 +10262,116 @@ void tst_ExtensionManager::extensionTabGroups()
     window->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     hub->setTracking(false);
+    QDir(dirB).removeRecursively();
+}
+
+// MD27 — chrome.topSites: get() answers the visit-count-ranked
+// MostVisitedURL list off the RC04 hosts rollup (the C++ aggregate
+// mirrors it when rustcore is off); 'topSites' gates the namespace
+// like Chrome, and get() is the only published member.
+void tst_ExtensionManager::extensionTopSites()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // Same ambient-persona binding the MD22 leg uses — the backend's
+    // HistoryManager::instance() resolves exactly this store, the
+    // ambient id restores on exit, the persona dir goes with it.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstexttop%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    HistoryManager *manager = HistoryManager::instance();
+    QVERIFY(manager);
+    QCOMPARE(manager->profileId(), profileId);
+    auto unbind = qScopeGuard([prevId, profileId]() {
+        HistoryManager::releaseFor(profileId);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+    manager->clear();
+
+    // Two hosts where the heavier one is NOT the newest — the rank
+    // must follow visit count, not recency, and the representative
+    // entry is the host's newest visit.
+    const QDateTime now = QDateTime::currentDateTime();
+    QList<HistoryEntry> seed;
+    seed.append(HistoryEntry(
+        QStringLiteral("https://top.example/first"),
+        now.addSecs(-30), QStringLiteral("Top first")));
+    seed.append(HistoryEntry(
+        QStringLiteral("https://top.example/latest"),
+        now.addSecs(-10), QStringLiteral("Top latest")));
+    seed.append(HistoryEntry(
+        QStringLiteral("https://other.example/"),
+        now, QStringLiteral("Other")));
+    manager->setHistory(seed);
+    QCOMPARE(manager->history().size(), 3);
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exttop-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-top\","
+                "\"version\":\"1.0\",\"permissions\":[\"topSites\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0045"),
+        QStringLiteral("tst-top"), dir);
+
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("topSites"), QStringLiteral("get"),
+        QJsonObject());
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonArray sites =
+        reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(sites.size(), 2);
+    // The visited host leads — two visits outrank the single newer
+    // one, and the newest visit supplies the MostVisitedURL.
+    QCOMPARE(sites.at(0).toObject().value(QLatin1String("url"))
+                 .toString(),
+             QStringLiteral("https://top.example/latest"));
+    QCOMPARE(sites.at(0).toObject().value(QLatin1String("title"))
+                 .toString(),
+             QStringLiteral("Top latest"));
+    QCOMPARE(sites.at(1).toObject().value(QLatin1String("url"))
+                 .toString(),
+             QStringLiteral("https://other.example/"));
+
+    // get() is the only published member — a mistyped bridge call is
+    // the typed unreachable-member verdict.
+    QCOMPARE(backend.invoke(QStringLiteral("topSites"),
+                            QStringLiteral("peek"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // The manifest gate is per-context: a sibling backend without
+    // 'topSites' hears no-permission.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-exttopb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-top-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0046"),
+        QStringLiteral("tst-top-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("topSites"),
+                             QStringLiteral("get"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
     QDir(dirB).removeRecursively();
 }
 

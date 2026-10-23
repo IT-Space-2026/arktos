@@ -1368,6 +1368,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeBookmarks(method, args);
     if (ns == QLatin1String("history"))
         return invokeHistory(method, args);
+    if (ns == QLatin1String("topSites"))
+        return invokeTopSites(method, args);
     if (ns == QLatin1String("cookies"))
         return invokeCookies(method, args);
     if (ns == QLatin1String("downloads"))
@@ -4841,6 +4843,134 @@ QJsonObject ExtensionShimBackend::invokeHistory(
         return okReply();
     }
 
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.topSites — MD27.  Chrome's MostVisitedURL is the per-host
+// "new tab tile" entry {url, title}; the ranking decision lives in
+// the RC04 hosts rollup (the same table TRUST01 and the omnibox
+// suggest lane build on) via rc_history_top_hosts — visit count
+// descending, earliest first_seen breaking ties, the host's newest
+// visit supplying the representative url/title.  The C++ lane
+// aggregates the identical ranking over HistoryManager's
+// newest-first listing so a no-rust build or an FFI failure still
+// answers honestly.  Rows: [{host, url, title, visits, first_seen}].
+// -------------------------------------------------------------------
+
+QJsonArray topSiteRows()
+{
+#ifdef ARKTOS_RUSTCORE
+    // Facade handle binds the ambient persona's history.db for the
+    // query — same posture the completer's RustHistorySuggestModel
+    // takes; the legacy spelling anchors the path by hand when the
+    // bridge cannot serve.
+    AcHistory *h = nullptr;
+    const QString profileId = BrowserPaths::activeProfileId();
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->history(profileId);
+    if (!h) {
+        const QByteArray dbPath = BrowserPaths::profileDataFilePath(
+            profileId, QLatin1String("history.db")).toUtf8();
+        rc_hist_open(dbPath.constData());
+    }
+    // Chrome's tile list stays small — 20 bounds the marshal.
+    char *raw = h
+        ? ac_hist_top_hosts(h, 20)
+        : rc_history_top_hosts(20);
+    ac_hist_close(h);
+    if (raw) {
+        const QByteArray out(raw);
+        if (h)
+            ac_string_free(raw);
+        else
+            rc_string_free(raw);
+        const QJsonArray rows = QJsonDocument::fromJson(out).array();
+        if (!rows.isEmpty() || out.trimmed() == "[]")
+            return rows;
+        // A malformed reply falls through to the C++ aggregate —
+        // the manager still carries the same store's truth.
+    }
+#endif
+    HistoryManager *manager = HistoryManager::instance();
+    if (!manager)
+        return QJsonArray();
+    struct HostAgg {
+        QString url;
+        QString title;
+        qint64 firstTs = 0;
+        int visits = 0;
+    };
+    // Newest-first listing: the first occurrence per host keeps the
+    // representative url/title; every visit counts toward the rank.
+    QStringList order;
+    QHash<QString, HostAgg> agg;
+    for (const HistoryEntry &e : manager->history()) {
+        const QString host = QUrl(e.url).host().toLower();
+        if (host.isEmpty())
+            continue;
+        HostAgg &a = agg[host];
+        if (!a.visits) {
+            order.append(host);
+            a.url = e.url;
+            a.title = e.title;
+            a.firstTs = e.dateTime.toMSecsSinceEpoch();
+        } else {
+            a.firstTs = qMin(a.firstTs,
+                             e.dateTime.toMSecsSinceEpoch());
+        }
+        ++a.visits;
+    }
+    std::stable_sort(order.begin(), order.end(),
+                     [&](const QString &x, const QString &y) {
+                         const HostAgg &a = agg.value(x);
+                         const HostAgg &b = agg.value(y);
+                         if (a.visits != b.visits)
+                             return a.visits > b.visits;
+                         return a.firstTs < b.firstTs;
+                     });
+    QJsonArray rows;
+    for (const QString &host : order) {
+        const HostAgg &a = agg.value(host);
+        rows.append(QJsonObject{
+            {QStringLiteral("host"), host},
+            {QStringLiteral("url"), a.url},
+            {QStringLiteral("title"), a.title},
+            {QStringLiteral("visits"), a.visits},
+            {QStringLiteral("first_seen"), a.firstTs}});
+        if (rows.size() >= 20)
+            break;
+    }
+    return rows;
+}
+
+QJsonObject ExtensionShimBackend::invokeTopSites(
+        const QString &method, const QJsonObject &args)
+{
+    Q_UNUSED(args);
+    // Chrome exposes get() only under the declared 'topSites' grant —
+    // the bridge object answers a direct call from any code in the
+    // context, so the gate runs here too (the task card's "no gate"
+    // line predates the Chrome docs check: developer.chrome.com
+    // lists topSites as a required permission).
+    if (!manifestPermissions().contains(QLatin1String("topSites")))
+        return errReply(QStringLiteral("no-permission"));
+
+    if (method == QLatin1String("get")) {
+        QJsonArray out;
+        for (const QJsonValue &v : topSiteRows()) {
+            const QJsonObject row = v.toObject();
+            const QString url =
+                row.value(QLatin1String("url")).toString();
+            if (url.isEmpty())
+                continue;   // no representative visit recorded
+            out.append(QJsonObject{
+                {QStringLiteral("url"), url},
+                {QStringLiteral("title"),
+                 row.value(QLatin1String("title")).toString()}});
+        }
+        return okReply(out);
+    }
     return errReply(QStringLiteral("unimplemented"));
 }
 

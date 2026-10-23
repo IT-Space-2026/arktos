@@ -834,11 +834,18 @@ void rc_bidi_free(RcBidiClient *client);
  * rc_history_suggest(term, limit) -> JSON array
  *   [{"url","title","ts","frecency","score"}, ...] ranked rows from the
  *   history store, newest-title representative per url; NULL when the
- *   store is not open. */
+ *   store is not open.
+ *
+ * rc_history_top_hosts(limit) -> JSON array
+ *   [{"host","url","title","visits","first_seen"}, ...] — the hosts
+ *   rollup ranked by visit count (MD27 chrome.topSites), newest
+ *   visit on the host supplying the representative url/title; NULL
+ *   when the store is not open. */
 char *rc_classify_input(const char *inputUtf8,
                         const char *optionsJsonUtf8);
 RcStatus rc_frecency_score(const char *jsonUtf8, int64_t *out);
 char *rc_history_suggest(const char *termUtf8, int64_t limit);
+char *rc_history_top_hosts(int64_t limit);
 
 /* --- command palette matching (CPAL01) --------------------------------
  * The query -> ranked-items decision of the command palette.  The row

@@ -1329,6 +1329,9 @@ QStringList ExtensionManager::runtimeServes()
         // surface is live.
         QStringLiteral("tabGroups"),
         QStringLiteral("tabs"),
+        // MD27: chrome.topSites serves get() off the RC04 hosts
+        // rollup — the whole declared surface is live.
+        QStringLiteral("topSites"),
         QStringLiteral("webNavigation"),
         QStringLiteral("webRequest"),
         QStringLiteral("windows"),
