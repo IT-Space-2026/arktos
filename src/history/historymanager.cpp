@@ -199,33 +199,80 @@ static void histExpire(const QString &profileId, int64_t cutoffMs)
     rc_hist_expire_older_than(cutoffMs, nullptr);
 }
 // RC16: the favicon store moved out of history.db into the per-
-// profile icon cache (cache/icons/ — disposable by contract).  The
-// dispatch below prefers this manager's profile-bound AcIcons; a
-// null handle means the bridge could not serve, and the rc_icons_*
-// spelling over the ensureRustIcons() anchor does the same work.
-// Both spellings take the PAGE url and derive the historyIconKey()
-// rule inside the store — the two sides can never drift apart.
-static RcStatus iconPut(AcIcons *h, const char *url,
-                        const uint8_t *png, size_t len)
+// profile icon cache (cache/icons/ — disposable by contract).
+// MB07: same envelope dispatch as the history ops above — one framed
+// round trip per call, the payload's "profile" binding the scope so
+// no AcIcons mints.  A null bridge keeps the rc_icons_* spelling
+// over the rustCoreEnsureDataDirFor() anchor.  Both spellings take
+// the PAGE url and derive the historyIconKey() rule inside the
+// store — the two lanes can never drift apart.
+static bool iconPut(const QString &profileId, const QByteArray &url,
+                    const QByteArray &png)
 {
-    return h ? ac_icons_put(h, url, png, len)
-             : rc_icons_put(url, png, len);
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        return bridge
+            ->mwCommand(AcMw::Icons, AcMw::IconsPut,
+                        QJsonObject{{QLatin1String("profile"), profileId},
+                                    {QLatin1String("url"),
+                                     QString::fromUtf8(url)},
+                                    {QLatin1String("png_b64"),
+                                     QString::fromLatin1(png.toBase64())}})
+            .isObject();
+    }
+    rustCoreEnsureDataDirFor(profileId);
+    return rc_icons_put(url.constData(),
+                        reinterpret_cast<const uint8_t *>(png.constData()),
+                        size_t(png.size())) == RC_OK;
 }
-static RcStatus iconGet(AcIcons *h, const char *url,
-                        RcBuffer *out)
+static bool iconGet(const QString &profileId, const QByteArray &url,
+                    QByteArray *png)
 {
-    return h ? ac_icons_get(h, url, out)
-             : rc_icons_get(url, out);
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        const QByteArray b64 = bridge
+            ->mwQuery(AcMw::Icons, AcMw::IconsGet,
+                      QJsonObject{{QLatin1String("profile"), profileId},
+                                  {QLatin1String("url"),
+                                   QString::fromUtf8(url)}})
+            .toObject()
+            .value(QLatin1String("png_b64"))
+            .toString()
+            .toLatin1();
+        if (b64.isEmpty())
+            return false;
+        *png = QByteArray::fromBase64(b64);
+        return true;
+    }
+    rustCoreEnsureDataDirFor(profileId);
+    RcBuffer out{};
+    if (rc_icons_get(url.constData(), &out) != RC_OK || !out.data)
+        return false;
+    *png = QByteArray(reinterpret_cast<const char *>(out.data),
+                      int(out.len));
+    rc_buffer_free(out);
+    return true;
 }
-static RcStatus iconClear(AcIcons *h)
+static void iconClear(const QString &profileId)
 {
-    return h ? ac_icons_clear(h) : rc_icons_clear();
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        bridge->mwCommand(AcMw::Icons, AcMw::IconsClear,
+                          QJsonObject{{QLatin1String("profile"),
+                                       profileId}});
+        return;
+    }
+    rustCoreEnsureDataDirFor(profileId);
+    rc_icons_clear();
 }
-static RcStatus iconSweep(AcIcons *h, int64_t cutoffMs,
-                          int64_t *removed)
+static void iconSweep(const QString &profileId, int64_t cutoffMs)
 {
-    return h ? ac_icons_sweep(h, cutoffMs, removed)
-             : rc_icons_sweep(cutoffMs, removed);
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        bridge->mwCommand(AcMw::Icons, AcMw::IconsSweep,
+                          QJsonObject{{QLatin1String("profile"), profileId},
+                                      {QLatin1String("cutoff_ms"),
+                                       qint64(cutoffMs)}});
+        return;
+    }
+    rustCoreEnsureDataDirFor(profileId);
+    rc_icons_sweep(cutoffMs, nullptr);
 }
 #endif
 
@@ -310,43 +357,12 @@ void HistoryManager::releaseFor(const QString &profileId)
     delete historyManagers().take(profileId);
 }
 
-#ifdef ARKTOS_RUSTCORE
-AcIcons *HistoryManager::rustIconStore() const
-{
-    // A minted handle pins the root it was bound against, so a
-    // test-mode data-root move drops it.
-    if (m_iconStore && RustCoreBridge::rootDrifted()) {
-        ac_icons_close(m_iconStore);
-        m_iconStore = nullptr;
-    }
-    if (!m_iconStore) {
-        if (RustCoreBridge *bridge = RustCoreBridge::serving())
-            m_iconStore = bridge->icons(m_profileId);
-    }
-    // No facade handle — anchor the process-global data dir at this
-    // profile's dir so the legacy rc_icons_* spelling lands on
-    // profiles/<id>/cache/icons too.
-    if (!m_iconStore)
-        ensureRustIcons();
-    return m_iconStore;
-}
-
-void HistoryManager::ensureRustIcons() const
-{
-    rustCoreEnsureDataDirFor(m_profileId);
-}
-#endif
-
 HistoryManager::~HistoryManager()
 {
     // remove history items on application exit
     if (m_daysToExpire == -2)
         clear();
     m_saveTimer->saveIfNeccessary();
-#ifdef ARKTOS_RUSTCORE
-    ac_icons_close(m_iconStore);
-    m_iconStore = nullptr;
-#endif
 }
 
 QList<HistoryEntry> HistoryManager::history() const
@@ -379,13 +395,11 @@ QIcon HistoryManager::icon(const QUrl &url) const
     QIcon icon = m_icons.value(key);
     if (icon.isNull()) {
         const QByteArray u = url.toString().toUtf8();
-        RcBuffer out{};
-        if (iconGet(rustIconStore(), u.constData(), &out) == RC_OK
-                && out.data) {
+        QByteArray png;
+        if (iconGet(m_profileId, u, &png)) {
             QPixmap pixmap;
-            if (pixmap.loadFromData(out.data, int(out.len), "PNG"))
+            if (pixmap.loadFromData(png, "PNG"))
                 icon = QIcon(pixmap);
-            rc_buffer_free(out);
         }
         if (!icon.isNull())
             const_cast<HistoryManager *>(this)->m_icons.insert(key, icon);
@@ -423,9 +437,7 @@ void HistoryManager::setIcon(const QUrl &url, const QIcon &icon)
     QBuffer buffer(&png);
     if (buffer.open(QIODevice::WriteOnly) && image.save(&buffer, "PNG")) {
         const QByteArray u = url.toString().toUtf8();
-        iconPut(rustIconStore(), u.constData(),
-                reinterpret_cast<const uint8_t *>(png.constData()),
-                size_t(png.size()));
+        iconPut(m_profileId, u, png);
     }
 #else
     const QString key = host.isEmpty() ? url.toString() : host;
@@ -461,7 +473,7 @@ void HistoryManager::clearIcons()
     // should not leave the old copy behind.
     QDir(iconStoreDir(m_profileId)).removeRecursively();
 #ifdef ARKTOS_RUSTCORE
-    iconClear(rustIconStore());
+    iconClear(m_profileId);
 #endif
 }
 
@@ -567,7 +579,7 @@ void HistoryManager::checkForExpired()
     // host whose last visit expired loses its cached PNG (the cache
     // is disposable; a live page re-records it on the next
     // iconChanged).
-    iconSweep(rustIconStore(), expireCutoffMs, nullptr);
+    iconSweep(m_profileId, expireCutoffMs);
 #endif
 
     if (nextTimeout > 0)

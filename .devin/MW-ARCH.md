@@ -557,7 +557,7 @@ lifecycle op stay flat. Per-call outcomes get recorded here as the
 cutover lands; the verify bar is unchanged behavior + unchanged
 autotest counts.
 
-| Caller site | Flat today | Decision (MB06 landed) |
+| Caller site | Flat today | Decision (MB06/MB07 landed) |
 |-------------|-----------|------------------------------|
 | `RustCoreSettings` (all ops: value/setValue/remove/contains/allKeys/clear/sync/importLegacyIni) | ac_* typed | **envelope** — settings.get/set/remove/contains/list/sync/import_ini; the handle is gone entirely, the payload's `"profile"` binds the scope per call; lazy `rc_settings_open` fallback when the bridge cannot serve |
 | `RustCoreProfiles` registry ops (list/get/create/rename/setAvatar/delete/reload) | ac_* typed | **envelope** — profiles.list/get/create/rename/set_avatar/delete/reload on the shared-root spelling; explicit fixture roots keep the flat lane |
@@ -568,7 +568,18 @@ autotest counts.
 | `RustHistorySuggestModel::refresh` (HistoryCompleter) | ac_hist_suggest on a minted-then-closed handle | **envelope** — history.suggest; the per-refresh handle mint disappears |
 | `BookmarkNode`/`BookmarksManager` per-node ops (get/find/parent/child_*/attach/detach/destroy/set_*) | ac_bm_* | **flat** — opaque node handles cannot cross the frame (§2.3); every call site is already a single flat call on the model's `m_store`, JSON framing would only add code |
 | `BookmarksManager` bulk ops (load/load_mem/save/import_html/export_html) | ac_bm_* | **flat** — one scalar FFI call each with nothing batchable on the Qt side; no envelope ops registered for them and none would shrink the call site |
-| policy/sessions/cookies/icons/opensearch callers | ac_* + rc_* mixed | TBD — MB07 |
+| `SiteDecisionStore` all ops (get/set/remove/lookup/entries/snapshot/storePresent/reload/reset) | ac_sitedec_* on a minted AcPolicy | **envelope** — policy.sitedec_* (MB07 landed) — the handle is gone, `"profile"` binds per call; empty profileId still pins "default", `rc_set_data_dir` + `rc_sitedec_*` stays the no-bridge fallback |
+| `DomainBlocklist::maybeCommit` reload | ac_blocklist_reload | **envelope** — policy.blocklist_reload (MB07 landed) |
+| `TrancoList::maybeCommit` validation + reload | ac_tranco_file_entries + ac_tranco_reload | **envelope** — policy.tranco_file_entries/tranco_reload (MB07 landed) — binds the ambient persona's dir, matching the flat `dataFilePath` anchor |
+| `SitePanel::siteTrustVerdict` | ac_sitetrust_lookup_opts | **envelope** — policy.sitetrust_lookup (MB07 landed) — host/https/probes in, verdict doc out |
+| `NavigationPolicy` verdict probes (rc_policy_evaluate/cookie_filter/eval_generation, rc_blocklist_check, rc_tranco_rank, rc_lookalike_check, rc_ua_spoof*) | rc_* | **flat** — per-navigation/per-cookie scalar verdicts are the hot-path single reads §1 keeps flat; nothing to batch |
+| `BrowserApplication` sessionSaveFor/sessionLoadFor/sessionClearFor | ac_session_* on a minted AcSession | **envelope** — session.save/load/clear (MB07 landed) — the manifest crosses as a JSON doc in `"session"`; load maps the flat lane's RC_NOT_FOUND/RC_CORRUPT onto the envelope error status |
+| `BrowserProfile` markSessionStart/markSessionCleanExit/markSessionTerminated | ac_session_mark_* | **envelope** — session.mark_start/mark_exit/mark_terminated (MB07 landed) — `"profile":"default"` pins the marker's persona |
+| `ClearPrivateData` session clear | rc_session_clear | **envelope** — session.clear (MB07 landed) |
+| `main.cpp` self-test/probe legs (rc_session_clear/exists/save/decode + mark*/saveSession/restoreLastSession) | rc_* | **flat** — wire-level probes asserting the flat lane stays correct; the application-level calls inside them ride the envelope through the public API |
+| cookies callers | none | **envelope-registered, flat Qt side** — zero Qt callers exist (RC15 ships no consumer yet); cookies.count/list/set are described+dispatched and probe-tested, no call site to cut over |
+| `HistoryManager` iconPut/iconGet/iconClear/iconSweep | ac_icons_* on a cached AcIcons | **envelope** — icons.put/get/clear/sweep (MB07 landed) — PNGs cross base64'd, `"profile"` binds per call, `m_iconStore` deleted |
+| `OpenSearchManager` registry ops (put/get/remove/rename/reorder/set_keywords/import/seed/restore/block/unblock/list/keywords/bindings) + `OpenSearchEngine::buildUrl` | rc_ose_* | **envelope** — opensearch.* (MB07 landed) — store is bound to `profiles/<active>/` (the flat `rustCoreEnsureDataDir` anchor), not the data root; raw XML descriptors cross as `"xml_b64"` |
 
 ## 10. What this doc deliberately did not decide
 

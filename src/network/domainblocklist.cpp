@@ -37,6 +37,8 @@
 #include "rustcorebridge.h"
 
 #include <arktos_core.h>
+
+#include <qjsonobject.h>
 #endif
 
 // Same ceiling the adblock subscriptions apply — a feed larger than
@@ -205,15 +207,14 @@ void DomainBlocklist::maybeCommit()
             && file.commit()) {
             // Point the core at the data dir (the SecureStore shim
             // may not have run yet) and re-merge seed ∪ override.
-            // RC08: the facade handle re-asserts the ambient
-            // persona's dir per op — the rc_set_data_dir anchor is
+            // MB07: the envelope command binds the ambient persona's
+            // dir inside the crate — the rc_set_data_dir anchor is
             // the legacy fallback.
-            AcPolicy *policy = nullptr;
-            if (RustCoreBridge *bridge = RustCoreBridge::serving())
-                policy = bridge->policy(BrowserPaths::activeProfileId());
-            if (policy) {
-                ac_blocklist_reload(policy);
-                ac_policy_close(policy);
+            if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+                bridge->mwCommand(
+                    AcMw::Policy, AcMw::PolicyBlocklistReload,
+                    QJsonObject{{QLatin1String("profile"),
+                                 BrowserPaths::activeProfileId()}});
             } else {
                 const QByteArray dir =
                     QFileInfo(path).absolutePath().toUtf8();

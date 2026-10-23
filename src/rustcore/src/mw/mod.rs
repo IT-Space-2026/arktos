@@ -60,9 +60,9 @@ use serde_json::{json, Value};
 use crate::error::{self, RcStatus};
 use crate::facade::{self, AcCore};
 use crate::{
-    bookmarks, containers, cookies, extverify, history, icons, notes, notify, omnibox,
-    opensearch, profiles, profilevault, session, settings, sitedecisions, store, tlsprobe,
-    updates, util,
+    blocklist, bookmarks, containers, cookies, extverify, history, icons, notes, notify,
+    omnibox, opensearch, profiles, profilevault, session, settings, sitedecisions,
+    sitetrust, store, tlsprobe, tranco, updates, util,
 };
 
 /// The envelope schema version — the frame's `version` byte and the
@@ -1208,6 +1208,122 @@ fn op_sitedec_lookup(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
     }
 }
 
+/// rc_sitedec_* command parity: an Ok write emits "sitedecisions"
+/// whether or not a row changed (the flat lane emits on status, not
+/// the changed flag it also computes — the response still reports
+/// it for callers that care).
+fn sitedec_emit(eff: &str, changed: bool) -> Value {
+    let _hint = notify::profile_hint(eff);
+    notify::emit("sitedecisions");
+    json!({ "ok": true, "changed": changed })
+}
+
+fn op_sitedec_remove(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let kind = arg_str(p, "kind")?;
+    let key = arg_str(p, "key")?;
+    let eff = policy_bind(ctx, p)?;
+    let changed = sitedecisions::remove(kind, key)?;
+    Ok(sitedec_emit(&eff, changed))
+}
+
+fn op_sitedec_clear(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let kind = arg_str(p, "kind")?;
+    let eff = policy_bind(ctx, p)?;
+    let changed = sitedecisions::clear_kind(kind)?;
+    Ok(sitedec_emit(&eff, changed))
+}
+
+/// entries is the {"key":"value",...} object replace_kind consumes —
+/// the "in-memory list is authoritative" mirror-write.
+fn op_sitedec_replace(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let kind = arg_str(p, "kind")?;
+    let entries = p
+        .get("entries")
+        .filter(|v| v.is_object())
+        .ok_or_else(|| OpErr::BadPayload("missing \"entries\" object".into()))?;
+    let bytes = serde_json::to_vec(entries)
+        .map_err(|e| OpErr::BadPayload(format!("entries doc: {e}")))?;
+    let eff = policy_bind(ctx, p)?;
+    let changed = sitedecisions::replace_kind(kind, &bytes)?;
+    Ok(sitedec_emit(&eff, changed))
+}
+
+fn op_sitedec_list(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let kind = arg_str(p, "kind")?;
+    policy_bind(ctx, p)?;
+    let doc = sitedecisions::list_json(kind)?;
+    Ok(json!({ "entries": serde_json::from_str(&doc).unwrap_or_else(|_| json!({})) }))
+}
+
+/// The whole store as one document — the payload IS the snapshot
+/// (same shape rc_sitedec_snapshot returns as a string).
+fn op_sitedec_snapshot(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    policy_bind(ctx, p)?;
+    let doc = sitedecisions::snapshot_json()?;
+    Ok(serde_json::from_str(&doc).unwrap_or(Value::Null))
+}
+
+fn op_sitedec_store_present(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let (dir, _eff) = bound_profile_dir(ctx, p)?;
+    store::lock()
+        .set_data_dir(path_str(&dir)?)
+        .map_err(OpErr::Failed)?;
+    Ok(json!({ "present": sitedecisions::store_present() }))
+}
+
+/// Reload/reset emit nothing — the flat lane is a bare status
+/// (rc_sitedec_reload/rc_sitedec_reset have no notify call).
+fn op_sitedec_reload(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    policy_bind(ctx, p)?;
+    sitedecisions::reload()?;
+    Ok(json!({ "ok": true }))
+}
+
+fn op_sitedec_reset(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    policy_bind(ctx, p)?;
+    sitedecisions::reset()?;
+    Ok(json!({ "ok": true }))
+}
+
+// The AcPolicy handle also anchors the domain blocklist, tranco and
+// site-trust stores under the bound profile dir — the envelope's
+// policy_bind re-asserts the same dir per call.
+
+fn op_blocklist_reload(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    policy_bind(ctx, p)?;
+    blocklist::reload()?;
+    Ok(json!({ "ok": true }))
+}
+
+fn op_tranco_file_entries(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let name = arg_str(p, "name")?;
+    policy_bind(ctx, p)?;
+    Ok(json!({ "entries": tranco::file_entries(name) }))
+}
+
+fn op_tranco_reload(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    policy_bind(ctx, p)?;
+    tranco::reload()?;
+    Ok(json!({ "ok": true }))
+}
+
+/// ac_sitetrust_lookup_opts parity: the composite verdict document.
+/// The bound profile's history db opens beside the data dir — the
+/// first-seen rollup must never read another persona's visits.
+fn op_sitetrust_lookup(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let host = arg_str(p, "host")?;
+    let is_https = p.get("https").and_then(Value::as_bool).unwrap_or(false);
+    let probes = opt_u64(p, "probes")?.unwrap_or(0) as u32;
+    let (dir, _eff) = bound_profile_dir(ctx, p)?;
+    store::lock()
+        .set_data_dir(path_str(&dir)?)
+        .map_err(OpErr::Failed)?;
+    let hist_db = path_str(&dir.join("history.db"))?.to_string();
+    history::with(|h| h.open(Some(hist_db.as_str())))?;
+    let doc = sitetrust::lookup_opts(host, is_https, probes);
+    Ok(serde_json::from_str(&doc).unwrap_or(Value::Null))
+}
+
 const POLICY_OPS: &[Op] = &[
     Op {
         id: 0x0001,
@@ -1233,6 +1349,102 @@ const POLICY_OPS: &[Op] = &[
         since: 1,
         handler: op_sitedec_lookup,
     },
+    Op {
+        id: 0x0004,
+        name: "sitedec_remove",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_sitedec_remove,
+    },
+    Op {
+        id: 0x0005,
+        name: "sitedec_clear",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_sitedec_clear,
+    },
+    Op {
+        id: 0x0006,
+        name: "sitedec_replace",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_sitedec_replace,
+    },
+    Op {
+        id: 0x0007,
+        name: "sitedec_list",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_sitedec_list,
+    },
+    Op {
+        id: 0x0008,
+        name: "sitedec_snapshot",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_sitedec_snapshot,
+    },
+    Op {
+        id: 0x0009,
+        name: "sitedec_store_present",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_sitedec_store_present,
+    },
+    Op {
+        id: 0x000a,
+        name: "sitedec_reload",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_sitedec_reload,
+    },
+    Op {
+        id: 0x000b,
+        name: "sitedec_reset",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_sitedec_reset,
+    },
+    Op {
+        id: 0x000c,
+        name: "blocklist_reload",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_blocklist_reload,
+    },
+    Op {
+        id: 0x000d,
+        name: "tranco_file_entries",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_tranco_file_entries,
+    },
+    Op {
+        id: 0x000e,
+        name: "tranco_reload",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_tranco_reload,
+    },
+    Op {
+        id: 0x000f,
+        name: "sitetrust_lookup",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_sitetrust_lookup,
+    },
 ];
 
 // ---- session (domain 6) ------------------------------------------------------
@@ -1242,12 +1454,18 @@ const POLICY_OPS: &[Op] = &[
 // anchoring.  Session ops emit no change events by contract
 // (per-run scratch state, MW-ARCH §5).
 
-/// Resolves the bound profile's session.dat; the stamped id is the
+/// Resolves the bound profile's dir; the stamped id is the
 /// effective profile (a non-slug/absent id resolves to "default").
-fn session_file(ctx: &MwCtx, p: &Value) -> Result<(PathBuf, String), OpErr> {
+fn session_dir(ctx: &MwCtx, p: &Value) -> Result<(PathBuf, String), OpErr> {
     let eff = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
     let root = std::path::Path::new(ctx.core.data_root());
-    Ok((facade::profile_dir(root, &eff).join("session.dat"), eff))
+    Ok((facade::profile_dir(root, &eff), eff))
+}
+
+/// The bound profile's session.dat.
+fn session_file(ctx: &MwCtx, p: &Value) -> Result<(PathBuf, String), OpErr> {
+    let (dir, eff) = session_dir(ctx, p)?;
+    Ok((dir.join("session.dat"), eff))
 }
 
 fn op_session_exists(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
@@ -1277,6 +1495,35 @@ fn op_session_save(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
 fn op_session_clear(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
     let (path, _pid) = session_file(ctx, p)?;
     session::clear_at(&path)?;
+    Ok(json!({ "ok": true }))
+}
+
+// The session.state lifecycle marker — the same _in(dir) ops
+// ac_session_mark_* run on their bound profile dir.
+
+fn op_session_mark_start(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let (dir, _pid) = session_dir(ctx, p)?;
+    let dirty = session::mark_start_in(&dir)?;
+    Ok(json!({ "ok": true, "dirty": dirty }))
+}
+
+fn opt_i32(p: &Value, name: &str) -> Result<i32, OpErr> {
+    let v = arg_i64(p, name)?;
+    i32::try_from(v)
+        .map_err(|_| OpErr::BadPayload(format!("\"{name}\" out of i32 range")))
+}
+
+fn op_session_mark_exit(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let code = opt_i32(p, "code")?;
+    let (dir, _pid) = session_dir(ctx, p)?;
+    session::mark_exit_in(&dir, code)?;
+    Ok(json!({ "ok": true }))
+}
+
+fn op_session_mark_terminated(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let signal = opt_i32(p, "signal")?;
+    let (dir, _pid) = session_dir(ctx, p)?;
+    session::mark_terminated_in(&dir, signal)?;
     Ok(json!({ "ok": true }))
 }
 
@@ -1312,6 +1559,30 @@ const SESSION_OPS: &[Op] = &[
         profile_scoped: true,
         since: 1,
         handler: op_session_clear,
+    },
+    Op {
+        id: 0x0005,
+        name: "mark_start",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_session_mark_start,
+    },
+    Op {
+        id: 0x0006,
+        name: "mark_exit",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_session_mark_exit,
+    },
+    Op {
+        id: 0x0007,
+        name: "mark_terminated",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_session_mark_terminated,
     },
 ];
 
@@ -1436,6 +1707,32 @@ fn op_icons_get(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
     Ok(json!({ "png_b64": b64_encode(&png) }))
 }
 
+/// rc_icons_clear parity: emit only when the cache actually held
+/// rows — an already-empty wipe is silent.
+fn op_icons_clear(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let (dir, eff) = icons_dir(ctx, p)?;
+    let had = icons::count_in(&dir).unwrap_or(0) > 0;
+    icons::clear_in(&dir)?;
+    if had {
+        let _hint = notify::profile_hint(&eff);
+        notify::emit("icons");
+    }
+    Ok(json!({ "ok": true }))
+}
+
+/// rc_icons_sweep parity: drop records stale at-or-before cutoff_ms,
+/// report the count, emit only when something went.
+fn op_icons_sweep(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let cutoff_ms = arg_i64(p, "cutoff_ms")?;
+    let (dir, eff) = icons_dir(ctx, p)?;
+    let removed = icons::sweep_in(&dir, cutoff_ms)?;
+    if removed > 0 {
+        let _hint = notify::profile_hint(&eff);
+        notify::emit("icons");
+    }
+    Ok(json!({ "ok": true, "removed": removed }))
+}
+
 const ICONS_OPS: &[Op] = &[
     Op {
         id: 0x0001,
@@ -1460,6 +1757,22 @@ const ICONS_OPS: &[Op] = &[
         profile_scoped: true,
         since: 1,
         handler: op_icons_get,
+    },
+    Op {
+        id: 0x0004,
+        name: "clear",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_icons_clear,
+    },
+    Op {
+        id: 0x0005,
+        name: "sweep",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_icons_sweep,
     },
 ];
 
@@ -1659,18 +1972,22 @@ const CUSTODY_OPS: &[Op] = &[
 
 // ---- opensearch (domain 12) ----------------------------------------------------------
 //
-// searchengines.json sits at the DATA ROOT — the store is global
-// (rustCoreEnsureDataDir(), never a profile dir), so these ops carry
-// no "profile" and bind the core root per call.
+// searchengines.json lives under profiles/<eff>/ — the flat lane's
+// rustCoreEnsureDataDir() anchors the ACTIVE profile's dir, and the
+// engine set + keyword bindings + bundled blocklist are per-persona
+// state.  The envelope binds the same dir per call; "profile"
+// carries the scope like the other persona-bound domains.
 
-fn opensearch_bind(ctx: &MwCtx) -> Result<(), OpErr> {
+fn opensearch_bind(ctx: &MwCtx, p: &Value) -> Result<String, OpErr> {
+    let (dir, eff) = bound_profile_dir(ctx, p)?;
     store::lock()
-        .set_data_dir(ctx.core.data_root())
-        .map_err(OpErr::Failed)
+        .set_data_dir(path_str(&dir)?)
+        .map_err(OpErr::Failed)?;
+    Ok(eff)
 }
 
-fn op_ose_list(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
-    opensearch_bind(ctx)?;
+fn op_ose_list(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    opensearch_bind(ctx, p)?;
     let doc = opensearch::list_json()?;
     // The store answers a bare name array — wrap it like the other
     // list ops so every domain's payload is a self-describing doc.
@@ -1684,12 +2001,196 @@ fn op_ose_put(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
         .ok_or_else(|| OpErr::BadPayload("missing \"engine\" doc".into()))?;
     let bytes = serde_json::to_vec(engine)
         .map_err(|e| OpErr::BadPayload(format!("engine doc: {e}")))?;
-    opensearch_bind(ctx)?;
+    let eff = opensearch_bind(ctx, p)?;
     let changed = opensearch::put_json(&bytes)?;
     if changed {
+        let _hint = notify::profile_hint(&eff);
         notify::emit("searchengines");
     }
     Ok(json!({ "ok": true, "changed": changed }))
+}
+
+/// rc_ose_* command parity: "searchengines" emits only when the
+/// store reports a real change, scoped to the bound persona like
+/// the other profile stores.
+fn ose_changed(eff: &str, changed: bool) -> Value {
+    if changed {
+        let _hint = notify::profile_hint(eff);
+        notify::emit("searchengines");
+    }
+    json!({ "ok": true, "changed": changed })
+}
+
+/// A store-side JSON-array string re-parsed into a payload field —
+/// the list_json-family functions answer serialized arrays.
+fn parse_json_field(doc: &str) -> Value {
+    serde_json::from_str(doc).unwrap_or_else(|_| json!([]))
+}
+
+fn op_ose_store_present(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    opensearch_bind(ctx, p)?;
+    Ok(json!({ "present": opensearch::store_present() }))
+}
+
+/// One engine record — {"engine": doc} or null when absent (the
+/// flat lane's NULL record), never an error on a miss.
+fn op_ose_get(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let name = arg_str(p, "name")?;
+    opensearch_bind(ctx, p)?;
+    match opensearch::get_json(name)? {
+        Some(doc) => Ok(json!({ "engine": serde_json::from_str(&doc)
+            .unwrap_or(Value::Null) })),
+        None => Ok(json!({ "engine": Value::Null })),
+    }
+}
+
+fn op_ose_remove(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let name = arg_str(p, "name")?;
+    let eff = opensearch_bind(ctx, p)?;
+    Ok(ose_changed(&eff, opensearch::remove(name)?))
+}
+
+fn op_ose_rename(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let old = arg_str(p, "old")?;
+    let new = arg_str(p, "new")?;
+    let eff = opensearch_bind(ctx, p)?;
+    Ok(ose_changed(&eff, opensearch::rename(old, new)?))
+}
+
+/// order is the display-order name array reorder() consumes.
+fn op_ose_reorder(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let order = p
+        .get("order")
+        .filter(|v| v.is_array())
+        .ok_or_else(|| OpErr::BadPayload("missing \"order\" array".into()))?;
+    let bytes = serde_json::to_vec(order)
+        .map_err(|e| OpErr::BadPayload(format!("order doc: {e}")))?;
+    let eff = opensearch_bind(ctx, p)?;
+    Ok(ose_changed(&eff, opensearch::reorder(&bytes)?))
+}
+
+/// keywords is the string array set_keywords consumes — the store
+/// strips the listed keywords off every other engine.
+fn op_ose_set_keywords(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let name = arg_str(p, "name")?;
+    let keywords = p
+        .get("keywords")
+        .filter(|v| v.is_array())
+        .ok_or_else(|| OpErr::BadPayload("missing \"keywords\" array".into()))?;
+    let bytes = serde_json::to_vec(keywords)
+        .map_err(|e| OpErr::BadPayload(format!("keywords doc: {e}")))?;
+    let eff = opensearch_bind(ctx, p)?;
+    Ok(ose_changed(&eff, opensearch::set_keywords(name, &bytes)?))
+}
+
+/// xml / xml_b64 carry the OpenSearch 1.1 descriptor — the parser
+/// handles arbitrary encodings, so the b64 spelling keeps non-UTF-8
+/// descriptors byte-exact like the flat lane's raw bytes.
+fn op_ose_import(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let bytes = match opt_str(p, "xml")? {
+        Some(s) => s.as_bytes().to_vec(),
+        None => arg_b64(p, "xml_b64")?,
+    };
+    let eff = opensearch_bind(ctx, p)?;
+    Ok(ose_changed(&eff, opensearch::import_descriptor(&bytes)?))
+}
+
+fn op_ose_engine_for_keyword(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let keyword = arg_str(p, "keyword")?;
+    opensearch_bind(ctx, p)?;
+    match opensearch::engine_for_keyword(keyword)? {
+        Some(name) => Ok(json!({ "name": name })),
+        None => Ok(json!({ "name": Value::Null })),
+    }
+}
+
+fn op_ose_keywords(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    opensearch_bind(ctx, p)?;
+    Ok(json!({ "keywords": parse_json_field(&opensearch::keywords_json()?) }))
+}
+
+fn op_ose_removed_bundled(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    opensearch_bind(ctx, p)?;
+    Ok(json!({ "names": parse_json_field(&opensearch::removed_bundled_json()?) }))
+}
+
+fn op_ose_block_bundled(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let name = arg_str(p, "name")?;
+    let eff = opensearch_bind(ctx, p)?;
+    Ok(ose_changed(&eff, opensearch::block_bundled(name)?))
+}
+
+fn op_ose_unblock_bundled(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let name = arg_str(p, "name")?;
+    let eff = opensearch_bind(ctx, p)?;
+    Ok(ose_changed(&eff, opensearch::unblock_bundled(name)?))
+}
+
+fn op_ose_bundled_names(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    opensearch_bind(ctx, p)?;
+    Ok(json!({ "names": parse_json_field(&opensearch::bundled_names_json()) }))
+}
+
+fn op_ose_seed_bundled(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let eff = opensearch_bind(ctx, p)?;
+    Ok(ose_changed(&eff, opensearch::seed_bundled()?))
+}
+
+fn op_ose_restore_bundled(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let eff = opensearch_bind(ctx, p)?;
+    Ok(ose_changed(&eff, opensearch::restore_bundled()?))
+}
+
+/// spec is the buildUrl/parseTemplate spec doc
+/// {"template","method","params","term","language","source"} —
+/// expand_json's contract, null on a bad spec.
+fn op_ose_expand(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let spec = p
+        .get("spec")
+        .filter(|v| v.is_object())
+        .ok_or_else(|| OpErr::BadPayload("missing \"spec\" object".into()))?;
+    let bytes = serde_json::to_vec(spec)
+        .map_err(|e| OpErr::BadPayload(format!("spec doc: {e}")))?;
+    opensearch_bind(ctx, p)?;
+    match opensearch::expand_json(&bytes) {
+        Some(url) => Ok(json!({ "url": url })),
+        None => Ok(json!({ "url": Value::Null })),
+    }
+}
+
+/// Engine + slot kind + term -> the expanded URL, null on absence —
+/// term/language/source default "" like the flat lane's NULL args.
+fn op_ose_url(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let name = arg_str(p, "name")?;
+    let kind = opt_str(p, "kind")?.unwrap_or("");
+    let term = opt_str(p, "term")?.unwrap_or("");
+    let language = opt_str(p, "language")?.unwrap_or("");
+    let source = opt_str(p, "source")?.unwrap_or("");
+    opensearch_bind(ctx, p)?;
+    match opensearch::engine_url(name, kind, term, language, source)? {
+        Some(url) => Ok(json!({ "url": url })),
+        None => Ok(json!({ "url": Value::Null })),
+    }
+}
+
+fn op_ose_keyword_url(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let keyword = arg_str(p, "keyword")?;
+    let term = opt_str(p, "term")?.unwrap_or("");
+    let language = opt_str(p, "language")?.unwrap_or("");
+    let source = opt_str(p, "source")?.unwrap_or("");
+    opensearch_bind(ctx, p)?;
+    match opensearch::keyword_url(keyword, term, language, source)? {
+        Some(url) => Ok(json!({ "url": url })),
+        None => Ok(json!({ "url": Value::Null })),
+    }
+}
+
+/// rc_ose_reset parity — the test-suite reset seam emits nothing
+/// (the flat spelling is a bare status too).
+fn op_ose_reset(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    opensearch_bind(ctx, p)?;
+    opensearch::reset()?;
+    Ok(json!({ "ok": true }))
 }
 
 const OPENSEARCH_OPS: &[Op] = &[
@@ -1697,7 +2198,7 @@ const OPENSEARCH_OPS: &[Op] = &[
         id: 0x0001,
         name: "list",
         class: OpClass::Query,
-        profile_scoped: false,
+        profile_scoped: true,
         since: 1,
         handler: op_ose_list,
     },
@@ -1705,9 +2206,161 @@ const OPENSEARCH_OPS: &[Op] = &[
         id: 0x0002,
         name: "put",
         class: OpClass::Command,
-        profile_scoped: false,
+        profile_scoped: true,
         since: 1,
         handler: op_ose_put,
+    },
+    Op {
+        id: 0x0003,
+        name: "store_present",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_store_present,
+    },
+    Op {
+        id: 0x0004,
+        name: "get",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_get,
+    },
+    Op {
+        id: 0x0005,
+        name: "remove",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_remove,
+    },
+    Op {
+        id: 0x0006,
+        name: "rename",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_rename,
+    },
+    Op {
+        id: 0x0007,
+        name: "reorder",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_reorder,
+    },
+    Op {
+        id: 0x0008,
+        name: "set_keywords",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_set_keywords,
+    },
+    Op {
+        id: 0x0009,
+        name: "import",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_import,
+    },
+    Op {
+        id: 0x000a,
+        name: "engine_for_keyword",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_engine_for_keyword,
+    },
+    Op {
+        id: 0x000b,
+        name: "keywords",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_keywords,
+    },
+    Op {
+        id: 0x000c,
+        name: "removed_bundled",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_removed_bundled,
+    },
+    Op {
+        id: 0x000d,
+        name: "block_bundled",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_block_bundled,
+    },
+    Op {
+        id: 0x000e,
+        name: "unblock_bundled",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_unblock_bundled,
+    },
+    Op {
+        id: 0x000f,
+        name: "bundled_names",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_bundled_names,
+    },
+    Op {
+        id: 0x0010,
+        name: "seed_bundled",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_seed_bundled,
+    },
+    Op {
+        id: 0x0011,
+        name: "restore_bundled",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_restore_bundled,
+    },
+    Op {
+        id: 0x0012,
+        name: "expand",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_expand,
+    },
+    Op {
+        id: 0x0013,
+        name: "url",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_url,
+    },
+    Op {
+        id: 0x0014,
+        name: "keyword_url",
+        class: OpClass::Query,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_keyword_url,
+    },
+    Op {
+        id: 0x0015,
+        name: "reset",
+        class: OpClass::Command,
+        profile_scoped: true,
+        since: 1,
+        handler: op_ose_reset,
     },
 ];
 
@@ -3266,5 +3919,365 @@ mod tests {
             unsafe { facade::ac_events_unsubscribe(core.0, id) },
             RcStatus::Ok
         );
+    }
+
+    #[test]
+    fn policy_extended_ops_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("polx"));
+
+        // store_present is the file-existence probe — false on a
+        // fresh root, true once a write lands.
+        let r = call(core.0, &query(1, 5, 0x0009, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["present"], false);
+        let r = call(
+            core.0,
+            &command(
+                2,
+                5,
+                0x0002,
+                r#"{"profile":"w1","kind":"zoom","key":"a.example","value":"150"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(3, 5, 0x0009, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["present"], true);
+
+        // list + snapshot hand back the whole store surface.
+        let r = call(
+            core.0,
+            &query(4, 5, 0x0007, r#"{"profile":"w1","kind":"zoom"}"#),
+        );
+        assert_eq!(r.ok()["entries"], json!({"a.example": "150"}));
+        let r = call(core.0, &query(5, 5, 0x0008, r#"{"profile":"w1"}"#));
+        // The snapshot doc is {version, generation, kinds:{kind:{k:v}}}.
+        assert_eq!(r.ok()["kinds"]["zoom"], json!({"a.example": "150"}));
+
+        // replace is the wholesale mirror-write.
+        let r = call(
+            core.0,
+            &command(
+                6,
+                5,
+                0x0006,
+                r#"{"profile":"w1","kind":"zoom","entries":{"b.example":"200","c.example":"110"}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core.0,
+            &query(7, 5, 0x0007, r#"{"profile":"w1","kind":"zoom"}"#),
+        );
+        assert_eq!(
+            r.ok()["entries"],
+            json!({"b.example": "200", "c.example": "110"})
+        );
+
+        // remove is idempotent; a second pass reports unchanged.
+        let r = call(
+            core.0,
+            &command(
+                8,
+                5,
+                0x0004,
+                r#"{"profile":"w1","kind":"zoom","key":"b.example"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["changed"], true);
+        let r = call(
+            core.0,
+            &command(
+                9,
+                5,
+                0x0004,
+                r#"{"profile":"w1","kind":"zoom","key":"b.example"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["changed"], false);
+
+        // reload and reset are bare-status commands.
+        let r = call(core.0, &command(10, 5, 0x000a, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core.0,
+            &command(11, 5, 0x0005, r#"{"profile":"w1","kind":"zoom"}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core.0,
+            &query(12, 5, 0x0007, r#"{"profile":"w1","kind":"zoom"}"#),
+        );
+        assert_eq!(r.ok()["entries"], json!({}));
+        let r = call(core.0, &command(13, 5, 0x000b, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(14, 5, 0x0009, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["present"], false);
+    }
+
+    #[test]
+    fn policy_store_anchors_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("pols"));
+
+        // tranco_file_entries answers 0 for an absent override file;
+        // tranco_reload + blocklist_reload are Ok on a bare root.
+        let r = call(
+            core.0,
+            &query(
+                1,
+                5,
+                0x000d,
+                r#"{"profile":"w1","name":"tranco-list.dat"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["entries"], 0);
+        let r = call(core.0, &command(2, 5, 0x000e, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &command(3, 5, 0x000c, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["ok"], true);
+
+        // sitetrust_lookup answers the composite verdict doc — an
+        // unlisted host is amber with no signals.
+        let r = call(
+            core.0,
+            &query(
+                4,
+                5,
+                0x000f,
+                r#"{"profile":"w1","host":"example.com","https":true,"probes":3}"#,
+            ),
+        );
+        let v = r.ok();
+        assert!(v["level"].is_string(), "{v}");
+        assert!(v["signals"].is_array(), "{v}");
+    }
+
+    #[test]
+    fn session_mark_ops_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("sessm"));
+
+        // A first mark_start is clean (no prior dirty run), a second
+        // without a mark between reports the dirty previous run.
+        let r = call(core.0, &command(1, 6, 0x0005, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["ok"], true);
+        assert_eq!(r.ok()["dirty"], false);
+        let r = call(core.0, &command(2, 6, 0x0005, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["dirty"], true);
+
+        // mark_exit records the clean exit; the next start is clean
+        // again.  mark_terminated is the signal-death variant.
+        let r = call(
+            core.0,
+            &command(3, 6, 0x0006, r#"{"profile":"w1","code":0}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &command(4, 6, 0x0005, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["dirty"], false);
+        let r = call(
+            core.0,
+            &command(5, 6, 0x0007, r#"{"profile":"w1","signal":15}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+
+        // Another persona's marker is untouched.
+        let r = call(core.0, &command(6, 6, 0x0005, r#"{"profile":"w2"}"#));
+        assert_eq!(r.ok()["dirty"], false);
+    }
+
+    #[test]
+    fn icons_clear_sweep_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("icox"));
+        let png = b64_encode(b"\x89PNG-fake");
+        let set = format!(
+            r#"{{"profile":"w1","url":"https://a/","png_b64":"{png}"}}"#
+        );
+        let r = call(core.0, &command(1, 8, 0x0002, &set));
+        assert_eq!(r.ok()["ok"], true);
+
+        // A sweep with a future cutoff drops the fresh row; a past
+        // cutoff is a no-op reporting 0.
+        let r = call(
+            core.0,
+            &command(2, 8, 0x0005, r#"{"profile":"w1","cutoff_ms":0}"#),
+        );
+        assert_eq!(r.ok()["removed"], 0);
+        let r = call(
+            core.0,
+            &command(
+                3,
+                8,
+                0x0005,
+                r#"{"profile":"w1","cutoff_ms":99999999999999}"#,
+            ),
+        );
+        assert_eq!(r.ok()["removed"], 1);
+        let r = call(core.0, &query(4, 8, 0x0001, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["count"], 0);
+
+        // clear on an empty cache is silent-but-Ok; after a fresh put
+        // it empties again.
+        let r = call(core.0, &command(5, 8, 0x0004, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &command(6, 8, 0x0002, &set));
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &command(7, 8, 0x0004, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(8, 8, 0x0001, r#"{"profile":"w1"}"#));
+        assert_eq!(r.ok()["count"], 0);
+    }
+
+    #[test]
+    fn opensearch_extended_ops_round_trip() {
+        let _g = guard();
+        let core = TestCore::new(&tmpdir("osex"));
+
+        let r = call(core.0, &query(1, 12, 0x0003, ""));
+        assert_eq!(r.ok()["present"], false);
+
+        let engine = r#"{"engine":{"name":"ProbeSE","search":{"template":"https://se/?q={searchTerms}"}}}"#;
+        let r = call(core.0, &command(2, 12, 0x0002, engine));
+        assert_eq!(r.ok()["changed"], true);
+        let r = call(core.0, &query(3, 12, 0x0003, ""));
+        assert_eq!(r.ok()["present"], true);
+
+        // get returns the whole record doc; a miss is a null engine.
+        let r = call(
+            core.0,
+            &query(4, 12, 0x0004, r#"{"name":"ProbeSE"}"#),
+        );
+        assert_eq!(r.ok()["engine"]["name"], "ProbeSE");
+        let r = call(core.0, &query(5, 12, 0x0004, r#"{"name":"Ghost"}"#));
+        assert_eq!(r.ok()["engine"], Value::Null);
+
+        // Keyword bindings: set -> engine_for_keyword -> keyword_url
+        // -> the bound-keywords list.
+        let r = call(
+            core.0,
+            &command(
+                6,
+                12,
+                0x0008,
+                r#"{"name":"ProbeSE","keywords":["ps","probe"]}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core.0,
+            &query(7, 12, 0x000a, r#"{"keyword":"ps"}"#),
+        );
+        assert_eq!(r.ok()["name"], "ProbeSE");
+        let r = call(
+            core.0,
+            &query(
+                8,
+                12,
+                0x0014,
+                r#"{"keyword":"ps","term":"cats","language":"en","source":"t"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["url"], "https://se/?q=cats");
+        let r = call(core.0, &query(9, 12, 0x000b, ""));
+        let kws = r.ok()["keywords"].as_array().unwrap().clone();
+        assert!(kws.iter().any(|k| k == "ps"), "{kws:?}");
+
+        // engine.url resolves the named engine + slot directly.
+        let r = call(
+            core.0,
+            &query(
+                10,
+                12,
+                0x0013,
+                r#"{"name":"ProbeSE","kind":"search","term":"dogs"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["url"], "https://se/?q=dogs");
+        let r = call(
+            core.0,
+            &query(
+                11,
+                12,
+                0x0013,
+                r#"{"name":"ProbeSE","kind":"bogus","term":"x"}"#,
+            ),
+        );
+        assert_eq!(r.err().0, "op_failed");
+
+        // expand is the parseTemplate spec -> URL primitive.
+        let r = call(
+            core.0,
+            &query(
+                12,
+                12,
+                0x0012,
+                r#"{"spec":{"template":"https://se/?q={searchTerms}","method":"","params":[],"term":"owls","language":"","source":""}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["url"], "https://se/?q=owls");
+
+        // rename keeps the bindings; reorder accepts the name list.
+        let r = call(
+            core.0,
+            &command(13, 12, 0x0006, r#"{"old":"ProbeSE","new":"RenamedSE"}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core.0,
+            &query(14, 12, 0x000a, r#"{"keyword":"ps"}"#),
+        );
+        assert_eq!(r.ok()["name"], "RenamedSE");
+        let r = call(
+            core.0,
+            &command(15, 12, 0x0007, r#"{"order":["RenamedSE"]}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+
+        // The bundled blocklist: block -> removed_bundled -> unblock.
+        let r = call(
+            core.0,
+            &command(16, 12, 0x000d, r#"{"name":"BundledX"}"#),
+        );
+        assert_eq!(r.ok()["changed"], true);
+        let r = call(core.0, &query(17, 12, 0x000c, ""));
+        let names = r.ok()["names"].as_array().unwrap().clone();
+        assert!(names.iter().any(|n| n == "BundledX"), "{names:?}");
+        let r = call(
+            core.0,
+            &command(18, 12, 0x000e, r#"{"name":"BundledX"}"#),
+        );
+        assert_eq!(r.ok()["changed"], true);
+        let r = call(core.0, &query(19, 12, 0x000f, ""));
+        assert!(r.ok()["names"].is_array());
+
+        // seed/restore bundled are idempotent change-reporting
+        // commands; import feeds a descriptor.
+        let r = call(core.0, &command(20, 12, 0x0010, ""));
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &command(21, 12, 0x0011, ""));
+        assert_eq!(r.ok()["ok"], true);
+        let xml = "<OpenSearchDescription xmlns=\"http://a9.com/-/spec/opensearch/1.1/\">\
+            <ShortName>ImpSE</ShortName>\
+            <Url type=\"text/html\" template=\"https://imp/?q={searchTerms}\"/>\
+            </OpenSearchDescription>";
+        let payload = format!(r#"{{"xml":{}}}"#, serde_json::to_string(xml).unwrap());
+        let r = call(core.0, &command(22, 12, 0x0009, &payload));
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core.0,
+            &query(23, 12, 0x0004, r#"{"name":"ImpSE"}"#),
+        );
+        assert_eq!(r.ok()["engine"]["name"], "ImpSE");
+
+        // remove drops a record; reset wipes the whole store.
+        let r = call(
+            core.0,
+            &command(24, 12, 0x0005, r#"{"name":"ImpSE"}"#),
+        );
+        assert_eq!(r.ok()["changed"], true);
+        let r = call(core.0, &command(25, 12, 0x0015, ""));
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core.0, &query(26, 12, 0x0003, ""));
+        assert_eq!(r.ok()["present"], false);
     }
 }

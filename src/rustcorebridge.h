@@ -42,7 +42,9 @@ struct RcProfiles;
 // MB06: the mw envelope registry ids Qt callers dispatch — the wire
 // truth is mw.describe (MW-ARCH §7); these mirror the ids it reports
 // (append-only, never renumber).  The complete per-domain op tables
-// live in rustcore/src/mw/mod.rs.
+// live in rustcore/src/mw/mod.rs.  MB07 added the policy, session,
+// icons and opensearch domains; cookies (7) and 9-11 stay flat for
+// now — no Qt caller dispatches them.
 namespace AcMw {
 enum Domain : quint8 {
     Mw = 0,
@@ -50,6 +52,10 @@ enum Domain : quint8 {
     Profiles = 2,
     History = 3,
     Bookmarks = 4,
+    Policy = 5,
+    Session = 6,
+    Icons = 8,
+    OpenSearch = 12,
 };
 enum SettingsOp : quint16 {
     SettingsGet = 0x0001,
@@ -80,6 +86,62 @@ enum HistoryOp : quint16 {
     HistoryClear = 0x0008,
     HistoryClearSince = 0x0009,
     HistoryExpire = 0x000a,
+};
+enum PolicyOp : quint16 {
+    SitedecGet = 0x0001,
+    SitedecSet = 0x0002,
+    SitedecLookup = 0x0003,
+    SitedecRemove = 0x0004,
+    SitedecClear = 0x0005,
+    SitedecReplace = 0x0006,
+    SitedecList = 0x0007,
+    SitedecSnapshot = 0x0008,
+    SitedecStorePresent = 0x0009,
+    SitedecReload = 0x000a,
+    SitedecReset = 0x000b,
+    PolicyBlocklistReload = 0x000c,
+    PolicyTrancoFileEntries = 0x000d,
+    PolicyTrancoReload = 0x000e,
+    SiteTrustLookup = 0x000f,
+};
+enum SessionOp : quint16 {
+    SessionExists = 0x0001,
+    SessionLoad = 0x0002,
+    SessionSave = 0x0003,
+    SessionClear = 0x0004,
+    SessionMarkStart = 0x0005,
+    SessionMarkExit = 0x0006,
+    SessionMarkTerminated = 0x0007,
+};
+enum IconsOp : quint16 {
+    IconsCount = 0x0001,
+    IconsPut = 0x0002,
+    IconsGet = 0x0003,
+    IconsClear = 0x0004,
+    IconsSweep = 0x0005,
+};
+enum OpenSearchOp : quint16 {
+    OseList = 0x0001,
+    OsePut = 0x0002,
+    OseStorePresent = 0x0003,
+    OseGet = 0x0004,
+    OseRemove = 0x0005,
+    OseRename = 0x0006,
+    OseReorder = 0x0007,
+    OseSetKeywords = 0x0008,
+    OseImport = 0x0009,
+    OseEngineForKeyword = 0x000a,
+    OseKeywords = 0x000b,
+    OseRemovedBundled = 0x000c,
+    OseBlockBundled = 0x000d,
+    OseUnblockBundled = 0x000e,
+    OseBundledNames = 0x000f,
+    OseSeedBundled = 0x0010,
+    OseRestoreBundled = 0x0011,
+    OseExpand = 0x0012,
+    OseUrl = 0x0013,
+    OseKeywordUrl = 0x0014,
+    OseReset = 0x0015,
 };
 }
 

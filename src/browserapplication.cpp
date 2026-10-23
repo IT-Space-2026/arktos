@@ -989,26 +989,20 @@ static bool vaultUnlockForRestore(const QString &persona,
 // RC13: the session store is per-persona — profiles/<id>/session.dat
 // holds only that persona's windows, so an engine swap, a deleted
 // container or a sealed profile on one persona can never strand the
-// others.  The facade handle binds the dir outright when the bridge
-// serves; the legacy spelling re-anchors the process-global store per
-// call like every other rc_* consumer.
-class SessionAccess
+// others.  MB07: one framed round trip per call — the payload's
+// "profile" binds the persona's dir inside the crate, so no
+// AcSession mints.  The legacy spelling re-anchors the
+// process-global store per call like every other rc_* consumer when
+// the bridge cannot serve.
+static RustCoreBridge *sessionAccess(const QString &profileId)
 {
-public:
-    explicit SessionAccess(const QString &profileId) : h(nullptr)
-    {
-        if (RustCoreBridge *bridge = RustCoreBridge::serving())
-            h = bridge->session(profileId);
-        if (!h) {
-            rustCoreEnsureDataDirFor(
-                profileId.isEmpty() ? QStringLiteral("default")
-                                    : profileId);
-        }
-    }
-    ~SessionAccess() { if (h) ac_session_close(h); }
-
-    AcSession *h;
-};
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        return bridge;
+    rustCoreEnsureDataDirFor(
+        profileId.isEmpty() ? QStringLiteral("default")
+                            : profileId);
+    return nullptr;
+}
 
 // Personas that currently hold a session.dat on disk — "default"
 // first so the restore's first-window reuse prefers the primary
@@ -1036,22 +1030,56 @@ static QStringList sessionStoreProfileIds()
 static RcStatus sessionSaveFor(const QString &persona,
                                const QByteArray &manifest)
 {
-    const SessionAccess access(persona);
+    if (RustCoreBridge *bridge = sessionAccess(persona)) {
+        // The manifest is a JSON document — it crosses as the
+        // payload's "session" value, not as encoded bytes.
+        const QJsonDocument doc = QJsonDocument::fromJson(manifest);
+        if (doc.isNull())
+            return RC_CORRUPT;
+        QJsonObject error;
+        const QJsonValue r = bridge->mwCommand(
+            AcMw::Session, AcMw::SessionSave,
+            QJsonObject{{QLatin1String("profile"), persona},
+                        {QLatin1String("session"), doc.object()}},
+            &error);
+        return r.isObject()
+            ? RC_OK
+            : RcStatus(error.value(QLatin1String("status"))
+                           .toInt(int(RC_CORRUPT)));
+    }
     const auto *data =
         reinterpret_cast<const uint8_t *>(manifest.constData());
-    return access.h
-        ? ac_session_save(access.h, data, size_t(manifest.size()))
-        : rc_session_save(data, size_t(manifest.size()));
+    return rc_session_save(data, size_t(manifest.size()));
 }
 
 static bool sessionLoadFor(const QString &persona, QByteArray *manifest,
                            bool *corrupt)
 {
-    const SessionAccess access(persona);
+    if (RustCoreBridge *bridge = sessionAccess(persona)) {
+        QJsonObject error;
+        const QJsonValue doc = bridge->mwQuery(
+            AcMw::Session, AcMw::SessionLoad,
+            QJsonObject{{QLatin1String("profile"), persona}}, &error);
+        // The response payload IS the manifest document; an error
+        // frame's "status" is the raw RcStatus — RC_NOT_FOUND means
+        // "no saved session" like the flat spelling, anything else
+        // is a corrupt read.
+        if (doc.isUndefined()) {
+            if (error.value(QLatin1String("status")).toInt()
+                    != int(RC_NOT_FOUND))
+                *corrupt = true;
+            return false;
+        }
+        if (!doc.isObject()) {
+            *corrupt = true;
+            return false;
+        }
+        *manifest = QJsonDocument(doc.toObject())
+            .toJson(QJsonDocument::Compact);
+        return true;
+    }
     RcBuffer stored{nullptr, 0};
-    const RcStatus status = access.h
-        ? ac_session_load(access.h, &stored)
-        : rc_session_load(&stored);
+    const RcStatus status = rc_session_load(&stored);
     if (status == RC_NOT_FOUND)
         return false;
     if (status != RC_OK) {
@@ -1068,11 +1096,13 @@ static bool sessionLoadFor(const QString &persona, QByteArray *manifest,
 
 static void sessionClearFor(const QString &persona)
 {
-    const SessionAccess access(persona);
-    if (access.h)
-        ac_session_clear(access.h);
-    else
-        rc_session_clear();
+    if (RustCoreBridge *bridge = sessionAccess(persona)) {
+        bridge->mwCommand(AcMw::Session, AcMw::SessionClear,
+                          QJsonObject{{QLatin1String("profile"),
+                                       persona}});
+        return;
+    }
+    rc_session_clear();
 }
 #endif // ARKTOS_RUSTCORE
 

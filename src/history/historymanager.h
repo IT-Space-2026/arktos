@@ -99,9 +99,6 @@ class AutoSaver;
 class HistoryModel;
 class HistoryFilterModel;
 class HistoryTreeModel;
-#ifdef ARKTOS_RUSTCORE
-struct AcIcons;
-#endif
 // QtWebKit's QWebHistoryInterface pushed visited urls into the
 // application; QtWebEngine keeps Chromium's own internal history, so
 // this remains a purely app-side store that WebPage feeds from its
@@ -201,27 +198,16 @@ private:
     QString atomicString(const QString &string);
     void startFrecencyTimer();
 #ifdef ARKTOS_RUSTCORE
-    // RC16: this profile's icon-cache handle — minted lazily through
-    // the shared AcCore, path-bound (no per-op re-assert needed; the
-    // store lives under profiles/<id>/cache/icons).  NULL when the
-    // bridge cannot serve — the legacy rc_icons_* spelling over
-    // ensureRustIcons() is the fallback.  The history.db lane needs
-    // no handle at all now (MB06): every op is a per-call
-    // profile-bound envelope dispatch, or a histAnchor() + rc_* when
-    // the bridge cannot serve.
-    AcIcons *rustIconStore() const;
-    // Legacy-path anchor for the icon lane: points the process-global
-    // data dir at this profile's dir so the rc_icons_* ops land under
-    // profiles/<id>/cache/icons.
-    void ensureRustIcons() const;
+    // MB07: the icon cache needs no handle either now — like the
+    // history.db lane (MB06) every op is a per-call profile-bound
+    // envelope dispatch, or a rustCoreEnsureDataDirFor() + rc_icons_*
+    // when the bridge cannot serve (the store lives under
+    // profiles/<id>/cache/icons).
     void importLegacyHistory();
     void rustReplaceAll();
 #endif
 
     QString m_profileId;
-#ifdef ARKTOS_RUSTCORE
-    mutable AcIcons *m_iconStore = nullptr;
-#endif
     AutoSaver *m_saveTimer;
     int m_daysToExpire;
     QTimer m_expiredTimer;

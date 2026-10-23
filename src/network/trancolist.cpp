@@ -38,6 +38,8 @@
 #include "rustcorebridge.h"
 
 #include <arktos_core.h>
+
+#include <qjsonobject.h>
 #endif
 
 // The Majestic CSV sits around 80 MB today, so the ceiling moves
@@ -283,12 +285,13 @@ void TrancoList::maybeCommit()
     // (corrupt zip, error page) is junk — drop it so it can neither
     // fail the reload nor jam a sibling's future commits, and sweep
     // any stale corrupt file left by an interrupted run too.
-    // RC08: the facade handle re-asserts the ambient persona's dir
-    // per op — the rc_set_data_dir anchor is the legacy fallback.
-    AcPolicy *policy = nullptr;
-    if (RustCoreBridge *bridge = RustCoreBridge::serving())
-        policy = bridge->policy(BrowserPaths::activeProfileId());
-    if (!policy) {
+    // MB07: the envelope ops bind the ambient persona's dir inside
+    // the crate per call — the rc_set_data_dir anchor is the legacy
+    // fallback.
+    RustCoreBridge *bridge = RustCoreBridge::serving();
+    const QJsonObject scope{{QLatin1String("profile"),
+                             BrowserPaths::activeProfileId()}};
+    if (!bridge) {
         const QByteArray dir =
             QFileInfo(listFilePath()).absolutePath().toUtf8();
         rc_set_data_dir(dir.constData());
@@ -299,8 +302,16 @@ void TrancoList::maybeCommit()
         const QString path = BrowserPaths::dataFilePath(name);
         if (!QFile::exists(path))
             continue;
-        const size_t entries = policy
-            ? ac_tranco_file_entries(policy, name.toUtf8().constData())
+        const size_t entries = bridge
+            ? size_t(bridge
+                     ->mwQuery(AcMw::Policy,
+                               AcMw::PolicyTrancoFileEntries,
+                               QJsonObject{{QLatin1String("profile"),
+                                            BrowserPaths::activeProfileId()},
+                                           {QLatin1String("name"), name}})
+                     .toObject()
+                     .value(QLatin1String("entries"))
+                     .toInteger())
             : rc_tranco_file_entries(name.toUtf8().constData());
         if (entries > 0) {
             kept += name;
@@ -311,10 +322,12 @@ void TrancoList::maybeCommit()
             failed = true;
         }
     }
-    const RcStatus reloadStatus = policy ? ac_tranco_reload(policy)
-                                         : rc_tranco_reload();
-    ac_policy_close(policy);
-    if (reloadStatus == RC_OK) {
+    const bool reloaded = bridge
+        ? bridge
+              ->mwCommand(AcMw::Policy, AcMw::PolicyTrancoReload, scope)
+              .isObject()
+        : rc_tranco_reload() == RC_OK;
+    if (reloaded) {
         const QDateTime now = QDateTime::currentDateTime();
         QSettings settings;
         for (const QString &name : written) {
