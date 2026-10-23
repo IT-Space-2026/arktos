@@ -38,12 +38,11 @@ matching every member of the namespace (or a dotted sub-path such as
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
 # stores this tree already has.  They stay in this block — still
-# typed today — but are queued: downloads -> MD24,
-# sessions -> MD25,
+# typed today — but are queued: sessions -> MD25,
 # tabGroups -> MD26, topSites -> MD27, browsingData -> MD28,
 # dns -> MD29, system -> MD30, privacy -> MD31, userScripts -> MD32,
 # fontSettings -> MD33.  Entries leave the declared set only when the
-# row lands the implementation.
+# row lands the implementation (downloads left with MD24).
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
@@ -59,7 +58,6 @@ chrome.devtools.*: unsupported
 chrome.displaySource.*: unsupported
 chrome.dns.*: unsupported
 chrome.documentScan.*: unsupported
-chrome.downloads.*: unsupported
 chrome.enterprise.*: unsupported
 chrome.favicon.*: unsupported
 chrome.fileBrowserHandler.*: unsupported
@@ -166,6 +164,31 @@ chrome.cookies.*: scheme-refused
 chrome.cookies.*: unsupported
 chrome.cookies.*: no-store
 chrome.cookies.*: store-failed
+# MD24: chrome.downloads is served over DownloadManager's record
+# list — 'downloads' gates the namespace (no-permission
+# undeclared).  The shelf surface (acceptDanger/drag/setShelfEnabled/
+# setUiOptions), POST/headers/body download options and
+# conflictAction 'overwrite' are typed unsupported; the deferred id
+# push can reject 'download-failed' when the engine never mints an
+# item.  The rest are the ops' correct verdicts (bad ids, wrong
+# state for the action, missing files, platform reveals refused,
+# icon pipeline empty, store/manager unreachable).
+chrome.downloads.*: no-permission
+chrome.downloads.*: invalid-argument
+chrome.downloads.*: unsupported
+chrome.downloads.*: unimplemented
+chrome.downloads.*: scheme-refused
+chrome.downloads.*: not-found
+chrome.downloads.*: not-pausable
+chrome.downloads.*: not-resumable
+chrome.downloads.*: not-in-progress
+chrome.downloads.*: not-complete
+chrome.downloads.*: file-missing
+chrome.downloads.*: reveal-failed
+chrome.downloads.*: no-icon
+chrome.downloads.*: no-store
+chrome.downloads.*: start-failed
+chrome.downloads.*: download-failed
 chrome.action.setIcon: invalid-image-data
 chrome.action.setIcon: invalid-path
 chrome.browserAction.setIcon: invalid-image-data

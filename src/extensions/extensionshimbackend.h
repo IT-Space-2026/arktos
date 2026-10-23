@@ -128,6 +128,19 @@ class QWebEngineProfile;
 //                  coverage scopes urls and per-cookie domains;
 //                  onChanged rides the engine-store signal tap,
 //                  withheld per cookie-domain coverage
+//   downloads.*  — MD24: a subset over DownloadManager's record
+//                  list — download() rides the manager's own policy
+//                  path (dlwpolicy verdict, save-as gate, external
+//                  handoff, rustdl claim) through the hidden retry
+//                  page, the id arriving via a deferred
+//                  '__arktos.downloadCreated' push since the engine
+//                  delivers requests asynchronously; search/erase
+//                  enumerate the same item cards the sidebar
+//                  renders, pause/resume/cancel/open/show/removeFile
+//                  drive the card's own actions, getFileIcon answers
+//                  a real platform type icon; 'downloads' gates the
+//                  namespace and the onCreated/onChanged/onErased
+//                  fan-out (eventGate)
 //   runtime.*    — context bookkeeping (getViews counts); MD18
 //                  lifecycle ops: reload rides ExtensionManager's
 //                  unload+load, requestUpdateCheck rides
@@ -222,6 +235,26 @@ public:
     // invokeI18n (bridge fetch) and the injected __ARKTOS_HOST_CONFIG
     // so getMessage resolves synchronously before page scripts run.
     static QJsonObject i18nMessages(const QString &extensionPath);
+
+    // MD24: the Chrome DownloadItem / onChanged DownloadDelta
+    // shapes + the deferred downloads.download ticket claim — public
+    // statics (tabObject/windowObject discipline) so the
+    // namespace-scope event taps can drive them; the DownloadItem
+    // friend grant (backend handle, OTR flag, card actions) applies
+    // inside this class only.
+    static QJsonObject downloadsItemJson(class DownloadItem *item);
+    static QJsonObject downloadsDeltaJson(class DownloadItem *item,
+                                        bool finished);
+    static bool downloadsClaimPending(class DownloadItem *item);
+    // The card's statusChanged arrives BEFORE QtWebEngine applies a
+    // pause (the request's isPaused flips asynchronously) — a delta
+    // emitted from that signal alone always reads stale.  This tap
+    // rides the request's own isPausedChanged so onChanged reports
+    // the pause the engine actually applied.
+    static void downloadsPauseTap(class DownloadItem *item);
+    // Post-finish reconciliation for API-minted items — see the
+    // implementation comment (page->download auto-accept quirk).
+    static void downloadsFileFixup(class DownloadItem *item);
 
     // ER16: the manifest's REQUIRED permissions — the gate source
     // for every permission-scoped namespace.  optional_permissions
@@ -346,6 +379,15 @@ private:
     // 'cookies'-declaring contexts and withheld per cookie domain.
     QJsonObject invokeCookies(const QString &method,
                               const QJsonObject &args);
+    // MD24: chrome.downloads — 'downloads' gates the namespace; the
+    // events are all tap-driven (itemAdded -> onCreated, the card's
+    // status/progress signals -> onChanged, model row removal ->
+    // onErased) so API and UI changes fan out identically through
+    // the broadcast lane — no member-emit path exists here.
+    QJsonObject invokeDownloads(const QString &method,
+                                const QJsonObject &args);
+    static bool downloadsQueryMatch(const QJsonObject &query,
+                                    class DownloadItem *item);
     QJsonObject invokeExtension(const QString &method,
                                 const QJsonObject &args);
     QJsonObject invokeSidebarAction(const QString &method,
@@ -434,6 +476,10 @@ private:
     // eviction/expiration/overwrite causes) — recorded once per
     // context.
     bool m_cookieCauseNoted = false;
+    // MD24: finalUrl answers the request url verbatim (no redirect
+    // tracking in the card), and conflictAction 'overwrite' is a
+    // recorded typed refusal — each noted once per context.
+    bool m_dlFinalUrlNoted = false;
 };
 
 #endif // EXTENSIONSHIMBACKEND_H

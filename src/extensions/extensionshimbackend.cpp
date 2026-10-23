@@ -25,6 +25,7 @@
 #include "browsermainwindow.h"
 #include "browserpaths.h"
 #include "cookiejar.h"
+#include "downloadmanager.h"
 #include "engineinterface.h"
 #include "extensionbackgroundhost.h"
 #include "extensioncommands.h"
@@ -36,6 +37,7 @@
 #include "historymanager.h"
 #include "tabbar.h"
 #include "tabwidget.h"
+#include "webenginebackend.h"
 #include "webview.h"
 
 #include <qapplication.h>
@@ -44,6 +46,7 @@
 #include <qdatetime.h>
 #include <qdir.h>
 #include <qfile.h>
+#include <qfileiconprovider.h>
 #include <qimage.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
@@ -53,6 +56,7 @@
 #include <qregularexpression.h>
 #include <qsavefile.h>
 #include <qset.h>
+#include <qstyle.h>
 #include <qsysinfo.h>
 #include <qtimer.h>
 #include <qvariant.h>
@@ -1018,6 +1022,164 @@ bool windowTypeMatch(const QJsonObject &getInfo)
     return false;
 }
 
+// -------------------------------------------------------------------
+// MD24: chrome.downloads — the machinery over DownloadManager's
+// record list.  The engine delivers a download() request
+// asynchronously (the profile's downloadRequested signal), so the op
+// answers a ticket at invoke time and the real Chrome download id
+// arrives via a '__arktos.downloadCreated' push the itemAdded tap
+// mints.  Pending tickets queue here, claimed by (url, issuing page)
+// — a UI-driven download of the same url can never steal one.
+// -------------------------------------------------------------------
+
+int s_dlTicketSeq = 0;
+
+struct DlPending {
+    int ticket = 0;
+    QString extId;
+    QString extName;
+    QUrl url;
+    QPointer<Engine::Page> issuer;
+    QPointer<ExtensionShimBackend> backend;
+};
+
+QList<DlPending> &dlPendingList()
+{
+    static QList<DlPending> list;
+    return list;
+}
+
+void dlBroadcast(const QString &name, const QJsonArray &eventArgs)
+{
+    ExtensionBackgroundRuntime::instance()->broadcastEvent(
+        name, QJsonObject{{QStringLiteral("__args"), eventArgs}});
+}
+
+// The deferred downloads.download answer — the ticket reply reaches
+// only the calling extension (every 'downloads'-declaring context
+// still hears the public onCreated broadcast).  A bare backend has
+// no relay context: pushEvent is its only surface — the same
+// fallback managementFanOut/bookmarksFanOut apply.
+void dlAnswerTicket(const DlPending &pending, const QJsonObject &reply)
+{
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    runtime->deliverEvent(pending.extId,
+        QStringLiteral("__arktos.downloadCreated"), reply);
+    if (pending.backend && !runtime->hasRelayContext(pending.extId))
+        emit pending.backend->pushEvent(
+            QStringLiteral("__arktos.downloadCreated"), reply);
+}
+
+// Per-item signal -> downloads.onChanged broadcast.  statusChanged
+// and downloadFinished both emit the full current-state delta (the
+// card fires them for pause flips, terminal transitions and retries
+// alike); progress ticks report byte counters only.  Chrome's
+// DownloadDelta values carry {current} — a previous value is only
+// included where the card actually recorded one (it never does, so
+// the field is honestly omitted rather than fabricated).
+void dlAttachItemTap(DownloadItem *item)
+{
+    if (!item || item->property("arktosDlTapped").toBool())
+        return;
+    item->setProperty("arktosDlTapped", true);
+    // Off-the-record rows stay invisible to the whole namespace —
+    // Chrome never surfaces incognito downloads to regular-profile
+    // contexts (downloadsItemJson answers them as empty).
+    item->setProperty("arktosDlVisible",
+                      !ExtensionShimBackend::downloadsDeltaJson(
+                          item, false).isEmpty());
+    const QPointer<DownloadItem> weak(item);
+    const auto fireDelta = [weak](bool finished) {
+        if (!weak || !weak->property("arktosDlVisible").toBool())
+            return;
+        QJsonObject delta =
+            ExtensionShimBackend::downloadsDeltaJson(weak, finished);
+        delta.insert(QStringLiteral("id"), idFor(weak.data()));
+        dlBroadcast(QStringLiteral("downloads.onChanged"),
+                    QJsonArray{delta});
+    };
+    QObject::connect(item, &DownloadItem::statusChanged, item,
+                     [fireDelta]() { fireDelta(false); });
+    QObject::connect(item, &DownloadItem::downloadFinished, item,
+                     [fireDelta]() { fireDelta(true); });
+    // pause/resume flip the request's isPaused asynchronously — the
+    // statusChanged delta above reads the value mid-apply, so the
+    // real pause notification rides the engine's isPausedChanged.
+    ExtensionShimBackend::downloadsPauseTap(item);
+    QObject::connect(item, &DownloadItem::progress, item, [weak]() {
+        if (!weak || !weak->property("arktosDlVisible").toBool())
+            return;
+        dlBroadcast(QStringLiteral("downloads.onChanged"), QJsonArray{
+            QJsonObject{
+                {QStringLiteral("id"), idFor(weak.data())},
+                {QStringLiteral("bytesReceived"), QJsonObject{
+                    {QStringLiteral("current"),
+                     double(weak->bytesReceived())}}},
+                {QStringLiteral("totalBytes"), QJsonObject{
+                    {QStringLiteral("current"),
+                     double(weak->bytesTotal())}}}}});
+    });
+}
+
+QPointer<DownloadManager> s_dlTapTarget;
+QList<QMetaObject::Connection> s_dlTapConns;
+
+// Lazily binds the ambient persona's download manager to the event
+// fan-out; re-points when the persona (and therefore the record
+// list) changes — download events must describe the profile the
+// extension reads through this namespace.
+void tapDlEvents(DownloadManager *manager)
+{
+    if (s_dlTapTarget == manager)
+        return;
+    for (const QMetaObject::Connection &conn : s_dlTapConns)
+        QObject::disconnect(conn);
+    s_dlTapConns.clear();
+    s_dlTapTarget = manager;
+    if (!manager)
+        return;
+    // Rows that predate the tap (restored records, downloads that
+    // started before the first downloads.* call) get the delta tap
+    // too — state changes on them still deserve onChanged.
+    const int rows =
+        manager->model() ? manager->model()->rowCount() : 0;
+    for (int r = 0; r < rows; ++r)
+        dlAttachItemTap(manager->itemAt(r));
+    const QPointer<DownloadManager> weak = manager;
+    s_dlTapConns << QObject::connect(
+        manager, &DownloadManager::itemAdded, manager,
+        [weak](DownloadItem *item) {
+            if (!weak || !item)
+                return;
+            dlAttachItemTap(item);
+            ExtensionShimBackend::downloadsClaimPending(item);
+            const QJsonObject json =
+                ExtensionShimBackend::downloadsItemJson(item);
+            if (!json.isEmpty())
+                dlBroadcast(QStringLiteral("downloads.onCreated"),
+                            QJsonArray{json});
+        });
+    s_dlTapConns << QObject::connect(
+        manager->model(), &QAbstractItemModel::rowsAboutToBeRemoved,
+        manager, [weak](const QModelIndex &, int first, int last) {
+            if (!weak)
+                return;
+            for (int r = first; r <= last; ++r) {
+                DownloadItem *item = weak->itemAt(r);
+                if (!item)
+                    continue;
+                // OTR rows are invisible to the namespace — an empty
+                // item json means no onErased either.
+                const QJsonObject json =
+                    ExtensionShimBackend::downloadsItemJson(item);
+                if (!json.isEmpty())
+                    dlBroadcast(QStringLiteral("downloads.onErased"),
+                                QJsonArray{json.value(QLatin1String("id"))});
+            }
+        });
+}
+
 } // namespace
 
 ExtensionShimBackend::ExtensionShimBackend(const QString &extensionId,
@@ -1130,6 +1292,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeHistory(method, args);
     if (ns == QLatin1String("cookies"))
         return invokeCookies(method, args);
+    if (ns == QLatin1String("downloads"))
+        return invokeDownloads(method, args);
     if (ns == QLatin1String("extension"))
         return invokeExtension(method, args);
     if (ns == QLatin1String("sidebarAction"))
@@ -4862,6 +5026,766 @@ QJsonObject ExtensionShimBackend::invokeCookies(
         return okReply();
     }
 
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.downloads — MD24.  The subset over DownloadManager's record
+// list: download() rides the manager's own policy path (the dlwpolicy
+// verdict, save-as prompt gate, external-handler claim and rustdl
+// handoff all run exactly like a page-issued download) through the
+// hidden retry page; search/erase enumerate the same item cards the
+// sidebar renders; pause/resume/cancel/open/show/removeFile drive the
+// card's own actions.  The 'downloads' manifest permission gates the
+// namespace (ER16) and the onCreated/onChanged/onErased fan-out —
+// every event is tap-driven so API and UI changes fan out
+// identically.  Off-the-record rows are invisible throughout: Chrome
+// never surfaces incognito downloads to regular-profile contexts, so
+// downloadsItemJson answers them empty and every enumeration skips
+// the empty shape.
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::downloadsItemJson(DownloadItem *item)
+{
+    using State = Engine::DownloadRequest::State;
+    QJsonObject o;
+    if (!item || item->m_offTheRecord)
+        return o;
+    o.insert(QStringLiteral("id"), idFor(item));
+    const QString url = QString::fromUtf8(item->m_url.toEncoded());
+    o.insert(QStringLiteral("url"), url);
+    // finalUrl: the card keeps only the request url — no redirect
+    // chain is tracked, so the honest answer echoes it.
+    o.insert(QStringLiteral("finalUrl"), url);
+    o.insert(QStringLiteral("filename"),
+             item->m_outputFileName.isEmpty()
+                 ? QString()
+                 : QFileInfo(item->m_outputFileName).absoluteFilePath());
+    o.insert(QStringLiteral("incognito"), false);
+    // danger — the SEC01 threat verdict's honest residue: flagged
+    // names/mimes the user saved answer 'accepted', flagged ones that
+    // never completed answer 'file'; unflagged rows answer
+    // 'noValidatedDanger' — Chrome's "no known danger" default, the
+    // exact truth here (no safe-browsing verdict ever runs).
+    {
+        const bool flagged =
+            DownloadItem::isDangerousExtension(item->m_outputFileName)
+            || DownloadItem::isExecutableMimeType(item->mimeType());
+        o.insert(QStringLiteral("danger"),
+                 !flagged ? QStringLiteral("noValidatedDanger")
+                 : item->downloadedSuccessfully()
+                     ? QStringLiteral("accepted")
+                     : QStringLiteral("file"));
+    }
+    o.insert(QStringLiteral("mime"), item->mimeType());
+    if (item->startedTime().isValid())
+        o.insert(QStringLiteral("startTime"),
+                 item->startedTime().toUTC()
+                     .toString(Qt::ISODateWithMs));
+    if (item->finishedTime().isValid())
+        o.insert(QStringLiteral("endTime"),
+                 item->finishedTime().toUTC()
+                     .toString(Qt::ISODateWithMs));
+    // state — a restored card reports Requested with no live backend;
+    // split it by the card's own verdicts (restored-complete vs
+    // retryable-interrupted).
+    QString state;
+    switch (item->currentState()) {
+    case State::Completed:
+        state = QStringLiteral("complete");
+        break;
+    case State::Cancelled:
+    case State::Interrupted:
+        state = QStringLiteral("interrupted");
+        break;
+    default:
+        break;
+    }
+    if (state.isEmpty()) {
+        bool haveBackend = item->m_download != nullptr;
+#ifdef ARKTOS_RUSTDL
+        haveBackend = haveBackend || item->m_engine != nullptr;
+#endif
+        state = !haveBackend
+            ? (item->downloadedSuccessfully()
+                   ? QStringLiteral("complete")
+                   : QStringLiteral("interrupted"))
+            : QStringLiteral("in_progress");
+    }
+    o.insert(QStringLiteral("state"), state);
+    const bool paused = item->isPaused();
+    o.insert(QStringLiteral("paused"), paused);
+    o.insert(QStringLiteral("canResume"), paused && item->canPause());
+    // error — Chrome's InterruptReason vocabulary: a cancelled card
+    // answers USER_CANCELED; a genuine interruption maps the engine's
+    // numeric reason where one is reachable (the Qt enum carries
+    // Chromium's own values).  Restored rows and the rustdl backend
+    // carry only a reason string — error stays honestly undefined.
+    QString error;
+    if (item->currentState() == State::Cancelled) {
+        error = QStringLiteral("USER_CANCELED");
+    } else if (item->currentState() == State::Interrupted) {
+        if (WebEngineDownloadRequest *wrapped =
+                WebEngineDownloadRequest::of(item->m_download)) {
+            if (QWebEngineDownloadRequest *req =
+                    wrapped->webEngineRequest()) {
+                using R = QWebEngineDownloadRequest;
+                switch (req->interruptReason()) {
+                case R::FileFailed:
+                    error = QStringLiteral("FILE_FAILED"); break;
+                case R::FileAccessDenied:
+                    error = QStringLiteral("FILE_ACCESS_DENIED"); break;
+                case R::FileNoSpace:
+                    error = QStringLiteral("FILE_NO_SPACE"); break;
+                case R::FileNameTooLong:
+                    error = QStringLiteral("FILE_NAME_TOO_LONG"); break;
+                case R::FileTooLarge:
+                    error = QStringLiteral("FILE_TOO_LARGE"); break;
+                case R::FileVirusInfected:
+                    error = QStringLiteral("FILE_VIRUS_INFECTED"); break;
+                case R::FileTransientError:
+                    error = QStringLiteral("FILE_TRANSIENT_ERROR"); break;
+                case R::FileBlocked:
+                    error = QStringLiteral("FILE_BLOCKED"); break;
+                case R::FileSecurityCheckFailed:
+                    error = QStringLiteral("FILE_SECURITY_CHECK_FAILED");
+                    break;
+                case R::FileTooShort:
+                    error = QStringLiteral("FILE_TOO_SHORT"); break;
+                case R::FileHashMismatch:
+                    error = QStringLiteral("FILE_HASH_MISMATCH"); break;
+                case R::NetworkFailed:
+                    error = QStringLiteral("NETWORK_FAILED"); break;
+                case R::NetworkTimeout:
+                    error = QStringLiteral("NETWORK_TIMEOUT"); break;
+                case R::NetworkDisconnected:
+                    error = QStringLiteral("NETWORK_DISCONNECTED"); break;
+                case R::NetworkServerDown:
+                    error = QStringLiteral("NETWORK_SERVER_DOWN"); break;
+                case R::NetworkInvalidRequest:
+                    error = QStringLiteral("NETWORK_INVALID_REQUEST");
+                    break;
+                case R::ServerFailed:
+                    error = QStringLiteral("SERVER_FAILED"); break;
+                case R::ServerBadContent:
+                    error = QStringLiteral("SERVER_BAD_CONTENT"); break;
+                case R::ServerUnauthorized:
+                    error = QStringLiteral("SERVER_UNAUTHORIZED"); break;
+                case R::ServerCertProblem:
+                    error = QStringLiteral("SERVER_CERT_PROBLEM"); break;
+                case R::ServerForbidden:
+                    error = QStringLiteral("SERVER_FORBIDDEN"); break;
+                case R::ServerUnreachable:
+                    error = QStringLiteral("SERVER_UNREACHABLE"); break;
+                case R::UserCanceled:
+                    error = QStringLiteral("USER_CANCELED"); break;
+                default:
+                    break;
+                }
+            }
+        }
+    }
+    if (!error.isEmpty())
+        o.insert(QStringLiteral("error"), error);
+    const QString path = item->m_outputFileName;
+    o.insert(QStringLiteral("exists"),
+             !path.isEmpty() && QFileInfo::exists(path));
+    qint64 fileSize = item->bytesTotal();
+    if (fileSize <= 0)
+        fileSize = qMax(item->bytesReceived(),
+                        item->m_restoredTotalBytes);
+    o.insert(QStringLiteral("fileSize"), double(fileSize));
+    o.insert(QStringLiteral("totalBytes"), double(fileSize));
+    o.insert(QStringLiteral("bytesReceived"),
+             double(item->bytesReceived()));
+    // Chrome's byExtId/byExtName — the ticket claim stamps these on
+    // API-initiated downloads.
+    const QString byId = item->property("arktosExtDlBy").toString();
+    if (!byId.isEmpty()) {
+        o.insert(QStringLiteral("byExtId"), byId);
+        const QString byName =
+            item->property("arktosExtDlName").toString();
+        if (!byName.isEmpty())
+            o.insert(QStringLiteral("byExtName"), byName);
+    }
+    return o;
+}
+
+QJsonObject ExtensionShimBackend::downloadsDeltaJson(
+        DownloadItem *item, bool finished)
+{
+    const QJsonObject full = downloadsItemJson(item);
+    QJsonObject delta;
+    if (full.isEmpty())
+        return delta;
+    const auto current = [&full](const QString &key) {
+        return QJsonObject{
+            {QStringLiteral("current"), full.value(key)}};
+    };
+    delta.insert(QStringLiteral("state"),
+                 current(QStringLiteral("state")));
+    delta.insert(QStringLiteral("paused"),
+                 current(QStringLiteral("paused")));
+    delta.insert(QStringLiteral("canResume"),
+                 current(QStringLiteral("canResume")));
+    if (finished) {
+        if (full.contains(QLatin1String("endTime")))
+            delta.insert(QStringLiteral("endTime"),
+                         current(QStringLiteral("endTime")));
+        if (full.contains(QLatin1String("error")))
+            delta.insert(QStringLiteral("error"),
+                         current(QStringLiteral("error")));
+        delta.insert(QStringLiteral("exists"),
+                     current(QStringLiteral("exists")));
+        delta.insert(QStringLiteral("fileSize"),
+                     current(QStringLiteral("fileSize")));
+        delta.insert(QStringLiteral("danger"),
+                     current(QStringLiteral("danger")));
+        delta.insert(QStringLiteral("mime"),
+                     current(QStringLiteral("mime")));
+    }
+    return delta;
+}
+
+void ExtensionShimBackend::downloadsPauseTap(DownloadItem *item)
+{
+    if (!item || !item->m_download)
+        return;
+    WebEngineDownloadRequest *raw =
+        WebEngineDownloadRequest::of(item->m_download);
+    if (!raw || !raw->webEngineRequest())
+        return;
+    const QPointer<DownloadItem> weak(item);
+    QObject::connect(raw->webEngineRequest(),
+        &QWebEngineDownloadRequest::isPausedChanged, item, [weak]() {
+            if (!weak || !weak->property("arktosDlVisible").toBool())
+                return;
+            QJsonObject delta = downloadsDeltaJson(weak, false);
+            delta.insert(QStringLiteral("id"), idFor(weak.data()));
+            dlBroadcast(QStringLiteral("downloads.onChanged"),
+                        QJsonArray{delta});
+        });
+}
+
+bool ExtensionShimBackend::downloadsClaimPending(DownloadItem *item)
+{
+    if (!item)
+        return false;
+    Engine::Page *issuer = item->page();
+    QList<DlPending> &pending = dlPendingList();
+    for (int i = 0; i < pending.size(); ++i) {
+        const DlPending &p = pending.at(i);
+        if (p.url != item->m_url)
+            continue;
+        // The issuer check keeps a UI-driven download of the same
+        // url from stealing an API ticket; a request whose page()
+        // already died falls back to the url match.
+        if (issuer && p.issuer && issuer != p.issuer)
+            continue;
+        item->setProperty("arktosExtDlBy", p.extId);
+        item->setProperty("arktosExtDlName", p.extName);
+        // page->download() requests arrive already accepted — the
+        // card's setDownloadDirectory/setDownloadFileName are refused
+        // and the engine writes under its own profile default with
+        // its own name.  Record the real landing target now (the
+        // request can be dead by finish) so downloadsFileFixup can
+        // reconcile it with the recorded name Chrome reports.
+        if (WebEngineDownloadRequest *raw =
+                WebEngineDownloadRequest::of(item->m_download))
+            if (QWebEngineDownloadRequest *r = raw->webEngineRequest())
+                if (!r->downloadDirectory().isEmpty()
+                        && !r->downloadFileName().isEmpty())
+                    item->setProperty("arktosExtDlActual",
+                        r->downloadDirectory() + QLatin1Char('/')
+                            + r->downloadFileName());
+        const QPointer<DownloadItem> weak(item);
+        QObject::connect(item, &DownloadItem::downloadFinished, item,
+                         [weak]() {
+            ExtensionShimBackend::downloadsFileFixup(weak.data());
+        });
+        const DlPending taken = pending.takeAt(i);
+        dlAnswerTicket(taken, QJsonObject{
+            {QStringLiteral("ticket"), taken.ticket},
+            {QStringLiteral("id"), idFor(item)}});
+        return true;
+    }
+    return false;
+}
+
+// The page->download() auto-accept quirk, reconciled: a completed
+// file is moved onto the card's recorded name (the one the API's
+// 'filename' suggestion produced and every search answer reports);
+// a cancelled/interrupted transfer's engine-side partial is removed
+// — Chrome's cancel drops the partial too.  Only API-minted items
+// carry 'arktosExtDlActual', so ordinary downloads are untouched.
+void ExtensionShimBackend::downloadsFileFixup(DownloadItem *item)
+{
+    if (!item)
+        return;
+    const QString actualProp =
+        item->property("arktosExtDlActual").toString();
+    if (actualProp.isEmpty())
+        return;
+    const QString actual = QFileInfo(actualProp).absoluteFilePath();
+    const QString wanted =
+        QFileInfo(item->m_outputFileName).absoluteFilePath();
+    if (item->downloadedSuccessfully()) {
+        if (actual != wanted && QFileInfo(actual).isFile()
+                && !wanted.isEmpty() && !QFileInfo::exists(wanted)
+                && !QFile::rename(actual, wanted)) {
+            // Cross-mount destinations fall back to copy+remove.
+            if (QFile::copy(actual, wanted))
+                QFile::remove(actual);
+        }
+        return;
+    }
+    for (const QString &p : {actual,
+                             actual + QLatin1String(".download")}) {
+        const QFileInfo info(p);
+        if (info.isFile() && !info.isSymLink())
+            QFile::remove(p);
+    }
+}
+
+// DownloadQuery time fields accept either epoch ms or an
+// ISO-parseable string — Chrome feeds both forms through Date.
+bool dlQueryTime(const QJsonValue &value, qint64 *out)
+{
+    if (value.isDouble()) {
+        *out = qint64(value.toDouble());
+        return true;
+    }
+    if (value.isString()) {
+        const QDateTime dt = QDateTime::fromString(
+            value.toString(), Qt::ISODateWithMs);
+        if (dt.isValid()) {
+            *out = dt.toMSecsSinceEpoch();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ExtensionShimBackend::downloadsQueryMatch(
+        const QJsonObject &query, DownloadItem *item)
+{
+    const QJsonObject j = downloadsItemJson(item);
+    if (j.isEmpty())
+        return false;
+    if (query.contains(QLatin1String("id"))
+            && j.value(QLatin1String("id")).toInt()
+                   != int(query.value(QLatin1String("id")).toDouble()))
+        return false;
+    // substring filters, case-insensitive like Chrome's own match.
+    for (const QString &key : {QStringLiteral("url"),
+                               QStringLiteral("finalUrl"),
+                               QStringLiteral("filename"),
+                               QStringLiteral("mime")}) {
+        const QString want = query.value(key).toString();
+        if (!want.isEmpty()
+                && !j.value(key).toString().contains(
+                    want, Qt::CaseInsensitive))
+            return false;
+    }
+    // query[] terms — each must hit the url or the filename.
+    const QJsonArray terms = query.value(QLatin1String("query")).toArray();
+    for (const QJsonValue &t : terms) {
+        const QString term = t.toString();
+        if (term.isEmpty())
+            continue;
+        if (!j.value(QLatin1String("url")).toString()
+                    .contains(term, Qt::CaseInsensitive)
+                && !j.value(QLatin1String("filename")).toString()
+                    .contains(term, Qt::CaseInsensitive))
+            return false;
+    }
+    for (const QString &key : {QStringLiteral("state"),
+                               QStringLiteral("danger")}) {
+        if (query.contains(key)
+                && j.value(key).toString() != query.value(key).toString())
+            return false;
+    }
+    for (const QString &key : {QStringLiteral("paused"),
+                               QStringLiteral("canResume"),
+                               QStringLiteral("exists"),
+                               QStringLiteral("incognito")}) {
+        if (query.contains(key)
+                && j.value(key).toBool() != query.value(key).toBool())
+            return false;
+    }
+    if (query.contains(QLatin1String("error"))
+            && j.value(QLatin1String("error")).toString()
+                   != query.value(QLatin1String("error")).toString())
+        return false;
+    // *Regex filters — the caller validated the patterns already.
+    for (const QString &key : {QStringLiteral("urlRegex"),
+                               QStringLiteral("finalUrlRegex"),
+                               QStringLiteral("filenameRegex")}) {
+        if (!query.contains(key))
+            continue;
+        const QString field = key.left(key.size() - 5);
+        const QRegularExpression re(query.value(key).toString());
+        if (!re.match(j.value(field).toString()).hasMatch())
+            return false;
+    }
+    // Time bounds — startedAfter/Before on startTime, endedAfter/
+    // Before on endTime; a row missing the bound's field fails the
+    // bound.
+    const QDateTime started = QDateTime::fromString(
+        j.value(QLatin1String("startTime")).toString(),
+        Qt::ISODateWithMs);
+    const QDateTime ended = QDateTime::fromString(
+        j.value(QLatin1String("endTime")).toString(), Qt::ISODateWithMs);
+    qint64 bound = 0;
+    if (query.contains(QLatin1String("startedAfter"))
+            && (!dlQueryTime(query.value(QLatin1String("startedAfter")),
+                             &bound)
+                || !started.isValid()
+                || started.toMSecsSinceEpoch() < bound))
+        return false;
+    if (query.contains(QLatin1String("startedBefore"))
+            && (!dlQueryTime(query.value(QLatin1String("startedBefore")),
+                             &bound)
+                || !started.isValid()
+                || started.toMSecsSinceEpoch() > bound))
+        return false;
+    if (query.contains(QLatin1String("endedAfter"))
+            && (!dlQueryTime(query.value(QLatin1String("endedAfter")),
+                             &bound)
+                || !ended.isValid()
+                || ended.toMSecsSinceEpoch() < bound))
+        return false;
+    if (query.contains(QLatin1String("endedBefore"))
+            && (!dlQueryTime(query.value(QLatin1String("endedBefore")),
+                             &bound)
+                || !ended.isValid()
+                || ended.toMSecsSinceEpoch() > bound))
+        return false;
+    if (query.contains(QLatin1String("totalBytesGreater"))
+            && j.value(QLatin1String("fileSize")).toDouble()
+                   <= query.value(QLatin1String("totalBytesGreater"))
+                          .toDouble())
+        return false;
+    if (query.contains(QLatin1String("totalBytesLess"))
+            && j.value(QLatin1String("fileSize")).toDouble()
+                   >= query.value(QLatin1String("totalBytesLess"))
+                          .toDouble())
+        return false;
+    return true;
+}
+
+QJsonObject ExtensionShimBackend::invokeDownloads(
+        const QString &method, const QJsonObject &args)
+{
+    // ER16 shape: Chrome exposes the namespace only under the
+    // declared 'downloads' grant — the bridge object answers a direct
+    // call from any code in the context, so the gate runs here too.
+    if (!manifestPermissions().contains(QLatin1String("downloads")))
+        return errReply(QStringLiteral("no-permission"));
+
+    DownloadManager *manager =
+        DownloadManager::instanceFor(BrowserPaths::activeProfileId());
+    if (!manager)
+        return errReply(QStringLiteral("no-store"));
+    tapDlEvents(manager);
+    if (!m_dlFinalUrlNoted) {
+        m_dlFinalUrlNoted = true;
+        recordNote(QStringLiteral(
+            "downloads: finalUrl echoes the request url (no redirect "
+            "tracking); danger answers 'noValidatedDanger' for "
+            "unflagged rows — Arktos runs no safe-browsing verdict"));
+    }
+
+    // (item, json) pairs — the json carries the OTR filter: an empty
+    // object means the row is invisible to this namespace.
+    const auto snapshot = [manager]() {
+        QList<QPair<DownloadItem *, QJsonObject>> out;
+        const int rows =
+            manager->model() ? manager->model()->rowCount() : 0;
+        for (int r = 0; r < rows; ++r) {
+            DownloadItem *item = manager->itemAt(r);
+            if (!item)
+                continue;
+            const QJsonObject json = downloadsItemJson(item);
+            if (json.isEmpty())
+                continue;
+            out.append({item, json});
+        }
+        return out;
+    };
+
+    if (method == QLatin1String("download")) {
+        const QString urlText =
+            args.value(QLatin1String("url")).toString();
+        const QUrl url(urlText);
+        if (urlText.isEmpty() || !url.isValid() || url.isRelative())
+            return errReply(QStringLiteral("invalid-argument"));
+        // The manager's own path handles the remote-download schemes
+        // plus data: (the fixture channel its autotests prove);
+        // everything else is refused before it reaches the engine.
+        const QString scheme = url.scheme().toLower();
+        if (scheme != QLatin1String("http")
+                && scheme != QLatin1String("https")
+                && scheme != QLatin1String("ftp")
+                && scheme != QLatin1String("data"))
+            return errReply(QStringLiteral("scheme-refused"));
+        // Options the engine path cannot honour — a POST or custom
+        // headers would silently fetch the wrong thing, so they are
+        // typed refusals, never dropped.
+        const QString httpMethod =
+            args.value(QLatin1String("method")).toString().toUpper();
+        if (!httpMethod.isEmpty()
+                && httpMethod != QLatin1String("GET"))
+            return errReply(QStringLiteral("unsupported"));
+        if (args.contains(QLatin1String("headers"))
+                || args.contains(QLatin1String("body")))
+            return errReply(QStringLiteral("unsupported"));
+        const QString conflict =
+            args.value(QLatin1String("conflictAction")).toString();
+        if (conflict == QLatin1String("overwrite"))
+            // The naming path only ever uniquifies — silently
+            // ignoring 'overwrite' could delete a user's file.
+            return errReply(QStringLiteral("unsupported"));
+        if (!conflict.isEmpty()
+                && conflict != QLatin1String("uniquify")
+                && conflict != QLatin1String("prompt"))
+            return errReply(QStringLiteral("invalid-argument"));
+        const bool saveAs =
+            args.value(QLatin1String("saveAs")).toBool()
+            || conflict == QLatin1String("prompt");
+        const QString filename =
+            args.value(QLatin1String("filename")).toString();
+        Engine::Page *page = manager->retryPage(false);
+        if (!page)
+            return errReply(QStringLiteral("start-failed"));
+        const int ticket = ++s_dlTicketSeq;
+        DlPending pending;
+        pending.ticket = ticket;
+        pending.extId = m_extensionId;
+        pending.extName = m_extensionName;
+        pending.url = url;
+        pending.issuer = page;
+        pending.backend = this;
+        dlPendingList().append(pending);
+        // The request can resolve to no item at all (a dlwpolicy
+        // block, an external-handler claim, a dead network service) —
+        // bound the wait so the JS waiter cannot hang forever.
+        QTimer::singleShot(30000, this, [ticket]() {
+            QList<DlPending> &list = dlPendingList();
+            for (int i = 0; i < list.size(); ++i) {
+                if (list.at(i).ticket != ticket)
+                    continue;
+                const DlPending p = list.takeAt(i);
+                dlAnswerTicket(p, QJsonObject{
+                    {QStringLiteral("ticket"), ticket},
+                    {QStringLiteral("error"),
+                     QStringLiteral("download-failed")}});
+                return;
+            }
+        });
+        manager->download(page, url, saveAs, filename);
+        return okReply(QJsonObject{{QStringLiteral("ticket"), ticket}});
+    }
+
+    if (method == QLatin1String("search")
+            || method == QLatin1String("erase")) {
+        if (!args.value(QLatin1String("query")).isObject())
+            return errReply(QStringLiteral("invalid-argument"));
+        const QJsonObject query =
+            args.value(QLatin1String("query")).toObject();
+        for (const QString &key : {QStringLiteral("urlRegex"),
+                                   QStringLiteral("finalUrlRegex"),
+                                   QStringLiteral("filenameRegex")}) {
+            if (query.contains(key)
+                    && !QRegularExpression(query.value(key).toString())
+                            .isValid())
+                return errReply(QStringLiteral("invalid-argument"));
+        }
+        int limit = 1000;
+        if (query.contains(QLatin1String("limit"))) {
+            limit = query.value(QLatin1String("limit")).toInt();
+            if (limit < 1)
+                return errReply(QStringLiteral("invalid-argument"));
+        }
+        QList<QPair<DownloadItem *, QJsonObject>> matched;
+        const QList<QPair<DownloadItem *, QJsonObject>> all = snapshot();
+        for (const auto &entry : all) {
+            if (downloadsQueryMatch(query, entry.first))
+                matched.append(entry);
+        }
+        // orderBy — '-'<field> descends; Chrome's default order is
+        // most-recent-first.
+        QStringList orderBy;
+        for (const QJsonValue &v
+                 : query.value(QLatin1String("orderBy")).toArray())
+            orderBy << v.toString();
+        if (orderBy.isEmpty())
+            orderBy << QStringLiteral("-startTime");
+        std::sort(matched.begin(), matched.end(),
+                  [&orderBy](const auto &x, const auto &y) {
+            for (const QString &key : orderBy) {
+                const bool desc = key.startsWith(QLatin1Char('-'));
+                const QString field =
+                    desc ? key.mid(1) : key;
+                const QJsonValue xv = x.second.value(field);
+                const QJsonValue yv = y.second.value(field);
+                if (xv == yv)
+                    continue;
+                bool less;
+                if (xv.isDouble() && yv.isDouble())
+                    less = xv.toDouble() < yv.toDouble();
+                else if (xv.isBool() && yv.isBool())
+                    less = !xv.toBool() && yv.toBool();
+                else
+                    less = xv.toString() < yv.toString();
+                return desc ? !less : less;
+            }
+            return false;
+        });
+        if (method == QLatin1String("search")) {
+            QJsonArray out;
+            for (const auto &entry : matched) {
+                out.append(entry.second);
+                if (out.size() >= limit)
+                    break;
+            }
+            return okReply(out);
+        }
+        // erase — remove matching non-in-flight rows through the
+        // model's own removability gate; the rowsAboutToBeRemoved tap
+        // fires onErased per row that actually leaves.
+        int erased = 0;
+        for (const auto &entry : matched) {
+            if (erased >= limit)
+                break;
+            const int row = manager->rowForItem(entry.first);
+            if (row >= 0 && manager->model()->removeRow(row))
+                ++erased;
+        }
+        return okReply();
+    }
+
+    if (method == QLatin1String("showDefaultFolder")) {
+        const QString dir = manager->downloadDirectory();
+        if (dir.isEmpty() || !DownloadItem::revealInFileManager(dir))
+            return errReply(QStringLiteral("reveal-failed"));
+        return okReply();
+    }
+
+    // The remaining served members are all id-addressed.
+    static const QSet<QString> idOps = {
+        QStringLiteral("pause"), QStringLiteral("resume"),
+        QStringLiteral("cancel"), QStringLiteral("open"),
+        QStringLiteral("show"), QStringLiteral("removeFile"),
+        QStringLiteral("getFileIcon")};
+    if (idOps.contains(method)) {
+        if (!args.value(QLatin1String("id")).isDouble())
+            return errReply(QStringLiteral("invalid-argument"));
+        const int id = int(args.value(QLatin1String("id")).toDouble());
+        DownloadItem *item = nullptr;
+        const QList<QPair<DownloadItem *, QJsonObject>> all = snapshot();
+        for (const auto &entry : all) {
+            if (entry.second.value(QLatin1String("id")).toInt() == id) {
+                item = entry.first;
+                break;
+            }
+        }
+        if (!item)
+            return errReply(QStringLiteral("not-found"));
+
+        if (method == QLatin1String("pause")) {
+            if (!item->canPause() || !item->downloading())
+                return errReply(QStringLiteral("not-pausable"));
+            if (!item->isPaused())
+                item->pauseOrResume();
+            return okReply();
+        }
+        if (method == QLatin1String("resume")) {
+            if (!item->isPaused() || !item->canPause())
+                return errReply(QStringLiteral("not-resumable"));
+            item->pauseOrResume();
+            return okReply();
+        }
+        if (method == QLatin1String("cancel")) {
+            if (!item->downloading()
+                    && item->currentState()
+                           != Engine::DownloadRequest::State::Requested)
+                return errReply(QStringLiteral("not-in-progress"));
+            item->stop();
+            return okReply();
+        }
+        if (method == QLatin1String("open")) {
+            if (!item->downloadedSuccessfully())
+                return errReply(QStringLiteral("not-complete"));
+            const QString path =
+                QFileInfo(item->m_outputFileName).absoluteFilePath();
+            if (item->m_outputFileName.isEmpty()
+                    || !QFileInfo(path).isFile())
+                return errReply(QStringLiteral("file-missing"));
+            item->open();
+            return okReply();
+        }
+        if (method == QLatin1String("show")) {
+            if (item->m_outputFileName.isEmpty()
+                    || DownloadItem::revealTarget(
+                           item->m_outputFileName).isEmpty())
+                return errReply(QStringLiteral("file-missing"));
+            if (!DownloadItem::revealInFileManager(
+                    item->m_outputFileName))
+                return errReply(QStringLiteral("reveal-failed"));
+            return okReply();
+        }
+        if (method == QLatin1String("removeFile")) {
+            if (!item->downloadedSuccessfully())
+                return errReply(QStringLiteral("not-complete"));
+            const QString path =
+                QFileInfo(item->m_outputFileName).absoluteFilePath();
+            const QFileInfo info(path);
+            // Same deletion safety removePartialFile applies — only
+            // ever a regular file the browser itself wrote.
+            if (!info.isFile() || info.isSymLink())
+                return errReply(QStringLiteral("file-missing"));
+            if (!QFile::remove(path))
+                return errReply(QStringLiteral("file-missing"));
+            dlBroadcast(QStringLiteral("downloads.onChanged"), QJsonArray{
+                QJsonObject{
+                    {QStringLiteral("id"), idFor(item)},
+                    {QStringLiteral("exists"), QJsonObject{
+                        {QStringLiteral("current"), false}}}}});
+            return okReply();
+        }
+        if (method == QLatin1String("getFileIcon")) {
+            const int size =
+                args.value(QLatin1String("options")).toObject()
+                    .value(QLatin1String("size")).toInt(32);
+            const int px = size == 16 ? 16 : 32;
+            QFileIconProvider provider;
+            QIcon icon =
+                provider.icon(QFileInfo(item->m_outputFileName));
+            if (icon.isNull() && qApp)
+                icon = qApp->style()->standardIcon(
+                    QStyle::SP_FileIcon);
+            if (icon.isNull())
+                return errReply(QStringLiteral("no-icon"));
+            const QPixmap pixmap = icon.pixmap(px, px);
+            QByteArray png;
+            QBuffer buffer(&png);
+            buffer.open(QIODevice::WriteOnly);
+            pixmap.save(&buffer, "PNG");
+            return okReply(QStringLiteral("data:image/png;base64,")
+                           + QString::fromLatin1(png.toBase64()));
+        }
+    }
+
+    // Chrome-shelf surface — Arktos has no downloads shelf, so the
+    // shelf actions and the danger-accept path stay typed.
+    for (const QString &m : {QStringLiteral("acceptDanger"),
+                             QStringLiteral("drag"),
+                             QStringLiteral("setShelfEnabled"),
+                             QStringLiteral("setUiOptions")}) {
+        if (method == m)
+            return errReply(QStringLiteral("unsupported"));
+    }
     return errReply(QStringLiteral("unimplemented"));
 }
 

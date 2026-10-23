@@ -2156,6 +2156,11 @@ QString eventGate(const QString &name)
     // domain coverage.
     if (ns == QLatin1String("cookies"))
         return QStringLiteral("cookies");
+    // MD24: downloads.onCreated/onChanged/onErased reach only
+    // 'downloads'-declaring contexts — the same grant
+    // invokeDownloads applies per call.
+    if (ns == QLatin1String("downloads"))
+        return QStringLiteral("downloads");
     return QString();
 }
 

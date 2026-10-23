@@ -141,6 +141,12 @@
     // MD18: resolve fn for an in-flight requestUpdateCheck — the
     // verdict arrives as an '__arktos.updateCheck' push.
     var updateCheckWaiter = null;
+    // MD24: ticket -> {resolve,reject} for in-flight
+    // downloads.download calls — the bridge answers a ticket
+    // synchronously and the minted Chrome download id arrives as an
+    // '__arktos.downloadCreated' push once the engine's async
+    // request lands on an item card.
+    var downloadCreatedWaiters = {};
 
     function flushBridgeQueue() {
         var q = bridgeQueue;
@@ -185,6 +191,26 @@
             // out, so the backend pushes the result instead.
             if (updateCheckWaiter)
                 updateCheckWaiter(payload || {});
+            return;
+        }
+        if (name === '__arktos.downloadCreated') {
+            // MD24: the deferred downloads.download answer — a
+            // {ticket,id} push resolves the pending call with the
+            // minted Chrome download id; a {ticket,error} push
+            // rejects it typed (the engine never produced an item:
+            // policy block, external handoff, dead service).
+            var dlTicket = payload && String(payload.ticket);
+            var dlWaiter = dlTicket
+                && downloadCreatedWaiters[dlTicket];
+            if (dlWaiter) {
+                delete downloadCreatedWaiters[dlTicket];
+                if (payload.error)
+                    dlWaiter.reject(typedError(
+                        String(payload.error),
+                        'chrome.downloads.download'));
+                else
+                    dlWaiter.resolve(payload.id);
+            }
             return;
         }
         if (name === '__arktos.portConnect') {
@@ -4309,6 +4335,114 @@
     }
     installCookies();
 
+    // --- chrome.downloads -----------------------------------------------
+    // MD24: same posture as cookies/history — the object answers in
+    // every extension context and the 'downloads' grant is enforced
+    // per call by the backend (invokeDownloads), so the namespace is
+    // always installed.  The members ride DownloadManager's own
+    // record list; download() is the one deferred member — the
+    // bridge answers a ticket and the real Chrome download id
+    // arrives as an '__arktos.downloadCreated' host push once the
+    // engine's asynchronous request lands on an item card (the same
+    // policy path a page-issued download runs).
+    function installDownloads() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.downloads; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var dlNs = {
+            __arktosShim: true,
+            onCreated: makeEvent('downloads.onCreated'),
+            onChanged: makeEvent('downloads.onChanged'),
+            onErased: makeEvent('downloads.onErased'),
+            // Chrome's filename-suggestion hook — Arktos keeps the
+            // dlwpolicy naming path, so the host never pushes this
+            // event; it exists so a listener registration is not a
+            // TypeError, and the registration itself is noted.
+            onDeterminingFilename: makeEvent(
+                'downloads.onDeterminingFilename',
+                { onAdd: function () {
+                    note('chrome.downloads.onDeterminingFilename '
+                         + 'registered — no event source (the '
+                         + 'dlwpolicy naming path never consults '
+                         + 'extensions)');
+                } })
+        };
+        var dlArgs = {
+            download: function (a) { return a[0] || {}; },
+            search: function (a) { return { query: a[0] || {} }; },
+            pause: function (a) { return { id: a[0] }; },
+            resume: function (a) { return { id: a[0] }; },
+            cancel: function (a) { return { id: a[0] }; },
+            open: function (a) { return { id: a[0] }; },
+            show: function (a) { return { id: a[0] }; },
+            showDefaultFolder: function () { return {}; },
+            erase: function (a) { return { query: a[0] || {} }; },
+            removeFile: function (a) { return { id: a[0] }; },
+            getFileIcon: function (a) {
+                return { id: a[0], options: a[1] || {} };
+            },
+            // Chrome-shelf surface — routed to the bridge like the
+            // served members so the backend's typed 'unsupported'
+            // (and the recorded gap) is the authoritative answer.
+            acceptDanger: function (a) { return { id: a[0] }; },
+            drag: function (a) { return { id: a[0] }; },
+            setShelfEnabled: function (a) {
+                return { enabled: !!a[0] };
+            },
+            setUiOptions: function (a) { return { options: a[0] || {} }; }
+        };
+        for (var mk in dlArgs) {
+            (function (m, map) {
+                dlNs[m] = function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var inner = call('downloads', m, map(a));
+                    var p;
+                    if (m === 'download') {
+                        // Deferred member: the invoke reply is a
+                        // ticket, the id arrives on the push.  A
+                        // missing ticket means the backend refused
+                        // the deferred shape itself.
+                        p = inner.then(function (reply) {
+                            var ticket = reply && reply.ticket;
+                            if (ticket === undefined) {
+                                return Promise.reject(typedError(
+                                    'start-failed',
+                                    'chrome.downloads.download'));
+                            }
+                            return new Promise(
+                                function (resolve, reject) {
+                                    downloadCreatedWaiters[
+                                        String(ticket)] = {
+                                            resolve: resolve,
+                                            reject: reject
+                                        };
+                                });
+                        });
+                    } else {
+                        p = inner;
+                    }
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mk, dlArgs[mk]);
+        }
+        installNs('downloads', dlNs);
+    }
+    installDownloads();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -4566,7 +4700,7 @@
         'scripting', 'offscreen', 'omnibox', 'devtools',
         'fontSettings', 'tabGroups', 'userScripts',
         'declarativeNetRequest', 'declarativeContent',
-        'browsingData', 'management', 'sessions', 'downloads',
+        'browsingData', 'management', 'sessions',
         'power', 'system', 'tts', 'enterprise', 'debugger',
         'processes', 'readingList', 'search', 'favicon', 'tabCapture',
         'input', 'dns', 'documentScan', 'fileSystemProvider',

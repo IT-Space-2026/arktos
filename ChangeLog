@@ -883,6 +883,17 @@ UI:
   with its live tab ids, and cookies.onChanged fans out — withheld
   per cookie domain from contexts whose host_permissions don't cover
   it — for changes made through the API or the browser itself (MD23).
+- chrome.downloads is live for extensions that declare the grant:
+  download() issues a real download through the same policy path a
+  page-issued one runs (the 'filename' suggestion lands as a
+  Chrome-relative path under the download directory), search/erase
+  enumerate the same records the download sidebar renders, and
+  pause/resume/cancel/open/show/showDefaultFolder/removeFile/
+  getFileIcon drive the cards' own actions — with
+  downloads.onCreated/onChanged/onErased fanning out to every hosted
+  context that declared "downloads", including downloads started
+  from the browser itself. The Chrome download-shelf surface stays
+  a typed refusal — Arktos has no shelf (MD24).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

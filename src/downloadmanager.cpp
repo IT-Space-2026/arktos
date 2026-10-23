@@ -412,7 +412,17 @@ void DownloadItem::getFileName()
         ? m_manager.data() : DownloadManager::instance();
     QString downloadDirectory = manager->downloadDirectory();
 
-    QString defaultFileName = saveFileName(downloadDirectory);
+    // MD24: a chrome.downloads.download 'filename' suggestion pending
+    // on the manager — keyed to this item's url so it can only ever
+    // name the download it was issued for.  Consumed on read: the
+    // naming pass owns the suggestion from here, retry or not.
+    QString wantedName;
+    if (m_manager && m_manager->m_extSuggestedName.first == m_url
+            && !m_manager->m_extSuggestedName.second.isEmpty()) {
+        wantedName = m_manager->m_extSuggestedName.second;
+        m_manager->m_extSuggestedName = qMakePair(QUrl(), QString());
+    }
+    QString defaultFileName = saveFileName(downloadDirectory, wantedName);
     QString fileName = defaultFileName;
     if (m_requestFileName) {
         m_gettingFileName = true;
@@ -673,17 +683,64 @@ void DownloadItem::removePartialFile()
         QLatin1Char('.') + info.fileName() + QLatin1String(".ardl")));
 }
 
-QString DownloadItem::saveFileName(const QString &directory) const
+QString DownloadItem::saveFileName(const QString &directory,
+                                   const QString &wantedName) const
 {
     // Chromium already folds the Content-Disposition filename into
     // suggestedFileName; both it and the URL path are untrusted input,
     // so everything goes through sanitizeFileName (SEC01).
-    QString name = sanitizeFileName(suggestedFileName());
-    if (name.isEmpty())
-        name = sanitizeFileName(m_url.path());
+    QString name;
+    if (!wantedName.isEmpty()) {
+        // MD24: chrome.downloads.download's 'filename' resolves
+        // relative to the download directory — Chrome allows
+        // subdirectory components, so each segment is sanitized
+        // individually; absolute paths, drive-letter spellings and
+        // '.'/'..' segments refuse back to the engine-suggested name
+        // (never silently clipped to a basename).
+        const QString rel = QDir::fromNativeSeparators(wantedName);
+        const QStringList segs =
+            rel.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        bool usable = !segs.isEmpty()
+            && !rel.startsWith(QLatin1Char('/'))
+            && !rel.startsWith(QLatin1Char('~'))
+            && !rel.contains(QLatin1Char(':'))
+            && segs.join(QLatin1Char('/')) == rel.trimmed();
+        QString clean;
+        if (usable) {
+            for (const QString &seg : segs) {
+                if (seg == QLatin1String("..")
+                        || seg == QLatin1String(".")) {
+                    usable = false;
+                    break;
+                }
+                const QString s = sanitizeFileName(seg);
+                if (s.isEmpty()) {
+                    usable = false;
+                    break;
+                }
+                clean += (clean.isEmpty() ? QString() : QString(QLatin1Char('/')))
+                    + s;
+            }
+        }
+        if (usable)
+            name = clean;
+    }
+    if (name.isEmpty()) {
+        name = sanitizeFileName(suggestedFileName());
+        if (name.isEmpty())
+            name = sanitizeFileName(m_url.path());
+    }
     if (name.isEmpty())
         name = QLatin1String("unnamed_download");
 
+    // A Chrome-relative name can carry subdirectory components — the
+    // dedup suffix still decorates the leaf, the path part survives.
+    QString dirPart;
+    const int lastSlash = name.lastIndexOf(QLatin1Char('/'));
+    if (lastSlash >= 0) {
+        dirPart = name.left(lastSlash + 1);
+        name = name.mid(lastSlash + 1);
+    }
     QFileInfo info(name);
     QString baseName = info.completeBaseName();
     QString endName = info.suffix();
@@ -703,7 +760,7 @@ QString DownloadItem::saveFileName(const QString &directory) const
     if (!endName.isEmpty())
         endName = QLatin1Char('.') + endName;
 
-    QString fileName = directory + baseName + endName;
+    QString fileName = directory + dirPart + baseName + endName;
     // A name is taken when the file exists on disk or when another
     // in-flight download has already claimed it (files land later, so
     // QFile::exists alone does not cover parallel downloads).
@@ -722,7 +779,7 @@ QString DownloadItem::saveFileName(const QString &directory) const
         // already exists, don't overwrite
         int i = 1;
         do {
-            fileName = directory + baseName + QLatin1Char('-') + QString::number(i++) + endName;
+            fileName = directory + dirPart + baseName + QLatin1Char('-') + QString::number(i++) + endName;
         } while (nameInUse(fileName));
     }
     return fileName;
@@ -1730,6 +1787,21 @@ void DownloadManager::download(Engine::Page *page, const QUrl &url, bool request
     // the request for this download.
     m_requestFileNameNext = requestFileName;
     page->download(url);
+}
+
+void DownloadManager::download(Engine::Page *page, const QUrl &url,
+                               bool requestFileName,
+                               const QString &suggestedFileName)
+{
+    if (!page || url.isEmpty())
+        return;
+    // MD24: chrome.downloads.download's 'filename' option — parked
+    // keyed to the request url so ONLY this download's item can
+    // consume it (the naming pass reads and clears it in getFileName;
+    // a request that never produces an item leaves a dead pair the
+    // url match refuses to apply elsewhere).
+    m_extSuggestedName = qMakePair(url, suggestedFileName);
+    download(page, url, requestFileName);
 }
 
 void DownloadManager::handleDownloadRequested(Engine::DownloadRequest *download)

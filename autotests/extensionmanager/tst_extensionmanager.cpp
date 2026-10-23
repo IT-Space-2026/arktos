@@ -44,6 +44,7 @@
 #include "browserpaths.h"
 #include "browserprofile.h"
 #include "cookiejar.h"
+#include "downloadmanager.h"
 #include "extensionactionbar.h"
 #include "extensionbackgroundhost.h"
 #include "extensioncommands.h"
@@ -117,6 +118,7 @@ private slots:
     void extensionBookmarks();
     void extensionHistory();
     void extensionCookies();
+    void extensionDownloads();
     void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
@@ -9124,6 +9126,521 @@ void tst_ExtensionManager::extensionCookies()
              QStringLiteral("no-permission"));
 
     QDir(dirB).removeRecursively();
+}
+
+// MD24 — chrome.downloads over DownloadManager's record list.  A
+// REAL hosted extension ('downloads' grant) drives bridge->invoke so
+// the eventGate + relay fan-out run for onCreated/onChanged/onErased;
+// the deferred '__arktos.downloadCreated' push carries the minted id.
+// A dedicated temp persona binds the ambient DownloadManager, the
+// builtin engine is pinned (rustdl would claim the http fixture), and
+// the verify leg rides a stalled loopback server: pause/resume/cancel
+// on an in-flight row, search, erase+onErased, the typed verdicts and
+// a bare-backend ticket push.
+void tst_ExtensionManager::extensionDownloads()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // Fixture: downloads grant + a background context so the runtime
+    // registers a relay for the event fan-out.
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extdl-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-dl\","
+                "\"version\":\"1.0\",\"permissions\":[\"downloads\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write("self.__dl=[];\n"
+                "try{chrome.downloads.onCreated.addListener("
+                "function(i){self.__dl.push(i);});}catch(e){}\n"
+                "try{chrome.downloads.onChanged.addListener("
+                "function(d){self.__dl.push(d);});}catch(e){}\n"
+                "try{chrome.downloads.onErased.addListener("
+                "function(i){self.__dl.push(i);});}catch(e){}\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.name == QLatin1String("tst-dl"))
+            manager->removeExtension(info.id);
+    }
+    auto loaded = std::make_shared<QString>();
+    auto loadErr = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded, loadErr](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name != QLatin1String("tst-dl"))
+            return;
+        if (info.error.isEmpty())
+            *loaded = info.id;
+        else
+            *loadErr = info.error;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && loadErr->isEmpty()
+           && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString extId = *loaded;
+    QVERIFY2(!extId.isEmpty(), qPrintable(QStringLiteral(
+        "fixture loaded (err=%1)").arg(*loadErr)));
+    manager->setExtensionEnabled(extId, true);
+    auto unload = qScopeGuard([manager, extId, dir]() {
+        manager->setExtensionEnabled(extId, false);
+        manager->removeExtension(extId);
+        QDir(dir).removeRecursively();
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(extId)
+            && runtime->host(extId)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    // Ambient-persona binding — invokeDownloads resolves exactly this
+    // manager's record list.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstextdl%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    // Same pin the downloadmanager autotests apply — the rust
+    // selector defaults to claiming http(s) urls on rustdl builds;
+    // this leg proves the Chromium request path.  The claim gate
+    // reads the ACTIVE persona's scope, so the key must land on the
+    // freshly-bound profile, not the ambient one.
+    ProfileSettings settings(profileId);
+    settings.setValue(QLatin1String("downloadmanager/engine"),
+                      QLatin1String("builtin"));
+    DownloadManager *dlm = DownloadManager::instanceFor(profileId);
+    QVERIFY(dlm);
+    QCOMPARE(dlm->profileId(), profileId);
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+    dlm->setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
+    auto unbind = qScopeGuard([prevId, profileId]() {
+        DownloadManager::releaseFor(profileId);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+
+    // A stalled loopback download — headers promise a huge body the
+    // trickle never finishes, so the row stays in-flight for the
+    // pause/resume/cancel leg (the trick the downloadmanager
+    // autotests use: Chromium only raises downloadRequested once
+    // body bytes arrive).
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    connect(&server, &QTcpServer::newConnection, &server, [&server]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        socket->readAll();
+        socket->write("HTTP/1.1 200 OK\r\n"
+                      "Content-Type: application/octet-stream\r\n"
+                      "Content-Disposition: attachment; "
+                      "filename=\"stall.bin\"\r\n"
+                      "Content-Length: 104857600\r\n"
+                      "\r\n");
+        QTimer *trickle = new QTimer(socket);
+        QObject::connect(trickle, &QTimer::timeout, socket,
+                         [socket]() { socket->write("x"); });
+        trickle->start(200);
+    });
+    const QString stalledUrl = QString::fromLatin1(
+        "http://127.0.0.1:%1/stall.bin").arg(server.serverPort());
+    const QString dataUrl = QStringLiteral(
+        "data:text/plain;base64,")
+        + QString::fromLatin1(QByteArray("hello world").toBase64());
+
+    ChromeBridge *bridge = runtime->host(extId)->bridge();
+    QVERIFY(bridge);
+    QSignalSpy hostEvents(bridge, &ChromeBridge::hostEvent);
+    auto invoke = [&](const QString &m, const QJsonObject &args) {
+        return bridge->invoke(QStringLiteral("downloads"), m, args);
+    };
+    auto hostEventsFor = [&](const QString &name) {
+        QList<QVariantList> out;
+        for (const QVariantList &args : hostEvents)
+            if (!args.isEmpty() && args.at(0).toString() == name)
+                out.append(args);
+        return out;
+    };
+
+    // Empty list — search answers the empty array; the shelf surface
+    // and unknown members stay typed.
+    QJsonObject reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject()}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("setShelfEnabled"), QJsonObject{
+                 {QStringLiteral("enabled"), true}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("drag"), QJsonObject{
+                 {QStringLiteral("id"), 1.0}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("bogus"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // download() — the synchronous answer is a ticket; the Chrome
+    // download id arrives via the '__arktos.downloadCreated' push.
+    reply = invoke(QStringLiteral("download"), QJsonObject{
+        {QStringLiteral("url"), stalledUrl}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const int ticket =
+        reply.value(QLatin1String("result")).toObject()
+            .value(QLatin1String("ticket")).toInt();
+    QVERIFY(ticket > 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("__arktos.downloadCreated"))
+             .isEmpty(),
+        30000);
+    int dlId = -1;
+    {
+        const QVariantList pushed =
+            hostEventsFor(QStringLiteral("__arktos.downloadCreated"))
+                .last();
+        const QJsonObject body = pushed.at(1).toJsonObject();
+        QCOMPARE(body.value(QLatin1String("ticket")).toInt(), ticket);
+        QVERIFY(body.value(QLatin1String("error")).isUndefined());
+        dlId = body.value(QLatin1String("id")).toInt();
+    }
+    QVERIFY(dlId > 0);
+
+    // downloads.onCreated rode the itemAdded tap to the relay — the
+    // record answers Chrome's DownloadItem shape with byExtId set.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("downloads.onCreated"))
+             .isEmpty(),
+        15000);
+    {
+        const QVariantList created =
+            hostEventsFor(QStringLiteral("downloads.onCreated")).last();
+        const QJsonObject item = created.at(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray().at(0).toObject();
+        QCOMPARE(item.value(QLatin1String("id")).toInt(), dlId);
+        QCOMPARE(item.value(QLatin1String("url")).toString(),
+                 stalledUrl);
+        QCOMPARE(item.value(QLatin1String("byExtId")).toString(),
+                 extId);
+    }
+
+    // search — id and url filters both land the same in-flight row.
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("id"), dlId}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    {
+        const QJsonArray hits =
+            reply.value(QLatin1String("result")).toArray();
+        QCOMPARE(hits.size(), 1);
+        const QJsonObject item = hits.at(0).toObject();
+        QCOMPARE(item.value(QLatin1String("state")).toString(),
+                 QStringLiteral("in_progress"));
+        QCOMPARE(item.value(QLatin1String("paused")).toBool(), false);
+        QCOMPARE(item.value(QLatin1String("incognito")).toBool(),
+                 false);
+        QVERIFY(!item.value(QLatin1String("filename")).toString()
+                     .isEmpty());
+    }
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("url"), QStringLiteral("stall.bin")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+
+    // pause -> onChanged delta {paused}, resume -> {paused:false};
+    // open/removeFile refuse a row that never completed.  The card's
+    // strict pausable gate is a live request in InProgress — wait
+    // for the trickle's first byte so the engine has actually
+    // started (accept→InProgress lags the item's minting).
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QJsonObject r = invoke(
+            QStringLiteral("search"), QJsonObject{
+                {QStringLiteral("query"), QJsonObject{
+                    {QStringLiteral("id"), dlId}}}});
+        const QJsonArray hits =
+            r.value(QLatin1String("result")).toArray();
+        return !hits.isEmpty()
+            && hits.at(0).toObject()
+                       .value(QLatin1String("bytesReceived"))
+                       .toDouble() > 0;
+    }(), 15000);
+    reply = invoke(QStringLiteral("pause"), QJsonObject{
+        {QStringLiteral("id"), dlId}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    // QtWebEngine applies a pause asynchronously — the honest
+    // {paused:true} delta rides the request's isPausedChanged tap.
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QList<QVariantList> deltas =
+            hostEventsFor(QStringLiteral("downloads.onChanged"));
+        for (const QVariantList &d : deltas) {
+            const QJsonObject delta = d.at(1).toJsonObject()
+                .value(QLatin1String("__args")).toArray()
+                .at(0).toObject();
+            if (delta.value(QLatin1String("id")).toInt() == dlId
+                    && delta.value(QLatin1String("paused")).toObject()
+                           .value(QLatin1String("current")).toBool())
+                return true;
+        }
+        return false;
+    }(), 15000);
+    reply = invoke(QStringLiteral("resume"), QJsonObject{
+        {QStringLiteral("id"), dlId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(invoke(QStringLiteral("open"), QJsonObject{
+                 {QStringLiteral("id"), dlId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-complete"));
+    QCOMPARE(invoke(QStringLiteral("removeFile"), QJsonObject{
+                 {QStringLiteral("id"), dlId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-complete"));
+
+    // cancel — the card stops, onChanged carries the terminal delta,
+    // the row answers 'interrupted' with Chrome's USER_CANCELED.
+    reply = invoke(QStringLiteral("cancel"), QJsonObject{
+        {QStringLiteral("id"), dlId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QList<QVariantList> deltas =
+            hostEventsFor(QStringLiteral("downloads.onChanged"));
+        for (const QVariantList &d : deltas) {
+            const QJsonObject delta = d.at(1).toJsonObject()
+                .value(QLatin1String("__args")).toArray()
+                .at(0).toObject();
+            if (delta.value(QLatin1String("id")).toInt() == dlId
+                    && delta.value(QLatin1String("state")).toObject()
+                               .value(QLatin1String("current"))
+                               .toString()
+                           == QLatin1String("interrupted"))
+                return true;
+        }
+        return false;
+    }(), 15000);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("id"), dlId}}}});
+    {
+        const QJsonObject item = reply.value(QLatin1String("result"))
+            .toArray().at(0).toObject();
+        QCOMPARE(item.value(QLatin1String("state")).toString(),
+                 QStringLiteral("interrupted"));
+        QCOMPARE(item.value(QLatin1String("error")).toString(),
+                 QStringLiteral("USER_CANCELED"));
+    }
+    // Cancelling a finished row is the typed refusal.
+    QCOMPARE(invoke(QStringLiteral("cancel"), QJsonObject{
+                 {QStringLiteral("id"), dlId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-in-progress"));
+
+    // erase — the row leaves the record list; the model tap fires
+    // onErased with the Chrome download id.
+    reply = invoke(QStringLiteral("erase"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("id"), dlId}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("downloads.onErased")).isEmpty(),
+        15000);
+    QCOMPARE(hostEventsFor(QStringLiteral("downloads.onErased")).last()
+                 .at(1).toJsonObject()
+                 .value(QLatin1String("__args")).toArray().at(0).toInt(),
+             dlId);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("id"), dlId}}}});
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+
+    // Refused shapes — missing url/query/id, bad scheme, the POST
+    // and 'overwrite' options Arktos cannot honour.
+    QCOMPARE(invoke(QStringLiteral("download"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("download"), QJsonObject{
+                 {QStringLiteral("url"),
+                  QStringLiteral("javascript:alert(1)")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("scheme-refused"));
+    QCOMPARE(invoke(QStringLiteral("download"), QJsonObject{
+                 {QStringLiteral("url"), stalledUrl},
+                 {QStringLiteral("method"), QStringLiteral("POST")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("download"), QJsonObject{
+                 {QStringLiteral("url"), stalledUrl},
+                 {QStringLiteral("conflictAction"),
+                  QStringLiteral("overwrite")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("search"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("pause"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("pause"), QJsonObject{
+                 {QStringLiteral("id"), 999999.0}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // A bare backend (no relay context) — the ticket answer falls
+    // back to pushEvent; a data: download completes so getFileIcon
+    // and removeFile can answer their real verdicts.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extdlb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-dl-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"downloads\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0041"),
+        QStringLiteral("tst-dl-b"), dirB);
+    QSignalSpy pushSpy(&backendB, &ExtensionShimBackend::pushEvent);
+    reply = backendB.invoke(QStringLiteral("downloads"),
+                            QStringLiteral("download"), QJsonObject{
+        {QStringLiteral("url"), dataUrl},
+        {QStringLiteral("filename"),
+         QStringLiteral("md24-fixture.txt")}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const int ticketB =
+        reply.value(QLatin1String("result")).toObject()
+            .value(QLatin1String("ticket")).toInt();
+    QVERIFY(ticketB > 0);
+    int dlIdB = -1;
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        for (const QVariantList &push : pushSpy) {
+            if (push.isEmpty()
+                    || push.at(0).toString()
+                           != QLatin1String("__arktos.downloadCreated"))
+                continue;
+            const QJsonObject body = push.at(1).toJsonObject();
+            if (body.value(QLatin1String("ticket")).toInt() != ticketB)
+                continue;
+            dlIdB = body.value(QLatin1String("id")).toInt();
+            return true;
+        }
+        return false;
+    }(), 30000);
+    QVERIFY(dlIdB > 0);
+
+    // The suggested filename landed under the download directory.
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QJsonObject r = backendB.invoke(
+            QStringLiteral("downloads"), QStringLiteral("search"),
+            QJsonObject{{QStringLiteral("query"), QJsonObject{
+                {QStringLiteral("id"), dlIdB}}}});
+        const QJsonArray hits =
+            r.value(QLatin1String("result")).toArray();
+        if (hits.isEmpty())
+            return false;
+        const QJsonObject item = hits.at(0).toObject();
+        return item.value(QLatin1String("filename")).toString()
+                   .endsWith(QLatin1String("md24-fixture.txt"));
+    }(), 15000);
+
+    // Wait for the tiny transfer to finish, then the completed-row
+    // members answer: getFileIcon's data url, removeFile's real
+    // unlink (exists flips false), open's typed file-missing.
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QJsonObject r = backendB.invoke(
+            QStringLiteral("downloads"), QStringLiteral("search"),
+            QJsonObject{{QStringLiteral("query"), QJsonObject{
+                {QStringLiteral("id"), dlIdB}}}});
+        const QJsonArray hits =
+            r.value(QLatin1String("result")).toArray();
+        return !hits.isEmpty()
+            && hits.at(0).toObject()
+                       .value(QLatin1String("state")).toString()
+                   == QLatin1String("complete");
+    }(), 15000);
+    reply = backendB.invoke(QStringLiteral("downloads"),
+                            QStringLiteral("getFileIcon"), QJsonObject{
+        {QStringLiteral("id"), dlIdB},
+        {QStringLiteral("options"), QJsonObject{
+            {QStringLiteral("size"), 16}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QVERIFY(reply.value(QLatin1String("result")).toString()
+                .startsWith(QLatin1String("data:image/png;base64,")));
+    reply = backendB.invoke(QStringLiteral("downloads"),
+                            QStringLiteral("removeFile"), QJsonObject{
+        {QStringLiteral("id"), dlIdB}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    reply = backendB.invoke(QStringLiteral("downloads"),
+                            QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("id"), dlIdB}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().at(0)
+                 .toObject().value(QLatin1String("exists")).toBool(),
+             false);
+    QCOMPARE(backendB.invoke(QStringLiteral("downloads"),
+                 QStringLiteral("open"), QJsonObject{
+                     {QStringLiteral("id"), dlIdB}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("file-missing"));
+
+    // showDefaultFolder — offscreen has no file-manager channel; the
+    // typed refusal is the honest answer here (ok on a real desktop).
+    reply = backendB.invoke(QStringLiteral("downloads"),
+                            QStringLiteral("showDefaultFolder"),
+                            QJsonObject());
+    if (!reply.value(QLatin1String("ok")).toBool())
+        QCOMPARE(reply.value(QLatin1String("error")).toString(),
+                 QStringLiteral("reveal-failed"));
+
+    // The manifest gate — a sibling without 'downloads' hears
+    // no-permission on every member.
+    const QString dirC = QDir::temp().filePath(
+        QStringLiteral("tst-extdlc-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirC));
+    {
+        QFile f(dirC + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-dl-c\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendC(
+        QStringLiteral("tstmockextensionid0042"),
+        QStringLiteral("tst-dl-c"), dirC);
+    QCOMPARE(backendC.invoke(QStringLiteral("downloads"),
+                 QStringLiteral("search"), QJsonObject{
+                     {QStringLiteral("query"), QJsonObject()}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendC.invoke(QStringLiteral("downloads"),
+                 QStringLiteral("download"), QJsonObject{
+                     {QStringLiteral("url"), dataUrl}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    QDir(dirB).removeRecursively();
+    QDir(dirC).removeRecursively();
 }
 
 // MD18 — chrome.runtime lifecycle ops.  reload rides the manager's
