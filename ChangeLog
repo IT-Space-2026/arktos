@@ -788,6 +788,16 @@ UI:
   sender.tab on the connecting port and onDisconnect propagating in
   both directions — gated by the same host-coverage rule
   tabs.sendMessage applies (MD12).
+- chrome.windows answers honestly end to end: get/getCurrent/
+  getLastFocused/getAll honour getInfo.populate by returning the
+  window's tabs array (URL and title still scrubbed for extensions
+  without host coverage) and getInfo.windowTypes as a real filter,
+  the reported window state is the actual minimized/maximized/
+  fullscreen state rather than a hardcoded "normal", bounds come
+  with the object, and update/create accept the same left/top/
+  width/height/state/drawAttention vocabulary Chrome does —
+  Bitwarden-style pop-out flows land where the extension asked
+  (MD13).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

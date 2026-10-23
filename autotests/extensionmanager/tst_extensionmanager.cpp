@@ -102,6 +102,7 @@ private slots:
     void extensionPageAgent();
     void extensionTabMessaging();
     void extensionTabConnect();
+    void extensionWindowsFidelity();
     void extensionScripting();
     void extensionScriptCss();
     void extensionContentScriptRegistration();
@@ -6823,6 +6824,257 @@ void tst_ExtensionManager::extensionTabConnect()
     manager->setExtensionEnabled(id, false);
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
     manager->removeExtension(id);
+    QDir(dir).removeRecursively();
+}
+
+// MD13 — chrome.windows fidelity.  get/getCurrent/getLastFocused/
+// getAll honour getInfo.populate with the seesUrls-scrubbed tabs
+// array (and getInfo.windowTypes filters honestly — every Arktos
+// window is "normal"); window.state reports the real Qt state;
+// update moves/resizes the real widget and create honours the same
+// bounds props; drawAttention routes through QApplication::alert.
+void tst_ExtensionManager::extensionWindowsFidelity()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extwin-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-windows\","
+                "\"version\":\"1.0\",\"permissions\":[\"tabs\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0005"),
+        QStringLiteral("tst-windows"), dir);
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *extra = tw->makeNewTab(false);
+    QVERIFY(extra);
+    QCOMPARE(tw->count(), 2);
+    const int wid = ExtensionShimBackend::windowIdFor(window);
+    QVERIFY(wid > 0);
+
+    const auto result = [](const QJsonObject &reply) {
+        return reply.value(QLatin1String("result")).toObject();
+    };
+
+    // --- populate ----------------------------------------------------
+    // get(getInfo.populate) returns the window's tabs array; the
+    // unhosted backend holds no url coverage, so the QUAL03 scrub
+    // strips url/title off every populated entry.
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), wid},
+                    {QStringLiteral("getInfo"),
+                     QJsonObject{{QStringLiteral("populate"),
+                                  true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QJsonObject win = result(reply);
+    QCOMPARE(win.value(QLatin1String("id")).toInt(), wid);
+    QCOMPARE(win.value(QLatin1String("state")).toString(),
+             QStringLiteral("normal"));
+    QCOMPARE(win.value(QLatin1String("type")).toString(),
+             QStringLiteral("normal"));
+    QCOMPARE(win.value(QLatin1String("tabs")).toArray().size(),
+             tw->count());
+    const QJsonObject firstTab =
+        win.value(QLatin1String("tabs")).toArray().first().toObject();
+    QCOMPARE(firstTab.value(QLatin1String("windowId")).toInt(), wid);
+    QVERIFY(!firstTab.contains(QLatin1String("url")));
+    QVERIFY(firstTab.value(QLatin1String("id")).toInt() > 0);
+
+    // populate defaults off — no tabs member at all.
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), wid}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(!result(reply).contains(QLatin1String("tabs")));
+
+    // getCurrent / getLastFocused honour the same getInfo.
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("getCurrent"),
+        QJsonObject{{QStringLiteral("getInfo"),
+                     QJsonObject{{QStringLiteral("populate"),
+                                  true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(result(reply).value(QLatin1String("tabs"))
+                .toArray().size() >= 1);
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("getLastFocused"),
+        QJsonObject{{QStringLiteral("getInfo"),
+                     QJsonObject{{QStringLiteral("populate"),
+                                  true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(result(reply).value(QLatin1String("tabs"))
+                .toArray().size() >= 1);
+    // get(WINDOW_ID_CURRENT) resolves the asking window like
+    // Chrome's special id does.
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), -2}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(result(reply).value(QLatin1String("id")).toInt() > 0);
+
+    // getAll populates every window it reports.
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("getAll"),
+        QJsonObject{{QStringLiteral("getInfo"),
+                     QJsonObject{{QStringLiteral("populate"),
+                                  true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonArray all =
+        reply.value(QLatin1String("result")).toArray();
+    QVERIFY(!all.isEmpty());
+    for (const QJsonValue &w : all)
+        QVERIFY(w.toObject().value(QLatin1String("tabs"))
+                    .toArray().size() >= 1);
+
+    // windowTypes honesty — "normal" is the only type Arktos has,
+    // so a popup-only filter matches nothing.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("windows"), QStringLiteral("get"),
+                 QJsonObject{{QStringLiteral("id"), wid},
+                             {QStringLiteral("getInfo"),
+                              QJsonObject{{QStringLiteral("windowTypes"),
+                                           QJsonArray{QStringLiteral(
+                                               "popup")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("getAll"),
+        QJsonObject{{QStringLiteral("getInfo"),
+                     QJsonObject{{QStringLiteral("windowTypes"),
+                                  QJsonArray{QStringLiteral(
+                                      "popup")}}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(),
+             0);
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("getAll"),
+        QJsonObject{{QStringLiteral("getInfo"),
+                     QJsonObject{{QStringLiteral("windowTypes"),
+                                  QJsonArray{QStringLiteral("normal"),
+                                             QStringLiteral(
+                                                 "popup")}}}}});
+    QVERIFY(reply.value(QLatin1String("result")).toArray().size()
+            >= 1);
+
+    // --- real state ---------------------------------------------------
+    // The window-state vocabulary reports what Qt reports.
+    window->showMaximized();
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), wid}});
+    QCOMPARE(result(reply).value(QLatin1String("state")).toString(),
+             QStringLiteral("maximized"));
+    window->showNormal();
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), wid}});
+    QCOMPARE(result(reply).value(QLatin1String("state")).toString(),
+             QStringLiteral("normal"));
+
+    // --- update: bounds + state + drawAttention ----------------------
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), wid},
+                    {QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("left"), 61},
+                                 {QStringLiteral("top"), 37},
+                                 {QStringLiteral("width"), 733},
+                                 {QStringLiteral("height"), 442},
+                                 {QStringLiteral("drawAttention"),
+                                  true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    // The reply reports the widget's frame-inclusive bounds — and
+    // the widget itself moved.
+    const QRect bounds = window->frameGeometry();
+    QCOMPARE(window->x(), 61);
+    QCOMPARE(window->y(), 37);
+    QCOMPARE(window->width(), 733);
+    QCOMPARE(window->height(), 442);
+    win = result(reply);
+    QCOMPARE(win.value(QLatin1String("left")).toInt(), bounds.x());
+    QCOMPARE(win.value(QLatin1String("top")).toInt(), bounds.y());
+    QCOMPARE(win.value(QLatin1String("width")).toInt(),
+             bounds.width());
+    QCOMPARE(win.value(QLatin1String("height")).toInt(),
+             bounds.height());
+
+    // update state lands on the real widget, and the roundtrip
+    // back to normal clears it.
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), wid},
+                    {QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("state"),
+                                  QStringLiteral("maximized")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(window->isMaximized());
+    QCOMPARE(result(reply).value(QLatin1String("state")).toString(),
+             QStringLiteral("maximized"));
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), wid},
+                    {QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("state"),
+                                  QStringLiteral("normal")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(!window->isMaximized() && !window->isMinimized());
+
+    // --- create honours the same props -------------------------------
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("create"),
+        QJsonObject{{QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("left"), 20},
+                                 {QStringLiteral("top"), 25},
+                                 {QStringLiteral("width"), 640},
+                                 {QStringLiteral("height"), 480},
+                                 {QStringLiteral("focused"),
+                                  false}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonObject created = result(reply);
+    const int createdId =
+        created.value(QLatin1String("id")).toInt();
+    QVERIFY(createdId > 0);
+    // Chrome populates the new window's tabs array.
+    QVERIFY(created.value(QLatin1String("tabs")).toArray().size()
+            >= 1);
+    // The minted widget itself carries the requested bounds.
+    BrowserMainWindow *spawned = nullptr;
+    for (QWidget *top : QApplication::topLevelWidgets()) {
+        BrowserMainWindow *cand =
+            qobject_cast<BrowserMainWindow *>(top);
+        if (cand
+                && ExtensionShimBackend::windowIdFor(cand)
+                       == createdId) {
+            spawned = cand;
+            break;
+        }
+    }
+    QVERIFY(spawned);
+    QCOMPARE(spawned->x(), 20);
+    QCOMPARE(spawned->y(), 25);
+    QCOMPARE(spawned->width(), 640);
+    QCOMPARE(spawned->height(), 480);
+    QCOMPARE(created.value(QLatin1String("left")).toInt(),
+             spawned->frameGeometry().x());
+    QCOMPARE(created.value(QLatin1String("width")).toInt(),
+             spawned->frameGeometry().width());
+
+    // deleteLater, not close(): open tabs trip the modal
+    // confirmClosingMultipleTabs prompt, unanswerable headless.
+    spawned->deleteLater();
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QDir(dir).removeRecursively();
 }
 

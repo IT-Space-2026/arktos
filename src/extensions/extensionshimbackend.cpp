@@ -33,6 +33,7 @@
 #include "tabwidget.h"
 #include "webview.h"
 
+#include <qapplication.h>
 #include <qbuffer.h>
 #include <qcoreapplication.h>
 #include <qdatetime.h>
@@ -218,6 +219,61 @@ QJsonObject zoomSettingsFor(const WebView *view)
             out.insert(key, recorded.value(key));
     }
     return out;
+}
+
+// MD13: chrome.windows create/update share this prop application —
+// bounds land first (frame-inclusive move, matching Chrome's
+// outer-bounds vocabulary), then window state so a maximized or
+// minimized request wins over a same-call geometry change, then
+// the attention flash drawAttention asks for.
+void applyWindowProps(BrowserMainWindow *window,
+                      const QJsonObject &props)
+{
+    if (!window)
+        return;
+    const bool hasW = props.contains(QStringLiteral("width"));
+    const bool hasH = props.contains(QStringLiteral("height"));
+    if (hasW || hasH)
+        window->resize(
+            hasW ? props.value(QStringLiteral("width")).toInt()
+                 : window->width(),
+            hasH ? props.value(QStringLiteral("height")).toInt()
+                 : window->height());
+    const bool hasL = props.contains(QStringLiteral("left"));
+    const bool hasT = props.contains(QStringLiteral("top"));
+    if (hasL || hasT)
+        window->move(
+            hasL ? props.value(QStringLiteral("left")).toInt()
+                 : window->x(),
+            hasT ? props.value(QStringLiteral("top")).toInt()
+                 : window->y());
+    const QString state =
+        props.value(QStringLiteral("state")).toString();
+    if (state == QLatin1String("minimized"))
+        window->showMinimized();
+    else if (state == QLatin1String("maximized"))
+        window->showMaximized();
+    else if (state == QLatin1String("fullscreen"))
+        window->showFullScreen();
+    else if (state == QLatin1String("normal"))
+        window->showNormal();
+    if (props.value(QStringLiteral("drawAttention")).toBool())
+        QApplication::alert(window);
+}
+
+// getInfo.windowTypes — every Arktos browser window is "normal",
+// so a filter naming only other types matches nothing.
+bool windowTypeMatch(const QJsonObject &getInfo)
+{
+    const QJsonArray types =
+        getInfo.value(QStringLiteral("windowTypes")).toArray();
+    if (types.isEmpty())
+        return true;
+    for (const QJsonValue &t : types) {
+        if (t.toString() == QLatin1String("normal"))
+            return true;
+    }
+    return false;
 }
 
 } // namespace
@@ -1537,10 +1593,32 @@ QJsonObject ExtensionShimBackend::windowObject(BrowserMainWindow *window)
     out.insert(QStringLiteral("id"), idFor(window));
     out.insert(QStringLiteral("focused"),
                window && window->isActiveWindow());
-    out.insert(QStringLiteral("state"), QStringLiteral("normal"));
+    // MD13: the real window-manager state instead of a hardcoded
+    // "normal" — Chrome's vocabulary maps straight onto Qt's.
+    QString state = QStringLiteral("normal");
+    if (window) {
+        if (window->isMinimized())
+            state = QStringLiteral("minimized");
+        else if (window->isMaximized())
+            state = QStringLiteral("maximized");
+        else if (window->isFullScreen())
+            state = QStringLiteral("fullscreen");
+    }
+    out.insert(QStringLiteral("state"), state);
     out.insert(QStringLiteral("type"), QStringLiteral("normal"));
-    out.insert(QStringLiteral("alwaysOnTop"), false);
+    out.insert(QStringLiteral("alwaysOnTop"),
+               window && window->windowFlags().testFlag(
+                   Qt::WindowStaysOnTopHint));
     out.insert(QStringLiteral("incognito"), false);
+    if (window) {
+        // Chrome reports outer bounds; frameGeometry carries the
+        // frame the same way x()/y() do.
+        const QRect bounds = window->frameGeometry();
+        out.insert(QStringLiteral("left"), bounds.x());
+        out.insert(QStringLiteral("top"), bounds.y());
+        out.insert(QStringLiteral("width"), bounds.width());
+        out.insert(QStringLiteral("height"), bounds.height());
+    }
     return out;
 }
 
@@ -1565,27 +1643,76 @@ QJsonObject ExtensionShimBackend::invokeWindows(const QString &method,
         if (visible)
             windows.append(window);
     }
+    // MD13: Chrome's populate option returns the window's tabs
+    // array — scrubbed through the same seesUrls gate tabs.query
+    // applies so url/title never ride a side channel.
+    const auto tabsFor = [this](BrowserMainWindow *window) {
+        QJsonArray tabs;
+        TabWidget *tw = window ? window->tabWidget() : nullptr;
+        if (tw) {
+            for (int i = 0; i < tw->count(); ++i) {
+                WebView *view = tw->webView(i);
+                if (ExtensionEventHub::trackable(view))
+                    tabs.append(shapedTab(
+                        tabObject(view, i, idFor(window))));
+            }
+        }
+        return tabs;
+    };
     if (method == QLatin1String("get")
             || method == QLatin1String("getCurrent")
             || method == QLatin1String("getLastFocused")) {
+        const QJsonObject getInfo =
+            args.value(QStringLiteral("getInfo")).toObject();
+        const bool populate =
+            getInfo.value(QStringLiteral("populate")).toBool();
+        if (!windowTypeMatch(getInfo))
+            return errReply(method == QLatin1String("get")
+                ? QStringLiteral("not-found")
+                : QStringLiteral("no-window"));
+        const auto answer = [populate, &tabsFor](
+                BrowserMainWindow *window) {
+            QJsonObject win = windowObject(window);
+            if (populate)
+                win.insert(QStringLiteral("tabs"), tabsFor(window));
+            return okReply(win);
+        };
         if (method == QLatin1String("get")) {
             const int wanted =
                 int(args.value(QStringLiteral("id")).toDouble(-1));
+            // WINDOW_ID_CURRENT names the asking window the same
+            // way getCurrent does.
+            if (wanted == -2) {
+                BrowserMainWindow *current = currentWindow();
+                if (current && windows.contains(current))
+                    return answer(current);
+                return errReply(QStringLiteral("not-found"));
+            }
             for (BrowserMainWindow *window : windows) {
                 if (window && idFor(window) == wanted)
-                    return okReply(windowObject(window));
+                    return answer(window);
             }
             return errReply(QStringLiteral("not-found"));
         }
         BrowserMainWindow *current = currentWindow();
         if (!current || !windows.contains(current))
             return errReply(QStringLiteral("no-window"));
-        return okReply(windowObject(current));
+        return answer(current);
     }
     if (method == QLatin1String("getAll")) {
+        const QJsonObject getInfo =
+            args.value(QStringLiteral("getInfo")).toObject();
+        const bool populate =
+            getInfo.value(QStringLiteral("populate")).toBool();
+        if (!windowTypeMatch(getInfo))
+            return okReply(QJsonArray());
         QJsonArray out;
-        for (BrowserMainWindow *window : windows)
-            out.append(windowObject(window));
+        for (BrowserMainWindow *window : windows) {
+            QJsonObject win = windowObject(window);
+            if (populate)
+                win.insert(QStringLiteral("tabs"), tabsFor(window));
+            out.append(win);
+        }
         return okReply(out);
     }
     if (method == QLatin1String("create")) {
@@ -1629,18 +1756,15 @@ QJsonObject ExtensionShimBackend::invokeWindows(const QString &method,
             if (!url.isEmpty())
                 view->loadUrl(url);
         }
+        // MD13: create honours the same bounds/state props update
+        // accepts — Chrome applies them on the fresh window.
+        applyWindowProps(window, props);
         if (props.value(QStringLiteral("focused")).toBool(true))
             window->activateWindow();
         QJsonObject reply = windowObject(window);
         // Chrome answers with the tabs array populated — callers
         // read win.tabs[0].id to drive follow-up chrome.tabs calls.
-        QJsonArray tabs;
-        for (int i = 0; i < tw->count(); ++i) {
-            WebView *view = tw->webView(i);
-            if (ExtensionEventHub::trackable(view))
-                tabs.append(tabObject(view, i, idFor(window)));
-        }
-        reply.insert(QStringLiteral("tabs"), tabs);
+        reply.insert(QStringLiteral("tabs"), tabsFor(window));
         return okReply(reply);
     }
     if (method == QLatin1String("update")) {
@@ -1651,16 +1775,7 @@ QJsonObject ExtensionShimBackend::invokeWindows(const QString &method,
         for (BrowserMainWindow *window : windows) {
             if (!window || idFor(window) != wanted)
                 continue;
-            const QString state =
-                props.value(QStringLiteral("state")).toString();
-            if (state == QLatin1String("minimized"))
-                window->showMinimized();
-            else if (state == QLatin1String("maximized"))
-                window->showMaximized();
-            else if (state == QLatin1String("fullscreen"))
-                window->showFullScreen();
-            else if (state == QLatin1String("normal"))
-                window->showNormal();
+            applyWindowProps(window, props);
             if (props.value(QStringLiteral("focused")).toBool())
                 window->activateWindow();
             return okReply(windowObject(window));

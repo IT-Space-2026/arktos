@@ -2709,8 +2709,9 @@
     // --- chrome.windows -----------------------------------------------------
     // EXT17: real window-level answers over the bridge (the EXT16
     // hub's window set — private/tor windows are invisible); events
-    // are the shim events EXT16 pushes.  create/update/remove keep
-    // their typed-error stubs via fillNs below.
+    // are the shim events EXT16 pushes.  MD13: the getInfo argument
+    // (populate, windowTypes) crosses too — the host populates the
+    // tabs array and filters honestly.
     if (typeof chrome !== 'undefined') {
         var winNs = { __arktosShim: true };
         var winEventNames = ['onCreated', 'onRemoved',
@@ -2727,8 +2728,15 @@
                           && typeof a[a.length - 1] === 'function')
                     ? a.pop() : null;
                 var args = {};
-                if (a.length && typeof a[0] === 'number')
-                    args.id = a[0];
+                // Chrome's signatures: get(windowId, getInfo),
+                // getCurrent/getLastFocused/getAll(getInfo) — a
+                // number is the id, an object is getInfo.
+                for (var i = 0; i < a.length; ++i) {
+                    if (typeof a[i] === 'number')
+                        args.id = a[i];
+                    else if (a[i] && typeof a[i] === 'object')
+                        args.getInfo = a[i];
+                }
                 var p = call('windows', method, args);
                 if (cb)
                     p.then(function (v) { answerCb(cb, v); },
