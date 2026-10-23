@@ -159,6 +159,12 @@ public:
     // flight" must ask the engine, not the value.
     bool isLoading() const;
     inline int currentZoom() const { return m_currentZoom; }
+    // MD11: chrome.tabs.setZoom — applies a Chrome-style factor
+    // (1.0 = 100%) through the view's own zoom machinery so
+    // m_currentZoom, the zoom readout, reload reapplication and the
+    // text-only zoom pref all stay coherent.  Answers the factor
+    // actually applied (the request clamps to the engine's range).
+    qreal setTabZoomFactor(qreal factor);
     TabWidget *tabWidget() const;
     // CONT02: the container this view's page is bound to — the empty
     // (default) container id for the normal and off-the-record

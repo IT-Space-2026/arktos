@@ -2542,6 +2542,93 @@
                     });
             });
         };
+        // MD11 — zoom + capture.  Zoom rides the tab's real zoom
+        // machinery; zoomSettings are a recorded model the backend
+        // merges over honest defaults (mode:'disabled' refuses later
+        // setZoom calls); captureVisibleTab is gated by the backend's
+        // seesUrls coverage check — an uncovered tab answers a typed
+        // no-permission rejection, never a blank image.
+        tabsNs.getZoom = function (tabId, cb) {
+            if (typeof tabId === 'function') { cb = tabId; tabId = null; }
+            var p = call('tabs', 'getZoom', { id: tabId });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        tabsNs.setZoom = function (tabId, zoomFactor, cb) {
+            // setZoom(tabId, factor) or setZoom(factor) — a lone
+            // number is always the factor, never the tabId.
+            if (typeof tabId === 'function') {
+                cb = tabId; tabId = null; zoomFactor = undefined;
+            }
+            if (typeof zoomFactor === 'function') {
+                cb = zoomFactor; zoomFactor = undefined;
+            }
+            if (zoomFactor === undefined || zoomFactor === null) {
+                zoomFactor = tabId;
+                tabId = null;
+            }
+            var p = call('tabs', 'setZoom',
+                         { id: tabId, zoom: zoomFactor });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        tabsNs.getZoomSettings = function (tabId, cb) {
+            if (typeof tabId === 'function') { cb = tabId; tabId = null; }
+            var p = call('tabs', 'getZoomSettings', { id: tabId });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        tabsNs.setZoomSettings = function (tabId, zoomSettings, cb) {
+            // setZoomSettings(tabId, settings) or
+            // setZoomSettings(settings).
+            if (typeof tabId === 'function') {
+                cb = tabId; tabId = null; zoomSettings = undefined;
+            }
+            if (typeof zoomSettings === 'function') {
+                cb = zoomSettings; zoomSettings = undefined;
+            }
+            if (zoomSettings === undefined || zoomSettings === null) {
+                zoomSettings = tabId;
+                tabId = null;
+            }
+            var p = call('tabs', 'setZoomSettings',
+                         { id: tabId, settings: zoomSettings || {} });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        tabsNs.captureVisibleTab = function (windowId, options, cb) {
+            // captureVisibleTab(windowId?, options?, cb) — a lone
+            // object is the options bag, a lone number the windowId.
+            if (typeof windowId === 'function') {
+                cb = windowId; windowId = null; options = undefined;
+            }
+            if (typeof options === 'function') {
+                cb = options; options = undefined;
+            }
+            if (options === undefined || options === null) {
+                if (windowId !== null
+                        && typeof windowId === 'object') {
+                    options = windowId;
+                    windowId = null;
+                } else {
+                    options = {};
+                }
+            }
+            var p = call('tabs', 'captureVisibleTab',
+                         { windowId: windowId, options: options });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
         var tabsProxy = new Proxy(tabsNs, {
             get: function (t, prop) {
                 if (prop === 'then')

@@ -158,6 +158,11 @@ chrome.scripting.*: no-such-file
 chrome.scripting.*: not-found
 chrome.storage.managed.*: read-only
 chrome.storage.*: invalid-area
+chrome.tabs.captureVisibleTab: capture-failed
+chrome.tabs.captureVisibleTab: invalid-argument
+chrome.tabs.captureVisibleTab: no-permission
+chrome.tabs.captureVisibleTab: no-window
+chrome.tabs.captureVisibleTab: not-found
 chrome.tabs.create: no-tab
 chrome.tabs.create: no-window
 chrome.tabs.create: url-refused
@@ -166,6 +171,8 @@ chrome.tabs.duplicate: invalid-argument
 chrome.tabs.duplicate: no-tab
 chrome.tabs.duplicate: not-found
 chrome.tabs.get: not-found
+chrome.tabs.getZoom: not-found
+chrome.tabs.getZoomSettings: not-found
 chrome.tabs.goBack: no-history
 chrome.tabs.goBack: not-found
 chrome.tabs.goForward: no-history
@@ -183,6 +190,11 @@ chrome.tabs.remove: not-found
 chrome.tabs.sendMessage: no-host-access
 chrome.tabs.sendMessage: no-receiver
 chrome.tabs.sendMessage: not-found
+chrome.tabs.setZoom: invalid-argument
+chrome.tabs.setZoom: not-found
+chrome.tabs.setZoom: zoom-disabled
+chrome.tabs.setZoomSettings: invalid-argument
+chrome.tabs.setZoomSettings: not-found
 chrome.tabs.update: not-found
 chrome.webNavigation.getAllFrames: no-tab
 chrome.webNavigation.getFrame: no-frame

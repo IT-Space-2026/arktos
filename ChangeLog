@@ -774,6 +774,14 @@ UI:
   actual state — pinned, audible, muted, discarded, autoDiscardable,
   highlighted and group id — so extensions like Bitwarden that probe
   tab state before acting see the truth (MD10).
+- chrome.tabs zoom and page capture are live: getZoom/setZoom ride
+  the real per-tab zoom machinery (the status-bar zoom readout and
+  reload reapplication stay in step) and get/setZoomSettings record
+  the requested mode/scope, with 'disabled' refusing further
+  setZoom calls. captureVisibleTab returns the visible tab as a png
+  or jpeg data url, gated by the same tabs/host-coverage rule that
+  decides whether an extension may see a tab's URL — an uncovered
+  extension gets a typed refusal, never pixels (MD11).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

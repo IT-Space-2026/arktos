@@ -92,6 +92,7 @@ private slots:
     void relayPortChurn();
     void extensionShimBackend();
     void extensionTabsOps();
+    void extensionTabsZoomCapture();
     void extensionMessageRelay();
     void extensionChromeNavLock();
     void extensionEventSurfaces();
@@ -3111,6 +3112,203 @@ void tst_ExtensionManager::extensionTabsOps()
     // confirmClosingMultipleTabs QMessageBox — modal, unanswerable.
     window->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QDir(dir).removeRecursively();
+}
+
+// MD11 — chrome.tabs zoom + captureVisibleTab.  A hosted fixture
+// holding 'tabs' sees the tab's pixels (the seesUrls shortcut); a
+// backend whose id the runtime never granted 'tabs'/host coverage
+// is refused no-permission.  setZoom rides the view's own zoom
+// machinery, and setZoomSettings records mode/scope with
+// 'disabled' refusing the extension's own setZoom.
+void tst_ExtensionManager::extensionTabsZoomCapture()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extzoom-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-zoomcap\","
+                "\"version\":\"1.0\",\"permissions\":[\"tabs\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write("// zoomcap fixture\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    connect(manager, &ExtensionManager::extensionLoaded, this,
+            [loaded](const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-zoomcap")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString extId = *loaded;
+    QVERIFY2(!extId.isEmpty(), "fixture loaded + hosted");
+    manager->setExtensionEnabled(extId, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(extId)
+            && runtime->host(extId)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionShimBackend *backend =
+        runtime->host(extId)->bridge()->backend();
+    QVERIFY(backend);
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view = tw->webView(0);
+    QVERIFY(view && view->page());
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    view->load(QUrl(QStringLiteral("data:text/html,<title>z</title>")));
+    QTRY_VERIFY_WITH_TIMEOUT(!loadSpy.isEmpty(), 30000);
+    // The capture needs a sized, realized view — under the
+    // offscreen platform show() still drives the compositor.
+    window->show();
+    QTest::qWaitForWindowExposed(window);
+    const int tabId = ExtensionShimBackend::tabIdFor(view);
+    const int wid = ExtensionShimBackend::windowIdFor(window);
+    QVERIFY(tabId > 0 && wid > 0);
+
+    // --- zoom roundtrip ---------------------------------------------
+    QJsonObject reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("getZoom"),
+        QJsonObject{{QStringLiteral("id"), tabId}});
+    QCOMPARE(reply.value(QLatin1String("result")).toDouble(), 1.0);
+
+    QSignalSpy zoomEvents(backend,
+                          &ExtensionShimBackend::pushEvent);
+    reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("setZoom"),
+        QJsonObject{{QStringLiteral("id"), tabId},
+                    {QStringLiteral("zoom"), 1.5}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(view->currentZoom(), 150);
+    reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("getZoom"),
+        QJsonObject{{QStringLiteral("id"), tabId}});
+    QCOMPARE(reply.value(QLatin1String("result")).toDouble(), 1.5);
+    // Chrome's onZoomChange push carries old/new factors + settings.
+    QCOMPARE(zoomEvents.size(), 1);
+    QCOMPARE(zoomEvents.first().at(0).toString(),
+             QStringLiteral("tabs.onZoomChange"));
+    const QJsonObject zoomInfo =
+        zoomEvents.first().at(1).toJsonObject();
+    QCOMPARE(zoomInfo.value(QLatin1String("tabId")).toInt(), tabId);
+    QCOMPARE(zoomInfo.value(QLatin1String("newZoomFactor"))
+                 .toDouble(), 1.5);
+    // Typed refusals: a non-positive factor, a dead tab id.
+    QCOMPARE(backend->invoke(
+                 QStringLiteral("tabs"), QStringLiteral("setZoom"),
+                 QJsonObject{{QStringLiteral("id"), tabId},
+                             {QStringLiteral("zoom"), 0.0}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend->invoke(
+                 QStringLiteral("tabs"), QStringLiteral("getZoom"),
+                 QJsonObject{{QStringLiteral("id"), 424242}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // --- zoomSettings: the recorded model -----------------------------
+    reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("getZoomSettings"),
+        QJsonObject{{QStringLiteral("id"), tabId}});
+    const QJsonObject defaults =
+        reply.value(QLatin1String("result")).toObject();
+    QCOMPARE(defaults.value(QLatin1String("mode")).toString(),
+             QStringLiteral("manual"));
+    QCOMPARE(defaults.value(QLatin1String("scope")).toString(),
+             QStringLiteral("per-tab"));
+    QCOMPARE(defaults.value(QLatin1String("defaultZoomFactor"))
+                 .toDouble(), 1.0);
+    reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("setZoomSettings"),
+        QJsonObject{{QStringLiteral("id"), tabId},
+                    {QStringLiteral("settings"),
+                     QJsonObject{{QStringLiteral("mode"),
+                                  QStringLiteral("disabled")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("getZoomSettings"),
+        QJsonObject{{QStringLiteral("id"), tabId}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("mode")).toString(),
+             QStringLiteral("disabled"));
+    // 'disabled' refuses the extension's own setZoom (Chrome parity).
+    QCOMPARE(backend->invoke(
+                 QStringLiteral("tabs"), QStringLiteral("setZoom"),
+                 QJsonObject{{QStringLiteral("id"), tabId},
+                             {QStringLiteral("zoom"), 2.0}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("zoom-disabled"));
+    // A bogus enum is a typed refusal — the record keeps mode only.
+    QCOMPARE(backend->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("setZoomSettings"),
+                 QJsonObject{{QStringLiteral("id"), tabId},
+                             {QStringLiteral("settings"),
+                              QJsonObject{{QStringLiteral("scope"),
+                                           QStringLiteral("bogus")}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // --- captureVisibleTab --------------------------------------------
+    // Covered: the fixture's 'tabs' grant sees every tab url, so the
+    // grab leaves as a png data url.
+    reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("captureVisibleTab"),
+        QJsonObject{{QStringLiteral("windowId"), wid}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QString dataUrl =
+        reply.value(QLatin1String("result")).toString();
+    QVERIFY(dataUrl.startsWith(
+        QStringLiteral("data:image/png;base64,")));
+    QVERIFY(dataUrl.size() > 64);
+    // An explicit windowId resolving nowhere is a typed refusal.
+    QCOMPARE(backend->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("captureVisibleTab"),
+                 QJsonObject{{QStringLiteral("windowId"), 424242}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-window"));
+    // Uncovered: an id the runtime never granted 'tabs'/host
+    // coverage — the seesUrls gate refuses before pixels leave.
+    ExtensionShimBackend uncovered(
+        QStringLiteral("unregisteredzoomid00"),
+        QStringLiteral("tst-zoom-uncovered"), dir);
+    QCOMPARE(uncovered.invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("captureVisibleTab"),
+                 QJsonObject{{QStringLiteral("windowId"), wid}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    // deleteLater, not close(): multiple open tabs trip the
+    // confirmClosingMultipleTabs QMessageBox — modal, unanswerable.
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(extId, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(extId), 20000);
+    manager->removeExtension(extId);
     QDir(dir).removeRecursively();
 }
 

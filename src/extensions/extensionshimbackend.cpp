@@ -33,13 +33,16 @@
 #include "tabwidget.h"
 #include "webview.h"
 
+#include <qbuffer.h>
 #include <qcoreapplication.h>
 #include <qdatetime.h>
 #include <qdir.h>
 #include <qfile.h>
+#include <qimage.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qlocale.h>
+#include <qpixmap.h>
 #include <qpointer.h>
 #include <qregularexpression.h>
 #include <qsavefile.h>
@@ -194,6 +197,27 @@ int chromeGroupId(int windowId, const QString &groupId)
     if (!slot)
         slot = next++;
     return slot;
+}
+
+// MD11: Chrome's zoomSettings shape for a tab — the recorded
+// setZoomSettings request merged over the honest defaults: Arktos
+// zoom is per-tab (never per-origin) and persists across
+// navigation, which is Chrome's "manual" mode.
+QJsonObject zoomSettingsFor(const WebView *view)
+{
+    QJsonObject out{
+        {QStringLiteral("mode"), QStringLiteral("manual")},
+        {QStringLiteral("scope"), QStringLiteral("per-tab")},
+        {QStringLiteral("defaultZoomFactor"), 1.0}};
+    const QJsonObject recorded = view
+        ? view->property("arktosExtZoomSettings").toJsonObject()
+        : QJsonObject();
+    for (const QString &key :
+             {QStringLiteral("mode"), QStringLiteral("scope")}) {
+        if (recorded.contains(key))
+            out.insert(key, recorded.value(key));
+    }
+    return out;
 }
 
 } // namespace
@@ -1289,6 +1313,151 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
         // form can still veto the drop itself.
         return okReply(shapedTab(
             tabObject(t.view, t.index, t.windowId)));
+    }
+    // MD11 — zoom surface.  get/setZoom ride the view's own zoom
+    // machinery (setTabZoomFactor keeps m_currentZoom, the zoom
+    // readout and reload reapplication coherent); zoomSettings are
+    // a recorded model like sidePanel's — mode/scope store on the
+    // tab, 'disabled' is enforced on this surface, and requests the
+    // engine cannot honor (per-origin scoping, navigation-reset
+    // 'automatic') land fidelity notes.
+    if (method == QLatin1String("getZoom")) {
+        const LocatedTab t = locateTab(
+            int(args.value(QStringLiteral("id")).toDouble(-1)));
+        if (!t.view)
+            return errReply(QStringLiteral("not-found"));
+        return okReply(qreal(t.view->currentZoom()) / 100.0);
+    }
+    if (method == QLatin1String("setZoom")) {
+        const LocatedTab t = locateTab(
+            int(args.value(QStringLiteral("id")).toDouble(-1)));
+        if (!t.view)
+            return errReply(QStringLiteral("not-found"));
+        const QJsonObject settings = zoomSettingsFor(t.view);
+        if (settings.value(QStringLiteral("mode")).toString()
+                == QLatin1String("disabled"))
+            return errReply(QStringLiteral("zoom-disabled"));
+        const double zoom =
+            args.value(QStringLiteral("zoom")).toDouble(-1.0);
+        if (zoom <= 0.0)
+            return errReply(QStringLiteral("invalid-argument"));
+        const double before = qreal(t.view->currentZoom()) / 100.0;
+        const double applied = t.view->setTabZoomFactor(zoom);
+        // Chrome fires tabs.onZoomChange on every zoom commit —
+        // push it with the factors and the tab's settings shape.
+        emit pushEvent(QStringLiteral("tabs.onZoomChange"), QJsonObject{
+            {QStringLiteral("tabId"), idFor(t.view)},
+            {QStringLiteral("oldZoomFactor"), before},
+            {QStringLiteral("newZoomFactor"), applied},
+            {QStringLiteral("zoomSettings"), settings}});
+        return okReply();
+    }
+    if (method == QLatin1String("getZoomSettings")) {
+        const LocatedTab t = locateTab(
+            int(args.value(QStringLiteral("id")).toDouble(-1)));
+        if (!t.view)
+            return errReply(QStringLiteral("not-found"));
+        return okReply(zoomSettingsFor(t.view));
+    }
+    if (method == QLatin1String("setZoomSettings")) {
+        const LocatedTab t = locateTab(
+            int(args.value(QStringLiteral("id")).toDouble(-1)));
+        if (!t.view)
+            return errReply(QStringLiteral("not-found"));
+        const QJsonObject req =
+            args.value(QStringLiteral("settings")).toObject();
+        QJsonObject recorded =
+            t.view->property("arktosExtZoomSettings").toJsonObject();
+        const QString mode =
+            req.value(QStringLiteral("mode")).toString();
+        if (!mode.isEmpty()) {
+            if (mode != QLatin1String("automatic")
+                    && mode != QLatin1String("manual")
+                    && mode != QLatin1String("disabled"))
+                return errReply(QStringLiteral("invalid-argument"));
+            recorded.insert(QStringLiteral("mode"), mode);
+            if (mode == QLatin1String("automatic"))
+                recordNote(QStringLiteral(
+                    "tabs.setZoomSettings: 'automatic' recorded — "
+                    "Arktos tab zoom persists across navigation "
+                    "(manual semantics)"));
+        }
+        const QString scope =
+            req.value(QStringLiteral("scope")).toString();
+        if (!scope.isEmpty()) {
+            if (scope != QLatin1String("per-origin")
+                    && scope != QLatin1String("per-tab"))
+                return errReply(QStringLiteral("invalid-argument"));
+            recorded.insert(QStringLiteral("scope"), scope);
+            if (scope == QLatin1String("per-origin"))
+                recordNote(QStringLiteral(
+                    "tabs.setZoomSettings: 'per-origin' recorded — "
+                    "Arktos zoom applies per-tab"));
+        }
+        t.view->setProperty("arktosExtZoomSettings", recorded);
+        return okReply();
+    }
+    if (method == QLatin1String("captureVisibleTab")) {
+        int wanted = int(
+            args.value(QStringLiteral("windowId")).toDouble(-2));
+        BrowserMainWindow *target = nullptr;
+        if (wanted == -2) {
+            target = currentWindow();
+        } else {
+            for (BrowserMainWindow *w : windows) {
+                if (w && idFor(w) == wanted) {
+                    target = w;
+                    break;
+                }
+            }
+        }
+        if (!target || !target->tabWidget())
+            return errReply(QStringLiteral("no-window"));
+        TabWidget *tw = target->tabWidget();
+        WebView *view = tw->currentWebView();
+        if (!ExtensionEventHub::trackable(view))
+            return errReply(QStringLiteral("not-found"));
+        // The capture exposes page pixels — the same url-disclosure
+        // class as the tab object's url fields, so it rides the
+        // seesUrls gate shapedTab applies ('tabs' or host coverage;
+        // Chrome's activeTab invocation grant is not modeled
+        // anywhere in this runtime).
+        if (!ExtensionBackgroundRuntime::instance()->seesUrls(
+                m_extensionId, view->url().toString()))
+            return errReply(QStringLiteral("no-permission"));
+        const QJsonObject opts =
+            args.value(QStringLiteral("options")).toObject();
+        const QString format =
+            opts.value(QStringLiteral("format"))
+                .toString(QStringLiteral("png"));
+        if (format != QLatin1String("png")
+                && format != QLatin1String("jpeg"))
+            return errReply(QStringLiteral("invalid-argument"));
+        QPixmap pixmap = view->grab();
+        if (pixmap.isNull() && !view->size().isEmpty()) {
+            // grab() asks the compositor — a never-realized view
+            // still paints through render() into a scratch image.
+            QImage fallback(view->size(), QImage::Format_ARGB32);
+            fallback.fill(Qt::transparent);
+            view->render(&fallback);
+            pixmap = QPixmap::fromImage(fallback);
+        }
+        QByteArray bytes;
+        QBuffer buffer(&bytes);
+        buffer.open(QIODevice::WriteOnly);
+        const int quality =
+            int(opts.value(QStringLiteral("quality")).toDouble(-1));
+        const bool saved = !pixmap.isNull()
+            && (format == QLatin1String("jpeg")
+                ? pixmap.toImage().save(&buffer, "JPEG",
+                                        quality < 0 ? -1
+                                                    : qBound(0, quality,
+                                                             100))
+                : pixmap.save(&buffer, "PNG"));
+        if (!saved || bytes.isEmpty())
+            return errReply(QStringLiteral("capture-failed"));
+        return okReply(QStringLiteral("data:image/%1;base64,%2")
+            .arg(format, QString::fromLatin1(bytes.toBase64())));
     }
     return errReply(QStringLiteral("unimplemented"));
 }

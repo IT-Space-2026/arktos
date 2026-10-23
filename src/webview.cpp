@@ -1148,6 +1148,16 @@ void WebView::resetZoom()
     applyZoom();
 }
 
+qreal WebView::setTabZoomFactor(qreal factor)
+{
+    // The engine holds 0.25..5.0 — clamp the requested percent into
+    // the range it can actually apply so the stored zoom and the
+    // rendered factor never drift apart.
+    m_currentZoom = qBound(25, qRound(factor * 100.0), 500);
+    applyZoom();
+    return qreal(m_currentZoom) / 100.0;
+}
+
 void WebView::loadFinished()
 {
     if (100 != m_progress) {
