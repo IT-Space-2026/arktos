@@ -147,6 +147,12 @@
     // '__arktos.downloadCreated' push once the engine's async
     // request lands on an item card.
     var downloadCreatedWaiters = {};
+    // MD29: ticket -> {resolve,reject} for in-flight dns.resolve
+    // calls — the bridge answers a ticket synchronously and the
+    // resolved addresses (or the typed failure) arrive as an
+    // '__arktos.dnsResolved' push once QHostInfo's off-thread
+    // lookup completes.
+    var dnsResolveWaiters = {};
 
     function flushBridgeQueue() {
         var q = bridgeQueue;
@@ -210,6 +216,28 @@
                         'chrome.downloads.download'));
                 else
                     dlWaiter.resolve(payload.id);
+            }
+            return;
+        }
+        if (name === '__arktos.dnsResolved') {
+            // MD29: the deferred dns.resolve answer — a
+            // {ticket,addresses} push resolves the pending call
+            // with Chrome's DnsResolveInfo shape; a {ticket,error}
+            // push rejects it typed (resolver error, bounded wait
+            // expired).
+            var dnsTicket = payload && String(payload.ticket);
+            var dnsWaiter = dnsTicket
+                && dnsResolveWaiters[dnsTicket];
+            if (dnsWaiter) {
+                delete dnsResolveWaiters[dnsTicket];
+                if (payload.error)
+                    dnsWaiter.reject(typedError(
+                        String(payload.error),
+                        'chrome.dns.resolve'));
+                else
+                    dnsWaiter.resolve({
+                        addresses: payload.addresses || []
+                    });
             }
             return;
         }
@@ -4652,6 +4680,56 @@
     }
     installBrowsingData();
 
+    // --- chrome.dns ---------------------------------------------------
+    // MD29: Chrome publishes resolve() alone and upstream only on
+    // ChromeOS; here the namespace answers for every hosted context
+    // — the 'dns' grant is enforced per call by the backend
+    // (invokeDns).  resolve() is the deferred member like
+    // downloads.download: the bridge answers a ticket and the
+    // DnsResolveInfo {addresses:[...]} (or the typed failure) lands
+    // on the '__arktos.dnsResolved' push once the off-thread lookup
+    // completes.
+    function installDns() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.dns; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var dnsNs = { __arktosShim: true };
+        dnsNs.resolve = function () {
+            var a = Array.prototype.slice.call(arguments);
+            var cb = null;
+            if (a.length && typeof a[a.length - 1] === 'function')
+                cb = a.pop();
+            var p = call('dns', 'resolve', { hostname: a[0] })
+                .then(function (reply) {
+                    var ticket = reply && reply.ticket;
+                    if (ticket === undefined) {
+                        return Promise.reject(typedError(
+                            'resolve-failed',
+                            'chrome.dns.resolve'));
+                    }
+                    return new Promise(
+                        function (resolve, reject) {
+                            dnsResolveWaiters[String(ticket)] = {
+                                resolve: resolve,
+                                reject: reject
+                            };
+                        });
+                });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined,
+                                    e && e.message || String(e));
+                       });
+            return p;
+        };
+        installNs('dns', dnsNs);
+    }
+    installDns();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -4912,7 +4990,7 @@
         'management',
         'power', 'system', 'tts', 'enterprise', 'debugger',
         'processes', 'readingList', 'search', 'favicon', 'tabCapture',
-        'input', 'dns', 'documentScan', 'fileSystemProvider',
+        'input', 'documentScan', 'fileSystemProvider',
         'printing', 'vpnProvider', 'wallpaper', 'audio',
         'accessibilityFeatures', 'autofill', 'certificateProvider',
         'contentSettings', 'desktopCapture', 'displaySource',

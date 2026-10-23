@@ -128,6 +128,15 @@ class QWebEngineProfile;
 //                  coverage scopes urls and per-cookie domains;
 //                  onChanged rides the engine-store signal tap,
 //                  withheld per cookie-domain coverage
+//   dns.*        — MD29: resolve() alone (Chrome publishes no other
+//                  member): QHostInfo::lookupHost runs the system
+//                  resolver off-thread, so the invoke answers a
+//                  ticket and the verdict lands as an
+//                  '__arktos.dnsResolved' push — {addresses:[...]}
+//                  on success, a typed resolve-failed on resolver
+//                  error or the bounded wait expiring; 'dns' gates
+//                  the namespace like Chrome's declared-grant
+//                  requirement
 //   downloads.*  — MD24: a subset over DownloadManager's record
 //                  list — download() rides the manager's own policy
 //                  path (dlwpolicy verdict, save-as gate, external
@@ -415,6 +424,16 @@ private:
     // unservable rather than widened to a whole-store wipe.
     QJsonObject invokeBrowsingData(const QString &method,
                                    const QJsonObject &args);
+    // MD29: chrome.dns — 'dns' gates the namespace like Chrome's
+    // declared-grant requirement; resolve() is the only published
+    // member.  The lookup is deferred like downloads.download: the
+    // reply is a ticket and the real answer arrives on the
+    // '__arktos.dnsResolved' push once QHostInfo's off-thread
+    // resolver answers — {ticket,addresses} on success,
+    // {ticket,error:'resolve-failed'} on resolver error or the
+    // bounded wait expiring.
+    QJsonObject invokeDns(const QString &method,
+                          const QJsonObject &args);
     // MD23: chrome.cookies — reads over the RC15 persistent mirror
     // (the jar's on-disk shadow, fed by the engine's cookie signals;
     // the C++ jar's live mirror is the no-rust read path), writes go

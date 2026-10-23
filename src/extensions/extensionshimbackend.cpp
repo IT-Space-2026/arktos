@@ -51,6 +51,7 @@
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileiconprovider.h>
+#include <qhostinfo.h>
 #include <qimage.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
@@ -1375,6 +1376,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeTopSites(method, args);
     if (ns == QLatin1String("browsingData"))
         return invokeBrowsingData(method, args);
+    if (ns == QLatin1String("dns"))
+        return invokeDns(method, args);
     if (ns == QLatin1String("cookies"))
         return invokeCookies(method, args);
     if (ns == QLatin1String("downloads"))
@@ -5281,6 +5284,147 @@ QJsonObject ExtensionShimBackend::invokeBrowsingData(
     }
 
     return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.dns — MD29.  Chrome publishes resolve() alone (and the
+// namespace only exists on ChromeOS upstream — here it answers for
+// every hosted context under the declared 'dns' grant).  The system
+// resolver runs off-thread behind QHostInfo::lookupHost, so the
+// reply is deferred like downloads.download: the invoke answers a
+// ticket and the verdict arrives on '__arktos.dnsResolved' —
+// {ticket,addresses:[...]} on success, {ticket,error:'resolve-
+// failed'} when the resolver reports an error or the bounded wait
+// expires.  Only the calling extension sees the push (every other
+// context of it shares the ticket space anyway — EXT17 backends are
+// per-extension, not per-context).
+// -------------------------------------------------------------------
+
+struct DnsPending {
+    int ticket = 0;
+    QString extId;
+    QPointer<ExtensionShimBackend> backend;
+    int lookupId = -1;
+};
+
+QList<DnsPending> &dnsPendingList()
+{
+    static QList<DnsPending> list;
+    return list;
+}
+
+int &dnsTicketSeq()
+{
+    static int seq = 0;
+    return seq;
+}
+
+// The deferred dns.resolve answer — same discipline dlAnswerTicket
+// applies: the relay reaches the extension's registered contexts; a
+// bare backend with none (tests, mid-respawn) hears it on pushEvent.
+void dnsAnswerTicket(const DnsPending &pending, const QJsonObject &reply)
+{
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    runtime->deliverEvent(pending.extId,
+        QStringLiteral("__arktos.dnsResolved"), reply);
+    if (pending.backend && !runtime->hasRelayContext(pending.extId))
+        emit pending.backend->pushEvent(
+            QStringLiteral("__arktos.dnsResolved"), reply);
+}
+
+void dnsFinishTicket(int ticket, const QJsonObject &reply)
+{
+    QList<DnsPending> &list = dnsPendingList();
+    for (int i = 0; i < list.size(); ++i) {
+        if (list.at(i).ticket != ticket)
+            continue;
+        dnsAnswerTicket(list.takeAt(i), reply);
+        return;
+    }
+}
+
+QJsonObject ExtensionShimBackend::invokeDns(
+        const QString &method, const QJsonObject &args)
+{
+    // Chrome exposes the namespace only under the declared 'dns'
+    // grant — the bridge object answers a direct call from any code
+    // in the context, so the gate runs here too.
+    if (!manifestPermissions().contains(QLatin1String("dns")))
+        return errReply(QStringLiteral("no-permission"));
+
+    if (method != QLatin1String("resolve"))
+        return errReply(QStringLiteral("unimplemented"));
+
+    const QJsonValue hostnameValue =
+        args.value(QLatin1String("hostname"));
+    if (!hostnameValue.isString())
+        return errReply(QStringLiteral("invalid-argument"));
+    const QString hostname = hostnameValue.toString().trimmed();
+    // A name getaddrinfo cannot accept (empty, over the 253-byte DNS
+    // name bound) is the argument verdict — no resolver round-trip.
+    if (hostname.isEmpty()
+            || hostname.toUtf8().size() > 253)
+        return errReply(QStringLiteral("invalid-argument"));
+
+    QObject *context = QCoreApplication::instance();
+    if (!context)
+        // No event loop can ever deliver the lookup — refuse at the
+        // ticket rather than stranding the JS waiter.
+        return errReply(QStringLiteral("resolve-failed"));
+
+    const int ticket = ++dnsTicketSeq();
+    DnsPending pending;
+    pending.ticket = ticket;
+    pending.extId = m_extensionId;
+    pending.backend = this;
+    dnsPendingList().append(pending);
+
+    // The system resolver can wait out its own retry budget on a
+    // dead upstream — bound the ticket so the JS waiter cannot hang
+    // forever (the same bound downloads.download's ticket gets).
+    QTimer::singleShot(30000, context, [ticket]() {
+        QList<DnsPending> &list = dnsPendingList();
+        for (int i = 0; i < list.size(); ++i) {
+            if (list.at(i).ticket != ticket)
+                continue;
+            const DnsPending p = list.takeAt(i);
+            if (p.lookupId > 0)
+                QHostInfo::abortHostLookup(p.lookupId);
+            dnsAnswerTicket(p, QJsonObject{
+                {QStringLiteral("ticket"), ticket},
+                {QStringLiteral("error"),
+                 QStringLiteral("resolve-failed")},
+                {QStringLiteral("detail"),
+                 QStringLiteral("lookup timed out")}});
+            return;
+        }
+    });
+    pending.lookupId = QHostInfo::lookupHost(
+        hostname, context, [ticket](const QHostInfo &info) {
+            QJsonObject reply{{QStringLiteral("ticket"), ticket}};
+            if (info.error() == QHostInfo::NoError) {
+                QJsonArray addresses;
+                for (const QHostAddress &address : info.addresses())
+                    addresses.append(address.toString());
+                reply.insert(QStringLiteral("addresses"), addresses);
+            } else {
+                reply.insert(QStringLiteral("error"),
+                             QStringLiteral("resolve-failed"));
+                reply.insert(QStringLiteral("detail"),
+                             info.errorString());
+            }
+            dnsFinishTicket(ticket, reply);
+        });
+    // lookupHost ran synchronously only in the never-happens
+    // immediate-failure shape (id 0) — stamp the real id onto the
+    // pending row so the timeout above can abort the query.
+    for (DnsPending &p : dnsPendingList()) {
+        if (p.ticket == ticket)
+            p.lookupId = pending.lookupId;
+    }
+
+    return okReply(QJsonObject{{QStringLiteral("ticket"), ticket}});
 }
 
 // -------------------------------------------------------------------

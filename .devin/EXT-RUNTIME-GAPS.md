@@ -38,12 +38,11 @@ matching every member of the namespace (or a dotted sub-path such as
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
 # stores this tree already has.  They stay in this block — still
-# typed today — but are queued: dns -> MD29,
-# system -> MD30, privacy -> MD31,
+# typed today — but are queued: system -> MD30, privacy -> MD31,
 # userScripts -> MD32, fontSettings -> MD33.  Entries leave the
 # declared set only when the row lands the implementation (downloads
 # left with MD24, sessions with MD25, tabGroups with MD26,
-# topSites with MD27, browsingData with MD28).
+# topSites with MD27, browsingData with MD28, dns with MD29).
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
@@ -56,7 +55,6 @@ chrome.declarativeNetRequest.*: unsupported
 chrome.desktopCapture.*: unsupported
 chrome.devtools.*: unsupported
 chrome.displaySource.*: unsupported
-chrome.dns.*: unsupported
 chrome.documentScan.*: unsupported
 chrome.enterprise.*: unsupported
 chrome.favicon.*: unsupported
@@ -168,6 +166,18 @@ chrome.browsingData.*: no-permission
 chrome.browsingData.*: invalid-argument
 chrome.browsingData.*: unsupported
 chrome.browsingData.*: unimplemented
+# MD29: chrome.dns is served over QHostInfo — 'dns' gates the
+# namespace like Chrome's declared-grant requirement (no-permission
+# undeclared).  resolve is the only published member; the lookup is
+# deferred — the invoke answers a ticket and the verdict lands on
+# '__arktos.dnsResolved' as {addresses:[...]} or a typed failure.
+# The rest are the call's correct verdicts (missing/mistyped or
+# oversized hostname, unreachable members, resolver error or the
+# bounded wait expiring).
+chrome.dns.*: no-permission
+chrome.dns.*: invalid-argument
+chrome.dns.*: resolve-failed
+chrome.dns.*: unimplemented
 # MD23: chrome.cookies is served over the RC15 persistent mirror
 # (reads) + QWebEngineCookieStore live jar (writes land both).
 # 'cookies' gates the namespace; url-bearing ops additionally need

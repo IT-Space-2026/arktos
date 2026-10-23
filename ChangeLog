@@ -934,6 +934,11 @@ UI:
   Chrome data types the browser can actually clear. Data types the
   browser cannot remove selectively are reported as unsupported
   rather than silently skipped (MD28).
+- chrome.dns is live for extensions that declare the grant:
+  resolve() answers Chrome's DnsResolveInfo shape — {addresses:
+  [...]} — resolved through the system resolver off the UI thread;
+  a name that cannot resolve reports a typed failure instead of
+  hanging the extension (MD29).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

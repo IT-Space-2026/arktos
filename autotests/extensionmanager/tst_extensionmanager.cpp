@@ -123,6 +123,7 @@ private slots:
     void extensionTabGroups();
     void extensionTopSites();
     void extensionBrowsingData();
+    void extensionDns();
     void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
@@ -10589,6 +10590,147 @@ void tst_ExtensionManager::extensionBrowsingData()
     }
 
     QDir(dirB).removeRecursively();
+}
+
+// MD29 — chrome.dns over QHostInfo: resolve() is the only member,
+// 'dns' gates the namespace like Chrome's declared grant, and the
+// lookup is deferred — the invoke answers a ticket and the verdict
+// lands on the '__arktos.dnsResolved' push as {addresses:[...]} or
+// a typed resolve-failed.
+void tst_ExtensionManager::extensionDns()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extdns-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-dns\","
+                "\"version\":\"1.0\",\"permissions\":[\"dns\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0049"),
+        QStringLiteral("tst-dns"), dir);
+    QSignalSpy pushSpy(&backend, &ExtensionShimBackend::pushEvent);
+    auto dnsPushes = [&pushSpy]() {
+        QList<QJsonObject> out;
+        for (const QVariantList &args : pushSpy) {
+            if (args.size() >= 2
+                    && args.at(0).toString()
+                           == QLatin1String("__arktos.dnsResolved"))
+                out.append(args.at(1).toJsonObject());
+        }
+        return out;
+    };
+
+    // Argument verdicts before any ticket is minted.
+    QCOMPARE(backend.invoke(QStringLiteral("dns"),
+                            QStringLiteral("resolve"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("dns"), QStringLiteral("resolve"),
+                 QJsonObject{{QStringLiteral("hostname"), 42.0}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("dns"), QStringLiteral("resolve"),
+                 QJsonObject{{QStringLiteral("hostname"),
+                              QStringLiteral("")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("dns"), QStringLiteral("resolve"),
+                 QJsonObject{{QStringLiteral("hostname"),
+                              QString(254, QLatin1Char('a'))}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // resolve is the only published member — anything else is the
+    // typed unreachable-member verdict.
+    QCOMPARE(backend.invoke(QStringLiteral("dns"),
+                            QStringLiteral("flush"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // The happy path: 'localhost' resolves off /etc/hosts — no
+    // network needed — and the ticket lands a non-empty addresses
+    // list carrying a loopback address.
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("dns"), QStringLiteral("resolve"),
+        QJsonObject{{QStringLiteral("hostname"),
+                     QStringLiteral("localhost")}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const int ticket = reply.value(QLatin1String("result")).toObject()
+        .value(QLatin1String("ticket")).toInt();
+    QVERIFY(ticket > 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!dnsPushes().isEmpty(), 30000);
+    {
+        const QJsonObject body = dnsPushes().constLast();
+        QCOMPARE(body.value(QLatin1String("ticket")).toInt(), ticket);
+        QVERIFY(!body.contains(QLatin1String("error")));
+        const QJsonArray addresses =
+            body.value(QLatin1String("addresses")).toArray();
+        QVERIFY(!addresses.isEmpty());
+        bool loopback = false;
+        for (const QJsonValue &v : addresses) {
+            const QHostAddress address(v.toString());
+            loopback = loopback || address.isLoopback();
+        }
+        QVERIFY(loopback);
+    }
+
+    // The failure path: a name getaddrinfo cannot accept produces a
+    // typed resolve-failed on the same push channel — never a hang.
+    reply = backend.invoke(
+        QStringLiteral("dns"), QStringLiteral("resolve"),
+        QJsonObject{{QStringLiteral("hostname"),
+                     QStringLiteral("not a host")}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const int badTicket = reply.value(QLatin1String("result"))
+        .toObject().value(QLatin1String("ticket")).toInt();
+    QVERIFY(badTicket > 0);
+    QVERIFY(badTicket != ticket);
+    QTRY_VERIFY_WITH_TIMEOUT(dnsPushes().size() >= 2, 30000);
+    {
+        const QJsonObject body = dnsPushes().constLast();
+        QCOMPARE(body.value(QLatin1String("ticket")).toInt(),
+                 badTicket);
+        QCOMPARE(body.value(QLatin1String("error")).toString(),
+                 QStringLiteral("resolve-failed"));
+    }
+
+    // The manifest gate is per-context: a sibling backend without
+    // 'dns' hears no-permission.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extdnsb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-dns-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0050"),
+        QStringLiteral("tst-dns-b"), dirB);
+    QCOMPARE(backendB.invoke(
+                 QStringLiteral("dns"), QStringLiteral("resolve"),
+                 QJsonObject{{QStringLiteral("hostname"),
+                              QStringLiteral("localhost")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    QDir(dirB).removeRecursively();
+    QDir(dir).removeRecursively();
 }
 
 // MD18 — chrome.runtime lifecycle ops.  reload rides the manager's
