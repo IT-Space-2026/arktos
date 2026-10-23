@@ -91,6 +91,7 @@ private slots:
     void chromePageChurn();
     void relayPortChurn();
     void extensionShimBackend();
+    void extensionTabsOps();
     void extensionMessageRelay();
     void extensionChromeNavLock();
     void extensionEventSurfaces();
@@ -2827,6 +2828,289 @@ void tst_ExtensionManager::extensionShimBackend()
     QDir(BrowserPaths::dataFilePath(
         QStringLiteral("extstorage")) + QLatin1Char('/') + id)
         .removeRecursively();
+    QDir(dir).removeRecursively();
+}
+
+// MD10 — chrome.tabs core ops + state honesty.  A bare
+// ExtensionShimBackend drives every op against a real
+// BrowserMainWindow's strip: remove/reload/duplicate/highlight/
+// move/goBack/goForward/dispatch + the update() state setters, and
+// the tabObject fields Chrome reads (pinned/discarded/groupId/
+// mutedInfo/audible/autoDiscardable) answer real strip and page
+// state instead of constants.  Query filters select on the same
+// fields.  Everything is asserted through the bridge reply shape
+// ({ok,result} / {ok:false,error}) the shim consumes.
+void tst_ExtensionManager::extensionTabsOps()
+{
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exttabs-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-tabs\","
+                "\"version\":\"1.0\",\"permissions\":[\"tabs\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0003"),
+        QStringLiteral("tst-tabs"), dir);
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view0 = tw->webView(0);
+    QVERIFY(view0 && view0->page());
+    WebView *view1 = tw->makeNewTab(false);
+    WebView *view2 = tw->makeNewTab(false);
+    QVERIFY(view1 && view2);
+    QCOMPARE(tw->count(), 3);
+    // A committed url apiece — discard refuses the empty-page case
+    // and the ops deserve a real document underneath.  Wait on
+    // loadFinished spies: WebView::isLoading() is false before the
+    // load even starts, so a "not loading" poll is a no-op here.
+    QSignalSpy load0(view0->page(), &QWebEnginePage::loadFinished);
+    QSignalSpy load1(view1->page(), &QWebEnginePage::loadFinished);
+    QSignalSpy load2(view2->page(), &QWebEnginePage::loadFinished);
+    view0->load(QUrl(QStringLiteral("data:text/html,<title>t0</title>")));
+    view1->load(QUrl(QStringLiteral("data:text/html,<title>t1</title>")));
+    view2->load(QUrl(QStringLiteral("data:text/html,<title>t2</title>")));
+    QTRY_VERIFY_WITH_TIMEOUT(!load0.isEmpty() && !load1.isEmpty()
+                             && !load2.isEmpty(), 30000);
+
+    const int id0 = ExtensionShimBackend::tabIdFor(view0);
+    const int id1 = ExtensionShimBackend::tabIdFor(view1);
+    const int id2 = ExtensionShimBackend::tabIdFor(view2);
+    const int wid = ExtensionShimBackend::windowIdFor(window);
+    QVERIFY(id0 > 0 && id1 > 0 && id2 > 0 && wid > 0);
+
+    // --- state honesty ------------------------------------------------
+    // Fields Chrome reads answer real state: pinned/groupId start
+    // false/-1, then flip through real strip ops.
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), id0}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("pinned")).toBool(), false);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("groupId")).toInt(), -1);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("discarded")).toBool(), false);
+
+    // update({pinned:true}) rides setTabPinned — the strip shows it
+    // and the next get reports it.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), id0},
+                    {QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("pinned"), true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(tw->isTabPinned(0));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("pinned")).toBool(), true);
+
+    // A real group: the minted int answers a stable, non-(-1) id and
+    // query({groupId}) selects exactly the member.
+    const QString gid = tw->createTabGroup(2);
+    QVERIFY(!gid.isEmpty());
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), id2}});
+    const int chromeGid = reply.value(QLatin1String("result"))
+        .toObject().value(QLatin1String("groupId")).toInt(-1);
+    QVERIFY(chromeGid >= 0);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"),
+        QJsonObject{{QStringLiteral("query"),
+                     QJsonObject{{QStringLiteral("windowId"), wid},
+                                 {QStringLiteral("groupId"),
+                                  chromeGid}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+
+    // update({muted:true}) reaches the engine page — mutedInfo
+    // reports it and query({muted}) selects on it.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), id1},
+                    {QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("muted"), true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(view1->page()->isAudioMuted());
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"),
+        QJsonObject{{QStringLiteral("query"),
+                     QJsonObject{{QStringLiteral("windowId"), wid},
+                                 {QStringLiteral("muted"), true}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+
+    // --- discard + autoDiscardable ------------------------------------
+    // Sleeping IS Chrome's discarded state; discard on a background
+    // tab lands the sleep, the active tab answers Chrome's
+    // undefined (null result), and autoDiscardable:false wakes it.
+    tw->setCurrentIndex(0);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("discard"),
+        QJsonObject{{QStringLiteral("id"), id1}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(tw->isTabSleeping(1), 10000);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), id1}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("discarded")).toBool(), true);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"),
+        QJsonObject{{QStringLiteral("query"),
+                     QJsonObject{{QStringLiteral("windowId"), wid},
+                                 {QStringLiteral("discarded"), true}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+    // The active tab cannot be discarded — Chrome's answer is no tab.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("discard"),
+        QJsonObject{{QStringLiteral("id"), id0}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).isNull());
+    // autoDiscardable:false records the flag AND un-discards.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), id1},
+                    {QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("autoDiscardable"),
+                                  false}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(!tw->isTabSleeping(1), 10000);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("autoDiscardable")).toBool(),
+             false);
+
+    // --- duplicate / move / highlight ---------------------------------
+    // The duplicate lands right after its source, the move reorders
+    // the strip, highlight activates and reports the window.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("duplicate"),
+        QJsonObject{{QStringLiteral("id"), id2}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonObject dup = reply.value(QLatin1String("result"))
+        .toObject();
+    QVERIFY(dup.value(QLatin1String("id")).toInt() != id2);
+    QCOMPARE(tw->count(), 4);
+    // Chrome lands the duplicate right after its source.
+    QCOMPARE(dup.value(QLatin1String("index")).toInt(),
+             tw->webViewIndex(view2) + 1);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("move"),
+        QJsonObject{{QStringLiteral("ids"), QJsonArray{id1}},
+                    {QStringLiteral("index"), 0},
+                    {QStringLiteral("windowId"), wid}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("index")).toInt(), 0);
+    QCOMPARE(tw->webViewIndex(view1), 0);
+    // Multi-id move answers the array shape.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("move"),
+        QJsonObject{{QStringLiteral("ids"), QJsonArray{id1, id2}},
+                    {QStringLiteral("index"), 1},
+                    {QStringLiteral("windowId"), wid}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 2);
+    // Cross-window refusal classes stay typed.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("tabs"), QStringLiteral("move"),
+                 QJsonObject{{QStringLiteral("ids"), QJsonArray{id1}},
+                             {QStringLiteral("index"), 0},
+                             {QStringLiteral("windowId"), 424242}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-window"));
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("highlight"),
+        QJsonObject{{QStringLiteral("windowId"), wid},
+                    {QStringLiteral("indexes"), QJsonArray{2}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(tw->currentIndex(), 2);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("id")).toInt(), wid);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("tabs")).toArray().size(), 1);
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("tabs"), QStringLiteral("highlight"),
+                 QJsonObject{{QStringLiteral("windowId"), 424242},
+                             {QStringLiteral("indexes"),
+                              QJsonArray{0}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-window"));
+
+    // --- reload / goBack / goForward ----------------------------------
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("reload"),
+        QJsonObject{{QStringLiteral("id"), id0}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    // Two committed navigations make a real back entry — the ops
+    // then move the page through its history.
+    WebView *navTab = tw->webView(1);
+    QVERIFY(navTab);
+    const int navId = ExtensionShimBackend::tabIdFor(navTab);
+    QSignalSpy navSpy(navTab->page(), &QWebEnginePage::loadFinished);
+    navTab->load(QUrl(QStringLiteral("data:text/html,<title>n1</title>")));
+    QTRY_VERIFY_WITH_TIMEOUT(navSpy.count() >= 1, 30000);
+    navTab->load(QUrl(QStringLiteral("data:text/html,<title>n2</title>")));
+    QTRY_VERIFY_WITH_TIMEOUT(navSpy.count() >= 2, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        navTab->enginePage()->canGoBack(), 10000);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("goBack"),
+        QJsonObject{{QStringLiteral("id"), navId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        navTab->enginePage()->canGoForward(), 10000);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("goForward"),
+        QJsonObject{{QStringLiteral("id"), navId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    // A tab with no forward entry answers the typed refusal.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("goForward"),
+        QJsonObject{{QStringLiteral("id"), navId}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("no-history"));
+
+    // --- remove --------------------------------------------------------
+    const int before = tw->count();
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("remove"),
+        QJsonObject{{QStringLiteral("ids"), QJsonArray{id0}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(tw->count(), before - 1);
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("tabs"), QStringLiteral("remove"),
+                 QJsonObject{{QStringLiteral("ids"),
+                              QJsonArray{424242}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // windowType: only "normal" matches — every Arktos browser
+    // window reports it.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"),
+        QJsonObject{{QStringLiteral("query"),
+                     QJsonObject{{QStringLiteral("windowId"), wid},
+                                 {QStringLiteral("windowType"),
+                                  QStringLiteral("popup")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 0);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"),
+        QJsonObject{{QStringLiteral("query"),
+                     QJsonObject{{QStringLiteral("windowId"), wid},
+                                 {QStringLiteral("windowType"),
+                                  QStringLiteral("normal")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(),
+             tw->count());
+
+    // deleteLater, not close(): multiple open tabs trip the
+    // confirmClosingMultipleTabs QMessageBox — modal, unanswerable.
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QDir(dir).removeRecursively();
 }
 

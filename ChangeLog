@@ -765,6 +765,15 @@ UI:
   so Bitwarden shows "2026.9.3" while built-in components with no
   manifest on disk show an honest "—". When an update check finds a
   newer package the cell reads "1.0.0 → 2.0.0 available" (EXT09).
+- Extensions can now drive the real tab strip through chrome.tabs:
+  remove, reload, duplicate, move, highlight, goBack/goForward and
+  discard (which parks the tab into the same sleeping state the
+  memory-saver uses) all act on live tabs instead of answering a
+  typed stub, and the deprecated getAllInWindow/getSelected aliases
+  resolve through tabs.query. Tab objects and query filters report
+  actual state — pinned, audible, muted, discarded, autoDiscardable,
+  highlighted and group id — so extensions like Bitwarden that probe
+  tab state before acting see the truth (MD10).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

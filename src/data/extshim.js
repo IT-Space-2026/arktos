@@ -2376,6 +2376,115 @@
                        function (e) { answerCb(cb, undefined, e.message); });
             return p;
         };
+        // MD10 — the core op set.  Every member rides the real
+        // dispatch; the callback conventions match the query/get
+        // wrappers above (undefined + lastError on a typed failure).
+        tabsNs.remove = function (tabIds, cb) {
+            var ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+            var p = call('tabs', 'remove', { ids: ids });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        tabsNs.reload = function (tabId, reloadProperties, cb) {
+            if (typeof tabId === 'function') {
+                cb = tabId; tabId = null; reloadProperties = null;
+            } else if (typeof reloadProperties === 'function') {
+                cb = reloadProperties; reloadProperties = null;
+            }
+            var p = call('tabs', 'reload',
+                         { id: tabId,
+                           bypassCache: !!(reloadProperties
+                               && reloadProperties.bypassCache) });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        tabsNs.duplicate = function (tabId, cb) {
+            var p = call('tabs', 'duplicate', { id: tabId });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        tabsNs.highlight = function (highlightInfo, cb) {
+            var info = highlightInfo || {};
+            var p = call('tabs', 'highlight',
+                         { windowId: info.windowId,
+                           indexes: info.tabs });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        tabsNs.move = function (tabIds, moveProperties, cb) {
+            var info = moveProperties || {};
+            var ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+            var p = call('tabs', 'move',
+                         { ids: ids, index: info.index,
+                           windowId: info.windowId });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        tabsNs.goBack = function (tabId, cb) {
+            if (typeof tabId === 'function') { cb = tabId; tabId = null; }
+            var p = call('tabs', 'goBack', { id: tabId });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        tabsNs.goForward = function (tabId, cb) {
+            if (typeof tabId === 'function') { cb = tabId; tabId = null; }
+            var p = call('tabs', 'goForward', { id: tabId });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        tabsNs.discard = function (tabId, cb) {
+            if (typeof tabId === 'function') { cb = tabId; tabId = null; }
+            var p = call('tabs', 'discard', { id: tabId })
+                .then(function (v) {
+                    // Chrome hands back undefined for a tab it could
+                    // not discard — the backend's null is that answer.
+                    return (v === null) ? undefined : v;
+                });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        // Deprecated Chrome spellings — aliases over the query
+        // surface, kept for MV2-era callers.
+        tabsNs.getAllInWindow = function (windowId, cb) {
+            var p = call('tabs', 'query',
+                         { query: { windowId:
+                             (windowId === undefined
+                              || windowId === null) ? -2 : windowId } });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, [], e.message); });
+            return p;
+        };
+        tabsNs.getSelected = function (windowId, cb) {
+            var p = call('tabs', 'query',
+                         { query: { active: true,
+                             windowId:
+                             (windowId === undefined
+                              || windowId === null) ? -2 : windowId } })
+                .then(function (v) {
+                    return (v && v.length) ? v[0] : undefined;
+                });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
         tabsNs.sendMessage = function (tabId, msg, opts, cb) {
             if (typeof opts === 'function') {
                 cb = opts;

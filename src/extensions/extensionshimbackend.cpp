@@ -22,12 +22,14 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserpaths.h"
+#include "engineinterface.h"
 #include "extensionbackgroundhost.h"
 #include "extensioncommands.h"
 #include "extensioneventhub.h"
 #include "extensionidlewatcher.h"
 #include "extensionmanager.h"
 #include "extensionnotificationcenter.h"
+#include "tabbar.h"
 #include "tabwidget.h"
 #include "webview.h"
 
@@ -131,6 +133,67 @@ BrowserMainWindow *currentWindow()
             fallback = window;
     }
     return fallback;
+}
+
+// One resolved tab — every tabs.* op lands on this four-tuple so a
+// mid-dispatch strip reorder never confuses (window, index, view)
+// again.  index is the strip position at resolve time; ops that
+// move things re-resolve through webViewIndex().
+struct LocatedTab {
+    BrowserMainWindow *window = nullptr;
+    TabWidget *tabs = nullptr;
+    WebView *view = nullptr;
+    int index = -1;
+    int windowId = -1;
+};
+
+// Resolve a chrome.tabs tabId to the live strip position — ids
+// minted by idFor() only describe trackable tabs (the same set
+// query enumerates).  tabId < 0 names the current window's current
+// tab, the default Chrome gives ops called without one.
+LocatedTab locateTab(int tabId)
+{
+    BrowserMainWindow *current = currentWindow();
+    for (BrowserMainWindow *window
+         : ExtensionEventHub::browsingWindows()) {
+        if (!window || !window->tabWidget())
+            continue;
+        TabWidget *tw = window->tabWidget();
+        const bool wantCurrent = tabId < 0 && window == current;
+        for (int i = 0; i < tw->count(); ++i) {
+            WebView *view = tw->webView(i);
+            if (!ExtensionEventHub::trackable(view))
+                continue;
+            if (tabId < 0 ? (wantCurrent && i == tw->currentIndex())
+                          : idFor(view) == tabId) {
+                LocatedTab out;
+                out.window = window;
+                out.tabs = tw;
+                out.view = view;
+                out.index = i;
+                out.windowId = idFor(window);
+                return out;
+            }
+        }
+    }
+    return LocatedTab();
+}
+
+// chrome.tabs reports groupId as an int; the strip keys group
+// membership on per-window strings.  Mint a session-stable int per
+// (window, group) pair — Chrome's -1 stays "no group".
+int chromeGroupId(int windowId, const QString &groupId)
+{
+    if (groupId.isEmpty())
+        return -1;
+    static QHash<QString, int> ids;
+    static int next = 1;
+    const QString key = QString::number(windowId)
+        + QLatin1Char('/') + groupId;
+    int &slot = ids[key];
+    if (!slot)
+        slot = next++;
+    return slot;
 }
 
 } // namespace
@@ -618,21 +681,42 @@ QJsonObject ExtensionShimBackend::tabObject(WebView *view, int index,
     tab.insert(QStringLiteral("index"), index);
     tab.insert(QStringLiteral("windowId"), windowId);
     QWebEnginePage *page = view ? view->page() : nullptr;
-    const bool active = view && view->tabWidget()
-        && view->tabWidget()->currentWebView() == view;
+    TabWidget *tw = view ? view->tabWidget() : nullptr;
+    Engine::Page *engine = view ? view->enginePage() : nullptr;
+    const bool active = view && tw
+        && tw->currentWebView() == view;
     tab.insert(QStringLiteral("active"), active);
+    // The strip has no multi-select, so Chrome's highlighted set
+    // collapses to the one active tab.
     tab.insert(QStringLiteral("highlighted"), active);
     tab.insert(QStringLiteral("selected"), active);
-    tab.insert(QStringLiteral("pinned"), false);
-    tab.insert(QStringLiteral("audible"), false);
-    tab.insert(QStringLiteral("discarded"), false);
-    tab.insert(QStringLiteral("autoDiscardable"), true);
-    tab.insert(QStringLiteral("groupId"), -1);
+    // MD10 honesty — real strip/page state instead of constants:
+    // pinned and group membership come off the TabWidget records,
+    // discarded maps the SLEEP01 sleeping state (Chrome's name for
+    // the same renderer release), audible/muted come off the live
+    // page, and autoDiscardable reads the flag tabs.update's setter
+    // plants on the view (Chrome's default is true).
+    tab.insert(QStringLiteral("pinned"),
+               tw && tw->isTabPinned(index));
+    tab.insert(QStringLiteral("audible"),
+               engine && engine->recentlyAudible());
+    tab.insert(QStringLiteral("discarded"),
+               (tw && tw->isTabSleeping(index))
+                   || (engine && engine->lifecycleState()
+                           == Engine::Page::LifecycleState::Discarded));
+    const QVariant autoDiscard =
+        view ? view->property("arktosExtAutoDiscardable") : QVariant();
+    tab.insert(QStringLiteral("autoDiscardable"),
+               !autoDiscard.isValid() || autoDiscard.toBool());
+    tab.insert(QStringLiteral("groupId"),
+               tw ? chromeGroupId(windowId, tw->tabGroupId(index))
+                  : -1);
     tab.insert(QStringLiteral("incognito"),
                page && page->profile()
                    && page->profile()->isOffTheRecord());
     QJsonObject muted;
-    muted.insert(QStringLiteral("muted"), false);
+    muted.insert(QStringLiteral("muted"),
+                 page && page->isAudioMuted());
     tab.insert(QStringLiteral("mutedInfo"), muted);
     tab.insert(QStringLiteral("url"),
                view ? view->url().toString() : QString());
@@ -695,6 +779,13 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
             if (q.value(QStringLiteral("lastFocusedWindow")).toBool()
                     && wid != currentWid)
                 continue;
+            // Window-scoped filter — every Arktos browser window is
+            // "normal"; a query for popup/panel/app/devtools matches
+            // nothing rather than mislabeling the surface.
+            if (q.contains(QStringLiteral("windowType"))
+                    && q.value(QStringLiteral("windowType")).toString()
+                           != QLatin1String("normal"))
+                continue;
             TabWidget *tw = window->tabWidget();
             if (!tw)
                 continue;
@@ -705,10 +796,36 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
                 if (!ExtensionEventHub::trackable(view))
                     continue;
                 QJsonObject tab = tabObject(view, i, wid);
-                if (q.contains(QStringLiteral("active"))
-                        && q.value(QStringLiteral("active")).toBool()
-                               != tab.value(QStringLiteral("active"))
-                                   .toBool())
+                // Boolean state filters — Chrome's query keys map
+                // one-to-one onto the tab object fields now that they
+                // carry real state ('muted' reads mutedInfo.muted).
+                const auto boolFilter = [&q, &tab](
+                        const QString &key, const QJsonValue &actual) {
+                    return !q.contains(key)
+                        || q.value(key).toBool() == actual.toBool();
+                };
+                if (!boolFilter(QStringLiteral("active"),
+                                tab.value(QStringLiteral("active")))
+                        || !boolFilter(QStringLiteral("highlighted"),
+                                tab.value(QStringLiteral("highlighted")))
+                        || !boolFilter(QStringLiteral("pinned"),
+                                tab.value(QStringLiteral("pinned")))
+                        || !boolFilter(QStringLiteral("audible"),
+                                tab.value(QStringLiteral("audible")))
+                        || !boolFilter(QStringLiteral("discarded"),
+                                tab.value(QStringLiteral("discarded")))
+                        || !boolFilter(QStringLiteral("autoDiscardable"),
+                                tab.value(QStringLiteral("autoDiscardable")))
+                        || !boolFilter(QStringLiteral("muted"),
+                                tab.value(QStringLiteral("mutedInfo"))
+                                    .toObject()
+                                    .value(QStringLiteral("muted"))))
+                    continue;
+                if (q.contains(QStringLiteral("groupId"))
+                        && int(q.value(QStringLiteral("groupId"))
+                                   .toDouble(-1))
+                               != tab.value(QStringLiteral("groupId"))
+                                      .toInt(-2))
                     continue;
                 if (q.contains(QStringLiteral("index"))
                         && int(q.value(QStringLiteral("index"))
@@ -878,10 +995,300 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
             if (!url.isEmpty())
                 target->loadUrl(url);
         }
+        if (props.contains(QStringLiteral("pinned")))
+            targetWindow->tabWidget()->setTabPinned(
+                targetIndex,
+                props.value(QStringLiteral("pinned")).toBool());
+        if (props.contains(QStringLiteral("muted"))
+                && target->page())
+            target->page()->setAudioMuted(
+                props.value(QStringLiteral("muted")).toBool());
+        if (props.contains(QStringLiteral("autoDiscardable"))) {
+            const bool on =
+                props.value(QStringLiteral("autoDiscardable")).toBool();
+            target->setProperty("arktosExtAutoDiscardable", on);
+            // Chrome: autoDiscardable:false un-discards the tab.
+            if (!on)
+                targetWindow->tabWidget()->wakeTab(targetIndex);
+        }
         if (props.value(QStringLiteral("active")).toBool())
             targetWindow->tabWidget()->setCurrentIndex(targetIndex);
+        // setTabPinned slides the tab to the pinned-block edge — the
+        // captured index is stale once a pin/unpin landed.
+        const int replyIndex =
+            targetWindow->tabWidget()->webViewIndex(target);
         return okReply(shapedTab(
-            tabObject(target, targetIndex, idFor(targetWindow))));
+            tabObject(target, replyIndex, idFor(targetWindow))));
+    }
+    if (method == QLatin1String("remove")) {
+        // Chrome accepts one id or an array — resolve the whole set
+        // first so a bogus id refuses the batch before any tab dies.
+        // A missing/null argument is a call error, never "the
+        // current tab" (unlike the optional-id ops below).
+        const QJsonValue idv = args.value(QStringLiteral("ids"));
+        if (!idv.isDouble() && !idv.isArray())
+            return errReply(QStringLiteral("invalid-argument"));
+        QList<int> ids;
+        if (idv.isArray()) {
+            const QJsonArray arr = idv.toArray();
+            for (const QJsonValue &v : arr)
+                ids.append(int(v.toDouble(-1)));
+        } else {
+            ids.append(int(idv.toDouble(-1)));
+        }
+        QList<LocatedTab> targets;
+        for (const int id : ids) {
+            const LocatedTab t = id > 0 ? locateTab(id) : LocatedTab();
+            if (!t.view)
+                return errReply(QStringLiteral("not-found"));
+            targets.append(t);
+        }
+        for (const LocatedTab &t : targets) {
+            // Strip indexes shift as earlier closes land — re-resolve
+            // each view's live position right before its close.
+            const int at = t.tabs->webViewIndex(t.view);
+            if (at >= 0)
+                t.tabs->closeTab(at);
+        }
+        return okReply();
+    }
+    if (method == QLatin1String("reload")) {
+        const LocatedTab t = locateTab(
+            int(args.value(QStringLiteral("id")).toDouble(-1)));
+        if (!t.view)
+            return errReply(QStringLiteral("not-found"));
+        if (t.tabs->isTabSleeping(t.index)) {
+            // A discarded page has no live document to reload —
+            // waking rebuilds the WebContents on the current entry,
+            // which IS the reload Chrome performs there.
+            t.tabs->wakeTab(t.index);
+        } else if (args.value(QStringLiteral("bypassCache")).toBool()
+                   && t.view->enginePage()) {
+            QAction *bypass = t.view->enginePage()->action(
+                Engine::StandardAction::ReloadAndBypassCache);
+            if (bypass)
+                bypass->trigger();
+            else
+                t.tabs->reloadTab(t.index);
+        } else {
+            t.tabs->reloadTab(t.index);
+        }
+        return okReply();
+    }
+    if (method == QLatin1String("duplicate")) {
+        const QJsonValue idv = args.value(QStringLiteral("id"));
+        if (!idv.isDouble())
+            return errReply(QStringLiteral("invalid-argument"));
+        const LocatedTab t = locateTab(int(idv.toDouble(-1)));
+        if (!t.view)
+            return errReply(QStringLiteral("not-found"));
+        // cloneTab() keeps the copy in the source's group and private
+        // context but appends it — Chrome lands the duplicate right
+        // after the source, so slide it there.
+        QSet<WebView *> before;
+        for (int i = 0; i < t.tabs->count(); ++i)
+            before.insert(t.tabs->webView(i));
+        t.tabs->cloneTab(t.index);
+        WebView *copy = nullptr;
+        for (int i = 0; i < t.tabs->count(); ++i) {
+            WebView *v = t.tabs->webView(i);
+            if (v && !before.contains(v)) {
+                copy = v;
+                break;
+            }
+        }
+        if (!copy)
+            return errReply(QStringLiteral("no-tab"));
+        const int at = t.tabs->webViewIndex(copy);
+        if (at > t.index + 1)
+            t.tabs->tabBar()->moveTab(at, t.index + 1);
+        return okReply(shapedTab(tabObject(
+            copy, t.tabs->webViewIndex(copy), t.windowId)));
+    }
+    if (method == QLatin1String("highlight")) {
+        // Chrome takes tab INDEXES inside a window, not ids — and
+        // multi-selects the rest.  The strip has no multi-select, so
+        // the first listed tab activates and the reply reports the
+        // one highlight that actually landed.
+        int wanted = int(
+            args.value(QStringLiteral("windowId")).toDouble(-2));
+        BrowserMainWindow *target = nullptr;
+        if (wanted == -2) {
+            target = currentWindow();
+        } else {
+            for (BrowserMainWindow *w : windows) {
+                if (w && idFor(w) == wanted) {
+                    target = w;
+                    break;
+                }
+            }
+        }
+        if (!target || !target->tabWidget())
+            return errReply(QStringLiteral("no-window"));
+        TabWidget *tw = target->tabWidget();
+        const QJsonValue tv = args.value(QStringLiteral("indexes"));
+        if (!tv.isDouble() && !tv.isArray())
+            return errReply(QStringLiteral("invalid-argument"));
+        QList<int> indexes;
+        if (tv.isArray()) {
+            const QJsonArray arr = tv.toArray();
+            for (const QJsonValue &v : arr)
+                indexes.append(int(v.toDouble(-1)));
+        } else {
+            indexes.append(int(tv.toDouble(-1)));
+        }
+        int activated = -1;
+        for (const int i : indexes) {
+            if (i >= 0 && i < tw->count()
+                    && ExtensionEventHub::trackable(tw->webView(i))) {
+                tw->setCurrentIndex(i);
+                activated = i;
+                break;
+            }
+        }
+        if (activated < 0)
+            return errReply(QStringLiteral("not-found"));
+        QJsonObject win = windowObject(target);
+        win.insert(QStringLiteral("tabs"),
+                   QJsonArray{shapedTab(tabObject(
+                       tw->webView(activated), activated,
+                       idFor(target)))});
+        return okReply(win);
+    }
+    if (method == QLatin1String("move")) {
+        const QJsonValue idv = args.value(QStringLiteral("ids"));
+        if (!idv.isDouble() && !idv.isArray())
+            return errReply(QStringLiteral("invalid-argument"));
+        QList<int> ids;
+        if (idv.isArray()) {
+            const QJsonArray arr = idv.toArray();
+            for (const QJsonValue &v : arr)
+                ids.append(int(v.toDouble(-1)));
+        } else {
+            ids.append(int(idv.toDouble(-1)));
+        }
+        if (ids.isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        const int to =
+            int(args.value(QStringLiteral("index")).toDouble(-1));
+        int wanted = int(
+            args.value(QStringLiteral("windowId")).toDouble(-2));
+        BrowserMainWindow *target = nullptr;
+        if (wanted == -2) {
+            // No windowId: same-strip reorder — the destination is
+            // the moved tab's own window.
+            const LocatedTab first = locateTab(ids.first());
+            if (!first.view)
+                return errReply(QStringLiteral("not-found"));
+            target = first.window;
+        } else {
+            for (BrowserMainWindow *w : windows) {
+                if (w && idFor(w) == wanted) {
+                    target = w;
+                    break;
+                }
+            }
+            if (!target)
+                return errReply(QStringLiteral("no-window"));
+        }
+        if (!target || !target->tabWidget())
+            return errReply(QStringLiteral("no-window"));
+        TabWidget *dst = target->tabWidget();
+        QJsonArray moved;
+        for (const int id : ids) {
+            // Re-resolve per tab — earlier moves shift indexes.
+            const LocatedTab t =
+                id > 0 ? locateTab(id) : LocatedTab();
+            if (!t.view)
+                return errReply(QStringLiteral("not-found"));
+            const int at = t.tabs->webViewIndex(t.view);
+            if (at < 0)
+                return errReply(QStringLiteral("not-found"));
+            const int pos = moved.size();
+            if (t.tabs == dst) {
+                // Same-strip reorder — the bar's moveTab rides the
+                // tabMoved bookkeeping (location bars, group
+                // normalize, pin-boundary conversion).
+                const int dstIndex = to < 0
+                    ? dst->count() - 1
+                    : qBound(0, to + pos, dst->count() - 1);
+                if (dstIndex != at)
+                    t.tabs->tabBar()->moveTab(at, dstIndex);
+            } else {
+                const int dstIndex =
+                    to < 0 ? -1 : to + pos;
+                if (!t.tabs->moveTabTo(at, dst, dstIndex))
+                    return errReply(QStringLiteral("move-refused"));
+            }
+            // The reply reports the landing position — for a
+            // cross-window move the view's strip changed entirely.
+            TabWidget *landed = t.view->tabWidget();
+            const int landedAt =
+                landed ? landed->webViewIndex(t.view) : -1;
+            moved.append(shapedTab(tabObject(
+                t.view, landedAt, idFor(target))));
+        }
+        return okReply(ids.size() == 1
+            ? moved.at(0) : QJsonValue(moved));
+    }
+    if (method == QLatin1String("goBack")
+            || method == QLatin1String("goForward")) {
+        const LocatedTab t = locateTab(
+            int(args.value(QStringLiteral("id")).toDouble(-1)));
+        Engine::Page *page = t.view ? t.view->enginePage() : nullptr;
+        if (!page)
+            return errReply(QStringLiteral("not-found"));
+        const bool back = method == QLatin1String("goBack");
+        if (back ? !page->canGoBack() : !page->canGoForward())
+            return errReply(QStringLiteral("no-history"));
+        if (back)
+            page->back();
+        else
+            page->forward();
+        return okReply();
+    }
+    if (method == QLatin1String("discard")) {
+        const QJsonValue idv = args.value(QStringLiteral("id"));
+        if (idv.isUndefined() || idv.isNull()) {
+            // No id — Chrome picks the least-important discardable
+            // tab.  The honest subset: the first background tab the
+            // sleep path would actually take (the current tab, empty
+            // pages and sleep-in-flight entries are never taken).
+            BrowserMainWindow *current = currentWindow();
+            TabWidget *tw = current ? current->tabWidget() : nullptr;
+            if (!tw)
+                return okReply(QJsonValue(QJsonValue::Null));
+            for (int i = 0; i < tw->count(); ++i) {
+                WebView *view = tw->webView(i);
+                if (i == tw->currentIndex()
+                        || !ExtensionEventHub::trackable(view)
+                        || tw->isTabSleeping(i)
+                        || view->url().isEmpty())
+                    continue;
+                tw->sleepTab(i);
+                return okReply(shapedTab(
+                    tabObject(view, i, idFor(current))));
+            }
+            return okReply(QJsonValue(QJsonValue::Null));
+        }
+        const LocatedTab t = locateTab(int(idv.toDouble(-1)));
+        if (!t.view)
+            return errReply(QStringLiteral("not-found"));
+        // An already-discarded tab answers its state again (Chrome
+        // returns the tab); one the sleep path cannot take — the
+        // active tab, an empty page — answers Chrome's undefined.
+        if (t.tabs->isTabSleeping(t.index))
+            return okReply(shapedTab(
+                tabObject(t.view, t.index, t.windowId)));
+        if (t.index == t.tabs->currentIndex()
+                || t.view->url().isEmpty())
+            return okReply(QJsonValue(QJsonValue::Null));
+        t.tabs->sleepTab(t.index);
+        // The discard commits after the async scroll/form capture —
+        // the reply's tab reflects the request landing, and a dirty
+        // form can still veto the drop itself.
+        return okReply(shapedTab(
+            tabObject(t.view, t.index, t.windowId)));
     }
     return errReply(QStringLiteral("unimplemented"));
 }
