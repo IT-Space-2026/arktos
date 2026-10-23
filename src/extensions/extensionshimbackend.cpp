@@ -51,6 +51,7 @@
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileiconprovider.h>
+#include <qguiapplication.h>
 #include <qhostinfo.h>
 #include <qimage.h>
 #include <qjsonarray.h>
@@ -60,11 +61,18 @@
 #include <qpointer.h>
 #include <qregularexpression.h>
 #include <qsavefile.h>
+#include <qscreen.h>
 #include <qset.h>
+#include <qstorageinfo.h>
 #include <qstyle.h>
 #include <qsysinfo.h>
+#include <qthread.h>
 #include <qtimer.h>
 #include <qvariant.h>
+
+#if defined(Q_OS_UNIX)
+#include <unistd.h>
+#endif
 
 #include <qnetworkcookie.h>
 #include <qwebenginecookiestore.h>
@@ -1378,6 +1386,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeBrowsingData(method, args);
     if (ns == QLatin1String("dns"))
         return invokeDns(method, args);
+    if (ns == QLatin1String("system"))
+        return invokeSystem(method, args);
     if (ns == QLatin1String("cookies"))
         return invokeCookies(method, args);
     if (ns == QLatin1String("downloads"))
@@ -5425,6 +5435,381 @@ QJsonObject ExtensionShimBackend::invokeDns(
     }
 
     return okReply(QJsonObject{{QStringLiteral("ticket"), ticket}});
+}
+
+// -------------------------------------------------------------------
+// chrome.system — MD30.  Chrome's honest-machine-facts namespace.
+// Each sub-namespace gates on its own 'system.<sub>' declared grant
+// like Chrome (system.memory/cpu/display/storage/...) — the gate
+// runs BEFORE the surface check so an extension that declares a
+// grant for a sub Arktos cannot serve (network, powerSource, the
+// ChromeOS-only surfaces) hears 'unsupported' rather than
+// 'no-permission': the grant was honored, the surface is missing.
+// Every answer is measured, never faked: memory rides
+// /proc/meminfo with a sysconf fallback, cpu rides QSysInfo +
+// /proc/cpuinfo + /proc/stat per-core jiffies, display enumerates
+// the live QScreen list, storage answers QStorageInfo on the
+// volumes that actually hold profile state.  Members Chrome
+// publishes that have no Arktos surface (storage.ejectDevice, the
+// ChromeOS-only display mutators) keep typed 'unsupported'.
+// -------------------------------------------------------------------
+
+// MemTotal/MemAvailable in bytes — /proc/meminfo on Linux, the
+// sysconf page counters elsewhere on POSIX.  -1 = not measurable;
+// the caller refuses rather than reporting a fake capacity.
+static void systemMemoryBytes(qint64 *total, qint64 *available)
+{
+    *total = -1;
+    *available = -1;
+#if defined(Q_OS_LINUX)
+    QFile file(QStringLiteral("/proc/meminfo"));
+    if (file.open(QIODevice::ReadOnly)) {
+        const QList<QByteArray> lines = file.readAll().split('\n');
+        for (const QByteArray &line : lines) {
+            const int colon = line.indexOf(':');
+            if (colon < 0)
+                continue;
+            const QByteArray key = line.left(colon).trimmed();
+            if (key != "MemTotal" && key != "MemAvailable")
+                continue;
+            // "  16384000 kB" — the number is the first field.
+            const qint64 kb = line.mid(colon + 1).simplified()
+                .split(' ').value(0).toLongLong();
+            if (key == "MemTotal")
+                *total = kb * 1024;
+            else
+                *available = kb * 1024;
+        }
+    }
+#endif
+    if (*total < 0) {
+#if defined(Q_OS_UNIX)
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        const long pages = sysconf(_SC_PHYS_PAGES);
+        const long freePages = sysconf(_SC_AVPHYS_PAGES);
+        if (pageSize > 0 && pages > 0)
+            *total = qint64(pages) * pageSize;
+        if (pageSize > 0 && freePages >= 0)
+            *available = qint64(freePages) * pageSize;
+#endif
+    }
+}
+
+// system.cpu.getInfo — Chrome's CpuInfo shape, every field measured:
+// archName mapped onto Chrome's vocabulary (unrecognized spellings
+// pass through raw — a real name is more honest than claiming
+// 'x86'), modelName/features off /proc/cpuinfo, numOfProcessors off
+// the scheduler's view, processors off /proc/stat's per-core
+// cumulative jiffies converted to seconds.  A build with no way to
+// measure per-core time answers an empty processors array — Chrome's
+// shape calls for one entry per core, but a fake zero row is worse
+// than a missing row.
+static QJsonObject systemCpuJson()
+{
+    const QString arch = QSysInfo::currentCpuArchitecture();
+    QString archName;
+    if (arch == QLatin1String("x86_64")
+            || arch == QLatin1String("amd64"))
+        archName = QStringLiteral("x86_64");
+    else if (arch == QLatin1String("aarch64")
+             || arch == QLatin1String("arm64"))
+        archName = QStringLiteral("arm64");
+    else if (arch.startsWith(QLatin1String("arm")))
+        archName = QStringLiteral("arm");
+    else if (arch.startsWith(QLatin1String("mips64")))
+        archName = QStringLiteral("mips64");
+    else if (arch.startsWith(QLatin1String("mips")))
+        archName = QStringLiteral("mips");
+    else if (arch.startsWith(QLatin1String("i"))
+             && arch.endsWith(QLatin1String("86")))
+        archName = QStringLiteral("x86");
+    else
+        archName = arch;   // honest passthrough, never a claim
+
+    QJsonObject info{{QStringLiteral("archName"), archName}};
+
+#if defined(Q_OS_LINUX)
+    QString modelName;
+    QJsonArray features;
+    QFile cpuinfo(QStringLiteral("/proc/cpuinfo"));
+    if (cpuinfo.open(QIODevice::ReadOnly)) {
+        const QList<QByteArray> lines = cpuinfo.readAll().split('\n');
+        for (const QByteArray &line : lines) {
+            const int colon = line.indexOf(':');
+            if (colon < 0)
+                continue;
+            const QByteArray key = line.left(colon).trimmed();
+            const QByteArray value = line.mid(colon + 1).trimmed();
+            if (modelName.isEmpty() && key == "model name")
+                modelName = QString::fromLocal8Bit(value);
+            if (features.isEmpty()
+                    && (key == "flags" || key == "Features")) {
+                const QList<QByteArray> flags =
+                    value.simplified().split(' ');
+                for (const QByteArray &flag : flags) {
+                    if (!flag.isEmpty())
+                        features.append(QString::fromLocal8Bit(flag));
+                }
+            }
+        }
+    }
+    info.insert(QStringLiteral("modelName"), modelName);
+    info.insert(QStringLiteral("features"), features);
+#else
+    info.insert(QStringLiteral("modelName"), QString());
+    info.insert(QStringLiteral("features"), QJsonArray());
+#endif
+
+    int numOfProcessors = QThread::idealThreadCount();
+    if (numOfProcessors <= 0)
+        numOfProcessors = 1;
+    info.insert(QStringLiteral("numOfProcessors"), numOfProcessors);
+
+    QJsonArray processors;
+#if defined(Q_OS_LINUX)
+    // /proc/stat cpuN rows carry cumulative jiffies per state;
+    // Chrome wants seconds, so convert on the clock tick.  The
+    // field mapping mirrors Chrome's own accounting: user =
+    // user+nice, kernel = system+irq+softirq, idle = idle+iowait,
+    // total = every measured column (guest time is already folded
+    // into user/nice by the kernel, so it is not summed again).
+    long ticksPerSec = 100;
+#if defined(Q_OS_UNIX)
+    const long confTicks = sysconf(_SC_CLK_TCK);
+    if (confTicks > 0)
+        ticksPerSec = confTicks;
+#endif
+    QFile stat(QStringLiteral("/proc/stat"));
+    if (stat.open(QIODevice::ReadOnly)) {
+        const QList<QByteArray> lines = stat.readAll().split('\n');
+        for (const QByteArray &line : lines) {
+            // "cpu0 123 0 456 ..." — the aggregate "cpu " row is
+            // excluded; per-core rows only.
+            if (!line.startsWith("cpu") || line.startsWith("cpu "))
+                continue;
+            const QList<QByteArray> fields =
+                line.mid(3).simplified().split(' ');
+            if (fields.size() < 4)
+                continue;
+            double columns[8] = {};
+            for (int i = 0; i < fields.size() && i < 8; ++i)
+                columns[i] = double(fields.at(i).toLongLong())
+                    / double(ticksPerSec);
+            double total = 0;
+            for (int i = 0; i < fields.size() && i < 8; ++i)
+                total += columns[i];
+            processors.append(QJsonObject{
+                {QStringLiteral("usage"), QJsonObject{
+                    {QStringLiteral("user"),
+                     columns[0] + columns[1]},
+                    {QStringLiteral("kernel"),
+                     columns[2] + columns[5] + columns[6]},
+                    {QStringLiteral("idle"),
+                     columns[3] + columns[4]},
+                    {QStringLiteral("total"), total}}}});
+        }
+    }
+#endif
+    info.insert(QStringLiteral("processors"), processors);
+    return info;
+}
+
+// system.display.getInfo — the live QScreen list projected onto
+// Chrome's DisplayInfo.  ids prefer the panel's serial number and
+// fall back to its name so they stay stable across calls;
+// bounds/workArea ride geometry()/availableGeometry(), rotation is
+// the real orientation delta.  isInternal is the honest connector-
+// name heuristic (eDP/LVDS/DSI are the spellings display servers
+// hand internal panels) — nothing deeper exists below the platform
+// plugins.  A screen reporting bounds identical to an
+// already-emitted one IS the mirror: mirroringSourceId names it.
+static QJsonArray systemDisplayList()
+{
+    QJsonArray displays;
+    QScreen *primary = QGuiApplication::primaryScreen();
+    const QList<QScreen *> screens = QGuiApplication::screens();
+    for (QScreen *screen : screens) {
+        if (!screen)
+            continue;
+        const QString name = screen->name();
+        QString id = screen->serialNumber();
+        if (id.isEmpty())
+            id = name;
+        if (id.isEmpty())
+            id = QString::number(displays.size() + 1);
+        const QRect bounds = screen->geometry();
+        const QRect work = screen->availableGeometry();
+        QJsonObject info{
+            {QStringLiteral("id"), id},
+            {QStringLiteral("name"), name},
+            {QStringLiteral("isPrimary"), screen == primary},
+            {QStringLiteral("isInternal"),
+             name.startsWith(QLatin1String("eDP"))
+                 || name.startsWith(QLatin1String("LVDS"))
+                 || name.startsWith(QLatin1String("DSI"))},
+            {QStringLiteral("isEnabled"), true},
+            {QStringLiteral("rotation"),
+             screen->angleBetween(screen->primaryOrientation(),
+                                  screen->orientation())},
+            {QStringLiteral("dpiX"), screen->logicalDotsPerInchX()},
+            {QStringLiteral("dpiY"), screen->logicalDotsPerInchY()},
+            {QStringLiteral("bounds"), QJsonObject{
+                {QStringLiteral("left"), bounds.x()},
+                {QStringLiteral("top"), bounds.y()},
+                {QStringLiteral("width"), bounds.width()},
+                {QStringLiteral("height"), bounds.height()}}},
+            {QStringLiteral("workArea"), QJsonObject{
+                {QStringLiteral("left"), work.x()},
+                {QStringLiteral("top"), work.y()},
+                {QStringLiteral("width"), work.width()},
+                {QStringLiteral("height"), work.height()}}},
+        };
+        for (const QJsonValue &v : displays) {
+            const QJsonObject prior = v.toObject()
+                .value(QStringLiteral("bounds")).toObject();
+            if (prior.value(QStringLiteral("left")).toInt()
+                        == bounds.x()
+                    && prior.value(QStringLiteral("top")).toInt()
+                           == bounds.y()
+                    && prior.value(QStringLiteral("width")).toInt()
+                           == bounds.width()
+                    && prior.value(QStringLiteral("height")).toInt()
+                           == bounds.height()) {
+                info.insert(
+                    QStringLiteral("mirroringSourceId"),
+                    v.toObject().value(QStringLiteral("id")));
+                break;
+            }
+        }
+        displays.append(info);
+    }
+    return displays;
+}
+
+// The storage units Chrome's StorageUnitInfo enumerates are mounted
+// volumes; the honest local set is the volumes that actually hold
+// profile state — the filesystem root plus the profile data dir's
+// volume (deduped on device, ready-only).  Widening to every mount
+// in /proc/mounts would report volumes the browser cannot touch.
+static QList<QStorageInfo> systemStorageVolumes()
+{
+    QList<QStorageInfo> volumes;
+    QSet<QByteArray> seen;
+    const auto add = [&volumes, &seen](const QStorageInfo &info) {
+        if (!info.isValid() || !info.isReady())
+            return;
+        const QByteArray device = info.device();
+        if (device.isEmpty() || seen.contains(device))
+            return;
+        seen.insert(device);
+        volumes.append(info);
+    };
+    add(QStorageInfo::root());
+    add(QStorageInfo(
+        BrowserPaths::profileDataDir(BrowserPaths::activeProfileId())));
+    return volumes;
+}
+
+// Chrome's StorageUnitInfo shape — id is the volume's real device
+// path so getAvailableCapacity can address it back stably.
+static QJsonObject systemStorageUnitJson(const QStorageInfo &info)
+{
+    return QJsonObject{
+        {QStringLiteral("id"), QString::fromLocal8Bit(info.device())},
+        {QStringLiteral("name"), info.displayName()},
+        {QStringLiteral("type"), QStringLiteral("fixed")},
+        {QStringLiteral("capacity"), double(info.bytesTotal())}};
+}
+
+QJsonObject ExtensionShimBackend::invokeSystem(
+        const QString &method, const QJsonObject &args)
+{
+    // Dotted "sub.member" like storage's "local.get" — a flat name
+    // is the typed unreachable-member verdict.
+    const int dot = method.indexOf(QLatin1Char('.'));
+    if (dot <= 0 || dot == method.size() - 1)
+        return errReply(QStringLiteral("unimplemented"));
+    const QString sub = method.left(dot);
+    const QString member = method.mid(dot + 1);
+    if (member.contains(QLatin1Char('.')))
+        return errReply(QStringLiteral("unimplemented"));
+
+    // Chrome gates each sub-namespace on its own 'system.<sub>'
+    // declared grant; the gate runs BEFORE the surface check so a
+    // declared-but-unserved sub hears 'unsupported' — the grant was
+    // honored, the surface is missing — while an undeclared call
+    // stays no-permission.
+    const QString grant = QStringLiteral("system.") + sub;
+    if (!manifestPermissions().contains(grant))
+        return errReply(QStringLiteral("no-permission"));
+
+    if (sub == QLatin1String("memory")) {
+        if (member == QLatin1String("getInfo")) {
+            qint64 capacity = -1, available = -1;
+            systemMemoryBytes(&capacity, &available);
+            if (capacity < 0)
+                // Nothing measured — a typed refusal beats a fake
+                // capacity.
+                return errReply(QStringLiteral("unsupported"));
+            QJsonObject info{
+                {QStringLiteral("capacity"), double(capacity)}};
+            if (available >= 0)
+                info.insert(QStringLiteral("availableCapacity"),
+                            double(available));
+            return okReply(info);
+        }
+        return errReply(QStringLiteral("unsupported"));
+    }
+    if (sub == QLatin1String("cpu")) {
+        if (member == QLatin1String("getInfo"))
+            return okReply(systemCpuJson());
+        return errReply(QStringLiteral("unsupported"));
+    }
+    if (sub == QLatin1String("display")) {
+        if (member == QLatin1String("getInfo")) {
+            const QJsonValue flags =
+                args.value(QLatin1String("flags"));
+            if (!flags.isUndefined() && !flags.isObject())
+                return errReply(QStringLiteral("invalid-argument"));
+            return okReply(systemDisplayList());
+        }
+        // setMirrorMode/setDisplayProperties/the overscan +
+        // touch-calibration family are ChromeOS-only surfaces
+        // upstream.
+        return errReply(QStringLiteral("unsupported"));
+    }
+    if (sub == QLatin1String("storage")) {
+        if (member == QLatin1String("getInfo")) {
+            const QList<QStorageInfo> volumes =
+                systemStorageVolumes();
+            QJsonArray units;
+            for (const QStorageInfo &info : volumes)
+                units.append(systemStorageUnitJson(info));
+            return okReply(units);
+        }
+        if (member == QLatin1String("getAvailableCapacity")) {
+            const QString id =
+                args.value(QLatin1String("id")).toString();
+            if (id.isEmpty())
+                return errReply(QStringLiteral("invalid-argument"));
+            const QList<QStorageInfo> volumes =
+                systemStorageVolumes();
+            for (const QStorageInfo &info : volumes) {
+                if (QString::fromLocal8Bit(info.device()) != id)
+                    continue;
+                return okReply(QJsonObject{
+                    {QStringLiteral("id"), id},
+                    {QStringLiteral("availableCapacity"),
+                     double(info.bytesAvailable())}});
+            }
+            return errReply(QStringLiteral("not-found"));
+        }
+        // ejectDevice — no device-ejection surface exists.
+        return errReply(QStringLiteral("unsupported"));
+    }
+    // system.network/powerSource/private/... — declared grant, no
+    // Arktos surface.
+    return errReply(QStringLiteral("unsupported"));
 }
 
 // -------------------------------------------------------------------

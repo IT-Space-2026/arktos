@@ -137,6 +137,17 @@ class QWebEngineProfile;
 //                  error or the bounded wait expiring; 'dns' gates
 //                  the namespace like Chrome's declared-grant
 //                  requirement
+//   system.*     — MD30: honest-machine-facts sub-namespaces, each
+//                  gated on its own 'system.<sub>' declared grant
+//                  like Chrome.  memory/cpu/display/storage
+//                  getInfo answer measured values (/proc/meminfo +
+//                  sysconf, /proc/cpuinfo + /proc/stat per-core
+//                  jiffies, the live QScreen list, QStorageInfo on
+//                  the volumes holding profile state);
+//                  storage.getAvailableCapacity is live too.
+//                  Declared-but-unserved subs and the ChromeOS-only
+//                  mutators answer typed 'unsupported' — the grant
+//                  is honored, the surface is missing.
 //   downloads.*  — MD24: a subset over DownloadManager's record
 //                  list — download() rides the manager's own policy
 //                  path (dlwpolicy verdict, save-as gate, external
@@ -434,6 +445,16 @@ private:
     // bounded wait expiring.
     QJsonObject invokeDns(const QString &method,
                           const QJsonObject &args);
+    // MD30: chrome.system — each sub-namespace gates on its own
+    // 'system.<sub>' declared grant (the check runs before the
+    // surface check so a declared-but-unserved sub hears
+    // 'unsupported', not 'no-permission').  Methods ride the dotted
+    // "sub.member" vocabulary: memory/cpu/display/storage getInfo
+    // answer measured machine facts plus storage
+    // getAvailableCapacity; everything else Chrome publishes stays
+    // typed 'unsupported' — no fake values anywhere.
+    QJsonObject invokeSystem(const QString &method,
+                             const QJsonObject &args);
     // MD23: chrome.cookies — reads over the RC15 persistent mirror
     // (the jar's on-disk shadow, fed by the engine's cookie signals;
     // the C++ jar's live mirror is the no-rust read path), writes go

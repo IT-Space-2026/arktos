@@ -939,6 +939,11 @@ UI:
   [...]} — resolved through the system resolver off the UI thread;
   a name that cannot resolve reports a typed failure instead of
   hanging the extension (MD29).
+- chrome.system is live for extensions that declare the per-surface
+  grants: system.memory/cpu/display/storage getInfo answer Chrome's
+  shapes with the machine's real values — memory capacity, per-core
+  CPU time, the connected display list and the profile volume's
+  capacity — instead of a blanket unsupported (MD30).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

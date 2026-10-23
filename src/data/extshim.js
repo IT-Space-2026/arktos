@@ -4730,6 +4730,118 @@
     }
     installDns();
 
+    // --- chrome.system --------------------------------------------------
+    // MD30: the honest-machine-facts namespace.  Every member routes
+    // to the bridge and the backend (invokeSystem) enforces the
+    // per-sub-namespace 'system.<sub>' grant like Chrome — the grant
+    // is checked before the surface so a declared-but-unserved sub
+    // (network here, powerSource/... upstream) answers 'unsupported',
+    // never a TypeError.  memory/cpu/display/storage getInfo answer
+    // measured values; storage.getAvailableCapacity is live;
+    // ejectDevice and the ChromeOS-only display mutators keep the
+    // backend's typed 'unsupported'.  The on* events exist so a
+    // registration is never a TypeError — there is no event source
+    // yet, so adding a listener is noted once.
+    function installSystem() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.system; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var noArgs = function () { return {}; };
+        var mk = function (sub, m, map) {
+            return function () {
+                var a = Array.prototype.slice.call(arguments);
+                var cb = null;
+                if (a.length
+                        && typeof a[a.length - 1] === 'function')
+                    cb = a.pop();
+                var p = call('system', sub + '.' + m, map(a));
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            };
+        };
+        var noSource = function (p) {
+            return { onAdd: function () {
+                note('chrome.system.' + p + ' registered — no '
+                     + 'event source for this sub-namespace');
+            } };
+        };
+        var sysNs = {
+            __arktosShim: true,
+            memory: {
+                getInfo: mk('memory', 'getInfo', noArgs)
+            },
+            cpu: {
+                getInfo: mk('cpu', 'getInfo', noArgs)
+            },
+            display: {
+                getInfo: mk('display', 'getInfo',
+                            function (a) { return { flags: a[0] }; }),
+                // ChromeOS-only mutators — routed so the backend's
+                // typed 'unsupported' is the authoritative answer.
+                getDisplayLayout: mk('display', 'getDisplayLayout',
+                                     noArgs),
+                enableUnifiedDesktop: mk('display',
+                                         'enableUnifiedDesktop',
+                                         noArgs),
+                overscanCalibrationStart: mk('display',
+                    'overscanCalibrationStart', noArgs),
+                overscanCalibrationComplete: mk('display',
+                    'overscanCalibrationComplete', noArgs),
+                overscanCalibrationReset: mk('display',
+                    'overscanCalibrationReset', noArgs),
+                overscanCalibrationClear: mk('display',
+                    'overscanCalibrationClear', noArgs),
+                showNativeTouchCalibration: mk('display',
+                    'showNativeTouchCalibration', noArgs),
+                startCustomTouchCalibration: mk('display',
+                    'startCustomTouchCalibration', noArgs),
+                completeCustomTouchCalibration: mk('display',
+                    'completeCustomTouchCalibration', noArgs),
+                clearTouchCalibration: mk('display',
+                    'clearTouchCalibration', noArgs),
+                setMirrorMode: mk('display', 'setMirrorMode',
+                    function (a) { return { info: a[0] }; }),
+                setDisplayProperties: mk('display',
+                    'setDisplayProperties',
+                    function (a) {
+                        return { id: a[0], info: a[1] };
+                    }),
+                onDisplayChanged: makeEvent(
+                    'system.display.onDisplayChanged',
+                    noSource('display.onDisplayChanged'))
+            },
+            storage: {
+                getInfo: mk('storage', 'getInfo', noArgs),
+                getAvailableCapacity: mk('storage',
+                    'getAvailableCapacity',
+                    function (a) { return { id: a[0] }; }),
+                ejectDevice: mk('storage', 'ejectDevice',
+                                function (a) { return { id: a[0] }; }),
+                onAttached: makeEvent('system.storage.onAttached',
+                                      noSource('storage.onAttached')),
+                onDetached: makeEvent('system.storage.onDetached',
+                                      noSource('storage.onDetached'))
+            },
+            // Declared-grant-but-unserved sub — the backend answers
+            // 'no-permission' undeclared, 'unsupported' declared.
+            network: {
+                getNetworkInterfaces: mk('network',
+                                         'getNetworkInterfaces',
+                                         noArgs)
+            }
+        };
+        installNs('system', sysNs);
+    }
+    installSystem();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -4988,7 +5100,7 @@
         'fontSettings', 'userScripts',
         'declarativeNetRequest', 'declarativeContent',
         'management',
-        'power', 'system', 'tts', 'enterprise', 'debugger',
+        'power', 'tts', 'enterprise', 'debugger',
         'processes', 'readingList', 'search', 'favicon', 'tabCapture',
         'input', 'documentScan', 'fileSystemProvider',
         'printing', 'vpnProvider', 'wallpaper', 'audio',

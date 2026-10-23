@@ -1328,6 +1328,14 @@ QStringList ExtensionManager::runtimeServes()
         // declared surface is live.
         QStringLiteral("sessions"),
         QStringLiteral("sidePanel"),
+        // MD30: chrome.system's memory/cpu/display/storage getInfo
+        // members answer measured machine facts — each 'system.<sub>'
+        // grant is honored by invokeSystem; unserved subs keep
+        // their typed verdicts.
+        QStringLiteral("system.cpu"),
+        QStringLiteral("system.display"),
+        QStringLiteral("system.memory"),
+        QStringLiteral("system.storage"),
         // MD26: chrome.tabGroups serves get/query/update/move/
         // ungroup over the TABGRP machinery; creation rides
         // chrome.tabs.group like the real API — the declared

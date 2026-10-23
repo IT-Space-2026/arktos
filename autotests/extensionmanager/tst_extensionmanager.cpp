@@ -124,6 +124,7 @@ private slots:
     void extensionTopSites();
     void extensionBrowsingData();
     void extensionDns();
+    void extensionSystem();
     void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
@@ -10728,6 +10729,212 @@ void tst_ExtensionManager::extensionDns()
                               QStringLiteral("localhost")}})
                  .value(QLatin1String("error")).toString(),
              QStringLiteral("no-permission"));
+
+    QDir(dirB).removeRecursively();
+    QDir(dir).removeRecursively();
+}
+
+// MD30 — chrome.system over measured machine facts: each
+// sub-namespace gates on its own 'system.<sub>' declared grant
+// (checked BEFORE the surface so a declared-but-unserved sub hears
+// 'unsupported', not 'no-permission'); memory/cpu/display/storage
+// getInfo answer real values plus storage.getAvailableCapacity.
+void tst_ExtensionManager::extensionSystem()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extsys-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-sys\","
+                "\"version\":\"1.0\",\"permissions\":[\"system.memory\","
+                "\"system.cpu\",\"system.display\",\"system.storage\","
+                "\"system.network\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0051"),
+        QStringLiteral("tst-sys"), dir);
+    const auto invoke = [&backend](const QString &method,
+                                   const QJsonObject &args
+                                       = QJsonObject()) {
+        return backend.invoke(QStringLiteral("system"), method, args);
+    };
+
+    // --- memory.getInfo: a measured capacity ----------------------
+    QJsonObject reply = invoke(QStringLiteral("memory.getInfo"));
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject memory =
+        reply.value(QLatin1String("result")).toObject();
+    QVERIFY(memory.value(QLatin1String("capacity")).toDouble() > 0);
+    // MemAvailable exists on every Linux — where it was measured it
+    // can never exceed the total.
+    if (memory.contains(QLatin1String("availableCapacity"))) {
+        QVERIFY(memory.value(QLatin1String("availableCapacity"))
+                    .toDouble() >= 0);
+        QVERIFY(memory.value(QLatin1String("availableCapacity"))
+                    .toDouble()
+                <= memory.value(QLatin1String("capacity")).toDouble());
+    }
+
+    // --- cpu.getInfo: mapped arch + real per-core rows ------------
+    reply = invoke(QStringLiteral("cpu.getInfo"));
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject cpu =
+        reply.value(QLatin1String("result")).toObject();
+    QVERIFY(!cpu.value(QLatin1String("archName")).toString()
+                 .isEmpty());
+    QVERIFY(cpu.value(QLatin1String("numOfProcessors")).toInt() >= 1);
+#if defined(Q_OS_LINUX)
+    // /proc/stat is the per-core source — cumulative seconds per
+    // usage field, one row per core.
+    const QJsonArray processors =
+        cpu.value(QLatin1String("processors")).toArray();
+    QVERIFY(processors.size() >= 1);
+    for (const QJsonValue &v : processors) {
+        const QJsonObject usage =
+            v.toObject().value(QLatin1String("usage")).toObject();
+        QVERIFY(usage.value(QLatin1String("user")).toDouble() >= 0);
+        QVERIFY(usage.value(QLatin1String("kernel")).toDouble() >= 0);
+        QVERIFY(usage.value(QLatin1String("idle")).toDouble() >= 0);
+        QVERIFY(usage.value(QLatin1String("total")).toDouble() >= 0);
+    }
+#endif
+
+    // --- display.getInfo: the live screen list --------------------
+    reply = invoke(QStringLiteral("display.getInfo"));
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonArray displays =
+        reply.value(QLatin1String("result")).toArray();
+    // The offscreen platform still reports its one screen.
+    QVERIFY(!displays.isEmpty());
+    bool sawPrimary = false;
+    for (const QJsonValue &v : displays) {
+        const QJsonObject display = v.toObject();
+        QVERIFY(!display.value(QLatin1String("id")).toString()
+                     .isEmpty());
+        QVERIFY(display.value(QLatin1String("isEnabled")).toBool());
+        const QJsonObject bounds =
+            display.value(QLatin1String("bounds")).toObject();
+        QVERIFY(bounds.value(QLatin1String("width")).toInt() > 0);
+        QVERIFY(bounds.value(QLatin1String("height")).toInt() > 0);
+        QVERIFY(display.contains(QLatin1String("workArea")));
+        const int rotation =
+            display.value(QLatin1String("rotation")).toInt();
+        QVERIFY(rotation == 0 || rotation == 90 || rotation == 180
+                || rotation == 270);
+        sawPrimary = sawPrimary
+            || display.value(QLatin1String("isPrimary")).toBool();
+    }
+    QVERIFY(sawPrimary);
+    // A flags object rides through; a mistyped one is the argument
+    // verdict.
+    QVERIFY(invoke(QStringLiteral("display.getInfo"),
+                   QJsonObject{{QStringLiteral("flags"), QJsonObject()}})
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(invoke(QStringLiteral("display.getInfo"),
+                    QJsonObject{{QStringLiteral("flags"), 7}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // --- storage.getInfo + getAvailableCapacity -------------------
+    reply = invoke(QStringLiteral("storage.getInfo"));
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonArray units =
+        reply.value(QLatin1String("result")).toArray();
+    QVERIFY(!units.isEmpty());
+    const QJsonObject unit = units.at(0).toObject();
+    const QString unitId =
+        unit.value(QLatin1String("id")).toString();
+    QVERIFY(!unitId.isEmpty());
+    QCOMPARE(unit.value(QLatin1String("type")).toString(),
+             QStringLiteral("fixed"));
+    QVERIFY(unit.value(QLatin1String("capacity")).toDouble() > 0);
+
+    reply = invoke(QStringLiteral("storage.getAvailableCapacity"),
+                   QJsonObject{{QStringLiteral("id"), unitId}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject available =
+        reply.value(QLatin1String("result")).toObject();
+    QCOMPARE(available.value(QLatin1String("id")).toString(), unitId);
+    QVERIFY(available.value(QLatin1String("availableCapacity"))
+                .toDouble() >= 0);
+    QVERIFY(available.value(QLatin1String("availableCapacity"))
+                .toDouble()
+            <= unit.value(QLatin1String("capacity")).toDouble());
+    // An unknown unit id is not-found; a missing one is the
+    // argument verdict.
+    QCOMPARE(invoke(QStringLiteral("storage.getAvailableCapacity"),
+                    QJsonObject{{QStringLiteral("id"),
+                                 QStringLiteral("/dev/nope0")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(invoke(QStringLiteral("storage.getAvailableCapacity"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // --- typed verdicts --------------------------------------------
+    // ChromeOS mutators + ejectDevice inside a served sub.
+    QCOMPARE(invoke(QStringLiteral("display.setMirrorMode"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("storage.ejectDevice"),
+                    QJsonObject{{QStringLiteral("id"), unitId}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("cpu.freeze"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // Declared 'system.network' — the grant was honored, the
+    // surface is missing: 'unsupported', not 'no-permission'.
+    QCOMPARE(invoke(QStringLiteral("network.getNetworkInterfaces"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // An undeclared sub stays no-permission.
+    QCOMPARE(invoke(QStringLiteral("powerSource.getInfo"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    // A flat member name is the unreachable-member verdict.
+    QCOMPARE(invoke(QStringLiteral("getInfo"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // The manifest gate is per-context: a sibling backend without
+    // any 'system.*' grant hears no-permission on every sub.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extsysb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-sys-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0052"),
+        QStringLiteral("tst-sys-b"), dirB);
+    for (const QString m : {QStringLiteral("memory.getInfo"),
+                            QStringLiteral("cpu.getInfo"),
+                            QStringLiteral("display.getInfo"),
+                            QStringLiteral("storage.getInfo"),
+                            QStringLiteral("network.getNetworkInterfaces")}) {
+        QCOMPARE(backendB.invoke(QStringLiteral("system"), m,
+                                 QJsonObject())
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+    }
 
     QDir(dirB).removeRecursively();
     QDir(dir).removeRecursively();

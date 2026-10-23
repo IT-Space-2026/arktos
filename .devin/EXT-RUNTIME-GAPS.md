@@ -38,11 +38,12 @@ matching every member of the namespace (or a dotted sub-path such as
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
 # stores this tree already has.  They stay in this block — still
-# typed today — but are queued: system -> MD30, privacy -> MD31,
+# typed today — but are queued: privacy -> MD31,
 # userScripts -> MD32, fontSettings -> MD33.  Entries leave the
 # declared set only when the row lands the implementation (downloads
 # left with MD24, sessions with MD25, tabGroups with MD26,
-# topSites with MD27, browsingData with MD28, dns with MD29).
+# topSites with MD27, browsingData with MD28, dns with MD29,
+# system with MD30).
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
@@ -77,7 +78,6 @@ chrome.processes.*: unsupported
 chrome.readingList.*: unsupported
 chrome.search.*: unsupported
 chrome.signedInDevices.*: unsupported
-chrome.system.*: unsupported
 chrome.systemIndicator.*: unsupported
 chrome.tabCapture.*: unsupported
 chrome.tts.*: unsupported
@@ -178,6 +178,20 @@ chrome.dns.*: no-permission
 chrome.dns.*: invalid-argument
 chrome.dns.*: resolve-failed
 chrome.dns.*: unimplemented
+# MD30: chrome.system is served over measured machine facts —
+# each sub-namespace gates on its own 'system.<sub>' declared grant
+# (no-permission undeclared).  memory/cpu/display/storage getInfo
+# answer real values plus storage.getAvailableCapacity;
+# storage.ejectDevice, the ChromeOS-only display mutators and the
+# declared-but-unserved subs (network, powerSource, ...) stay typed
+# 'unsupported'.  The rest are the calls' correct verdicts
+# (mistyped args, an unknown storage unit id, unreachable members,
+# an unmeasurable capacity).
+chrome.system.*: no-permission
+chrome.system.*: invalid-argument
+chrome.system.*: not-found
+chrome.system.*: unsupported
+chrome.system.*: unimplemented
 # MD23: chrome.cookies is served over the RC15 persistent mirror
 # (reads) + QWebEngineCookieStore live jar (writes land both).
 # 'cookies' gates the namespace; url-bearing ops additionally need
