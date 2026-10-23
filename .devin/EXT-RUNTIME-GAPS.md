@@ -38,11 +38,11 @@ matching every member of the namespace (or a dotted sub-path such as
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
 # stores this tree already has.  They stay in this block — still
-# typed today — but are queued: sessions -> MD25,
-# tabGroups -> MD26, topSites -> MD27, browsingData -> MD28,
-# dns -> MD29, system -> MD30, privacy -> MD31, userScripts -> MD32,
-# fontSettings -> MD33.  Entries leave the declared set only when the
-# row lands the implementation (downloads left with MD24).
+# typed today — but are queued: tabGroups -> MD26, topSites -> MD27,
+# browsingData -> MD28, dns -> MD29, system -> MD30, privacy -> MD31,
+# userScripts -> MD32, fontSettings -> MD33.  Entries leave the
+# declared set only when the row lands the implementation (downloads
+# left with MD24, sessions with MD25).
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
@@ -78,7 +78,6 @@ chrome.privacy.*: unsupported
 chrome.processes.*: unsupported
 chrome.readingList.*: unsupported
 chrome.search.*: unsupported
-chrome.sessions.*: unsupported
 chrome.signedInDevices.*: unsupported
 chrome.system.*: unsupported
 chrome.systemIndicator.*: unsupported
@@ -189,6 +188,18 @@ chrome.downloads.*: no-icon
 chrome.downloads.*: no-store
 chrome.downloads.*: start-failed
 chrome.downloads.*: download-failed
+# MD25: chrome.sessions is served over TabWidget's TABS05 closed-tab
+# undo stack — 'sessions' gates the namespace (no-permission
+# undeclared).  getDevices answers the honest empty list (no sync);
+# getRecentlyClosed/restore enumerate/rebuild the menu's records.
+# The rest are the ops' correct verdicts (bad maxResults or
+# non-numeric sessionId, unknown/stale serial, empty stack,
+# rebuild failure) plus unreachable members.
+chrome.sessions.*: no-permission
+chrome.sessions.*: invalid-argument
+chrome.sessions.*: not-found
+chrome.sessions.*: restore-failed
+chrome.sessions.*: unimplemented
 chrome.action.setIcon: invalid-image-data
 chrome.action.setIcon: invalid-path
 chrome.browserAction.setIcon: invalid-image-data

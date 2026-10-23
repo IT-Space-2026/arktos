@@ -127,6 +127,10 @@ signals:
     // strip-level churn (add/close/reorder/title).
     void tabGroupsChanged();
     void lastTabClosed();
+    // MD25: the TABS05 undo stack changed — a tab was queued for
+    // reopen, a record was restored, or the stack was cleared.
+    // chrome.sessions' onChanged rides it; every mutation site emits.
+    void recentlyClosedTabsChanged();
 
     // current tab signals
     void setCurrentTitle(const QString &url);
@@ -353,6 +357,27 @@ public:
     // form resolves it from the process-global private flag.
     static QUrl guessUrlFromString(const QString &url);
     static QUrl guessUrlFromString(const QString &url, bool privateContext);
+
+    // MD25 (chrome.sessions): the undo stack as enumerated records —
+    // newest first, the same order the recently-closed menu shows —
+    // and a restore that addresses records by the serial each entry
+    // carries (list positions shift under a caller holding one, so
+    // the stack never addresses by index).  Plain methods, not slots:
+    // moc cannot parse a nested struct in a slots section.
+    struct ClosedTabRecord {
+        quint64 serial = 0;        // sessions.restore() sessionId key
+        QUrl url;
+        QString title;
+        qint64 lastModified = 0;   // ms since epoch the tab was closed
+        int index = -1;            // strip index at close, -1 hidden
+        bool pinned = false;
+    };
+    QList<ClosedTabRecord> recentlyClosedRecords() const;
+    // Restores the record carrying `serial` — answers the rebuilt
+    // view, nullptr when the serial names no record or the rebuild
+    // failed (the record is consumed either way, matching the
+    // menu/openLastTab semantics).
+    WebView *restoreRecentlyClosed(quint64 serial);
 
 protected:
     void changeEvent(QEvent *event) override;
@@ -628,15 +653,21 @@ private:
         bool scrollValid = false;
         double scrollX = 0.0;
         double scrollY = 0.0;
+        // MD25: a process-stable serial — chrome.sessions.restore()
+        // addresses records by id while list positions shift — and
+        // the close timestamp feeding Session.lastModified.
+        quint64 serial = 0;
+        qint64 lastModified = 0;
     };
     // pushRecentlyClosedTab snapshots the closing tab (closeTab's
     // strip path and closeHiddenTab's filtered-level path share it);
     // restoreClosedTab rebuilds the tab and puts back the recorded
-    // slot.
+    // slot, answering the view it made (nullptr when the tab could
+    // not be recreated).
     void pushRecentlyClosedTab(WebView *view, int index,
                                const QString &containerId,
                                const QString &groupId);
-    void restoreClosedTab(const RecentlyClosedTab &closed);
+    WebView *restoreClosedTab(const RecentlyClosedTab &closed);
 
     // A detached member of a collapsed group: its page widget, its
     // location bar and the tab-strip visuals re-applied on expand.

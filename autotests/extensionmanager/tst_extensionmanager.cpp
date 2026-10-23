@@ -119,6 +119,7 @@ private slots:
     void extensionHistory();
     void extensionCookies();
     void extensionDownloads();
+    void extensionSessions();
     void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
@@ -9641,6 +9642,286 @@ void tst_ExtensionManager::extensionDownloads()
 
     QDir(dirB).removeRecursively();
     QDir(dirC).removeRecursively();
+}
+
+// MD25 — chrome.sessions over TabWidget's TABS05 closed-tab undo
+// stack.  A hosted fixture ('sessions' grant + a background context
+// that registers onChanged and snapshots MAX_SESSION_RESULTS)
+// drives bridge->invoke: getDevices answers the honest empty list,
+// getRecentlyClosed enumerates a real window's undo record after
+// closeTab, restore() rebuilds it through the shared undo path, and
+// sessions.onChanged rides the hub's recentlyClosedTabsChanged tap.
+// The manifest gate lands on a bare sibling backend.
+void tst_ExtensionManager::extensionSessions()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extsess-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-sess\","
+                "\"version\":\"1.0\",\"permissions\":[\"sessions\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write("self.__sess=[];\n"
+                "self.__sessMax=(chrome.sessions"
+                " ? chrome.sessions.MAX_SESSION_RESULTS : null);\n"
+                "try{chrome.sessions.onChanged.addListener("
+                "function(){self.__sess.push('changed');});}"
+                "catch(e){}\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.name == QLatin1String("tst-sess"))
+            manager->removeExtension(info.id);
+    }
+    auto loaded = std::make_shared<QString>();
+    auto loadErr = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded, loadErr](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name != QLatin1String("tst-sess"))
+            return;
+        if (info.error.isEmpty())
+            *loaded = info.id;
+        else
+            *loadErr = info.error;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && loadErr->isEmpty()
+           && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString extId = *loaded;
+    QVERIFY2(!extId.isEmpty(), qPrintable(QStringLiteral(
+        "fixture loaded (err=%1)").arg(*loadErr)));
+    manager->setExtensionEnabled(extId, true);
+    auto unload = qScopeGuard([manager, extId, dir]() {
+        manager->setExtensionEnabled(extId, false);
+        manager->removeExtension(extId);
+        QDir(dir).removeRecursively();
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(extId)
+            && runtime->host(extId)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    ChromeBridge *bridge = runtime->host(extId)->bridge();
+    QVERIFY(bridge);
+    QSignalSpy hostEvents(bridge, &ChromeBridge::hostEvent);
+    auto invoke = [&](const QString &m, const QJsonObject &args) {
+        return bridge->invoke(QStringLiteral("sessions"), m, args);
+    };
+    auto hostEventsFor = [&](const QString &name) {
+        QList<QVariantList> out;
+        for (const QVariantList &args : hostEvents)
+            if (!args.isEmpty() && args.at(0).toString() == name)
+                out.append(args);
+        return out;
+    };
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+
+    // The namespace constant landed page-side.
+    QCOMPARE(eval(runtime->host(extId)->page(),
+                  QStringLiteral("self.__sessMax")).toInt(), 25);
+
+    // Empty-stack answers + the arg refusals that don't need a record.
+    QJsonObject reply = invoke(QStringLiteral("getDevices"),
+                               QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    reply = invoke(QStringLiteral("getRecentlyClosed"),
+                   QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("restore"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(invoke(QStringLiteral("getRecentlyClosed"), QJsonObject{
+                 {QStringLiteral("filter"), QJsonObject{
+                     {QStringLiteral("maxResults"), 26.0}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    reply = invoke(QStringLiteral("getRecentlyClosed"), QJsonObject{
+        {QStringLiteral("filter"), QJsonObject{
+            {QStringLiteral("maxResults"), 0.0}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("bogus"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // A real window + a closable tab — the undo record must carry a
+    // url, so the tab loads a fixture document first.
+    ExtensionEventHub *hub = ExtensionEventHub::instance();
+    hub->setTracking(true);
+    hub->syncNow();
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    hub->syncNow();   // wires recentlyClosedTabsChanged on this strip
+    tw->newTab();
+    QCOMPARE(tw->count(), 2);
+    WebView *view = tw->webView(1);
+    QVERIFY(view);
+    const QUrl closedUrl(
+        QStringLiteral("data:text/html,<title>sess-closed</title>x"));
+    view->load(closedUrl);
+    QTRY_VERIFY_WITH_TIMEOUT(view->url() == closedUrl, 10000);
+    tw->closeTab(1);
+    QVERIFY(tw->hasRecentlyClosedTabs());
+
+    // sessions.onChanged rode the hub tap into the hosted context.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("sessions.onChanged")).isEmpty(),
+        15000);
+
+    // getRecentlyClosed — the closed tab's Session shape.
+    reply = invoke(QStringLiteral("getRecentlyClosed"),
+                   QJsonObject());
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QString sessionId;
+    {
+        const QJsonArray sessions =
+            reply.value(QLatin1String("result")).toArray();
+        QCOMPARE(sessions.size(), 1);
+        const QJsonObject session = sessions.at(0).toObject();
+        QVERIFY(session.value(QLatin1String("lastModified")).toDouble()
+                > 0);
+        const QJsonObject tab =
+            session.value(QLatin1String("tab")).toObject();
+        QCOMPARE(tab.value(QLatin1String("url")).toString(),
+                 closedUrl.toString());
+        QCOMPARE(tab.value(QLatin1String("windowId")).toInt(),
+                 ExtensionShimBackend::windowIdFor(window));
+        QCOMPARE(tab.value(QLatin1String("index")).toInt(), 1);
+        QCOMPARE(tab.value(QLatin1String("active")).toBool(), false);
+        QCOMPARE(tab.value(QLatin1String("incognito")).toBool(), false);
+        sessionId =
+            tab.value(QLatin1String("sessionId")).toString();
+        QVERIFY(!sessionId.isEmpty());
+    }
+
+    // A non-numeric id is an argument error; an unknown one is the
+    // typed miss.
+    QCOMPARE(invoke(QStringLiteral("restore"), QJsonObject{
+                 {QStringLiteral("sessionId"),
+                  QStringLiteral("bogus")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("restore"), QJsonObject{
+                 {QStringLiteral("sessionId"),
+                  QStringLiteral("999999")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // restore(sessionId) — the shared undo path rebuilds the tab;
+    // the record is consumed.
+    const int beforeRestore = tw->count();
+    reply = invoke(QStringLiteral("restore"), QJsonObject{
+        {QStringLiteral("sessionId"), sessionId}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    {
+        const QJsonObject session =
+            reply.value(QLatin1String("result")).toObject();
+        const QJsonObject tab =
+            session.value(QLatin1String("tab")).toObject();
+        QCOMPARE(tab.value(QLatin1String("url")).toString(),
+                 closedUrl.toString());
+        QVERIFY(tab.value(QLatin1String("id")).toInt() > 0);
+    }
+    QCOMPARE(tw->count(), beforeRestore + 1);
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        for (int i = 0; i < tw->count(); ++i)
+            if (tw->webView(i)
+                    && tw->webView(i)->url() == closedUrl)
+                return true;
+        return false;
+    }(), 15000);
+    // The consumed id answers the typed miss now.
+    QCOMPARE(invoke(QStringLiteral("restore"), QJsonObject{
+                 {QStringLiteral("sessionId"), sessionId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    reply = invoke(QStringLiteral("getRecentlyClosed"),
+                   QJsonObject());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+
+    // Chrome's no-arg form — close the rebuilt tab and restore()
+    // takes the newest session.
+    int rebuilt = -1;
+    for (int i = 0; i < tw->count(); ++i)
+        if (tw->webView(i) && tw->webView(i)->url() == closedUrl)
+            rebuilt = i;
+    QVERIFY(rebuilt >= 0);
+    tw->closeTab(rebuilt);
+    reply = invoke(QStringLiteral("restore"), QJsonObject());
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("tab")).toObject()
+                 .value(QLatin1String("url")).toString(),
+             closedUrl.toString());
+
+    // The manifest gate — a sibling without 'sessions' hears
+    // no-permission on every member.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extsessb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-sess-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0043"),
+        QStringLiteral("tst-sess-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("sessions"),
+                 QStringLiteral("getDevices"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(QStringLiteral("sessions"),
+                 QStringLiteral("getRecentlyClosed"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(QStringLiteral("sessions"),
+                 QStringLiteral("restore"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    hub->setTracking(false);
+    QDir(dirB).removeRecursively();
 }
 
 // MD18 — chrome.runtime lifecycle ops.  reload rides the manager's

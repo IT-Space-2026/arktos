@@ -2161,6 +2161,10 @@ QString eventGate(const QString &name)
     // invokeDownloads applies per call.
     if (ns == QLatin1String("downloads"))
         return QStringLiteral("downloads");
+    // MD25: sessions.onChanged reaches only 'sessions'-declaring
+    // contexts — the same grant invokeSessions applies per call.
+    if (ns == QLatin1String("sessions"))
+        return QStringLiteral("sessions");
     return QString();
 }
 

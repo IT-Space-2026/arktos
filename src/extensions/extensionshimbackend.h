@@ -141,6 +141,18 @@ class QWebEngineProfile;
 //                  a real platform type icon; 'downloads' gates the
 //                  namespace and the onCreated/onChanged/onErased
 //                  fan-out (eventGate)
+//   sessions.*   — MD25: a minimal surface over TabWidget's TABS05
+//                  closed-tab undo stack.  getDevices answers the
+//                  honest empty list (no sync service, so no other
+//                  device can report); getRecentlyClosed enumerates
+//                  the same records the "Recently Closed Tabs" menu
+//                  drives — merged across windows, newest first,
+//                  capped at Chrome's MAX_SESSION_RESULTS (25, the
+//                  stack's own bound); restore() addresses records
+//                  by the serial sessionId and rebuilds through the
+//                  shared undo path; 'sessions' gates the namespace
+//                  and onChanged rides the hub's
+//                  recentlyClosedTabsChanged tap (eventGate)
 //   runtime.*    — context bookkeeping (getViews counts); MD18
 //                  lifecycle ops: reload rides ExtensionManager's
 //                  unload+load, requestUpdateCheck rides
@@ -388,6 +400,14 @@ private:
                                 const QJsonObject &args);
     static bool downloadsQueryMatch(const QJsonObject &query,
                                     class DownloadItem *item);
+    // MD25: chrome.sessions over the per-window TABS05 undo stacks —
+    // 'sessions' gates the namespace; every member is served
+    // (getDevices/getRecentlyClosed/restore), so only a mistyped
+    // call or an unknown/stale sessionId produces a typed verdict.
+    // onChanged is entirely tap-driven (the hub wires
+    // recentlyClosedTabsChanged), so no member-emit path exists here.
+    QJsonObject invokeSessions(const QString &method,
+                               const QJsonObject &args);
     QJsonObject invokeExtension(const QString &method,
                                 const QJsonObject &args);
     QJsonObject invokeSidebarAction(const QString &method,
@@ -480,6 +500,9 @@ private:
     // tracking in the card), and conflictAction 'overwrite' is a
     // recorded typed refusal — each noted once per context.
     bool m_dlFinalUrlNoted = false;
+    // MD25: the getDevices honest-empty caveat (no sync service) is
+    // recorded once per context, not on every call.
+    bool m_sessionsDevicesNoted = false;
 };
 
 #endif // EXTENSIONSHIMBACKEND_H

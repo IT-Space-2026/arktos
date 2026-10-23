@@ -894,6 +894,17 @@ UI:
   context that declared "downloads", including downloads started
   from the browser itself. The Chrome download-shelf surface stays
   a typed refusal — Arktos has no shelf (MD24).
+- chrome.sessions is live for extensions that declare the grant:
+  getDevices honestly answers the empty list (Arktos has no sync
+  service, so no other device can report), getRecentlyClosed
+  enumerates the same recently-closed records the "Recently Closed
+  Tabs" menu drives — merged across windows, newest first, capped
+  at Chrome's MAX_SESSION_RESULTS — and restore() rebuilds a closed
+  tab through the same undo path the menu uses, addressed by the
+  sessionId serial each record carries. sessions.onChanged fans out
+  to every hosted context that declared "sessions", including
+  closes, restores and clears made through the browser's own UI
+  (MD25).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

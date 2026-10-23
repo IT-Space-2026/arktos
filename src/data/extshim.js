@@ -4443,6 +4443,57 @@
     }
     installDownloads();
 
+    // --- chrome.sessions --------------------------------------------------
+    // MD25: same posture as downloads/history — the object answers
+    // in every extension context and the 'sessions' grant is
+    // enforced per call by the backend (invokeSessions), so the
+    // namespace is always installed.  getRecentlyClosed/restore ride
+    // TabWidget's per-window closed-tab undo stacks; getDevices is
+    // the honest empty list (no sync service); MAX_SESSION_RESULTS
+    // is Chrome's published bound — the same 25 the stack enforces.
+    function installSessions() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.sessions; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var sessNs = {
+            __arktosShim: true,
+            MAX_SESSION_RESULTS: 25,
+            onChanged: makeEvent('sessions.onChanged')
+        };
+        var sessArgs = {
+            getDevices: function (a) { return { filter: a[0] || {} }; },
+            getRecentlyClosed: function (a) {
+                return { filter: a[0] || {} };
+            },
+            restore: function (a) { return { sessionId: a[0] }; }
+        };
+        for (var mk in sessArgs) {
+            (function (m, map) {
+                sessNs[m] = function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('sessions', m, map(a));
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mk, sessArgs[mk]);
+        }
+        installNs('sessions', sessNs);
+    }
+    installSessions();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -4700,7 +4751,7 @@
         'scripting', 'offscreen', 'omnibox', 'devtools',
         'fontSettings', 'tabGroups', 'userScripts',
         'declarativeNetRequest', 'declarativeContent',
-        'browsingData', 'management', 'sessions',
+        'browsingData', 'management',
         'power', 'system', 'tts', 'enterprise', 'debugger',
         'processes', 'readingList', 'search', 'favicon', 'tabCapture',
         'input', 'dns', 'documentScan', 'fileSystemProvider',

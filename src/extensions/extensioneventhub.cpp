@@ -301,6 +301,14 @@ void ExtensionEventHub::wireWindow(BrowserMainWindow *window)
                 [this]() { syncNow(); });
         connect(tw, &QTabWidget::currentChanged, this,
                 [this, tw](int index) { onTabActivated(tw, index); });
+        // MD25: chrome.sessions.onChanged — the undo stack's mutation
+        // signal covers close-queue, restore and clear alike, so UI
+        // and API paths emit the same no-arg ping Chrome sends.
+        connect(tw, &TabWidget::recentlyClosedTabsChanged, this,
+                []() {
+            ExtensionBackgroundRuntime::instance()->broadcastEvent(
+                QStringLiteral("sessions.onChanged"), argsPayload({}));
+        });
     }
     // The destroyed() signal runs while the object is already sliced
     // to QObject — a slot parameter cast would be UB, so the typed

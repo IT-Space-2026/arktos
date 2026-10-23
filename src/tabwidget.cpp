@@ -291,8 +291,11 @@ TabWidget::TabWidget(QWidget *parent)
 
 void TabWidget::clearRecentlyClosedTabs()
 {
+    if (m_recentlyClosedTabs.isEmpty())
+        return;
     m_recentlyClosedTabs.clear();
     m_recentlyClosedTabsAction->setEnabled(false);
+    emit recentlyClosedTabsChanged();
 }
 
 bool TabWidget::hasRecentlyClosedTabs() const
@@ -4270,23 +4273,31 @@ void TabWidget::pushRecentlyClosedTab(WebView *view, int index,
         closed.scrollX = scroll.x();
         closed.scrollY = scroll.y();
     }
+    // MD25: the serial addresses this record across every window's
+    // stack (a process-wide counter — a closed tab can outlive its
+    // window), and lastModified feeds Session.lastModified.
+    static quint64 s_closedSerial = 0;
+    closed.serial = ++s_closedSerial;
+    closed.lastModified = QDateTime::currentMSecsSinceEpoch();
     m_recentlyClosedTabs.prepend(closed);
     while (m_recentlyClosedTabs.size() > m_recentlyClosedTabsSize)
         m_recentlyClosedTabs.removeLast();
     m_recentlyClosedTabsAction->setEnabled(true);
+    emit recentlyClosedTabsChanged();
 }
 
-// Shared undo path for openLastTab() and the recently-closed menu:
-// recreate the tab on its recorded container, then put back the strip
-// slot it was closed from — the pin block first, then a still-living
-// group, otherwise the recorded index clamped to today's strip.
-void TabWidget::restoreClosedTab(const RecentlyClosedTab &closed)
+// Shared undo path for openLastTab(), the recently-closed menu and
+// restoreRecentlyClosed(): recreate the tab on its recorded
+// container, then put back the strip slot it was closed from — the
+// pin block first, then a still-living group, otherwise the recorded
+// index clamped to today's strip.
+WebView *TabWidget::restoreClosedTab(const RecentlyClosedTab &closed)
 {
     // A container deleted since the close degrades to the default —
     // makeNewTabInContainer resolves unknown ids that way already.
     WebView *view = makeNewTabInContainer(closed.containerId, true);
     if (!view)
-        return;
+        return nullptr;
     // The engine cannot inject a serialized back/forward stack (see
     // createTab), so the history blob contributes its current entry;
     // an unreadable blob falls back to the flat url.
@@ -4325,6 +4336,7 @@ void TabWidget::restoreClosedTab(const RecentlyClosedTab &closed)
             view, QPointF(closed.scrollX, closed.scrollY));
     // TABS12: a renamed tab reopens renamed.
     setCustomTitleForPage(tabPageWidget(view), closed.customTitle);
+    return view;
 }
 
 void TabWidget::openLastTab()
@@ -4333,6 +4345,7 @@ void TabWidget::openLastTab()
         return;
     restoreClosedTab(m_recentlyClosedTabs.takeFirst());
     m_recentlyClosedTabsAction->setEnabled(!m_recentlyClosedTabs.isEmpty());
+    emit recentlyClosedTabsChanged();
 }
 
 void TabWidget::aboutToShowRecentTabsMenu()
@@ -4369,6 +4382,44 @@ void TabWidget::aboutToShowRecentTriggeredAction(QAction *action)
         return;
     restoreClosedTab(m_recentlyClosedTabs.takeAt(i));
     m_recentlyClosedTabsAction->setEnabled(!m_recentlyClosedTabs.isEmpty());
+    emit recentlyClosedTabsChanged();
+}
+
+// MD25 — chrome.sessions' read surface: the undo stack as plain
+// records (newest first) so the shim can enumerate closed sessions
+// across windows, and a serial-addressed restore so an extension's
+// held sessionId still resolves after newer entries push above it.
+QList<TabWidget::ClosedTabRecord> TabWidget::recentlyClosedRecords()
+        const
+{
+    QList<ClosedTabRecord> out;
+    out.reserve(m_recentlyClosedTabs.size());
+    for (const RecentlyClosedTab &closed : m_recentlyClosedTabs) {
+        ClosedTabRecord record;
+        record.serial = closed.serial;
+        record.url = closed.url;
+        record.title = closed.title;
+        record.lastModified = closed.lastModified;
+        record.index = closed.index;
+        record.pinned = closed.pinned;
+        out.append(record);
+    }
+    return out;
+}
+
+WebView *TabWidget::restoreRecentlyClosed(quint64 serial)
+{
+    for (int i = 0; i < m_recentlyClosedTabs.size(); ++i) {
+        if (m_recentlyClosedTabs.at(i).serial != serial)
+            continue;
+        WebView *view =
+            restoreClosedTab(m_recentlyClosedTabs.takeAt(i));
+        m_recentlyClosedTabsAction->setEnabled(
+            !m_recentlyClosedTabs.isEmpty());
+        emit recentlyClosedTabsChanged();
+        return view;
+    }
+    return nullptr;
 }
 
 void TabWidget::retranslate()

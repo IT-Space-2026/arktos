@@ -1294,6 +1294,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeCookies(method, args);
     if (ns == QLatin1String("downloads"))
         return invokeDownloads(method, args);
+    if (ns == QLatin1String("sessions"))
+        return invokeSessions(method, args);
     if (ns == QLatin1String("extension"))
         return invokeExtension(method, args);
     if (ns == QLatin1String("sidebarAction"))
@@ -5785,6 +5787,173 @@ QJsonObject ExtensionShimBackend::invokeDownloads(
                              QStringLiteral("setUiOptions")}) {
         if (method == m)
             return errReply(QStringLiteral("unsupported"));
+    }
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.sessions — MD25.  A minimal surface over TabWidget's TABS05
+// closed-tab undo stack.  getDevices answers the honest empty list —
+// Arktos has no sync service, so no other device can report sessions.
+// getRecentlyClosed enumerates the same records the "Recently Closed
+// Tabs" menu drives, merged across every browsing window newest-first
+// (each stack is per-window, Chrome's list is global) and capped at
+// MAX_SESSION_RESULTS — 25, the same bound the stack already
+// enforces.  restore() resolves the serial sessionId a Session's tab
+// carries back through restoreRecentlyClosed — list positions shift
+// under a caller holding an id, so the stack never addresses by
+// index.  'sessions' gates the whole namespace like Chrome; onChanged
+// is tap-driven (the hub wires recentlyClosedTabsChanged), so UI and
+// API mutations fan out identically and no member-emit path exists
+// here.
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::invokeSessions(
+        const QString &method, const QJsonObject &args)
+{
+    // ER16 shape: Chrome exposes the namespace only under the
+    // declared 'sessions' grant — the bridge object answers a direct
+    // call from any code in the context, so the gate runs here too.
+    if (!manifestPermissions().contains(QLatin1String("sessions")))
+        return errReply(QStringLiteral("no-permission"));
+
+    // The closed-tab records across every browsing window — each
+    // (window, record) pair keeps its owner so restore() and the
+    // windowId fill resolve against the stack the record lives on.
+    const auto collect = []() {
+        QList<QPair<BrowserMainWindow *, TabWidget::ClosedTabRecord>>
+            out;
+        for (BrowserMainWindow *window
+             : ExtensionEventHub::browsingWindows()) {
+            TabWidget *tw = window ? window->tabWidget() : nullptr;
+            if (!tw)
+                continue;
+            const QList<TabWidget::ClosedTabRecord> records =
+                tw->recentlyClosedRecords();
+            for (const TabWidget::ClosedTabRecord &record : records)
+                out.append({window, record});
+        }
+        // Chrome's list is newest-first globally — merge the
+        // per-window stacks on the close timestamp.
+        std::sort(out.begin(), out.end(),
+                  [](const auto &x, const auto &y) {
+            return x.second.lastModified > y.second.lastModified;
+        });
+        return out;
+    };
+    // The chrome.sessions Session shape — a closed tab's Session is
+    // {lastModified, tab}; window sessions have no Arktos record (a
+    // closed window leaves no undo entry).
+    const auto sessionJson = [](BrowserMainWindow *window,
+                                const TabWidget::ClosedTabRecord &r) {
+        QJsonObject tab;
+        tab.insert(QStringLiteral("index"), r.index);
+        tab.insert(QStringLiteral("windowId"), windowIdFor(window));
+        tab.insert(QStringLiteral("pinned"), r.pinned);
+        tab.insert(QStringLiteral("active"), false);
+        // The strip has no multi-select — highlighted/selected
+        // collapse onto active like tabObject() answers.
+        tab.insert(QStringLiteral("highlighted"), false);
+        tab.insert(QStringLiteral("selected"), false);
+        // OTR pages never enter the undo stack (SEC07).
+        tab.insert(QStringLiteral("incognito"), false);
+        tab.insert(QStringLiteral("url"), r.url.toString());
+        tab.insert(QStringLiteral("title"), r.title);
+        // sessions.restore() addresses this serial — a stale id
+        // (restored, evicted, cleared) simply misses.
+        tab.insert(QStringLiteral("sessionId"),
+                   QString::number(r.serial));
+        QJsonObject session;
+        session.insert(QStringLiteral("lastModified"),
+                       double(r.lastModified));
+        session.insert(QStringLiteral("tab"), tab);
+        return session;
+    };
+
+    if (method == QLatin1String("getDevices")) {
+        if (!m_sessionsDevicesNoted) {
+            m_sessionsDevicesNoted = true;
+            recordNote(QStringLiteral(
+                "sessions: getDevices answers the honest empty list "
+                "— Arktos has no sync service, so no other device "
+                "can report sessions"));
+        }
+        return okReply(QJsonArray());
+    }
+
+    if (method == QLatin1String("getRecentlyClosed")) {
+        // Chrome's Filter.maxResults bound — values outside
+        // [0, MAX_SESSION_RESULTS] are argument errors, not clamps.
+        int maxResults = 25;
+        const QJsonObject filter =
+            args.value(QLatin1String("filter")).toObject();
+        if (filter.contains(QLatin1String("maxResults"))) {
+            const QJsonValue v =
+                filter.value(QLatin1String("maxResults"));
+            if (!v.isDouble() || v.toDouble() < 0
+                    || v.toDouble() > 25)
+                return errReply(QStringLiteral("invalid-argument"));
+            maxResults = v.toInt();
+        }
+        QJsonArray out;
+        const QList<QPair<BrowserMainWindow *,
+                          TabWidget::ClosedTabRecord>> all = collect();
+        for (const auto &entry : all) {
+            if (out.size() >= maxResults)
+                break;
+            out.append(sessionJson(entry.first, entry.second));
+        }
+        return okReply(out);
+    }
+
+    if (method == QLatin1String("restore")) {
+        const QString sessionId =
+            args.value(QLatin1String("sessionId")).toString();
+        const QList<QPair<BrowserMainWindow *,
+                          TabWidget::ClosedTabRecord>> all = collect();
+        if (all.isEmpty())
+            return errReply(QStringLiteral("not-found"));
+        if (sessionId.isEmpty()) {
+            // Chrome's no-arg form restores the newest session.
+            const auto &top = all.first();
+            TabWidget *tw = top.first->tabWidget();
+            WebView *view =
+                tw ? tw->restoreRecentlyClosed(top.second.serial)
+                   : nullptr;
+            if (!view)
+                return errReply(QStringLiteral("restore-failed"));
+            QJsonObject session = sessionJson(top.first, top.second);
+            // The rebuilt tab's live id — Chrome's restored Session
+            // answers the tab that now exists.
+            QJsonObject tab =
+                session.value(QLatin1String("tab")).toObject();
+            tab.insert(QStringLiteral("id"), tabIdFor(view));
+            session.insert(QStringLiteral("tab"), tab);
+            return okReply(session);
+        }
+        bool parsed = false;
+        const quint64 serial = sessionId.toULongLong(&parsed);
+        if (!parsed || serial == 0)
+            return errReply(QStringLiteral("invalid-argument"));
+        for (const auto &entry : all) {
+            if (entry.second.serial != serial)
+                continue;
+            TabWidget *tw = entry.first->tabWidget();
+            WebView *view =
+                tw ? tw->restoreRecentlyClosed(serial) : nullptr;
+            if (!view)
+                return errReply(QStringLiteral("restore-failed"));
+            QJsonObject session =
+                sessionJson(entry.first, entry.second);
+            QJsonObject tab =
+                session.value(QLatin1String("tab")).toObject();
+            tab.insert(QStringLiteral("id"), tabIdFor(view));
+            session.insert(QStringLiteral("tab"), tab);
+            return okReply(session);
+        }
+        // An id from before the last restore/clear, or never ours —
+        // Chrome's stale-session answer.
+        return errReply(QStringLiteral("not-found"));
     }
     return errReply(QStringLiteral("unimplemented"));
 }

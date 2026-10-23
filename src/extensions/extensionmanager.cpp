@@ -1318,6 +1318,10 @@ QStringList ExtensionManager::runtimeServes()
         QStringLiteral("notifications"),
         QStringLiteral("offscreen"),
         QStringLiteral("scripting"),
+        // MD25: chrome.sessions serves getDevices/getRecentlyClosed/
+        // restore over TabWidget's closed-tab undo stack — the whole
+        // declared surface is live.
+        QStringLiteral("sessions"),
         QStringLiteral("sidePanel"),
         QStringLiteral("tabs"),
         QStringLiteral("webNavigation"),
