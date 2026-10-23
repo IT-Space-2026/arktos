@@ -107,6 +107,7 @@ private slots:
     void extensionAllowedAccess();
     void extensionManagementRead();
     void extensionManagementMutations();
+    void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
     void extensionContentScriptRegistration();
@@ -7760,6 +7761,168 @@ void tst_ExtensionManager::extensionManagementMutations()
     QDir(dir).removeRecursively();
     QDir(dirB).removeRecursively();
     QDir(dirC).removeRecursively();
+}
+
+// MD18 — chrome.runtime lifecycle ops.  reload rides the manager's
+// unload+load of the calling extension; requestUpdateCheck rides
+// checkForUpdates/updateResultFor with the verdict pushed back as
+// '__arktos.updateCheck' in Chrome's {status,version} vocabulary;
+// setUninstallURL persists the page removeExtension() opens once the
+// removal actually lands.
+void tst_ExtensionManager::extensionRuntimeOps()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extrtops-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-rtops\","
+                "\"version\":\"1.0\"}");
+        f.close();
+    }
+    ExtensionManager *manager = ExtensionManager::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-rtops")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+
+    ExtensionShimBackend backend(id, QStringLiteral("tst-rtops"), dir);
+    QSignalSpy pushSpy(&backend, &ExtensionShimBackend::pushEvent);
+
+    // --- setUninstallURL: validation + the persisted roundtrip ----
+    const QUrl uninstallPage(
+        QStringLiteral("https://example.com/gone?id=1"));
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("runtime"), QStringLiteral("setUninstallURL"),
+        QJsonObject{{QStringLiteral("url"), uninstallPage.toString()}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(manager->uninstallUrlFor(id), uninstallPage);
+    // Chrome's contract is http/https only — a script scheme is a
+    // typed refusal and the recorded url survives it.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("runtime"),
+                 QStringLiteral("setUninstallURL"),
+                 QJsonObject{{QStringLiteral("url"),
+                              QStringLiteral("javascript:alert(1)")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(manager->uninstallUrlFor(id), uninstallPage);
+    // An empty url clears the record like Chrome.
+    QVERIFY(backend.invoke(
+                QStringLiteral("runtime"),
+                QStringLiteral("setUninstallURL"),
+                QJsonObject{{QStringLiteral("url"), QString()}})
+                .value(QLatin1String("ok")).toBool());
+    QVERIFY(manager->uninstallUrlFor(id).isEmpty());
+    // Re-arm for the removal leg below.
+    QVERIFY(backend.invoke(
+                QStringLiteral("runtime"),
+                QStringLiteral("setUninstallURL"),
+                QJsonObject{{QStringLiteral("url"),
+                             uninstallPage.toString()}})
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(manager->uninstallUrlFor(id), uninstallPage);
+
+    // --- requestUpdateCheck: Chrome's status vocabulary -----------
+    reply = backend.invoke(
+        QStringLiteral("runtime"), QStringLiteral("requestUpdateCheck"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    // The verdict arrives as a push — the check runs real fetches
+    // the invoke reply cannot wait out.  The fixture declares no
+    // update_url, so the honest answer is Chrome's "no_update".
+    QString updateStatus;
+    QElapsedTimer updateTimer;
+    updateTimer.start();
+    while (updateStatus.isEmpty() && updateTimer.elapsed() < 30000) {
+        QTest::qWait(50);
+        for (const QList<QVariant> &args : pushSpy) {
+            if (args.at(0).toString()
+                    != QLatin1String("__arktos.updateCheck"))
+                continue;
+            updateStatus = args.at(1).toJsonObject()
+                .value(QLatin1String("status")).toString();
+        }
+    }
+    QVERIFY((QStringList{QStringLiteral("throttled"),
+                         QStringLiteral("no_update"),
+                         QStringLiteral("update_available")}
+                 .contains(updateStatus)));
+    QCOMPARE(updateStatus, QStringLiteral("no_update"));
+
+    // --- reload: unload+load brings the same extension back -------
+    auto unloadedCount = std::make_shared<int>(0);
+    auto reloadedCount = std::make_shared<int>(0);
+    QObject::connect(manager, &ExtensionManager::extensionUnloaded,
+                     this, [id, unloadedCount](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.id == id)
+            ++*unloadedCount;
+    });
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [id, reloadedCount](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.id == id)
+            ++*reloadedCount;
+    });
+    reply = backend.invoke(
+        QStringLiteral("runtime"), QStringLiteral("reload"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(*unloadedCount >= 1, 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(*reloadedCount >= 1, 30000);
+    // The reload's transient unload must NOT open the recorded
+    // uninstall page — only a real removal does.
+    for (BrowserMainWindow *w
+         : BrowserApplication::instance()->mainWindows()) {
+        TabWidget *tw = w->tabWidget();
+        for (int i = 0; i < tw->count(); ++i)
+            QVERIFY2(tw->webView(i)->url() != uninstallPage,
+                     "reload-unload opened the uninstall page");
+    }
+    // A bare backend the manager never tracked gets not-found.
+    ExtensionShimBackend bare(
+        QStringLiteral("tstmockextensionid0020"),
+        QStringLiteral("tst-rtops-bare"), dir);
+    QCOMPARE(bare.invoke(QStringLiteral("runtime"),
+                         QStringLiteral("reload"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // --- removal opens the recorded uninstall page -----------------
+    // The page lands in a new tab on whatever window the app fronts —
+    // enumerate rather than assuming which registered window got it.
+    const auto pageOpened = [uninstallPage]() {
+        for (BrowserMainWindow *w
+             : BrowserApplication::instance()->mainWindows()) {
+            TabWidget *tw = w->tabWidget();
+            for (int i = 0; i < tw->count(); ++i) {
+                if (tw->webView(i)->url() == uninstallPage)
+                    return true;
+            }
+        }
+        return false;
+    };
+    QVERIFY(!pageOpened());
+    manager->removeExtension(id);
+    QTRY_VERIFY_WITH_TIMEOUT(pageOpened(), 20000);
+    // Consumed — the record dies with the extension.
+    QVERIFY(manager->uninstallUrlFor(id).isEmpty());
+
+    QDir(dir).removeRecursively();
 }
 
 // ER07 — chrome.scripting.executeScript.  A fixture extension

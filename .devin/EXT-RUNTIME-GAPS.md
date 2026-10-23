@@ -98,7 +98,6 @@ chrome.wallpaper.*: unsupported
 # MD07 queued carve-outs (still typed today — entries stay):
 #   tabs unserved members -> MD10 ops/state, MD11 zoom+capture,
 #     MD12 connect; management read ops -> MD16, mutations -> MD17;
-#     runtime reload / requestUpdateCheck / setUninstallURL -> MD18;
 #     storage getKeys/setAccessLevel/sync/quota -> MD19;
 #     alarms edges -> MD20.
 # (extension.isAllowed* left with MD15 — invokeExtension answers the
@@ -112,8 +111,6 @@ chrome.notifications.*: unsupported
 chrome.permissions.remove: unsupported
 chrome.permissions.request: unsupported
 chrome.runtime.getPackageDirectoryEntry: unsupported
-chrome.runtime.reload: unsupported
-chrome.runtime.requestUpdateCheck: unsupported
 chrome.runtime.restartAfterDelay: unsupported
 chrome.runtime.sendNativeMessage: unsupported
 chrome.sidePanel.open: unsupported

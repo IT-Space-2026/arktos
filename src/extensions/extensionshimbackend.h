@@ -94,7 +94,14 @@ class QWebEngineProfile;
 //                  recorded-options model sidePanel uses (ER15);
 //                  open/close/toggle answer typed unsupported;
 //                  the manifest's sidebar_action key gates it (ER16)
-//   runtime.*    — context bookkeeping (getViews counts)
+//   runtime.*    — context bookkeeping (getViews counts); MD18
+//                  lifecycle ops: reload rides ExtensionManager's
+//                  unload+load, requestUpdateCheck rides
+//                  checkForUpdates/updateResultFor with the verdict
+//                  pushed back as '__arktos.updateCheck' (the check
+//                  runs real fetches the invoke reply cannot wait
+//                  out), setUninstallURL persists the page Chrome
+//                  opens when the removal lands
 //   shim.*       — diagnostics channel: 'note' -> notes(), 'gap' ->
 //                  gapReported() -> the host's health surface
 class ExtensionShimBackend : public QObject
@@ -330,6 +337,10 @@ private:
     QStringList m_gaps;
     QJsonObject m_manifest;         // invalid until manifestJson()
     bool m_manifestLoaded = false;
+
+    // MD18: a requestUpdateCheck whose verdict is still in flight —
+    // a second call answers 'throttled' like Chrome.
+    bool m_updateCheckPending = false;
 };
 
 #endif // EXTENSIONSHIMBACKEND_H

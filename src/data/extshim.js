@@ -138,6 +138,9 @@
     var bridgeQueue = [];
     var bridgeWatch = null;
     var hostEventWired = false;
+    // MD18: resolve fn for an in-flight requestUpdateCheck — the
+    // verdict arrives as an '__arktos.updateCheck' push.
+    var updateCheckWaiter = null;
 
     function flushBridgeQueue() {
         var q = bridgeQueue;
@@ -174,6 +177,14 @@
             // getViews composes its return array from this.
             if (payload && payload.contexts)
                 shim.contexts = payload.contexts;
+            return;
+        }
+        if (name === '__arktos.updateCheck') {
+            // MD18: the requestUpdateCheck verdict — the check runs
+            // real network fetches the invoke reply cannot wait
+            // out, so the backend pushes the result instead.
+            if (updateCheckWaiter)
+                updateCheckWaiter(payload || {});
             return;
         }
         if (name === '__arktos.portConnect') {
@@ -1519,7 +1530,7 @@
         // them; listeners must land on the shim event.
         var connEvents = ['onConnect', 'onConnectExternal',
                           'onMessageExternal', 'onInstalled',
-                          'onStartup'];
+                          'onStartup', 'onUpdateAvailable'];
         for (var ce = 0; ce < connEvents.length; ++ce) {
             (function (cname) {
                 var evName = 'runtime.' + cname;
@@ -1622,13 +1633,19 @@
                 return p;
             }, 'chrome.runtime.getPlatformInfo');
         }
-        if (typeof rt.setUninstallURL !== 'function') {
-            rtSet('setUninstallURL', function (url, cb) {
-                note('chrome.runtime.setUninstallURL recorded '
-                     + '(no uninstall flow)');
-                return okCall(undefined, cb);
-            }, 'chrome.runtime.setUninstallURL');
-        }
+        // MD18: the lifecycle trio install unconditionally like
+        // connect — a native binding can only reach the dead service
+        // worker, so the bridge verdict is authoritative.
+        rtSet('setUninstallURL', function (url, cb) {
+            var p = call('runtime', 'setUninstallURL',
+                         { url: String(url || '') });
+            if (cb)
+                p.then(function () { cb(); },
+                       function (e) {
+                           answerCb(cb, undefined, e.message);
+                       });
+            return p;
+        }, 'chrome.runtime.setUninstallURL');
         if (typeof rt.openOptionsPage !== 'function') {
             rtSet('openOptionsPage', function (cb) {
                 // EXT17: opens options_ui.page in a normal tab via
@@ -1643,12 +1660,57 @@
                 return p;
             }, 'chrome.runtime.openOptionsPage');
         }
-        if (typeof rt.requestUpdateCheck !== 'function') {
-            rtSet('requestUpdateCheck', function (cb) {
-                return failCall('runtime.requestUpdateCheck',
-                                'unsupported', cb);
-            }, 'chrome.runtime.requestUpdateCheck');
-        }
+        rtSet('requestUpdateCheck', function (cb) {
+            var p = new Promise(function (resolve, reject) {
+                var finish = function (r) {
+                    if (updateCheckWaiter !== finish)
+                        return;
+                    updateCheckWaiter = null;
+                    var status = (r && r.status) || 'throttled';
+                    var details = {};
+                    if (r && r.version !== undefined)
+                        details.version = r.version;
+                    if (r && r.error !== undefined)
+                        details.error = r.error;
+                    if (cb) {
+                        // Chrome's callback shape is (status, details).
+                        try { cb(status, details); } catch (e) {}
+                    }
+                    resolve({ status: status, details: details });
+                };
+                if (updateCheckWaiter) {
+                    // Chrome answers 'throttled' to a concurrent
+                    // request — the backend does the same.
+                    if (cb) {
+                        try { cb('throttled', {}); } catch (e) {}
+                    }
+                    resolve({ status: 'throttled', details: {} });
+                    return;
+                }
+                updateCheckWaiter = finish;
+                call('runtime', 'requestUpdateCheck', {})
+                    .then(function (r) {
+                        // An immediate verdict (throttled) comes
+                        // back on the reply; a real check's verdict
+                        // arrives as '__arktos.updateCheck'.
+                        if (r && r.status)
+                            finish(r);
+                    })
+                    .catch(function (e) {
+                        if (updateCheckWaiter === finish)
+                            updateCheckWaiter = null;
+                        reject(e);
+                    });
+                // The fetch path has its own (longer) timeouts
+                // host-side; this only bounds a verdict that never
+                // arrives at all.
+                setTimeout(function () {
+                    finish({ status: 'throttled',
+                             error: 'update-check-timeout' });
+                }, 90000);
+            });
+            return p;
+        }, 'chrome.runtime.requestUpdateCheck');
         if (typeof rt.restartAfterDelay !== 'function') {
             rtSet('restartAfterDelay', function (delay, cb) {
                 return failCall('runtime.restartAfterDelay',
@@ -1674,11 +1736,13 @@
                 return deadPort(app, 'no-native-messaging');
             }, 'chrome.runtime.connectNative');
         }
-        if (typeof rt.reload !== 'function') {
-            rtSet('reload', function () {
-                recordGap('chrome.runtime.reload', 'unsupported');
-            }, 'chrome.runtime.reload');
-        }
+        rtSet('reload', function () {
+            // chrome.runtime.reload — the backend's unload+load IS
+            // the reload.  The reply may never land because this
+            // context dies with the unload; Chrome gives reload no
+            // callback anyway.
+            call('runtime', 'reload', {}).catch(function () {});
+        }, 'chrome.runtime.reload');
     }
 
     // --- chrome.extension (legacy alias surface) ----------------------

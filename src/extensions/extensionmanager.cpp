@@ -21,11 +21,13 @@
 #include "profilesettings.h"
 
 #include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "extensionbackgroundhost.h"
 #include "extensionshimbackend.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
 #include "networkaccessmanager.h"
+#include "tabwidget.h"
 
 #if defined(ARKTOS_RUSTCORE)
 #include "rustcore.h"
@@ -423,10 +425,21 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
         emit changed();
     });
     connect(extensions, &QWebEngineExtensionManager::unloadFinished,
-            this, relay(&ExtensionManager::extensionUnloaded));
+            this, [this, relay](const QWebEngineExtensionInfo &info) {
+        // MD18: a setUninstallURL page opens when the remove lands —
+        // but only for a removal removeExtension() dispatched; the
+        // reload path's transient unload carries no pending marker.
+        maybeOpenUninstallPage(infoFrom(info).id);
+        relay(&ExtensionManager::extensionUnloaded)(info);
+    });
     connect(extensions, &QWebEngineExtensionManager::uninstallFinished,
             this, [this, profile](const QWebEngineExtensionInfo &info) {
         const ExtensionInfo plain = infoFrom(info);
+        // MD18: the recorded uninstall page opens first — its
+        // settings key dies with the extension either way.
+        maybeOpenUninstallPage(plain.id);
+        ProfileSettings(BrowserProfile::profileIdFor(profile))
+            .remove(uninstallUrlSettingsKey(plain.id));
         // SEC25: the pin and any tamper flag die with the extension;
         // the EXT20 enable record goes with them.
         ProfileSettings(BrowserProfile::profileIdFor(profile))
@@ -682,6 +695,11 @@ void ExtensionManager::removeExtension(const QString &id)
     if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
         const QWebEngineExtensionInfo info = findById(extensions, id);
         if (!info.id().isEmpty()) {
+            // MD18: a recorded setUninstallURL page opens once the
+            // removal lands — the finish handlers consume the marker.
+            const QUrl uninstallPage = uninstallUrlFor(id);
+            if (!uninstallPage.isEmpty())
+                m_pendingUninstallPages.insert(id, uninstallPage);
             if (info.isInstalled())
                 extensions->uninstallExtension(info);
             else
@@ -693,6 +711,91 @@ void ExtensionManager::removeExtension(const QString &id)
     }
 #endif
     emit errorOccurred(tr("Extension support is not available in this build of Qt WebEngine."));
+}
+
+void ExtensionManager::reloadExtension(const QString &id)
+{
+#if QT_CONFIG(webengine_extensions)
+    if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
+        const QWebEngineExtensionInfo info = findById(extensions, id);
+        if (!info.id().isEmpty() && !info.path().isEmpty()) {
+            const QString path = info.path();
+            // unload+load IS Chrome's runtime.reload.  The engine
+            // applies unload asynchronously — re-load the same path
+            // once THIS extension's unloadFinished lands.  The same
+            // already-approved path re-rides its consent grant
+            // (programmatic, like the bundled install's: the reload
+            // is not a new path approval).
+            QMetaObject::Connection *conn = new QMetaObject::Connection;
+            *conn = connect(
+                extensions, &QWebEngineExtensionManager::unloadFinished,
+                this, [this, conn, id, path](
+                    const QWebEngineExtensionInfo &unloaded) {
+                if (unloaded.id() != id)
+                    return;
+                disconnect(*conn);
+                delete conn;
+                m_consentedPaths.insert(path);
+                loadExtension(path);
+            });
+            extensions->unloadExtension(info);
+            return;
+        }
+        emit errorOccurred(tr("Extension %1 is no longer loaded.").arg(id));
+        return;
+    }
+#endif
+    emit errorOccurred(tr("Extension support is not available in this build of Qt WebEngine."));
+}
+
+bool ExtensionManager::setUninstallUrl(const QString &id,
+                                       const QUrl &url)
+{
+    const QString key = uninstallUrlSettingsKey(id);
+    ProfileSettings settings(m_profileId);
+    if (url.isEmpty()) {
+        settings.remove(key);
+        return true;
+    }
+    // Chrome's contract: http/https only, 255 characters max — a
+    // recorded url is always one a tab may open.
+    const QString text = url.toString();
+    if (!url.isValid() || text.length() > 255
+            || (url.scheme() != QLatin1String("http")
+                && url.scheme() != QLatin1String("https")))
+        return false;
+    settings.setValue(key, text);
+    return true;
+}
+
+QUrl ExtensionManager::uninstallUrlFor(const QString &id) const
+{
+    return ProfileSettings(m_profileId)
+        .value(uninstallUrlSettingsKey(id)).toUrl();
+}
+
+QString ExtensionManager::uninstallUrlSettingsKey(const QString &id)
+{
+    return QLatin1String("extensions/uninstallurl/") + id;
+}
+
+void ExtensionManager::maybeOpenUninstallPage(const QString &id)
+{
+    const QUrl page = m_pendingUninstallPages.take(id);
+    if (page.isEmpty())
+        return;
+    // The record is consumed — a refused open must not replay it on
+    // the next unrelated unload.
+    ProfileSettings(m_profileId).remove(uninstallUrlSettingsKey(id));
+    // Chrome opens the uninstall page in a new tab — never clobber
+    // the user's current one.  instance() can be null for a plain
+    // QApplication, and mainWindow() stays null on a sealed persona
+    // (VSEC01 fails closed — the page drops like any sealed write).
+    BrowserApplication *app = BrowserApplication::instance();
+    if (!app)
+        return;
+    if (BrowserMainWindow *window = app->mainWindow())
+        window->tabWidget()->loadUrl(page, TabWidget::NewSelectedTab);
 }
 
 bool ExtensionManager::sessionSawEnabledExtension()

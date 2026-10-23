@@ -3013,13 +3013,45 @@ QJsonObject ExtensionShimBackend::invokeSidebarAction(
 // -------------------------------------------------------------------
 // chrome.runtime extras — context bookkeeping.  getViews can't move
 // Window objects across the channel; it answers context counts and
-// the shim composes the return array in-page.
+// the shim composes the return array in-page.  MD18 serves the
+// lifecycle trio: reload rides ExtensionManager's unload+load of
+// the calling extension, requestUpdateCheck rides
+// checkForUpdates/updateResultFor (the verdict pushes back as
+// '__arktos.updateCheck' — the check runs real fetches the invoke
+// reply cannot wait out), and setUninstallURL persists the page
+// removeExtension() opens once the removal lands.
 // -------------------------------------------------------------------
+
+// MD18: one UpdateResult -> Chrome's requestUpdateCheck vocabulary.
+// 'throttled' is also Chrome's failure verdict — the honest detail
+// rides along in 'error' when the check produced one.
+static QJsonObject updateCheckJson(
+        const ExtensionManager::UpdateResult &result)
+{
+    QJsonObject verdict;
+    if (!result.availableVersion.isEmpty()) {
+        verdict.insert(QStringLiteral("status"),
+                       QStringLiteral("update_available"));
+        verdict.insert(QStringLiteral("version"),
+                       result.availableVersion);
+    } else if (result.upToDate || result.noSource
+               || result.id.isEmpty()) {
+        // An id the check never produced a row for (untracked
+        // caller, built-in component) is Chrome's "no update".
+        verdict.insert(QStringLiteral("status"),
+                       QStringLiteral("no_update"));
+    } else {
+        verdict.insert(QStringLiteral("status"),
+                       QStringLiteral("throttled"));
+    }
+    if (!result.error.isEmpty())
+        verdict.insert(QStringLiteral("error"), result.error);
+    return verdict;
+}
 
 QJsonObject ExtensionShimBackend::invokeRuntime(const QString &method,
                                                 const QJsonObject &args)
 {
-    Q_UNUSED(args);
     if (method == QLatin1String("getViews")) {
         QJsonObject counts;
         counts.insert(QStringLiteral("background"), 1);
@@ -3095,8 +3127,80 @@ QJsonObject ExtensionShimBackend::invokeRuntime(const QString &method,
                     info.value(QStringLiteral("arch")).toString());
         return okReply(info);
     }
-    if (method == QLatin1String("reload"))
-        return errReply(QStringLiteral("unsupported"));
+    if (method == QLatin1String("reload")) {
+        // chrome.runtime.reload — the manager's unload+load of the
+        // calling extension.  Deferred a turn so this reply can
+        // leave before the host dies; Chrome gives reload no
+        // callback anyway.
+        ExtensionManager *manager = ExtensionManager::instance();
+        bool tracked = false;
+        bool builtin = false;
+        if (manager) {
+            const QList<ExtensionManager::ExtensionInfo> records =
+                manager->extensions();
+            for (const ExtensionManager::ExtensionInfo &info : records) {
+                if (info.id != m_extensionId)
+                    continue;
+                tracked = info.loaded;
+                builtin = info.builtin || info.path.isEmpty();
+                break;
+            }
+        }
+        if (!tracked)
+            return errReply(QStringLiteral("not-found"));
+        if (builtin)
+            return errReply(QStringLiteral("cannot-modify"));
+        QPointer<ExtensionManager> guard(manager);
+        const QString id = m_extensionId;
+        QTimer::singleShot(0, manager, [guard, id]() {
+            if (guard)
+                guard->reloadExtension(id);
+        });
+        return okReply();
+    }
+    if (method == QLatin1String("requestUpdateCheck")) {
+        ExtensionManager *manager = ExtensionManager::instance();
+        if (!manager || !ExtensionManager::isSupported())
+            return errReply(QStringLiteral("unsupported"));
+        if (m_updateCheckPending || manager->updateCheckInProgress()) {
+            // Chrome throttles a request while a check is in flight.
+            return okReply(QJsonObject{{QStringLiteral("status"),
+                                        QStringLiteral("throttled")}});
+        }
+        m_updateCheckPending = true;
+        connect(manager, &ExtensionManager::updateCheckFinished, this,
+                [this, manager](
+                    const QList<ExtensionManager::UpdateResult> &) {
+            if (!m_updateCheckPending)
+                return;
+            m_updateCheckPending = false;
+            const ExtensionManager::UpdateResult result =
+                manager->updateResultFor(m_extensionId);
+            const QJsonObject verdict = updateCheckJson(result);
+            emit pushEvent(QStringLiteral("__arktos.updateCheck"),
+                           verdict);
+            // Chrome also fires onUpdateAvailable on the caller's
+            // contexts when the check finds one.
+            if (verdict.value(QStringLiteral("status")).toString()
+                    == QLatin1String("update_available")) {
+                emit pushEvent(QStringLiteral("runtime.onUpdateAvailable"),
+                    QJsonObject{{QStringLiteral("__args"),
+                        QJsonArray{QJsonObject{
+                            {QStringLiteral("version"),
+                             result.availableVersion}}}}});
+            }
+        });
+        manager->checkForUpdates(true);
+        return okReply();
+    }
+    if (method == QLatin1String("setUninstallURL")) {
+        ExtensionManager *manager = ExtensionManager::instance();
+        if (!manager)
+            return errReply(QStringLiteral("unsupported"));
+        const QUrl url(args.value(QStringLiteral("url")).toString());
+        return manager->setUninstallUrl(m_extensionId, url)
+            ? okReply() : errReply(QStringLiteral("invalid-argument"));
+    }
     return errReply(QStringLiteral("unimplemented"));
 }
 

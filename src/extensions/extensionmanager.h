@@ -291,6 +291,22 @@ public:
     void removeExtension(const QString &id);     // unload or uninstall, per state
     void setExtensionEnabled(const QString &id, bool enabled);
 
+    // MD18: chrome.runtime.reload — unload + load of the same
+    // already-approved path.  The reload re-rides its original
+    // consent grant (programmatic, like the bundled-install grant:
+    // the path is not a new approval).  Component extensions with
+    // no on-disk path cannot reload — errorOccurred reports it.
+    void reloadExtension(const QString &id);
+
+    // MD18: chrome.runtime.setUninstallURL — the page Chrome opens
+    // once the extension's removal lands.  Persisted per persona;
+    // an empty/invalid url clears the record.  Chrome's contract:
+    // http/https only, 255 characters max — the store refuses
+    // anything else at write time so a recorded url is always one
+    // a tab may open.  Answers false on a refused value.
+    bool setUninstallUrl(const QString &id, const QUrl &url);
+    QUrl uninstallUrlFor(const QString &id) const;
+
     // EXTEXIT01: true once any extension was enabled in this session —
     // engine teardown traps afterwards, so exit must quick_exit.
     static bool sessionSawEnabledExtension();
@@ -486,6 +502,11 @@ private:
                                         const QString &id);
     static QString enabledSettingsKey(const QString &storageName,
                                       const QString &id);
+    static QString uninstallUrlSettingsKey(const QString &id);
+    // MD18: opens a setUninstallURL page recorded for a removal
+    // removeExtension() dispatched — the pending marker is what
+    // keeps a reload-unload from opening the uninstall page.
+    void maybeOpenUninstallPage(const QString &id);
     void reapplyEnabledFlags(QWebEngineProfile *profile);
     void reloadUserScripts(QWebEngineProfile *profile);
     void scheduleAutoUpdateCheck();
@@ -507,6 +528,12 @@ private:
     // SEC25: extension ids whose installed tree failed the integrity
     // sweep this session; cleared on uninstall and re-pin.
     QSet<QString> m_tamperedIds;
+
+    // MD18: ids removeExtension() dispatched while a setUninstallURL
+    // page was recorded for them — the load/unload finish handlers
+    // open + consume the entry so a reload's transient unload never
+    // opens it.
+    QHash<QString, QUrl> m_pendingUninstallPages;
 
     // EXT07: bundled installs in flight, correlated to their
     // installFinished by the package-name stem so the per-profile

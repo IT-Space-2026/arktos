@@ -829,6 +829,14 @@ UI:
   mutator's own event surface), so extensions observing lifecycle
   changes see them live; removed extensions stop answering the read
   members instead of lingering as ghosts (MD17).
+- chrome.runtime's lifecycle trio is live: reload() restarts the
+  calling extension through the same unload+load path the engine
+  drives, requestUpdateCheck() runs a real self-update check and
+  answers Chrome's status vocabulary (update_available also fires
+  runtime.onUpdateAvailable; concurrent requests throttle like
+  Chrome), and setUninstallURL() persists the page an extension asks
+  to show — removing that extension now opens it in a new tab the
+  way Chrome does instead of dropping the record (MD18).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now
