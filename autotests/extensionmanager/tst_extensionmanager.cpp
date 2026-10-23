@@ -133,6 +133,7 @@ private slots:
     void extensionScriptCss();
     void extensionContentScriptRegistration();
     void extensionUserScripts();
+    void extensionFontSettings();
     void extensionNotifications();
     void extensionIdle();
     void extensionCommands();
@@ -14065,6 +14066,495 @@ void tst_ExtensionManager::extensionUserScripts()
     manager->removeExtension(idB);
     QDir(dir).removeRecursively();
     QDir(dirB).removeRecursively();
+}
+
+// MD33 — chrome.fontSettings over the real engine font defaults:
+// getFontList answers the installed system families, the six
+// servable generic families and the three sizes read/write the
+// persisted websettings rows (re-applying live onto the engine),
+// the flattened last-writer control claims and clear() restores
+// the pre-extension value; 'math' and per-script fonts keep the
+// typed refusals and an undeclared context hears no-permission.
+void tst_ExtensionManager::extensionFontSettings()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extfont-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-font\","
+                "\"version\":\"1.0\",\"permissions\":[\"fontSettings\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0056"),
+        QStringLiteral("tst-font"), dir);
+    const auto invoke = [&backend](const QString &method,
+                                   const QJsonObject &args
+                                       = QJsonObject()) {
+        return backend.invoke(QStringLiteral("fontSettings"), method,
+                              args);
+    };
+    QSignalSpy pushSpy(&backend, &ExtensionShimBackend::pushEvent);
+
+    const QString profileId = BrowserPaths::activeProfileId();
+
+    // The leg writes real persona font state — snapshot every
+    // websettings row it can touch so the restore below leaves the
+    // profile as found.
+    ProfileSettings snapshot(profileId);
+    snapshot.beginGroup(QLatin1String("websettings"));
+    const QVariant origStandard =
+        snapshot.value(QLatin1String("standardFont"));
+    const QVariant origFixed =
+        snapshot.value(QLatin1String("fixedFont"));
+    const QVariant origMinimum =
+        snapshot.value(QLatin1String("minimumFontSize"));
+    const QVariant origSerif =
+        snapshot.value(QLatin1String("serifFont"));
+    const QVariant origSans =
+        snapshot.value(QLatin1String("sansSerifFont"));
+    const QVariant origCursive =
+        snapshot.value(QLatin1String("cursiveFont"));
+    const QVariant origFantasy =
+        snapshot.value(QLatin1String("fantasyFont"));
+    snapshot.endGroup();
+
+    const auto details = [](const QJsonObject &d) {
+        return QJsonObject{{QStringLiteral("details"), d}};
+    };
+    const auto getFont = [&invoke, &details](const QString &family) {
+        return invoke(QStringLiteral("getFont"),
+                      details(QJsonObject{
+                          {QStringLiteral("genericFamily"), family}}))
+            .value(QLatin1String("result")).toObject();
+    };
+
+    // --- getFontList — the installed system families ---------------
+    const QJsonArray fonts = invoke(QStringLiteral("getFontList"))
+        .value(QLatin1String("result")).toArray();
+    QVERIFY(fonts.size() > 0);
+    for (const QJsonValue &entry : fonts) {
+        const QJsonObject font = entry.toObject();
+        QVERIFY(!font.value(QLatin1String("fontId")).toString()
+                    .isEmpty());
+        QVERIFY(!font.value(QLatin1String("displayName")).toString()
+                    .isEmpty());
+    }
+
+    // --- getFont / the size getters — real engine defaults ---------
+    const QJsonObject standard = getFont(QStringLiteral("standard"));
+    QVERIFY(!standard.value(QLatin1String("fontId")).toString()
+                .isEmpty());
+    QCOMPARE(standard.value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controllable_by_this_extension"));
+    // A missing genericFamily defaults to 'standard' like Chrome.
+    QCOMPARE(invoke(QStringLiteral("getFont"))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("fontId")).toString(),
+             standard.value(QLatin1String("fontId")).toString());
+    // The fixed family reads the live engine row.
+    QCOMPARE(getFont(QStringLiteral("fixed"))
+                 .value(QLatin1String("fontId")).toString(),
+             BrowserProfile::normalProfile()->settings()->fontFamily(
+                 QWebEngineSettings::FixedFont));
+    const int origDefaultSize =
+        invoke(QStringLiteral("getDefaultFontSize"))
+            .value(QLatin1String("result")).toObject()
+            .value(QLatin1String("pixelSize")).toInt();
+    QVERIFY(origDefaultSize > 0);
+    QCOMPARE(invoke(QStringLiteral("getDefaultFontSize"))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controllable_by_this_extension"));
+    QCOMPARE(invoke(QStringLiteral("getDefaultFixedFontSize"))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("pixelSize")).toInt(),
+             BrowserProfile::normalProfile()->settings()->fontSize(
+                 QWebEngineSettings::DefaultFixedFontSize));
+    QVERIFY(invoke(QStringLiteral("getMinimumFontSize"))
+                .value(QLatin1String("result")).toObject()
+                .value(QLatin1String("pixelSize")).toInt() >= 0);
+
+    // --- setFont — lands the persisted row AND the live engine -----
+    const QString origStandardId =
+        standard.value(QLatin1String("fontId")).toString();
+    QString altFont;
+    for (const QJsonValue &entry : fonts) {
+        const QString id = entry.toObject()
+            .value(QLatin1String("fontId")).toString();
+        if (id != origStandardId) {
+            altFont = id;
+            break;
+        }
+    }
+    if (altFont.isEmpty())
+        altFont = origStandardId;   // degenerate one-font systems
+    QVERIFY(invoke(QStringLiteral("setFont"),
+                   details(QJsonObject{
+                       {QStringLiteral("genericFamily"),
+                        QStringLiteral("standard")},
+                       {QStringLiteral("fontId"), altFont}}))
+                .value(QLatin1String("ok")).toBool());
+    {
+        ProfileSettings store(profileId);
+        store.beginGroup(QLatin1String("websettings"));
+        QCOMPARE(store.value(QLatin1String("standardFont"))
+                     .value<QFont>().family(), altFont);
+        store.endGroup();
+    }
+    QCOMPARE(BrowserProfile::normalProfile()->settings()->fontFamily(
+                 QWebEngineSettings::StandardFont), altFont);
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("fontId")).toString(), altFont);
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_this_extension"));
+    // The API-driven mutation fanned onFontChanged out — the bare
+    // backend hears its own control level on pushEvent.
+    bool sawFontChange = false;
+    for (const QList<QVariant> &call : pushSpy) {
+        if (call.value(0).toString() != QLatin1String(
+                "fontSettings.onFontChanged"))
+            continue;
+        const QJsonObject d = call.value(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray().first()
+                .toObject();
+        QCOMPARE(d.value(QLatin1String("fontId")).toString(), altFont);
+        QCOMPARE(d.value(QLatin1String("genericFamily")).toString(),
+                 QStringLiteral("standard"));
+        QCOMPARE(d.value(QLatin1String("script")).toString(),
+                 QStringLiteral("Zyyy"));
+        QCOMPARE(d.value(QLatin1String("levelOfControl")).toString(),
+                 QStringLiteral("controlled_by_this_extension"));
+        sawFontChange = true;
+    }
+    QVERIFY(sawFontChange);
+
+    // --- a dialog-less family — the serifFont row ------------------
+    QString serifFont;
+    for (const QJsonValue &entry : fonts) {
+        const QString id = entry.toObject()
+            .value(QLatin1String("fontId")).toString();
+        if (id != altFont) {
+            serifFont = id;
+            break;
+        }
+    }
+    if (serifFont.isEmpty())
+        serifFont = altFont;
+    QVERIFY(invoke(QStringLiteral("setFont"),
+                   details(QJsonObject{
+                       {QStringLiteral("genericFamily"),
+                        QStringLiteral("serif")},
+                       {QStringLiteral("fontId"), serifFont}}))
+                .value(QLatin1String("ok")).toBool());
+    {
+        ProfileSettings store(profileId);
+        store.beginGroup(QLatin1String("websettings"));
+        QCOMPARE(store.value(QLatin1String("serifFont")).toString(),
+                 serifFont);
+        store.endGroup();
+    }
+    QCOMPARE(BrowserProfile::normalProfile()->settings()->fontFamily(
+                 QWebEngineSettings::SerifFont), serifFont);
+    QCOMPARE(getFont(QStringLiteral("serif"))
+                 .value(QLatin1String("fontId")).toString(), serifFont);
+
+    // --- the size triples — writes land the composite rows ---------
+    QVERIFY(invoke(QStringLiteral("setDefaultFontSize"),
+                   details(QJsonObject{{QStringLiteral("pixelSize"),
+                                        22}}))
+                .value(QLatin1String("ok")).toBool());
+    {
+        ProfileSettings store(profileId);
+        store.beginGroup(QLatin1String("websettings"));
+        QCOMPARE(store.value(QLatin1String("standardFont"))
+                     .value<QFont>().pointSize(), 22);
+        store.endGroup();
+    }
+    QCOMPARE(BrowserProfile::normalProfile()->settings()->fontSize(
+                 QWebEngineSettings::DefaultFontSize), 22);
+    QCOMPARE(invoke(QStringLiteral("getDefaultFontSize"))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("pixelSize")).toInt(), 22);
+    // The family half a setDefaultFontSize seeded survives a later
+    // setFont — the composite row keeps both.
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("fontId")).toString(), altFont);
+
+    QVERIFY(invoke(QStringLiteral("setDefaultFixedFontSize"),
+                   details(QJsonObject{{QStringLiteral("pixelSize"),
+                                        15}}))
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(BrowserProfile::normalProfile()->settings()->fontSize(
+                 QWebEngineSettings::DefaultFixedFontSize), 15);
+    QVERIFY(invoke(QStringLiteral("setMinimumFontSize"),
+                   details(QJsonObject{{QStringLiteral("pixelSize"),
+                                        10}}))
+                .value(QLatin1String("ok")).toBool());
+    {
+        ProfileSettings store(profileId);
+        store.beginGroup(QLatin1String("websettings"));
+        QCOMPARE(store.value(QLatin1String("minimumFontSize")).toInt(),
+                 10);
+        store.endGroup();
+    }
+    QCOMPARE(BrowserProfile::normalProfile()->settings()->fontSize(
+                 QWebEngineSettings::MinimumFontSize), 10);
+    bool sawSizeChange = false;
+    for (const QList<QVariant> &call : pushSpy) {
+        if (call.value(0).toString() != QLatin1String(
+                "fontSettings.onMinimumFontSizeChanged"))
+            continue;
+        const QJsonObject d = call.value(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray().first()
+                .toObject();
+        QCOMPARE(d.value(QLatin1String("pixelSize")).toInt(), 10);
+        QCOMPARE(d.value(QLatin1String("levelOfControl")).toString(),
+                 QStringLiteral("controlled_by_this_extension"));
+        sawSizeChange = true;
+    }
+    QVERIFY(sawSizeChange);
+
+    // --- control layering -------------------------------------------
+    // A second 'fontSettings'-declaring extension sees the member
+    // the first controls as controlled_by_other_extensions; its
+    // clear is Chrome's silent no-op; its own set takes the claim
+    // (last writer wins).
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extfontb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-font-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"fontSettings\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0057"),
+        QStringLiteral("tst-font-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("fontSettings"),
+                 QStringLiteral("getFont"),
+                 details(QJsonObject{
+                     {QStringLiteral("genericFamily"),
+                      QStringLiteral("standard")}}))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_other_extensions"));
+    QVERIFY(backendB.invoke(QStringLiteral("fontSettings"),
+                QStringLiteral("clearFont"),
+                details(QJsonObject{
+                    {QStringLiteral("genericFamily"),
+                     QStringLiteral("standard")}}))
+                .value(QLatin1String("ok")).toBool());
+    // The no-op clear changed nothing — backend still controls.
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_this_extension"));
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("fontId")).toString(), altFont);
+    QString secondFont;
+    for (const QJsonValue &entry : fonts) {
+        const QString id = entry.toObject()
+            .value(QLatin1String("fontId")).toString();
+        if (id != altFont && id != origStandardId) {
+            secondFont = id;
+            break;
+        }
+    }
+    if (secondFont.isEmpty())
+        secondFont = origStandardId;
+    QVERIFY(backendB.invoke(QStringLiteral("fontSettings"),
+                QStringLiteral("setFont"),
+                details(QJsonObject{
+                    {QStringLiteral("genericFamily"),
+                     QStringLiteral("standard")},
+                    {QStringLiteral("fontId"), secondFont}}))
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("fontId")).toString(), secondFont);
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_other_extensions"));
+    // The new controller's clear restores the pre-extension value —
+    // the family held before EITHER extension's first set.
+    QVERIFY(backendB.invoke(QStringLiteral("fontSettings"),
+                QStringLiteral("clearFont"),
+                details(QJsonObject{
+                    {QStringLiteral("genericFamily"),
+                     QStringLiteral("standard")}}))
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("fontId")).toString(),
+             origStandardId);
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controllable_by_this_extension"));
+    // The size member's controller clear restores the pre-extension
+    // size the same way.
+    QVERIFY(invoke(QStringLiteral("clearDefaultFontSize"))
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(invoke(QStringLiteral("getDefaultFontSize"))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("pixelSize")).toInt(),
+             origDefaultSize);
+
+    // --- typed verdicts ---------------------------------------------
+    // 'math' is published but has no Qt family; per-script fonts
+    // have no engine granularity — both are the typed refusal.
+    QCOMPARE(invoke(QStringLiteral("getFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("genericFamily"),
+                         QStringLiteral("math")}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("setFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("genericFamily"),
+                         QStringLiteral("math")},
+                        {QStringLiteral("fontId"), altFont}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("getFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("genericFamily"),
+                         QStringLiteral("standard")},
+                        {QStringLiteral("script"),
+                         QStringLiteral("Latn")}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // Argument verdicts: an unpublished family, mistyped
+    // genericFamily/script/fontId/pixelSize, an unknown fontId, an
+    // out-of-range size, a non-object details envelope.
+    QCOMPARE(invoke(QStringLiteral("getFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("genericFamily"),
+                         QStringLiteral("bogus")}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("getFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("genericFamily"), 7}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("getFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("script"), 7}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("genericFamily"),
+                         QStringLiteral("standard")}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("fontId"), 7}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("fontId"),
+                         QStringLiteral("Not A Real Font 999")}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setDefaultFontSize"),
+                    details(QJsonObject{
+                        {QStringLiteral("pixelSize"),
+                         QStringLiteral("big")}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setDefaultFontSize"),
+                    details(QJsonObject{
+                        {QStringLiteral("pixelSize"), 0}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setMinimumFontSize"),
+                    details(QJsonObject{
+                        {QStringLiteral("pixelSize"), -1}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setDefaultFontSize"),
+                    details(QJsonObject{
+                        {QStringLiteral("pixelSize"), 999}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("getFont"),
+                    QJsonObject{{QStringLiteral("details"), 7}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // Unknown member is the unreachable-member verdict.
+    QCOMPARE(invoke(QStringLiteral("getBogus"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // The manifest gate is per-context: a sibling backend without
+    // the 'fontSettings' grant hears no-permission on every op.
+    const QString dirC = QDir::temp().filePath(
+        QStringLiteral("tst-extfontc-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirC));
+    {
+        QFile f(dirC + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-font-c\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendC(
+        QStringLiteral("tstmockextensionid0058"),
+        QStringLiteral("tst-font-c"), dirC);
+    QCOMPARE(backendC.invoke(QStringLiteral("fontSettings"),
+                 QStringLiteral("getFontList"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendC.invoke(QStringLiteral("fontSettings"),
+                 QStringLiteral("getFont"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendC.invoke(QStringLiteral("fontSettings"),
+                 QStringLiteral("setMinimumFontSize"),
+                 details(QJsonObject{
+                     {QStringLiteral("pixelSize"), 10}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    // --- restore the persona ----------------------------------------
+    {
+        ProfileSettings restore(profileId);
+        restore.beginGroup(QLatin1String("websettings"));
+        const auto restoreKey = [&restore](const QString &key,
+                                           const QVariant &value) {
+            if (value.isValid())
+                restore.setValue(key, value);
+            else
+                restore.remove(key);
+        };
+        restoreKey(QStringLiteral("standardFont"), origStandard);
+        restoreKey(QStringLiteral("fixedFont"), origFixed);
+        restoreKey(QStringLiteral("minimumFontSize"), origMinimum);
+        restoreKey(QStringLiteral("serifFont"), origSerif);
+        restoreKey(QStringLiteral("sansSerifFont"), origSans);
+        restoreKey(QStringLiteral("cursiveFont"), origCursive);
+        restoreKey(QStringLiteral("fantasyFont"), origFantasy);
+        restore.endGroup();
+    }
+    // Re-apply so the engine's live values roll back too — the
+    // writes above pushed them through applySettings.
+    BrowserProfile::applySettings(BrowserProfile::normalProfile());
+
+    QDir(dirC).removeRecursively();
+    QDir(dirB).removeRecursively();
+    QDir(dir).removeRecursively();
 }
 
 // Diagnostic leg for a REAL installed extension — pointed at an

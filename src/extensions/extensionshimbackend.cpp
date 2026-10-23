@@ -27,6 +27,7 @@
 #include "browserpaths.h"
 #include "browserprofile.h"
 #include "clearprivatedata.h"
+#include "containermanager.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
 #include "engineinterface.h"
@@ -55,6 +56,7 @@
 #include <qdir.h>
 #include <qfile.h>
 #include <qfileiconprovider.h>
+#include <qfontdatabase.h>
 #include <qguiapplication.h>
 #include <qhostinfo.h>
 #include <qimage.h>
@@ -82,6 +84,7 @@
 #include <qwebenginecookiestore.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+#include <qwebenginesettings.h>
 
 #if defined(ARKTOS_RUSTCORE)
 #include "rustcorebridge.h"
@@ -1394,6 +1397,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeSystem(method, args);
     if (ns == QLatin1String("privacy"))
         return invokePrivacy(method, args);
+    if (ns == QLatin1String("fontSettings"))
+        return invokeFontSettings(method, args);
     if (ns == QLatin1String("cookies"))
         return invokeCookies(method, args);
     if (ns == QLatin1String("downloads"))
@@ -6348,6 +6353,560 @@ QJsonObject ExtensionShimBackend::invokePrivacy(
             privacyFanOut(id, m_extensionId, this);
         }
         return okReply();
+    }
+
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.fontSettings — MD33.  Chrome's flat member vocabulary over
+// the engine's real font defaults.  The whole namespace gates on
+// the declared 'fontSettings' grant like Chrome; every op's first
+// argument is a details object (getFontList takes none).
+//
+// Served surfaces and their real mappings:
+//
+//   getFontList                — the installed system families
+//                                (QFontDatabase)
+//   getFont/setFont/clearFont  — Chrome's genericFamily enum onto
+//     QWebEngineSettings::FontFamily + a persisted websettings row:
+//       standard   -> StandardFont   (standardFont — the settings
+//                                     dialog's composite QFont row:
+//                                     family + default size ride one
+//                                     value)
+//       fixed      -> FixedFont      (fixedFont, same composite)
+//       serif      -> SerifFont      (serifFont)
+//       sansserif  -> SansSerifFont  (sansSerifFont)
+//       cursive    -> CursiveFont    (cursiveFont)
+//       fantasy    -> FantasyFont    (fantasyFont)
+//       math       -> no Qt family   (typed 'unsupported')
+//   get/set/clearDefaultFontSize      — the standardFont row's size
+//   get/set/clearDefaultFixedFontSize — the fixedFont row's size
+//   get/set/clearMinimumFontSize      — minimumFontSize (0 = off)
+//
+// Chrome also scopes fonts per ISO-15924 script — QWebEngineSettings
+// carries one family per generic family, so only the 'Zyyy' (common)
+// row is servable; a named script is typed 'unsupported'.  Pixel
+// semantics follow the settings dialog's own: the QFont's pointSize
+// is what applySettings hands setFontSize — the same conflation the
+// dialog already makes, not a new one.
+//
+// Writes persist through websettings and re-apply live via
+// BrowserProfile::applySettings on every materialized profile bound
+// to the persona — the same fan-out the settings dialog's save runs
+// (profile + OTR + containers).
+//
+// ChromeSetting-style control like privacy: a member's first set()
+// snapshots the pre-extension value and claims it; get() resolves
+// levelOfControl per extension; the controller's clear*() restores
+// the snapshot while a non-controller's clear is Chrome's silent
+// no-op.  The four on*Changed events carry __controller so
+// shapedPayload resolves each observer's own level; user-driven
+// settings-dialog changes emit no event (there is no source).
+// -------------------------------------------------------------------
+
+enum class FontSizeMember {
+    DefaultFontSize,
+    DefaultFixedFontSize,
+    MinimumFontSize,
+};
+
+struct FontFamilyDef {
+    const char *name;                      // Chrome genericFamily
+    QWebEngineSettings::FontFamily engine;
+    const char *key;                       // websettings row
+    bool composite;                        // QFont row (family+size)
+    bool served;
+};
+
+// Chrome's published genericFamily enum.  'math' is published but
+// has no QWebEngineSettings family in this Qt (the enum ends at
+// PictographFont, which Chrome does not expose) — it keeps the
+// typed refusal like every other unmappable member.
+static const FontFamilyDef kFontFamilies[] = {
+    { "standard",  QWebEngineSettings::StandardFont,
+      "standardFont",   true,  true  },
+    { "serif",     QWebEngineSettings::SerifFont,
+      "serifFont",      false, true  },
+    { "sansserif", QWebEngineSettings::SansSerifFont,
+      "sansSerifFont",  false, true  },
+    { "fixed",     QWebEngineSettings::FixedFont,
+      "fixedFont",      true,  true  },
+    { "cursive",   QWebEngineSettings::CursiveFont,
+      "cursiveFont",    false, true  },
+    { "fantasy",   QWebEngineSettings::FantasyFont,
+      "fantasyFont",    false, true  },
+    { "math",      QWebEngineSettings::StandardFont,
+      nullptr,          false, false },
+};
+
+static const FontFamilyDef *fontFamilyDefFor(const QString &name)
+{
+    for (const FontFamilyDef &def : kFontFamilies) {
+        if (name == QLatin1String(def.name))
+            return &def;
+    }
+    return nullptr;
+}
+
+// Chromium's out-of-box font defaults — a pristine unnamed (OTR)
+// profile no persona's applySettings ever touched.  The baseline for
+// an unmaterialized persona and the seed for a first write into a
+// composite row.
+static QWebEngineSettings *fontBaselineSettings()
+{
+    static QWebEngineProfile *baseline = nullptr;
+    if (!baseline)
+        baseline = new QWebEngineProfile(qApp);
+    return baseline->settings();
+}
+
+// The persona's live engine settings — the materialized profile's
+// view, where applySettings already folded the stored rows in.
+// nullptr for an unmaterialized non-default persona (a read must
+// never materialize one).
+static QWebEngineSettings *fontLiveSettings(const QString &profileId)
+{
+    if (profileId == QLatin1String("default"))
+        return BrowserProfile::normalProfile()->settings();
+    if (QWebEngineProfile *profile =
+            BrowserProfile::personaProfileIfCreated(profileId))
+        return profile->settings();
+    return nullptr;
+}
+
+static QWebEngineSettings *fontEngineOrBaseline(const QString &profileId)
+{
+    if (QWebEngineSettings *live = fontLiveSettings(profileId))
+        return live;
+    return fontBaselineSettings();
+}
+
+// The stored variant -> QFont decode, with the missing/undecodable
+// cases folded to "absent": an empty variant yields QFont() — the
+// system default, family non-empty and size the app default — and a
+// legacy '@Type(...)' ini blob (imported by RC08 as a raw string it
+// cannot decode) yields the same resolved default.  Both are "no
+// persona override", never a real value.
+static bool fontFromStored(const QVariant &stored, QFont *out)
+{
+    if (!stored.isValid())
+        return false;
+    if (stored.typeId() == QMetaType::QString
+            && stored.toString().startsWith(QLatin1Char('@')))
+        return false;
+    const QFont font = stored.value<QFont>();
+    if (font.family().isEmpty())
+        return false;
+    if (out)
+        *out = font;
+    return true;
+}
+
+// The Chrome-level fontId a family reports — the persona's stored
+// row when it carries one, else the engine's resolved default.
+static QString fontFamilyValue(const FontFamilyDef &def,
+                               const QString &profileId)
+{
+    ProfileSettings store(profileId);
+    store.beginGroup(QLatin1String("websettings"));
+    const QVariant stored = store.value(QLatin1String(def.key));
+    QFont font;
+    const QString family =
+        (def.composite && fontFromStored(stored, &font))
+            ? font.family()
+            : (!def.composite ? stored.toString() : QString());
+    if (!family.isEmpty())
+        return family;
+    return fontEngineOrBaseline(profileId)->fontFamily(def.engine);
+}
+
+static QWebEngineSettings::FontSize fontSizeSlot(FontSizeMember member)
+{
+    switch (member) {
+    case FontSizeMember::DefaultFixedFontSize:
+        return QWebEngineSettings::DefaultFixedFontSize;
+    case FontSizeMember::MinimumFontSize:
+        return QWebEngineSettings::MinimumFontSize;
+    case FontSizeMember::DefaultFontSize:
+        break;
+    }
+    return QWebEngineSettings::DefaultFontSize;
+}
+
+static int fontSizeValue(FontSizeMember member,
+                         const QString &profileId)
+{
+    ProfileSettings store(profileId);
+    store.beginGroup(QLatin1String("websettings"));
+    if (member == FontSizeMember::MinimumFontSize) {
+        const QVariant stored =
+            store.value(QLatin1String("minimumFontSize"));
+        if (stored.isValid())
+            return stored.toInt();
+    } else {
+        const QString key =
+            member == FontSizeMember::DefaultFontSize
+                ? QStringLiteral("standardFont")
+                : QStringLiteral("fixedFont");
+        const QVariant stored = store.value(key);
+        QFont font;
+        if (fontFromStored(stored, &font)) {
+            const int size = font.pointSize();
+            if (size > 0)
+                return size;
+        }
+    }
+    return fontEngineOrBaseline(profileId)->fontSize(
+        fontSizeSlot(member));
+}
+
+// The live half of a write — applySettings re-reads the persona's
+// whole websettings group onto every materialized profile that binds
+// it: the persona profile, the OTR overlay and the persona's
+// container profiles.  The same fan-out the settings dialog's save
+// runs (its normalProfile + OTR + reapplySettings trio).
+static void fontApplyLive(const QString &profileId)
+{
+    if (profileId == QLatin1String("default"))
+        BrowserProfile::applySettings(BrowserProfile::normalProfile());
+    else if (QWebEngineProfile *profile =
+                 BrowserProfile::personaProfileIfCreated(profileId))
+        BrowserProfile::applySettings(profile);
+    if (QWebEngineProfile *otr =
+            BrowserProfile::privateProfileIfCreated())
+        BrowserProfile::applySettings(otr);
+    if (ContainerManager *containers =
+            ContainerManager::instanceIfCreated(profileId))
+        containers->reapplySettings();
+}
+
+static void fontWriteFamily(const FontFamilyDef &def,
+                            const QString &family,
+                            const QString &profileId)
+{
+    ProfileSettings store(profileId);
+    store.beginGroup(QLatin1String("websettings"));
+    if (def.composite) {
+        // standard/fixed ride the dialog's {family,size} QFont row —
+        // a family write must preserve the size half, so a
+        // never-written row seeds from the engine first.
+        const QVariant stored = store.value(QLatin1String(def.key));
+        QFont font;
+        if (!fontFromStored(stored, &font)) {
+            QWebEngineSettings *engine =
+                fontEngineOrBaseline(profileId);
+            font = QFont(engine->fontFamily(def.engine),
+                         engine->fontSize(
+                             def.engine == QWebEngineSettings::FixedFont
+                                 ? QWebEngineSettings::DefaultFixedFontSize
+                                 : QWebEngineSettings::DefaultFontSize));
+        }
+        font.setFamily(family);
+        store.setValue(QLatin1String(def.key), font);
+    } else {
+        store.setValue(QLatin1String(def.key), family);
+    }
+    fontApplyLive(profileId);
+}
+
+static void fontWriteSize(FontSizeMember member, int px,
+                          const QString &profileId)
+{
+    ProfileSettings store(profileId);
+    store.beginGroup(QLatin1String("websettings"));
+    if (member == FontSizeMember::MinimumFontSize) {
+        store.setValue(QLatin1String("minimumFontSize"), px);
+    } else {
+        // The size half of the composite row — a never-written row
+        // seeds from the engine so the family half is preserved.
+        const bool standard =
+            member == FontSizeMember::DefaultFontSize;
+        const QString key = standard
+            ? QStringLiteral("standardFont")
+            : QStringLiteral("fixedFont");
+        const QVariant stored = store.value(key);
+        QFont font;
+        if (!fontFromStored(stored, &font)) {
+            QWebEngineSettings *engine =
+                fontEngineOrBaseline(profileId);
+            font = QFont(engine->fontFamily(
+                             standard ? QWebEngineSettings::StandardFont
+                                      : QWebEngineSettings::FixedFont),
+                         px);
+        }
+        font.setPointSize(px);
+        store.setValue(key, font);
+    }
+    fontApplyLive(profileId);
+}
+
+// Per-member extension control — the flattened Chrome layering
+// (same discipline privacy applies): the last successful set()ter
+// controls; prior snapshots the pre-claim value the controller's
+// clear*() restores.  Keys are the Chrome generic family names for
+// the font ops and the member names for the size ops.
+struct FontControl {
+    QString extensionId;
+    QVariant prior;
+    bool hasPrior = false;
+};
+
+static QHash<QString, FontControl> &fontControl()
+{
+    static QHash<QString, FontControl> map;
+    return map;
+}
+
+static QString fontLevelOfControl(const QString &key,
+                                  const QString &extensionId)
+{
+    const QString controller = fontControl().value(key).extensionId;
+    if (controller.isEmpty())
+        return QStringLiteral("controllable_by_this_extension");
+    return controller == extensionId
+        ? QStringLiteral("controlled_by_this_extension")
+        : QStringLiteral("controlled_by_other_extensions");
+}
+
+static QJsonArray fontListJson()
+{
+    QStringList families = QFontDatabase::families();
+    families.removeDuplicates();
+    families.sort(Qt::CaseInsensitive);
+    QJsonArray list;
+    for (const QString &family : families) {
+        list.append(QJsonObject{
+            {QStringLiteral("fontId"), family},
+            {QStringLiteral("displayName"), family}});
+    }
+    return list;
+}
+
+// The on*Changed fan-out — Chrome's details shape plus a
+// levelOfControl that resolves per observer through __controller,
+// the same call privacy's onChange makes.  A bare backend hears its
+// own controlled_by_this_extension copy on pushEvent.
+static void fontFanOut(const QString &event, QJsonObject details,
+                       const QString &actorId,
+                       ExtensionShimBackend *backend)
+{
+    const QString name = QStringLiteral("fontSettings.") + event;
+    details.insert(QStringLiteral("levelOfControl"),
+                   QStringLiteral("controlled_by_other_extensions"));
+    const QJsonObject payload{
+        {QStringLiteral("__args"), QJsonArray{details}},
+        {QStringLiteral("__controller"), actorId}};
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    runtime->broadcastEvent(name, payload);
+    if (backend && !runtime->hasRelayContext(actorId)) {
+        details.insert(
+            QStringLiteral("levelOfControl"),
+            QStringLiteral("controlled_by_this_extension"));
+        emit backend->pushEvent(name, QJsonObject{
+            {QStringLiteral("__args"), QJsonArray{details}}});
+    }
+}
+
+QJsonObject ExtensionShimBackend::invokeFontSettings(
+        const QString &method, const QJsonObject &args)
+{
+    // Chrome exposes the namespace only under the declared
+    // 'fontSettings' grant — the same gate privacy applies.
+    if (!manifestPermissions().contains(QLatin1String("fontSettings")))
+        return errReply(QStringLiteral("no-permission"));
+
+    if (!m_fontSettingsNoted) {
+        m_fontSettingsNoted = true;
+        recordNote(QStringLiteral(
+            "chrome.fontSettings: standard/serif/sansserif/fixed/"
+            "cursive/fantasy families and default/fixed/minimum "
+            "sizes are served over the persona's real engine "
+            "defaults — writes land the persisted websettings rows "
+            "and re-apply live; 'math' has no Qt family and "
+            "per-script (non-'Zyyy') fonts no granularity, both "
+            "typed unsupported; extension control is flattened "
+            "(last set()ter controls, clear() restores the "
+            "pre-extension value); user-driven settings flips emit "
+            "no on*Changed"));
+    }
+
+    const QString profileId = BrowserPaths::activeProfileId();
+
+    if (method == QLatin1String("getFontList"))
+        return okReply(fontListJson());
+
+    // Every op's first argument is a details object.
+    const QJsonValue detailsValue =
+        args.value(QLatin1String("details"));
+    QJsonObject details;
+    if (detailsValue.isObject())
+        details = detailsValue.toObject();
+    else if (!detailsValue.isUndefined())
+        return errReply(QStringLiteral("invalid-argument"));
+
+    // ---- generic-family font ops -----------------------------------
+    if (method == QLatin1String("getFont")
+            || method == QLatin1String("setFont")
+            || method == QLatin1String("clearFont")) {
+        // genericFamily defaults to 'standard' like Chrome.
+        const QJsonValue familyValue =
+            details.value(QLatin1String("genericFamily"));
+        QString familyName = QStringLiteral("standard");
+        if (!familyValue.isUndefined()) {
+            if (!familyValue.isString())
+                return errReply(QStringLiteral("invalid-argument"));
+            familyName = familyValue.toString();
+        }
+        const FontFamilyDef *def = fontFamilyDefFor(familyName);
+        // A name Chrome never published is the argument verdict; a
+        // published one this build cannot map ('math') is the typed
+        // refusal — the grant was honored, the surface is missing.
+        if (!def)
+            return errReply(QStringLiteral("invalid-argument"));
+        if (!def->served)
+            return errReply(QStringLiteral("unsupported"));
+
+        // Per-script fonts have no QWebEngineSettings granularity —
+        // only Chrome's 'Zyyy' (common) row is servable.
+        const QJsonValue scriptValue =
+            details.value(QLatin1String("script"));
+        QString script = QStringLiteral("Zyyy");
+        if (!scriptValue.isUndefined()) {
+            if (!scriptValue.isString())
+                return errReply(QStringLiteral("invalid-argument"));
+            script = scriptValue.toString();
+            if (script != QLatin1String("Zyyy"))
+                return errReply(QStringLiteral("unsupported"));
+        }
+
+        const QString key = QLatin1String(def->name);
+
+        if (method == QLatin1String("getFont")) {
+            // Chrome's FontDetails: the resolved fontId plus the
+            // request's family/script echoed back.
+            return okReply(QJsonObject{
+                {QStringLiteral("fontId"),
+                 fontFamilyValue(*def, profileId)},
+                {QStringLiteral("genericFamily"), familyName},
+                {QStringLiteral("script"), script},
+                {QStringLiteral("levelOfControl"),
+                 fontLevelOfControl(key, m_extensionId)}});
+        }
+        if (method == QLatin1String("setFont")) {
+            const QJsonValue idValue =
+                details.value(QLatin1String("fontId"));
+            if (!idValue.isString())
+                return errReply(QStringLiteral("invalid-argument"));
+            const QString fontId = idValue.toString();
+            // Chrome's fontId names a system font — anything else is
+            // an argument error, never a silently-registered miss.
+            if (!QFontDatabase::families().contains(fontId))
+                return errReply(QStringLiteral("invalid-argument"));
+
+            FontControl &control = fontControl()[key];
+            if (control.extensionId.isEmpty()) {
+                control.prior = fontFamilyValue(*def, profileId);
+                control.hasPrior = true;
+            }
+            fontWriteFamily(*def, fontId, profileId);
+            control.extensionId = m_extensionId;
+            fontFanOut(QStringLiteral("onFontChanged"),
+                       QJsonObject{
+                           {QStringLiteral("fontId"), fontId},
+                           {QStringLiteral("genericFamily"),
+                            familyName},
+                           {QStringLiteral("script"), script}},
+                       m_extensionId, this);
+            return okReply();
+        }
+        // clearFont — the controller's restore-default; a clear by a
+        // non-controller (or on an unclaimed family) is Chrome's
+        // silent no-op.
+        FontControl &control = fontControl()[key];
+        if (control.extensionId == m_extensionId) {
+            if (control.hasPrior)
+                fontWriteFamily(*def, control.prior.toString(),
+                                profileId);
+            control = FontControl();
+            fontFanOut(QStringLiteral("onFontChanged"),
+                       QJsonObject{
+                           {QStringLiteral("fontId"),
+                            fontFamilyValue(*def, profileId)},
+                           {QStringLiteral("genericFamily"),
+                            familyName},
+                           {QStringLiteral("script"), script}},
+                       m_extensionId, this);
+        }
+        return okReply();
+    }
+
+    // ---- the three get/set/clear*FontSize triples ------------------
+    struct SizeMemberDef {
+        const char *prefix;
+        FontSizeMember member;
+        const char *event;
+    };
+    static const SizeMemberDef kSizeMembers[] = {
+        { "DefaultFontSize",      FontSizeMember::DefaultFontSize,
+          "onDefaultFontSizeChanged" },
+        { "DefaultFixedFontSize", FontSizeMember::DefaultFixedFontSize,
+          "onFixedFontSizeChanged" },
+        { "MinimumFontSize",      FontSizeMember::MinimumFontSize,
+          "onMinimumFontSizeChanged" },
+    };
+    for (const SizeMemberDef &def : kSizeMembers) {
+        const QString prefix = QLatin1String(def.prefix);
+        const QString key = prefix;
+        if (method == QLatin1String("get") + prefix) {
+            return okReply(QJsonObject{
+                {QStringLiteral("pixelSize"),
+                 fontSizeValue(def.member, profileId)},
+                {QStringLiteral("levelOfControl"),
+                 fontLevelOfControl(key, m_extensionId)}});
+        }
+        if (method == QLatin1String("set") + prefix) {
+            const QJsonValue size =
+                details.value(QLatin1String("pixelSize"));
+            if (!size.isDouble())
+                return errReply(QStringLiteral("invalid-argument"));
+            const double px = size.toDouble();
+            // The engine stores an int pixel size; outside a sane
+            // bound is an argument error, never a silent clamp.
+            const int floor =
+                def.member == FontSizeMember::MinimumFontSize ? 0 : 1;
+            if (px < floor || px > 500)
+                return errReply(QStringLiteral("invalid-argument"));
+
+            FontControl &control = fontControl()[key];
+            if (control.extensionId.isEmpty()) {
+                control.prior = fontSizeValue(def.member, profileId);
+                control.hasPrior = true;
+            }
+            fontWriteSize(def.member, qRound(px), profileId);
+            control.extensionId = m_extensionId;
+            fontFanOut(QLatin1String(def.event),
+                       QJsonObject{{QStringLiteral("pixelSize"),
+                                    qRound(px)}},
+                       m_extensionId, this);
+            return okReply();
+        }
+        if (method == QLatin1String("clear") + prefix) {
+            FontControl &control = fontControl()[key];
+            if (control.extensionId == m_extensionId) {
+                if (control.hasPrior)
+                    fontWriteSize(def.member, control.prior.toInt(),
+                                  profileId);
+                control = FontControl();
+                fontFanOut(QLatin1String(def.event),
+                           QJsonObject{{QStringLiteral("pixelSize"),
+                                        fontSizeValue(def.member,
+                                                      profileId)}},
+                           m_extensionId, this);
+            }
+            return okReply();
+        }
     }
 
     return errReply(QStringLiteral("unimplemented"));

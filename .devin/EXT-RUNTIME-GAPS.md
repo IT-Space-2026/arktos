@@ -37,13 +37,11 @@ matching every member of the namespace (or a dotted sub-path such as
 # --- dead namespaces: no Arktos surface exists ---------------------
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
-# stores this tree already has.  They stay in this block — still
-# typed today — but are queued: fontSettings -> MD33.
-# Entries leave the declared set only when the row lands the
-# implementation (downloads left with MD24, sessions with MD25,
-# tabGroups with MD26, topSites with MD27, browsingData with MD28,
-# dns with MD29, system with MD30, privacy with MD31,
-# userScripts with MD32).
+# stores this tree already has — each queue entry left this block
+# when its row landed the implementation (downloads left with MD24,
+# sessions with MD25, tabGroups with MD26, topSites with MD27,
+# browsingData with MD28, dns with MD29, system with MD30, privacy
+# with MD31, userScripts with MD32, fontSettings with MD33).
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
@@ -61,7 +59,8 @@ chrome.enterprise.*: unsupported
 chrome.favicon.*: unsupported
 chrome.fileBrowserHandler.*: unsupported
 chrome.fileSystemProvider.*: unsupported
-chrome.fontSettings.*: unsupported
+# fontSettings left the dead list with MD33 — see the served
+# vocabulary under "served namespaces" below.
 chrome.gcm.*: unsupported
 chrome.identity.*: unsupported
 chrome.input.*: unsupported
@@ -231,6 +230,22 @@ chrome.userScripts.*: no-such-file
 chrome.userScripts.*: not-found
 chrome.userScripts.*: unsupported
 chrome.userScripts.*: unimplemented
+# MD33: chrome.fontSettings is served over the real engine font
+# defaults — 'fontSettings' gates the whole namespace like Chrome's
+# declared grant (no-permission undeclared).  getFontList answers
+# the system family list; getFont/setFont/clearFont map Chrome's
+# servable generic families (standard/serif/sansserif/fixed/
+# cursive/fantasy) onto the persisted websettings rows and
+# re-apply live; the three get/set/clear*FontSize triples ride the
+# composite standard/fixed font rows and minimumFontSize.  Chrome's
+# 'math' generic family (no Qt family) and per-script (non-'Zyyy')
+# fonts stay typed 'unsupported'.  The rest are the ops' correct
+# verdicts (mistyped details/fontId/pixelSize, an unpublished
+# genericFamily, an unknown fontId, unreachable members).
+chrome.fontSettings.*: no-permission
+chrome.fontSettings.*: invalid-argument
+chrome.fontSettings.*: unsupported
+chrome.fontSettings.*: unimplemented
 # MD23: chrome.cookies is served over the RC15 persistent mirror
 # (reads) + QWebEngineCookieStore live jar (writes land both).
 # 'cookies' gates the namespace; url-bearing ops additionally need

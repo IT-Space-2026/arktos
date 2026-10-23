@@ -5064,6 +5064,72 @@
     }
     installPrivacy();
 
+    // --- chrome.fontSettings -------------------------------------------
+    // MD33: the real font surface.  getFontList answers the system
+    // family list; getFont/getDefaultFontSize/
+    // getDefaultFixedFontSize/getMinimumFontSize read the browser's
+    // real engine defaults and set*/clear* write the persisted
+    // persona settings back through the bridge — the backend
+    // (invokeFontSettings, under the declared 'fontSettings' grant)
+    // is authoritative: Chrome's 'math' generic family and per-script
+    // (non-'Zyyy') fonts have no Qt engine mapping and keep the
+    // typed 'unsupported', never a TypeError.  The four on*Changed
+    // events are real shim events the host fans out on extension-
+    // driven mutations (levelOfControl resolves per observer);
+    // user-driven settings-dialog flips have no event source yet.
+    function installFontSettings() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.fontSettings; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var mk = function (m) {
+            return function () {
+                var a = Array.prototype.slice.call(arguments);
+                var cb = null;
+                if (a.length
+                        && typeof a[a.length - 1] === 'function')
+                    cb = a.pop();
+                var p = call('fontSettings', m,
+                             { details: a[0] || {} });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            };
+        };
+        var fontNs = {
+            __arktosShim: true,
+            getFontList: mk('getFontList'),
+            getFont: mk('getFont'),
+            setFont: mk('setFont'),
+            clearFont: mk('clearFont'),
+            getDefaultFontSize: mk('getDefaultFontSize'),
+            setDefaultFontSize: mk('setDefaultFontSize'),
+            clearDefaultFontSize: mk('clearDefaultFontSize'),
+            getDefaultFixedFontSize: mk('getDefaultFixedFontSize'),
+            setDefaultFixedFontSize: mk('setDefaultFixedFontSize'),
+            clearDefaultFixedFontSize:
+                mk('clearDefaultFixedFontSize'),
+            getMinimumFontSize: mk('getMinimumFontSize'),
+            setMinimumFontSize: mk('setMinimumFontSize'),
+            clearMinimumFontSize: mk('clearMinimumFontSize'),
+            onFontChanged: makeEvent('fontSettings.onFontChanged'),
+            onDefaultFontSizeChanged:
+                makeEvent('fontSettings.onDefaultFontSizeChanged'),
+            onFixedFontSizeChanged:
+                makeEvent('fontSettings.onFixedFontSizeChanged'),
+            onMinimumFontSizeChanged:
+                makeEvent('fontSettings.onMinimumFontSizeChanged')
+        };
+        installNs('fontSettings', fontNs);
+    }
+    installFontSettings();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -5321,7 +5387,6 @@
         'windows', 'identity', 'gcm',
         'nativeMessaging',
         'scripting', 'offscreen', 'omnibox', 'devtools',
-        'fontSettings',
         'declarativeNetRequest', 'declarativeContent',
         'management',
         'power', 'tts', 'enterprise', 'debugger',

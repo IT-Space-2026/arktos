@@ -182,6 +182,14 @@ class QWebEngineProfile;
 //                  'tabGroups' gates the namespace, and the
 //                  onCreated/onUpdated/onMoved/onRemoved fan-out is
 //                  the hub's tabGroupsChanged diff tap (eventGate)
+//   fontSettings.* — MD33: the system font list plus the engine's
+//                  real per-generic-family defaults and the three
+//                  font sizes (default/fixed/minimum), persisted
+//                  through the same websettings rows the settings
+//                  dialog owns and re-applied live; 'math' and
+//                  per-script fonts stay typed unsupported —
+//                  'fontSettings' gates the namespace and the
+//                  on*Changed fan-out (eventGate)
 //   runtime.*    — context bookkeeping (getViews counts); MD18
 //                  lifecycle ops: reload rides ExtensionManager's
 //                  unload+load, requestUpdateCheck rides
@@ -469,6 +477,23 @@ private:
     // resolve each observer's own levelOfControl.
     QJsonObject invokePrivacy(const QString &method,
                               const QJsonObject &args);
+    // MD33: chrome.fontSettings — Chrome's flat member vocabulary
+    // (getFontList, getFont/setFont/clearFont, the three
+    // get/set/clear*FontSize triples) over QFontDatabase and the
+    // profile's real QWebEngineSettings defaults.  'fontSettings'
+    // gates the whole namespace like Chrome's declared-grant
+    // requirement; every op rides a {details:{...}} envelope.  The
+    // generic families Qt's engine can express (standard, serif,
+    // sansserif, fixed, cursive, fantasy) read/write the persisted
+    // websettings rows and re-apply live; 'math' has no
+    // QWebEngineSettings family in this Qt and per-script (non-
+    // 'Zyyy') fonts have no granularity at all — both stay typed
+    // 'unsupported'.  set* claims control (last writer wins, like
+    // privacy) and the controller's clear* restores the
+    // pre-extension value; the four on*Changed events fan out with
+    // __controller shaping like privacy's onChange.
+    QJsonObject invokeFontSettings(const QString &method,
+                                   const QJsonObject &args);
     // MD23: chrome.cookies — reads over the RC15 persistent mirror
     // (the jar's on-disk shadow, fed by the engine's cookie signals;
     // the C++ jar's live mirror is the no-rust read path), writes go
@@ -606,6 +631,10 @@ private:
     // MD31: the served-member vocabulary + flattened control caveat
     // is recorded once per context, not on every get/set.
     bool m_privacyNoted = false;
+    // MD33: the fontSettings served-subset vocabulary (six servable
+    // generic families + three sizes; 'math' + per-script fonts
+    // typed unsupported) is recorded once per context.
+    bool m_fontSettingsNoted = false;
 };
 
 #endif // EXTENSIONSHIMBACKEND_H

@@ -2178,6 +2178,11 @@ QString eventGate(const QString &name)
     // applies per call.
     if (ns == QLatin1String("privacy"))
         return QStringLiteral("privacy");
+    // MD33: fontSettings.on*Changed reaches only
+    // 'fontSettings'-declaring contexts — the same grant
+    // invokeFontSettings applies per call.
+    if (ns == QLatin1String("fontSettings"))
+        return QStringLiteral("fontSettings");
     return QString();
 }
 
@@ -2332,12 +2337,14 @@ QJsonObject ExtensionBackgroundRuntime::shapedPayload(
             return payload;
         return QJsonObject();
     }
-    // MD31: privacy.<member>.onChange details carry the acting
-    // extension's id under __controller — levelOfControl is a
-    // per-extension verdict (the same call Chrome's extension
-    // layering makes), so each observer's copy resolves its own
-    // control level and the carrier field never leaks to JS.
-    if (ns == QLatin1String("privacy")) {
+    // MD31/MD33: privacy.<member>.onChange and fontSettings's
+    // on*Changed details carry the acting extension's id under
+    // __controller — levelOfControl is a per-extension verdict (the
+    // same call Chrome's extension layering makes), so each
+    // observer's copy resolves its own control level and the
+    // carrier field never leaks to JS.
+    if (ns == QLatin1String("privacy")
+            || ns == QLatin1String("fontSettings")) {
         const QString controller = payload
             .value(QLatin1String("__controller")).toString();
         QJsonObject shaped = payload;

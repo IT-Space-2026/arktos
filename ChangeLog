@@ -964,6 +964,16 @@ UI:
   Chrome's world properties for getWorldConfigurations to echo back;
   the glob matchers stay a typed unsupported rather than a
   half-matched accept (MD32).
+- chrome.fontSettings is live for extensions that declare the
+  grant: getFontList answers the installed system families, and the
+  standard/serif/sans-serif/fixed/cursive/fantasy families plus the
+  default, fixed and minimum font sizes get/set/clear the same
+  persisted values the browser's own font settings drive —
+  re-applying to live pages without a restart and reporting
+  Chrome's levelOfControl vocabulary as extensions claim and
+  release each member (clear restores the value held before the
+  extension took over). Chrome's 'math' family and per-script fonts
+  stay a typed unsupported rather than a fake mapping (MD33).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

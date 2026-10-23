@@ -1320,6 +1320,12 @@ QStringList ExtensionManager::runtimeServes()
         // MD23: chrome.cookies reads the RC15 persistent mirror and
         // writes the engine jar + mirror — the namespace is served.
         QStringLiteral("cookies"),
+        // MD33: chrome.fontSettings serves getFontList, the six
+        // servable generic families (standard/serif/sansserif/fixed/
+        // cursive/fantasy) and the three font sizes over the real
+        // engine defaults — 'math' and per-script fonts keep their
+        // typed verdicts.
+        QStringLiteral("fontSettings"),
         // MD22: chrome.history rides the RC04 store through
         // HistoryManager — the namespace is fully served.
         QStringLiteral("history"),

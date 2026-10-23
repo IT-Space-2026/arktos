@@ -761,6 +761,26 @@ void applySettings(QWebEngineProfile *profile)
     engineSettings->setFontFamily(QWebEngineSettings::FixedFont, fixedFont.family());
     engineSettings->setFontSize(QWebEngineSettings::DefaultFixedFontSize, fixedFont.pointSize());
 
+    // MD33: chrome.fontSettings — generic families the settings
+    // dialog has no UI for persist as plain family-string keys
+    // (written through invokeFontSettings); absent keys keep the
+    // engine default.
+    static const struct {
+        const char *key;
+        QWebEngineSettings::FontFamily family;
+    } kExtraFontKeys[] = {
+        { "serifFont",     QWebEngineSettings::SerifFont },
+        { "sansSerifFont", QWebEngineSettings::SansSerifFont },
+        { "cursiveFont",   QWebEngineSettings::CursiveFont },
+        { "fantasyFont",   QWebEngineSettings::FantasyFont },
+    };
+    for (const auto &entry : kExtraFontKeys) {
+        const QString family =
+            settings.value(QLatin1String(entry.key)).toString();
+        if (!family.isEmpty())
+            engineSettings->setFontFamily(entry.family, family);
+    }
+
     // POPUP01: the attribute stays bound to the blocker preference.
     // false makes Chromium drop zero-user-gesture window.open calls of
     // EVERY shape inside the renderer — including plain opens that
