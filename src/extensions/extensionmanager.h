@@ -23,8 +23,10 @@
 #include <qobject.h>
 
 #include <qhash.h>
+#include <qimage.h>
 #include <qjsonobject.h>
 #include <qlist.h>
+#include <qmap.h>
 #include <qpointer.h>
 #include <qset.h>
 #include <qstring.h>
@@ -164,6 +166,12 @@ public:
         QString actionBadgeColor; // css color string, empty = default
         QString actionPopup;      // setPopup override path
         bool actionEnabled = true;
+        // MD14: chrome.action.setIcon recorded overrides — size-keyed
+        // bundle-relative paths (key 0 = an unsized string detail)
+        // and decoded RGBA pixels.  Both empty = the manifest's
+        // declared icon applies; the strip prefers these.
+        QMap<int, QString> actionIconPaths;
+        QMap<int, QImage> actionIconImages;
     };
 
     // Result of reading an unpacked extension's manifest.json — used to

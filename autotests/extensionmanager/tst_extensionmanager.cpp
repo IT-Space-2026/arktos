@@ -103,6 +103,7 @@ private slots:
     void extensionTabMessaging();
     void extensionTabConnect();
     void extensionWindowsFidelity();
+    void extensionActionIcon();
     void extensionScripting();
     void extensionScriptCss();
     void extensionContentScriptRegistration();
@@ -1578,6 +1579,16 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
         " await chrome.alarms.clearAll();"
         " await chrome.action.setTitle({title:'Shim Title'});"
         " await chrome.action.setBadgeText({text:'7'});"
+        // MD14: setIcon rides the real bridge — imageData crosses as
+        // base64'd raw RGBA, a size->path map lands verbatim on the
+        // backend (and replaces the image override, Chrome parity).
+        " await chrome.action.setIcon({imageData:{width:2,height:2,"
+        "   data:new Uint8ClampedArray([255,0,0,255,0,255,0,255,"
+        "   0,0,255,255,255,255,255,255])}});"
+        " out.iconImage=true;"
+        " await chrome.browserAction.setIcon("
+        "   {path:{'16':'icons/a.png'}});"
+        " out.iconPath=true;"
         " out.title=await chrome.action.getTitle({});"
         " out.badge=await chrome.action.getBadgeText({});"
         " out.url=chrome.runtime.getURL('x.html')"
@@ -1640,6 +1651,13 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
         ExtensionShimBackend::actionState(id);
     QCOMPARE(action.title, QStringLiteral("Shim Title"));
     QCOMPARE(action.badgeText, QStringLiteral("7"));
+    // Both setIcon spellings resolved; the path call is the recorded
+    // override now (it replaced the imageData one).
+    QVERIFY(out.value(QLatin1String("iconImage")).toBool());
+    QVERIFY(out.value(QLatin1String("iconPath")).toBool());
+    QCOMPARE(action.iconPaths.value(16),
+             QStringLiteral("icons/a.png"));
+    QVERIFY(action.iconImages.isEmpty());
     QTRY_VERIFY_WITH_TIMEOUT(
         runtime->host(id)->shimGaps().contains(
             QStringLiteral("chrome.notifications.create: no-permission")),
@@ -7075,6 +7093,190 @@ void tst_ExtensionManager::extensionWindowsFidelity()
     spawned->deleteLater();
     window->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QDir(dir).removeRecursively();
+}
+
+// MD14 — chrome.action/browserAction.setIcon: path details resolve
+// to bundle-relative files under the extension dir with
+// openOptionsPage's hygiene, imageData details carry raw RGBA (the
+// shim base64s them across the bridge); both record into ActionState
+// and surface through ExtensionInfo for the EXT08 strip.  The 'get'
+// icon member is the read-back readers/tests use — Chrome exposes
+// no getIcon.
+void tst_ExtensionManager::extensionActionIcon()
+{
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exticon-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-icon\","
+                "\"version\":\"1.0\"}");
+        f.close();
+    }
+    const QString id = QStringLiteral("tstmockextensionid0007");
+    ExtensionShimBackend backend(id, QStringLiteral("tst-icon"), dir);
+
+    const auto result = [](const QJsonObject &reply) {
+        return reply.value(QLatin1String("result")).toObject();
+    };
+
+    // --- imageData: raw RGBA decoded into the recorded state --------
+    // 2x2 image — red, green, blue, opaque-white pixels.
+    const QByteArray rgba = QByteArray::fromHex(
+        "ff0000ff00ff00ff0000ffffffffffff");
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("setIcon"),
+        QJsonObject{{QStringLiteral("imageData"),
+            QJsonObject{{QStringLiteral("width"), 2},
+                        {QStringLiteral("height"), 2},
+                        {QStringLiteral("rgba"),
+                         QString::fromLatin1(rgba.toBase64())}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    ExtensionShimBackend::ActionState state =
+        ExtensionShimBackend::actionState(id);
+    QCOMPARE(state.iconImages.size(), 1);
+    const QImage img = state.iconImages.value(0);
+    QCOMPARE(img.size(), QSize(2, 2));
+    QCOMPARE(img.pixelColor(0, 0), QColor(255, 0, 0));
+    QCOMPARE(img.pixelColor(1, 0), QColor(0, 255, 0));
+    QCOMPARE(img.pixelColor(0, 1), QColor(0, 0, 255));
+    QCOMPARE(img.pixelColor(1, 1), QColor(255, 255, 255));
+    QVERIFY(state.iconPaths.isEmpty());
+    // The 'get' reader sees it.
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("key"),
+                     QStringLiteral("icon")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(result(reply).value(QLatin1String("imageDataSizes"))
+                 .toArray(),
+             QJsonArray{0});
+
+    // --- path map through the browserAction spelling ----------------
+    // A later setIcon replaces the whole override — the recorded
+    // imageData drops when only path is given (Chrome parity).
+    reply = backend.invoke(
+        QStringLiteral("browserAction"), QStringLiteral("setIcon"),
+        QJsonObject{{QStringLiteral("path"),
+            QJsonObject{{QStringLiteral("16"),
+                         QStringLiteral("icons/a.png")},
+                        {QStringLiteral("32"),
+                         QStringLiteral("icons/b.png")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    state = ExtensionShimBackend::actionState(id);
+    QCOMPARE(state.iconPaths.size(), 2);
+    QCOMPARE(state.iconPaths.value(16),
+             QStringLiteral("icons/a.png"));
+    QCOMPARE(state.iconPaths.value(32),
+             QStringLiteral("icons/b.png"));
+    QVERIFY(state.iconImages.isEmpty());
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("key"),
+                     QStringLiteral("icon")}});
+    QCOMPARE(result(reply).value(QLatin1String("paths")).toObject()
+                 .value(QLatin1String("16")).toString(),
+             QStringLiteral("icons/a.png"));
+
+    // A bare-string path records under the unsized key.
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("setIcon"),
+        QJsonObject{{QStringLiteral("path"),
+                     QStringLiteral("icon.png")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(ExtensionShimBackend::actionState(id)
+                 .iconPaths.value(0),
+             QStringLiteral("icon.png"));
+
+    // --- hygiene: escapes and absolutes are typed refusals ----------
+    for (const QString &bad : {QStringLiteral("../escape.png"),
+                               QStringLiteral("/abs.png"),
+                               QStringLiteral("a:b.png"),
+                               QStringLiteral("icons/../x.png"),
+                               QStringLiteral("https://e/x.png")}) {
+        reply = backend.invoke(
+            QStringLiteral("action"), QStringLiteral("setIcon"),
+            QJsonObject{{QStringLiteral("path"), bad}});
+        QCOMPARE(reply.value(QLatin1String("error")).toString(),
+                 QStringLiteral("invalid-path"));
+    }
+    // Same through a size map — and a failed call must not
+    // half-commit (the recorded override is untouched).
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("setIcon"),
+        QJsonObject{{QStringLiteral("path"),
+            QJsonObject{{QStringLiteral("16"),
+                         QStringLiteral("icons/a.png")},
+                        {QStringLiteral("32"),
+                         QStringLiteral("../x.png")}}}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-path"));
+    QCOMPARE(ExtensionShimBackend::actionState(id)
+                 .iconPaths.value(0),
+             QStringLiteral("icon.png"));
+
+    // Malformed imageData is its own typed refusal.
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("setIcon"),
+        QJsonObject{{QStringLiteral("imageData"),
+            QJsonObject{{QStringLiteral("width"), 4},
+                        {QStringLiteral("height"), 4},
+                        {QStringLiteral("rgba"),
+                         QString::fromLatin1(rgba.toBase64())}}}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-image-data"));
+
+    // --- setIcon({}) resets to the manifest default -----------------
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("setIcon"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    state = ExtensionShimBackend::actionState(id);
+    QVERIFY(state.iconPaths.isEmpty() && state.iconImages.isEmpty());
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("key"),
+                     QStringLiteral("icon")}});
+    QVERIFY(result(reply).value(QLatin1String("paths")).toObject()
+                .isEmpty());
+    QVERIFY(result(reply).value(QLatin1String("imageDataSizes"))
+                .toArray().isEmpty());
+
+    // --- ExtensionInfo carries the override for the strip -----------
+    // Needs a real manager row, so this half installs the fixture.
+    if (ExtensionManager::isSupported()) {
+        const QString realId = installFixture(dir);
+        QVERIFY2(!realId.isEmpty()
+                     && !realId.startsWith(QLatin1String("ERROR:")),
+                 qPrintable(realId));
+        ExtensionShimBackend live(realId, QStringLiteral("tst-icon"),
+                                  dir);
+        reply = live.invoke(
+            QStringLiteral("action"), QStringLiteral("setIcon"),
+            QJsonObject{{QStringLiteral("imageData"),
+                QJsonObject{{QStringLiteral("width"), 2},
+                            {QStringLiteral("height"), 2},
+                            {QStringLiteral("rgba"),
+                             QString::fromLatin1(
+                                 rgba.toBase64())}}}});
+        QVERIFY(reply.value(QLatin1String("ok")).toBool());
+        bool saw = false;
+        for (const ExtensionManager::ExtensionInfo &info
+             : ExtensionManager::instance()->extensions()) {
+            if (info.id == realId) {
+                saw = info.actionIconImages.value(0).size()
+                        == QSize(2, 2)
+                    && info.actionIconImages.value(0).pixelColor(1, 0)
+                        == QColor(0, 255, 0);
+            }
+        }
+        QVERIFY(saw);
+        ExtensionManager::instance()->removeExtension(realId);
+    }
+
     QDir(dir).removeRecursively();
 }
 

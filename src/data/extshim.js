@@ -2183,6 +2183,17 @@
         });
     }
 
+    // Binary payloads for the bridge — ImageData.data is a
+    // Uint8ClampedArray, which marshals as a sparse object instead of
+    // bytes; chunked fromCharCode + btoa keeps it compact and exact.
+    function bytesToBase64(bytes) {
+        var bin = '';
+        for (var i = 0; i < bytes.length; i += 8192)
+            bin += String.fromCharCode.apply(
+                null, bytes.subarray(i, i + 8192));
+        return btoa(bin);
+    }
+
     // --- chrome.action / chrome.browserAction ----------------------------
     // No native toolbar delegate exists — setters feed the per-
     // extension action-state registry EXT08's button strip reads.
@@ -2259,8 +2270,45 @@
                 return p;
             },
             setIcon: function (details, cb) {
-                return failCall('action.setIcon',
-                                'unsupported', cb);
+                details = details || {};
+                // ImageData can't cross the bridge — encode the raw
+                // RGBA as base64 ({width,height,rgba}); a size->image
+                // map carries the same shape per key.  path entries
+                // pass through verbatim; the host applies the
+                // bundle-path hygiene.
+                var args = { tabId: details.tabId };
+                var encImage = function (img) {
+                    if (!img || !img.data || !img.width || !img.height)
+                        return null;
+                    return { width: img.width, height: img.height,
+                             rgba: bytesToBase64(img.data) };
+                };
+                if (details.path) {
+                    if (typeof details.path === 'string')
+                        args.path = details.path;
+                    else {
+                        var pm = {};
+                        for (var pk in details.path)
+                            pm[pk] = String(details.path[pk]);
+                        args.path = pm;
+                    }
+                }
+                if (details.imageData) {
+                    if (details.imageData.data)
+                        args.imageData = encImage(details.imageData);
+                    else {
+                        var im = {};
+                        for (var ik in details.imageData)
+                            im[ik] = encImage(details.imageData[ik]);
+                        args.imageData = im;
+                    }
+                }
+                var p = call('action', 'setIcon', args);
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message); });
+                return p.then(function () {});
             },
             setPopup: function (details, cb) {
                 var p = call('action', 'set',

@@ -611,6 +611,8 @@ QList<ExtensionManager::ExtensionInfo> ExtensionManager::extensions() const
         info.actionBadgeColor = action.badgeColor;
         info.actionPopup = action.popup;
         info.actionEnabled = action.enabled;
+        info.actionIconPaths = action.iconPaths;
+        info.actionIconImages = action.iconImages;
     }
 #endif
     return list;

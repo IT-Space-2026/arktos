@@ -1806,6 +1806,92 @@ QJsonObject ExtensionShimBackend::invokeAction(const QString &method,
 {
     ActionState &state = actionStates()[m_extensionId];
     const QString key = args.value(QStringLiteral("key")).toString();
+    if (method == QLatin1String("setIcon")) {
+        // details.path — a bare string or a size->path map of
+        // bundle-relative files under m_extensionPath (the same
+        // hygiene openOptionsPage applies).  details.imageData —
+        // {width,height,rgba-base64} or a size->image map of raw
+        // RGBA; decoded here so no reader ever sees the wire shape.
+        // Neither present (setIcon({})) resets to the manifest
+        // default like Chrome.  Validate into locals first so a bad
+        // member can't half-commit an override.
+        QMap<int, QString> paths;
+        QMap<int, QImage> images;
+        const auto cleanPath = [](const QString &rel) {
+            return !rel.isEmpty()
+                && !rel.startsWith(QLatin1Char('/'))
+                && !rel.contains(QLatin1Char(':'))
+                && !rel.split(QLatin1Char('/'))
+                        .contains(QStringLiteral(".."));
+        };
+        const QJsonValue path = args.value(QStringLiteral("path"));
+        if (path.isString()) {
+            if (!cleanPath(path.toString()))
+                return errReply(QStringLiteral("invalid-path"));
+            paths.insert(0, path.toString());
+        } else if (path.isObject()) {
+            const QJsonObject map = path.toObject();
+            for (auto it = map.constBegin(); it != map.constEnd();
+                 ++it) {
+                const QString rel = it.value().toString();
+                if (!cleanPath(rel))
+                    return errReply(QStringLiteral("invalid-path"));
+                paths.insert(it.key().toInt(), rel);
+            }
+        } else if (!path.isUndefined() && !path.isNull()) {
+            return errReply(QStringLiteral("invalid-path"));
+        }
+        const auto decodeImage = [](const QJsonValue &v, QImage *out) {
+            const QJsonObject spec = v.toObject();
+            const int w = spec.value(QStringLiteral("width")).toInt();
+            const int h = spec.value(QStringLiteral("height")).toInt();
+            const QByteArray rgba = QByteArray::fromBase64(
+                spec.value(QStringLiteral("rgba")).toString()
+                    .toLatin1());
+            if (w <= 0 || h <= 0 || w > 1024 || h > 1024
+                    || rgba.size() != qint64(w) * h * 4)
+                return false;
+            // ImageData pixels are RGBA byte order — Format_RGBA8888
+            // is exactly that layout.
+            *out = QImage(
+                reinterpret_cast<const uchar *>(rgba.constData()),
+                w, h, QImage::Format_RGBA8888).copy();
+            return true;
+        };
+        const QJsonValue imageData =
+            args.value(QStringLiteral("imageData"));
+        const auto decodeInto = [&images, &decodeImage](
+                int size, const QJsonValue &v) {
+            QImage img;
+            if (!decodeImage(v, &img))
+                return false;
+            images.insert(size, img);
+            return true;
+        };
+        if (imageData.isObject()
+                && imageData.toObject().contains(
+                    QStringLiteral("rgba"))) {
+            if (!decodeInto(0, imageData))
+                return errReply(QStringLiteral("invalid-image-data"));
+        } else if (imageData.isObject()) {
+            const QJsonObject map = imageData.toObject();
+            for (auto it = map.constBegin(); it != map.constEnd();
+                 ++it) {
+                if (!decodeInto(it.key().toInt(), it.value()))
+                    return errReply(
+                        QStringLiteral("invalid-image-data"));
+            }
+        } else if (!imageData.isUndefined() && !imageData.isNull()) {
+            return errReply(QStringLiteral("invalid-image-data"));
+        }
+        state.iconPaths = paths;
+        state.iconImages = images;
+        emit actionStateChanged();
+        // The EXT08 strip rebuilds off the manager's changed() —
+        // pulse it so a runtime setIcon actually re-renders.
+        emit ExtensionManager::instance()->changed();
+        return okReply();
+    }
     if (method == QLatin1String("set")) {
         if (key == QLatin1String("title"))
             state.title = args.value(QStringLiteral("value")).toString();
@@ -1874,6 +1960,21 @@ QJsonObject ExtensionShimBackend::invokeAction(const QString &method,
             return okReply(state.popup);
         if (key == QLatin1String("enabled"))
             return okReply(state.enabled);
+        if (key == QLatin1String("icon")) {
+            // Internal read-back for delegates/tests — Chrome has
+            // no getIcon; the strip consumes ActionState directly.
+            QJsonObject out;
+            QJsonObject paths;
+            for (auto it = state.iconPaths.constBegin();
+                 it != state.iconPaths.constEnd(); ++it)
+                paths.insert(QString::number(it.key()), it.value());
+            out.insert(QStringLiteral("paths"), paths);
+            QJsonArray sizes;
+            for (const int size : state.iconImages.keys())
+                sizes.append(size);
+            out.insert(QStringLiteral("imageDataSizes"), sizes);
+            return okReply(out);
+        }
         return errReply(QStringLiteral("invalid-key"));
     }
     return errReply(QStringLiteral("unimplemented"));

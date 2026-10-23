@@ -798,6 +798,13 @@ UI:
   width/height/state/drawAttention vocabulary Chrome does —
   Bitwarden-style pop-out flows land where the extension asked
   (MD13).
+- chrome.action/browserAction.setIcon is live: path details resolve
+  to bundle-relative files inside the extension's own directory (the
+  same escape hygiene every other bundle path gets) and imageData
+  details carry the raw pixels across — the recorded override lands
+  in the toolbar strip so extensions that swap their icon at runtime
+  (a locked/unlocked badge, say) actually change the button face
+  (MD14).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

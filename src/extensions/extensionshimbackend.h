@@ -21,8 +21,10 @@
 #define EXTENSIONSHIMBACKEND_H
 
 #include <qhash.h>
+#include <qimage.h>
 #include <qjsonobject.h>
 #include <qlist.h>
+#include <qmap.h>
 #include <qobject.h>
 #include <qstring.h>
 #include <qstringlist.h>
@@ -124,6 +126,16 @@ public:
         // click fires onClicked, Chrome parity).
         bool popupSet = false;
         bool enabled = true;
+        // MD14: chrome.action.setIcon overrides the manifest's
+        // declared icon — both maps empty = the manifest applies.
+        // iconPaths are bundle-relative files under the extension
+        // dir (the same hygiene openOptionsPage applies); key 0 is
+        // a bare-string path detail with no declared size.
+        // iconImages are the decoded imageData pixels (raw RGBA on
+        // the wire); readers prefer them — pixels are authoritative
+        // where a path is just a reference.
+        QMap<int, QString> iconPaths;
+        QMap<int, QImage> iconImages;
     };
     static ActionState actionState(const QString &extensionId);
 

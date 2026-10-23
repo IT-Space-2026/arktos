@@ -97,8 +97,7 @@ chrome.wallpaper.*: unsupported
 # --- served namespaces, deliberately unserved members --------------
 # MD07 queued carve-outs (still typed today — entries stay):
 #   tabs unserved members -> MD10 ops/state, MD11 zoom+capture,
-#     MD12 connect; action/browserAction
-#     .setIcon -> MD14; extension.isAllowed* -> MD15; management
+#     MD12 connect; extension.isAllowed* -> MD15; management
 #     read ops -> MD16, mutations -> MD17; runtime reload /
 #     requestUpdateCheck / setUninstallURL -> MD18; storage
 #     getKeys/setAccessLevel/sync/quota -> MD19; alarms edges -> MD20.
@@ -106,8 +105,6 @@ chrome.wallpaper.*: unsupported
 # sendMessage frameId!=0 is unsupported (page agent lives in the main
 # frame only).
 chrome.tabs.*: unsupported
-chrome.action.setIcon: unsupported
-chrome.browserAction.setIcon: unsupported
 chrome.extension.isAllowedFileSchemeAccess: unsupported
 chrome.extension.isAllowedIncognitoAccess: unsupported
 chrome.idle.getAutoLockDelay: unsupported
@@ -136,6 +133,10 @@ chrome.webRequest.*: unsupported
 # constraints (globs, cookieStoreId) refuse the same way.
 chrome.scripting.*: unsupported
 # --- domain refusals — correct replies, kept visible ---------------
+chrome.action.setIcon: invalid-image-data
+chrome.action.setIcon: invalid-path
+chrome.browserAction.setIcon: invalid-image-data
+chrome.browserAction.setIcon: invalid-path
 chrome.contextMenus.create: duplicate-id
 chrome.contextMenus.remove: not-found
 chrome.contextMenus.update: not-found
