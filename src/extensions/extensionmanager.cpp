@@ -1322,6 +1322,15 @@ QStringList ExtensionManager::runtimeServes()
         QStringLiteral("menus"),
         QStringLiteral("notifications"),
         QStringLiteral("offscreen"),
+        // MD31: chrome.privacy serves the eight ChromeSetting
+        // members with a real mapping (thirdPartyCookiesAllowed,
+        // hyperlinkAuditingEnabled, referrersEnabled,
+        // doNotTrackEnabled, networkPredictionEnabled,
+        // webRTCIPHandlingPolicy, passwordSavingEnabled,
+        // searchSuggestEnabled) — writes land the real persona
+        // toggles live; the rest of Chrome's vocabulary keeps its
+        // typed verdicts.
+        QStringLiteral("privacy"),
         QStringLiteral("scripting"),
         // MD25: chrome.sessions serves getDevices/getRecentlyClosed/
         // restore over TabWidget's closed-tab undo stack — the whole

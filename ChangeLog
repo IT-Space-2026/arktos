@@ -944,6 +944,16 @@ UI:
   shapes with the machine's real values — memory capacity, per-core
   CPU time, the connected display list and the profile volume's
   capacity — instead of a blanket unsupported (MD30).
+- chrome.privacy is live for extensions that declare the grant: the
+  ChromeSetting-shaped members that have a real Arktos setting
+  behind them — third-party cookies, hyperlink auditing, referrers,
+  do-not-track, network prediction, WebRTC IP handling, password
+  saving and search suggestions — get/set/clear the same values the
+  browser's own settings drive and apply live, reporting Chrome's
+  levelOfControl vocabulary as extensions claim and release each
+  member (clear restores the value held before the extension took
+  over). Members with no honest equivalent stay a typed unsupported
+  rather than a fake toggle (MD31).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

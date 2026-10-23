@@ -25,6 +25,7 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserpaths.h"
+#include "browserprofile.h"
 #include "clearprivatedata.h"
 #include "cookiejar.h"
 #include "downloadmanager.h"
@@ -37,9 +38,12 @@
 #include "extensionnotificationcenter.h"
 #include "extensionreviewdialog.h"
 #include "historymanager.h"
+#include "opensearchmanager.h"
+#include "privacyrequestinterceptor.h"
 #include "profilesettings.h"
 #include "tabbar.h"
 #include "tabwidget.h"
+#include "toolbarsearch.h"
 #include "webenginebackend.h"
 #include "webview.h"
 
@@ -1388,6 +1392,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeDns(method, args);
     if (ns == QLatin1String("system"))
         return invokeSystem(method, args);
+    if (ns == QLatin1String("privacy"))
+        return invokePrivacy(method, args);
     if (ns == QLatin1String("cookies"))
         return invokeCookies(method, args);
     if (ns == QLatin1String("downloads"))
@@ -5810,6 +5816,541 @@ QJsonObject ExtensionShimBackend::invokeSystem(
     // system.network/powerSource/private/... — declared grant, no
     // Arktos surface.
     return errReply(QStringLiteral("unsupported"));
+}
+
+// -------------------------------------------------------------------
+// chrome.privacy — MD31.  Chrome's ChromeSetting surface over the
+// browser's real settings.  The whole namespace gates on the
+// declared 'privacy' grant like Chrome; every member answers
+// get/set/clear in the "<sub>.<member>.<op>" vocabulary.
+//
+// Served members — each maps onto a persisted persona toggle and
+// re-applies live on write:
+//
+//   websites.thirdPartyCookiesAllowed   <-> cookies/blockThirdPartyCookies
+//       (inverted; the jar's loadSettings re-read lands it in the
+//       live policy snapshot)
+//   websites.hyperlinkAuditingEnabled   <-> privacy/blockPings
+//       (inverted — the PING01 toggle also gates sendBeacon and CSP
+//       report uploads, the honest superset of <a ping> auditing)
+//   websites.referrersEnabled           <-> privacy/refererPolicy
+//       (bool can't express the four levels: true -> EngineDefault,
+//       false -> Never; get is enabled for every level but Never)
+//   websites.doNotTrackEnabled          <-> privacy/gpcSignal
+//       (deprecated upstream; the Sec-GPC header +
+//       navigator.globalPrivacyControl pair is the DNT signal's
+//       living successor — the same "send a privacy preference"
+//       semantics)
+//   network.networkPredictionEnabled    <-> privacy/blockPrefetch
+//       (inverted; setting false also drops the opt-in dnsPrefetch
+//       key — Chrome's prediction-off kills every speculative
+//       resolution — while setting true leaves DNS prefetch off:
+//       TELEM02 keeps it opt-in)
+//   network.webRTCIPHandlingPolicy      <-> privacy/webrtcIpProtection
+//       ("default" -> off, "disable_non_proxied_udp" -> on — the
+//       two values the bool+process-flag pair can honestly express;
+//       Chrome's two intermediate policies stay typed unsupported)
+//   services.passwordSavingEnabled      <-> autofill/passwordForms
+//   services.searchSuggestEnabled       <-> openSearch/suggestInAddressField
+//       (through OpenSearchManager so the toolbar's suggestion
+//       fetching flips live, not just on next read)
+//
+// ChromeSetting semantics: get() answers {value, levelOfControl};
+// levelOfControl is per-extension — the member's last set()ter
+// controls it (Chrome's most-preferred-extension layering,
+// flattened: last writer wins).  The value an extension changed is
+// snapshotted on the first claim so clear() restores the
+// pre-extension state like Chrome's restore-default; clear() by a
+// non-controller is Chrome's silent no-op.  'scope' values other
+// than 'regular' mean incognito layering the persona stores cannot
+// express — typed unsupported.  The unserved half of Chrome's
+// published vocabulary stays typed 'unsupported' too; an unknown
+// member or op is the unreachable-member verdict.  onChange details
+// carry the acting extension's id under __controller — fanOut's
+// shapedPayload resolves each observer's own levelOfControl from
+// it, the same call Chrome's per-extension control makes.
+// -------------------------------------------------------------------
+
+enum class PrivacyMember {
+    Invalid,
+    NetworkPredictionEnabled,
+    WebRTCIPHandlingPolicy,
+    PasswordSavingEnabled,
+    SearchSuggestEnabled,
+    ThirdPartyCookiesAllowed,
+    HyperlinkAuditingEnabled,
+    ReferrersEnabled,
+    DoNotTrackEnabled,
+};
+
+struct PrivacyMemberDef {
+    const char *sub;
+    const char *name;
+    PrivacyMember id;
+};
+
+static const PrivacyMemberDef kPrivacyMembers[] = {
+    { "network", "networkPredictionEnabled",
+      PrivacyMember::NetworkPredictionEnabled },
+    { "network", "webRTCIPHandlingPolicy",
+      PrivacyMember::WebRTCIPHandlingPolicy },
+    { "services", "passwordSavingEnabled",
+      PrivacyMember::PasswordSavingEnabled },
+    { "services", "searchSuggestEnabled",
+      PrivacyMember::SearchSuggestEnabled },
+    { "websites", "thirdPartyCookiesAllowed",
+      PrivacyMember::ThirdPartyCookiesAllowed },
+    { "websites", "hyperlinkAuditingEnabled",
+      PrivacyMember::HyperlinkAuditingEnabled },
+    { "websites", "referrersEnabled",
+      PrivacyMember::ReferrersEnabled },
+    { "websites", "doNotTrackEnabled",
+      PrivacyMember::DoNotTrackEnabled },
+};
+
+// The rest of Chrome's published vocabulary — known members with no
+// honest mapping.  autofillAddress/CreditCard ride Chromium's
+// autofill feature (Arktos's fill engine has no enable toggle),
+// safeBrowsing* need the Safe Browsing service, spellingService the
+// Google-backed remote spellcheck, translationEnabled the translate
+// pipeline, protectedContent + webRTCUDPPortRange are ChromeOS-only,
+// webRTCNonProxiedUdpEnabled is the deprecated webRTCIPHandlingPolicy
+// spelling, and the Privacy Sandbox family (fledge/topics/
+// adMeasurement/privacySandbox) has no local counterpart.
+static const char *const kPrivacyUnserved[][2] = {
+    { "network", "webRTCNonProxiedUdpEnabled" },
+    { "network", "webRTCUDPPortRange" },
+    { "services", "autofillAddressEnabled" },
+    { "services", "autofillCreditCardEnabled" },
+    { "services", "autofillEnabled" },
+    { "services", "safeBrowsingEnabled" },
+    { "services", "safeBrowsingExtendedReportingEnabled" },
+    { "services", "spellingServiceEnabled" },
+    { "services", "translationEnabled" },
+    { "websites", "adMeasurementEnabled" },
+    { "websites", "fledgeEnabled" },
+    { "websites", "privacySandboxEnabled" },
+    { "websites", "protectedContentEnabled" },
+    { "websites", "topicsEnabled" },
+};
+
+static PrivacyMember privacyMemberFor(const QString &sub,
+                                      const QString &member)
+{
+    for (const PrivacyMemberDef &def : kPrivacyMembers) {
+        if (sub == QLatin1String(def.sub)
+                && member == QLatin1String(def.name))
+            return def.id;
+    }
+    return PrivacyMember::Invalid;
+}
+
+static bool privacyMemberUnserved(const QString &sub,
+                                  const QString &member)
+{
+    for (const auto &entry : kPrivacyUnserved) {
+        if (sub == QLatin1String(entry[0])
+                && member == QLatin1String(entry[1]))
+            return true;
+    }
+    return false;
+}
+
+static QString privacyMemberPath(PrivacyMember id)
+{
+    for (const PrivacyMemberDef &def : kPrivacyMembers) {
+        if (def.id == id)
+            return QString::fromLatin1(def.sub) + QLatin1Char('.')
+                + QString::fromLatin1(def.name);
+    }
+    return QString();
+}
+
+// Per-member extension control — the flattened Chrome layering.
+// extensionId is the last successful set()ter (empty = unclaimed);
+// prior snapshots the pre-claim value clear() restores.
+struct PrivacyControl {
+    QString extensionId;
+    QVariant prior;
+    bool hasPrior = false;
+};
+
+static QHash<QString, PrivacyControl> &privacyControl()
+{
+    static QHash<QString, PrivacyControl> map;
+    return map;
+}
+
+// The Chrome-level value a member reports — reads the live persona
+// store so a user-side flip is the answer, never a cached snapshot.
+static QVariant privacyMemberValue(PrivacyMember id)
+{
+    const QString profileId = BrowserPaths::activeProfileId();
+    switch (id) {
+    case PrivacyMember::ThirdPartyCookiesAllowed:
+        return !ProfileSettings(profileId).value(
+            QLatin1String("cookies/blockThirdPartyCookies"), true)
+                .toBool();
+    case PrivacyMember::HyperlinkAuditingEnabled:
+        return !ProfileSettings(profileId).value(
+            QLatin1String("privacy/blockPings"), true).toBool();
+    case PrivacyMember::ReferrersEnabled:
+        return PrivacyRequestInterceptor::storedRefererPolicy()
+            != int(PrivacyRequestInterceptor::RefererNever);
+    case PrivacyMember::DoNotTrackEnabled:
+        return ProfileSettings(profileId).value(
+            QLatin1String("privacy/gpcSignal"), true).toBool();
+    case PrivacyMember::NetworkPredictionEnabled:
+        return !ProfileSettings(profileId).value(
+            QLatin1String("privacy/blockPrefetch"), true).toBool();
+    case PrivacyMember::WebRTCIPHandlingPolicy:
+        return ProfileSettings(profileId).value(
+            QLatin1String("privacy/webrtcIpProtection"), true).toBool()
+            ? QStringLiteral("disable_non_proxied_udp")
+            : QStringLiteral("default");
+    case PrivacyMember::PasswordSavingEnabled:
+        return ProfileSettings(profileId).value(
+            QLatin1String("autofill/passwordForms"), true).toBool();
+    case PrivacyMember::SearchSuggestEnabled:
+        // The manager's live member is the truth — its autosave may
+        // not have flushed a just-set toggle to disk yet.
+        return ToolbarSearch::openSearchManager()
+            ->suggestionsInAddressField();
+    case PrivacyMember::Invalid:
+        break;
+    }
+    return QVariant();
+}
+
+// The IO-thread snapshot + engine-attribute half of a privacy/*
+// write.  The interceptor re-read is unconditional — it is the
+// request-path consumer; applySettings only runs on profiles
+// already materialized (a profile created later reads the fresh
+// key at construction).
+static void privacyApplyLive(const QString &profileId)
+{
+    PrivacyRequestInterceptor::loadSettings();
+    if (profileId == QLatin1String("default")) {
+        // normalProfile() lazily creates the shared persona profile
+        // — materializing it to push a live toggle is the same
+        // bring-up the settings dialog performs.
+        if (QWebEngineProfile *profile = BrowserProfile::normalProfile())
+            BrowserProfile::applySettings(profile);
+    } else if (QWebEngineProfile *profile =
+                   BrowserProfile::personaProfileIfCreated(profileId)) {
+        BrowserProfile::applySettings(profile);
+    }
+    if (QWebEngineProfile *otr =
+            BrowserProfile::privateProfileIfCreated())
+        BrowserProfile::applySettings(otr);
+}
+
+// The referer half of a write — the level int is the native value
+// (the Chrome bool collapses four levels into allow/never, so
+// clear()'s restore needs the level itself to hand the user's exact
+// policy back).  The PRIV01-era bool stays in sync like the
+// settings dialog's write — an older build maps "Chromium default"
+// to off and everything else to trimmed.
+static void privacyRefererWrite(int level)
+{
+    const QString profileId = BrowserPaths::activeProfileId();
+    ProfileSettings settings(profileId);
+    settings.setValue(QLatin1String("privacy/refererPolicy"), level);
+    settings.setValue(QLatin1String("privacy/trimReferer"),
+                      level != int(PrivacyRequestInterceptor::
+                                       RefererEngineDefault));
+    privacyApplyLive(profileId);
+}
+
+// Write a member's Chrome-level value onto the real setting and
+// apply it through the live machinery.  The caller already
+// validated the value's shape.
+static void privacyMemberWrite(PrivacyMember id, const QVariant &value)
+{
+    const QString profileId = BrowserPaths::activeProfileId();
+    switch (id) {
+    case PrivacyMember::ThirdPartyCookiesAllowed: {
+        ProfileSettings settings(profileId);
+        settings.setValue(QLatin1String("cookies/blockThirdPartyCookies"),
+                          !value.toBool());
+        CookieJar::instanceFor(profileId)->loadSettings();
+        break;
+    }
+    case PrivacyMember::HyperlinkAuditingEnabled: {
+        ProfileSettings settings(profileId);
+        settings.setValue(QLatin1String("privacy/blockPings"),
+                          !value.toBool());
+        privacyApplyLive(profileId);
+        break;
+    }
+    case PrivacyMember::ReferrersEnabled:
+        privacyRefererWrite(value.toBool()
+            ? int(PrivacyRequestInterceptor::RefererEngineDefault)
+            : int(PrivacyRequestInterceptor::RefererNever));
+        break;
+    case PrivacyMember::DoNotTrackEnabled: {
+        ProfileSettings settings(profileId);
+        settings.setValue(QLatin1String("privacy/gpcSignal"),
+                          value.toBool());
+        privacyApplyLive(profileId);
+        break;
+    }
+    case PrivacyMember::NetworkPredictionEnabled: {
+        ProfileSettings settings(profileId);
+        settings.setValue(QLatin1String("privacy/blockPrefetch"),
+                          !value.toBool());
+        if (!value.toBool())
+            // Prediction off kills every speculative channel —
+            // DNS prefetch is the second half.
+            settings.setValue(QLatin1String("privacy/dnsPrefetch"),
+                              false);
+        privacyApplyLive(profileId);
+        break;
+    }
+    case PrivacyMember::WebRTCIPHandlingPolicy: {
+        ProfileSettings settings(profileId);
+        settings.setValue(
+            QLatin1String("privacy/webrtcIpProtection"),
+            value.toString()
+                == QLatin1String("disable_non_proxied_udp"));
+        privacyApplyLive(profileId);
+        break;
+    }
+    case PrivacyMember::PasswordSavingEnabled: {
+        ProfileSettings settings(profileId);
+        settings.setValue(QLatin1String("autofill/passwordForms"),
+                          value.toBool());
+        AutoFillManager::instanceFor(profileId)->loadSettings();
+        break;
+    }
+    case PrivacyMember::SearchSuggestEnabled:
+        // The manager writes + autosaves itself and flips the
+        // toolbar's suggestion fetching live.
+        ToolbarSearch::openSearchManager()
+            ->setSuggestionsInAddressField(value.toBool());
+        break;
+    case PrivacyMember::Invalid:
+        break;
+    }
+}
+
+// The native value clear() restores — identical to the Chrome-level
+// value for every member whose mapping is a plain bool/enum; for
+// referrersEnabled it is the four-level int (the bool can't carry
+// "Strict" or "Trimmed" back).
+static QVariant privacyNativeValue(PrivacyMember id)
+{
+    if (id == PrivacyMember::ReferrersEnabled)
+        return PrivacyRequestInterceptor::storedRefererPolicy();
+    return privacyMemberValue(id);
+}
+
+static void privacyNativeWrite(PrivacyMember id, const QVariant &value)
+{
+    if (id == PrivacyMember::ReferrersEnabled) {
+        privacyRefererWrite(value.toInt());
+        return;
+    }
+    privacyMemberWrite(id, value);
+}
+
+static QString privacyLevelOfControl(const QString &path,
+                                     const QString &extensionId)
+{
+    const QString controller =
+        privacyControl().value(path).extensionId;
+    if (controller.isEmpty())
+        return QStringLiteral("controllable_by_this_extension");
+    return controller == extensionId
+        ? QStringLiteral("controlled_by_this_extension")
+        : QStringLiteral("controlled_by_other_extensions");
+}
+
+// onChange for one member — ChromeSetting details {value,
+// levelOfControl}; the level is per-observer, so the payload ships
+// the acting extension's id under __controller and shapedPayload
+// resolves each context's own control level.
+static void privacyFanOut(PrivacyMember id, const QString &actorId,
+                          ExtensionShimBackend *backend)
+{
+    const QString path = privacyMemberPath(id);
+    const QString name = QStringLiteral("privacy.") + path
+        + QLatin1String(".onChange");
+    const QJsonObject payload{
+        {QStringLiteral("__args"), QJsonArray{QJsonObject{
+            {QStringLiteral("value"),
+             QJsonValue::fromVariant(privacyMemberValue(id))},
+            {QStringLiteral("levelOfControl"),
+             QStringLiteral("controlled_by_other_extensions")}}}},
+        {QStringLiteral("__controller"), actorId}};
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    runtime->broadcastEvent(name, payload);
+    // Same bare-backend fallback managementFanOut applies — the
+    // actor's own level is the controlled_by_this_extension shape.
+    if (backend && !runtime->hasRelayContext(actorId)) {
+        const QJsonObject shaped{
+            {QStringLiteral("__args"), QJsonArray{QJsonObject{
+                {QStringLiteral("value"),
+                 QJsonValue::fromVariant(privacyMemberValue(id))},
+                {QStringLiteral("levelOfControl"),
+                 QStringLiteral("controlled_by_this_extension")}}}}};
+        emit backend->pushEvent(name, shaped);
+    }
+}
+
+QJsonObject ExtensionShimBackend::invokePrivacy(
+        const QString &method, const QJsonObject &args)
+{
+    // Chrome exposes the namespace only under the declared
+    // 'privacy' grant — the bridge object answers a direct call
+    // from any code in the context, so the gate runs here too.
+    if (!manifestPermissions().contains(QLatin1String("privacy")))
+        return errReply(QStringLiteral("no-permission"));
+
+    if (!m_privacyNoted) {
+        m_privacyNoted = true;
+        recordNote(QStringLiteral(
+            "chrome.privacy: served ChromeSetting members are "
+            "websites.thirdPartyCookiesAllowed/hyperlinkAuditing"
+            "Enabled/referrersEnabled/doNotTrackEnabled, network."
+            "networkPredictionEnabled/webRTCIPHandlingPolicy and "
+            "services.passwordSavingEnabled/searchSuggestEnabled — "
+            "writes land the real persona toggles and re-apply live; "
+            "extension control is flattened (last set()ter controls, "
+            "clear() restores the pre-extension value); user-driven "
+            "settings flips emit no onChange"));
+    }
+
+    // "<sub>.<member>.<op>" — exactly two dots.
+    const int firstDot = method.indexOf(QLatin1Char('.'));
+    if (firstDot <= 0)
+        return errReply(QStringLiteral("unimplemented"));
+    const int lastDot = method.lastIndexOf(QLatin1Char('.'));
+    if (lastDot == firstDot || lastDot == method.size() - 1)
+        return errReply(QStringLiteral("unimplemented"));
+    const QString sub = method.left(firstDot);
+    const QString member = method.mid(firstDot + 1,
+                                      lastDot - firstDot - 1);
+    const QString op = method.mid(lastDot + 1);
+
+    const PrivacyMember id = privacyMemberFor(sub, member);
+    const QString path = privacyMemberPath(id);
+    if (id == PrivacyMember::Invalid) {
+        // Declared grant honored — a member Chrome publishes but
+        // this build cannot map hears 'unsupported'; anything else
+        // is the unreachable-member verdict.
+        if (privacyMemberUnserved(sub, member))
+            return errReply(QStringLiteral("unsupported"));
+        return errReply(QStringLiteral("unimplemented"));
+    }
+
+    const QJsonValue detailsValue = args.value(QLatin1String("details"));
+    QJsonObject details;
+    if (detailsValue.isObject())
+        details = detailsValue.toObject();
+    else if (!detailsValue.isUndefined())
+        return errReply(QStringLiteral("invalid-argument"));
+
+    // ChromeSetting scopes beyond 'regular' mean incognito layering
+    // the persona stores cannot express — a recognized-but-
+    // unservable scope is 'unsupported', an unrecognized one the
+    // argument verdict.
+    const auto scopeCheck = [](const QJsonObject &d) -> QString {
+        const QJsonValue scope = d.value(QLatin1String("scope"));
+        if (scope.isUndefined())
+            return QString();
+        if (!scope.isString())
+            return QStringLiteral("invalid-argument");
+        const QString value = scope.toString();
+        if (value == QLatin1String("regular"))
+            return QString();
+        if (value == QLatin1String("incognito_persistent")
+                || value == QLatin1String("incognito_session_only"))
+            return QStringLiteral("unsupported");
+        return QStringLiteral("invalid-argument");
+    };
+
+    if (op == QLatin1String("get")) {
+        const QJsonValue incognito =
+            details.value(QLatin1String("incognito"));
+        if (!incognito.isUndefined() && !incognito.isBool())
+            return errReply(QStringLiteral("invalid-argument"));
+        // get() answers the regular-profile value — there is no
+        // incognito overlay to resolve a different one from, so an
+        // incognito:true query hears the same honest value.
+        return okReply(QJsonObject{
+            {QStringLiteral("value"),
+             QJsonValue::fromVariant(privacyMemberValue(id))},
+            {QStringLiteral("levelOfControl"),
+             privacyLevelOfControl(path, m_extensionId)}});
+    }
+
+    if (op == QLatin1String("set")) {
+        const QString scopeVerdict = scopeCheck(details);
+        if (!scopeVerdict.isEmpty())
+            return errReply(scopeVerdict);
+        const QJsonValue value = details.value(QLatin1String("value"));
+        QVariant applied;
+        if (id == PrivacyMember::WebRTCIPHandlingPolicy) {
+            if (!value.isString())
+                return errReply(QStringLiteral("invalid-argument"));
+            const QString policy = value.toString();
+            if (policy == QLatin1String("default")
+                    || policy == QLatin1String(
+                           "disable_non_proxied_udp")) {
+                applied = policy;
+            } else if (policy == QLatin1String(
+                           "default_public_and_private_interfaces")
+                       || policy == QLatin1String(
+                           "default_public_interface_only")) {
+                // Chrome-published values the bool+process-flag
+                // pair cannot express — typed unservable, never a
+                // silent clamp to a different policy.
+                return errReply(QStringLiteral("unsupported"));
+            } else {
+                return errReply(QStringLiteral("invalid-argument"));
+            }
+        } else {
+            if (!value.isBool())
+                return errReply(QStringLiteral("invalid-argument"));
+            applied = value.toBool();
+        }
+
+        // First claim snapshots the pre-extension value — clear()
+        // restores it like Chrome's restore-default.  The native
+        // value is captured, not the Chrome projection — the referer
+        // member's four levels would otherwise collapse to a bool.
+        PrivacyControl &control = privacyControl()[path];
+        if (control.extensionId.isEmpty()) {
+            control.prior = privacyNativeValue(id);
+            control.hasPrior = true;
+        }
+        privacyMemberWrite(id, applied);
+        control.extensionId = m_extensionId;
+        privacyFanOut(id, m_extensionId, this);
+        return okReply();
+    }
+
+    if (op == QLatin1String("clear")) {
+        const QString scopeVerdict = scopeCheck(details);
+        if (!scopeVerdict.isEmpty())
+            return errReply(scopeVerdict);
+        PrivacyControl &control = privacyControl()[path];
+        if (control.extensionId == m_extensionId) {
+            // The controller's clear restores the pre-extension
+            // value and releases the claim — Chrome's
+            // restore-default; a clear by a non-controller (or on
+            // an unclaimed member) is Chrome's silent no-op.
+            if (control.hasPrior)
+                privacyNativeWrite(id, control.prior);
+            control = PrivacyControl();
+            privacyFanOut(id, m_extensionId, this);
+        }
+        return okReply();
+    }
+
+    return errReply(QStringLiteral("unimplemented"));
 }
 
 // -------------------------------------------------------------------

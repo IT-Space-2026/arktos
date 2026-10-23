@@ -58,9 +58,11 @@
 #include "extensionshimbackend.h"
 #include "historymanager.h"
 #include "engineinterface.h"
+#include "opensearchmanager.h"
 #include "profilesettings.h"
 #include "qtest_arktos.h"
 #include "tabwidget.h"
+#include "toolbarsearch.h"
 #include "webpage.h"
 #include "webview.h"
 
@@ -125,6 +127,7 @@ private slots:
     void extensionBrowsingData();
     void extensionDns();
     void extensionSystem();
+    void extensionPrivacy();
     void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
@@ -10936,6 +10939,425 @@ void tst_ExtensionManager::extensionSystem()
                  QStringLiteral("no-permission"));
     }
 
+    QDir(dirB).removeRecursively();
+    QDir(dir).removeRecursively();
+}
+
+// MD31 — chrome.privacy over the browser's real settings.  The eight
+// mapped ChromeSetting members roundtrip the persona's persisted
+// toggles with live re-application; control layering, clear-restore,
+// scope refusals and the unserved-vocabulary verdicts are asserted
+// the same way.
+void tst_ExtensionManager::extensionPrivacy()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extpriv-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-priv\","
+                "\"version\":\"1.0\",\"permissions\":[\"privacy\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0053"),
+        QStringLiteral("tst-priv"), dir);
+    const auto invoke = [&backend](const QString &method,
+                                   const QJsonObject &args
+                                       = QJsonObject()) {
+        return backend.invoke(QStringLiteral("privacy"), method, args);
+    };
+    QSignalSpy pushSpy(&backend, &ExtensionShimBackend::pushEvent);
+
+    const QString profileId = BrowserPaths::activeProfileId();
+
+    // The leg writes real persona state — snapshot every key it can
+    // touch so the restore below leaves the profile as found.
+    ProfileSettings store(profileId);
+    const bool origBlock3p = store.value(
+        QLatin1String("cookies/blockThirdPartyCookies"), true).toBool();
+    const bool origBlockPings = store.value(
+        QLatin1String("privacy/blockPings"), true).toBool();
+    const QVariant origReferer =
+        store.value(QLatin1String("privacy/refererPolicy"));
+    const bool origTrimReferer = store.value(
+        QLatin1String("privacy/trimReferer"), true).toBool();
+    const bool origGpc = store.value(
+        QLatin1String("privacy/gpcSignal"), true).toBool();
+    const bool origBlockPrefetch = store.value(
+        QLatin1String("privacy/blockPrefetch"), true).toBool();
+    const bool origDnsPrefetch = store.value(
+        QLatin1String("privacy/dnsPrefetch"), false).toBool();
+    const bool origWebrtc = store.value(
+        QLatin1String("privacy/webrtcIpProtection"), true).toBool();
+    const bool origPasswordForms = store.value(
+        QLatin1String("autofill/passwordForms"), true).toBool();
+    const bool origSuggest = ToolbarSearch::openSearchManager()
+        ->suggestionsInAddressField();
+
+    const auto get = [&invoke](const QString &path) {
+        const QJsonObject reply = invoke(path + QLatin1String(".get"));
+        return reply.value(QLatin1String("result")).toObject();
+    };
+    const auto setBool = [&invoke](const QString &path, bool value) {
+        return invoke(path + QLatin1String(".set"),
+                      QJsonObject{{QStringLiteral("details"),
+                                   QJsonObject{{QStringLiteral("value"),
+                                                value}}}});
+    };
+
+    // --- websites.thirdPartyCookiesAllowed — get/set/clear over the
+    // real cookie policy -------------------------------------------
+    const bool orig3pAllowed = !origBlock3p;
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("value")).toBool(),
+             orig3pAllowed);
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controllable_by_this_extension"));
+
+    QVERIFY2(setBool(QStringLiteral(
+                         "websites.thirdPartyCookiesAllowed"), true)
+                 .value(QLatin1String("ok")).toBool(),
+             qPrintable(setBool(
+                 QStringLiteral("websites.thirdPartyCookiesAllowed"),
+                 true).value(QLatin1String("error")).toString()));
+    // The write landed the persisted key AND the live jar policy —
+    // Chrome's set() semantics are real, not recorded-only.
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("cookies/blockThirdPartyCookies"),
+                 true).toBool(), false);
+    QCOMPARE(CookieJar::instanceFor(profileId)
+                 ->blockThirdPartyCookies(), false);
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("value")).toBool(), true);
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_this_extension"));
+    // The API-driven mutation fanned the ChromeSetting's onChange
+    // out — the bare backend hears it on pushEvent with the actor's
+    // own control level.
+    bool saw3pChange = false;
+    for (const QList<QVariant> &call : pushSpy) {
+        if (call.value(0).toString() != QLatin1String(
+                "privacy.websites.thirdPartyCookiesAllowed.onChange"))
+            continue;
+        const QJsonObject details = call.value(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray().first()
+                .toObject();
+        QCOMPARE(details.value(QLatin1String("value")).toBool(), true);
+        QCOMPARE(details.value(QLatin1String("levelOfControl"))
+                     .toString(),
+                 QStringLiteral("controlled_by_this_extension"));
+        saw3pChange = true;
+    }
+    QVERIFY(saw3pChange);
+
+    // --- websites.hyperlinkAuditingEnabled <- blockPings ----------
+    QCOMPARE(get(QStringLiteral("websites.hyperlinkAuditingEnabled"))
+                 .value(QLatin1String("value")).toBool(),
+             !origBlockPings);
+    QVERIFY(setBool(QStringLiteral(
+                        "websites.hyperlinkAuditingEnabled"), true)
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/blockPings"), true).toBool(),
+             false);
+    QCOMPARE(get(QStringLiteral("websites.hyperlinkAuditingEnabled"))
+                 .value(QLatin1String("value")).toBool(), true);
+
+    // --- websites.referrersEnabled <- privacy/refererPolicy -------
+    QVERIFY(setBool(QStringLiteral("websites.referrersEnabled"), false)
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/refererPolicy")).toInt(), 3);
+    QCOMPARE(get(QStringLiteral("websites.referrersEnabled"))
+                 .value(QLatin1String("value")).toBool(), false);
+    // The controller's clear() restores the pre-extension value —
+    // Chrome's restore-default.
+    QVERIFY(invoke(QStringLiteral("websites.referrersEnabled.clear"))
+                .value(QLatin1String("ok")).toBool());
+    const int restoredReferer = origReferer.isValid()
+        ? origReferer.toInt() : (origTrimReferer ? 1 : 0);
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/refererPolicy")).toInt(),
+             restoredReferer);
+    QCOMPARE(get(QStringLiteral("websites.referrersEnabled"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controllable_by_this_extension"));
+
+    // --- websites.doNotTrackEnabled <- privacy/gpcSignal ----------
+    QCOMPARE(get(QStringLiteral("websites.doNotTrackEnabled"))
+                 .value(QLatin1String("value")).toBool(), origGpc);
+    QVERIFY(setBool(QStringLiteral("websites.doNotTrackEnabled"),
+                    false).value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/gpcSignal"), true).toBool(),
+             false);
+
+    // --- network.networkPredictionEnabled <- blockPrefetch --------
+    QCOMPARE(get(QStringLiteral("network.networkPredictionEnabled"))
+                 .value(QLatin1String("value")).toBool(),
+             !origBlockPrefetch);
+    QVERIFY(setBool(QStringLiteral("network.networkPredictionEnabled"),
+                    true).value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/blockPrefetch"), true).toBool(),
+             false);
+    // Prediction-off also drops the opt-in DNS prefetch — Chrome's
+    // semantic folds every speculative channel.
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/dnsPrefetch"), true);
+    QVERIFY(setBool(QStringLiteral("network.networkPredictionEnabled"),
+                    false).value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/blockPrefetch"), true).toBool(),
+             true);
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/dnsPrefetch"), true).toBool(),
+             false);
+
+    // --- network.webRTCIPHandlingPolicy <- webrtcIpProtection -----
+    QCOMPARE(get(QStringLiteral("network.webRTCIPHandlingPolicy"))
+                 .value(QLatin1String("value")).toString(),
+             origWebrtc ? QStringLiteral("disable_non_proxied_udp")
+                        : QStringLiteral("default"));
+    QVERIFY(invoke(QStringLiteral("network.webRTCIPHandlingPolicy.set"),
+                   QJsonObject{{QStringLiteral("details"),
+                                QJsonObject{{QStringLiteral("value"),
+                                             QStringLiteral("default")}}}})
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/webrtcIpProtection"),
+                 true).toBool(), false);
+    QCOMPARE(get(QStringLiteral("network.webRTCIPHandlingPolicy"))
+                 .value(QLatin1String("value")).toString(),
+             QStringLiteral("default"));
+    // Chrome's intermediate policies can't be expressed by the
+    // bool+process-flag pair — typed unservable, never clamped.
+    QCOMPARE(invoke(QStringLiteral("network.webRTCIPHandlingPolicy.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("value"),
+                                 QStringLiteral(
+                                     "default_public_interface_only")}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("network.webRTCIPHandlingPolicy.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("value"),
+                                              7}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // --- services.passwordSavingEnabled <- autofill/passwordForms -
+    QCOMPARE(get(QStringLiteral("services.passwordSavingEnabled"))
+                 .value(QLatin1String("value")).toBool(),
+             origPasswordForms);
+    QVERIFY(setBool(QStringLiteral("services.passwordSavingEnabled"),
+                    false).value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("autofill/passwordForms"),
+                 true).toBool(), false);
+
+    // --- services.searchSuggestEnabled <- openSearch suggest flag -
+    QCOMPARE(get(QStringLiteral("services.searchSuggestEnabled"))
+                 .value(QLatin1String("value")).toBool(), origSuggest);
+    QVERIFY(setBool(QStringLiteral("services.searchSuggestEnabled"),
+                    false).value(QLatin1String("ok")).toBool());
+    // The manager write flips the toolbar's live state, not just
+    // the persisted row.
+    QCOMPARE(ToolbarSearch::openSearchManager()
+                 ->suggestionsInAddressField(), false);
+
+    // --- control layering ------------------------------------------
+    // A second 'privacy'-declaring extension sees the member the
+    // first controls as controlled_by_other_extensions; its clear()
+    // is Chrome's silent no-op; its own set() takes the claim (last
+    // writer wins).
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extprivb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-priv-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"privacy\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0054"),
+        QStringLiteral("tst-priv-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("privacy"),
+                 QStringLiteral(
+                     "websites.thirdPartyCookiesAllowed.get"),
+                 QJsonObject())
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_other_extensions"));
+    QVERIFY(backendB.invoke(QStringLiteral("privacy"),
+                QStringLiteral("websites.thirdPartyCookiesAllowed.clear"),
+                QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    // The no-op clear changed nothing — backend still controls.
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_this_extension"));
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("value")).toBool(), true);
+    QVERIFY(backendB.invoke(QStringLiteral("privacy"),
+                QStringLiteral("websites.thirdPartyCookiesAllowed.set"),
+                QJsonObject{{QStringLiteral("details"),
+                             QJsonObject{{QStringLiteral("value"),
+                                          false}}}})
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("cookies/blockThirdPartyCookies"),
+                 true).toBool(), true);
+    QCOMPARE(backendB.invoke(QStringLiteral("privacy"),
+                 QStringLiteral(
+                     "websites.thirdPartyCookiesAllowed.get"),
+                 QJsonObject())
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_this_extension"));
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_other_extensions"));
+    // The new controller's clear restores the pre-extension value —
+    // the state before EITHER extension's first set.
+    QVERIFY(backendB.invoke(QStringLiteral("privacy"),
+                QStringLiteral("websites.thirdPartyCookiesAllowed.clear"),
+                QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("value")).toBool(), orig3pAllowed);
+
+    // --- typed verdicts ---------------------------------------------
+    // Published-but-unserved members.
+    QCOMPARE(invoke(QStringLiteral("services.translationEnabled.get"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("websites.topicsEnabled.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("value"),
+                                              true}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("network.webRTCUDPPortRange.get"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // Unknown member / unknown op / malformed names.
+    QCOMPARE(invoke(QStringLiteral("websites.bogusMember.get"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+    QCOMPARE(invoke(QStringLiteral(
+                        "websites.thirdPartyCookiesAllowed.frobnicate"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+    QCOMPARE(invoke(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+    QCOMPARE(invoke(QStringLiteral("get"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+    // Argument verdicts: mistyped value, missing value, mistyped
+    // details/incognito, and the incognito-scope refusals.
+    QCOMPARE(invoke(QStringLiteral("websites.thirdPartyCookiesAllowed.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("value"),
+                                              QStringLiteral("yes")}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("websites.thirdPartyCookiesAllowed.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject()}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("websites.thirdPartyCookiesAllowed.get"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("incognito"),
+                                              1}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("websites.thirdPartyCookiesAllowed.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("value"), true},
+                                             {QStringLiteral("scope"),
+                                 QStringLiteral(
+                                     "incognito_session_only")}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("websites.thirdPartyCookiesAllowed.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("value"), true},
+                                             {QStringLiteral("scope"),
+                                              QStringLiteral("bogus")}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // The manifest gate is per-context: a sibling backend without
+    // the 'privacy' grant hears no-permission on every op.
+    const QString dirC = QDir::temp().filePath(
+        QStringLiteral("tst-extprivc-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirC));
+    {
+        QFile f(dirC + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-priv-c\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendC(
+        QStringLiteral("tstmockextensionid0055"),
+        QStringLiteral("tst-priv-c"), dirC);
+    QCOMPARE(backendC.invoke(QStringLiteral("privacy"),
+                 QStringLiteral("websites.thirdPartyCookiesAllowed.get"),
+                 QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendC.invoke(QStringLiteral("privacy"),
+                 QStringLiteral("services.passwordSavingEnabled.set"),
+                 QJsonObject{{QStringLiteral("details"),
+                              QJsonObject{{QStringLiteral("value"),
+                                           true}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    // --- restore the persona -----------------------------------------
+    ProfileSettings(profileId).setValue(
+        QLatin1String("cookies/blockThirdPartyCookies"), origBlock3p);
+    CookieJar::instanceFor(profileId)->loadSettings();
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/blockPings"), origBlockPings);
+    if (origReferer.isValid())
+        ProfileSettings(profileId).setValue(
+            QLatin1String("privacy/refererPolicy"), origReferer);
+    else
+        ProfileSettings(profileId).remove(
+            QLatin1String("privacy/refererPolicy"));
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/trimReferer"), origTrimReferer);
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/gpcSignal"), origGpc);
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/blockPrefetch"), origBlockPrefetch);
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/dnsPrefetch"), origDnsPrefetch);
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/webrtcIpProtection"), origWebrtc);
+    ProfileSettings(profileId).setValue(
+        QLatin1String("autofill/passwordForms"), origPasswordForms);
+    ToolbarSearch::openSearchManager()
+        ->setSuggestionsInAddressField(origSuggest);
+
+    QDir(dirC).removeRecursively();
     QDir(dirB).removeRecursively();
     QDir(dir).removeRecursively();
 }

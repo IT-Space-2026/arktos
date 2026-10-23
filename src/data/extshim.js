@@ -4842,6 +4842,113 @@
     }
     installSystem();
 
+    // --- chrome.privacy ---------------------------------------------------
+    // MD31: the ChromeSetting surface.  Every sub-namespace member is
+    // a setting object {get,set,clear,onChange} — get/set/clear route
+    // to the bridge so the backend's verdict (invokePrivacy, under
+    // the declared 'privacy' grant) is authoritative: the eight
+    // members with a real mapping read/write the browser's actual
+    // toggles, and Chrome's remaining published members answer typed
+    // 'unsupported' — never a TypeError, never a fake store.
+    // onChange is a real shim event the host fans out on
+    // extension-driven mutations (extensionbackgroundhost's
+    // shapedPayload resolves each context's own levelOfControl);
+    // user-driven settings-dialog flips have no event source yet.
+    function installPrivacy() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.privacy; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var mkSetting = function (sub, member) {
+            var path = sub + '.' + member;
+            var mk = function (op) {
+                return function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('privacy', path + '.' + op,
+                                 { details: a[0] || {} });
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            };
+            return {
+                get: mk('get'),
+                set: mk('set'),
+                clear: mk('clear'),
+                onChange: makeEvent('privacy.' + path + '.onChange')
+            };
+        };
+        var privacyNs = {
+            __arktosShim: true,
+            network: {
+                networkPredictionEnabled:
+                    mkSetting('network', 'networkPredictionEnabled'),
+                webRTCIPHandlingPolicy:
+                    mkSetting('network', 'webRTCIPHandlingPolicy'),
+                // Chrome-published but unservable — the backend's
+                // typed 'unsupported' is the authoritative answer.
+                webRTCNonProxiedUdpEnabled:
+                    mkSetting('network', 'webRTCNonProxiedUdpEnabled'),
+                webRTCUDPPortRange:
+                    mkSetting('network', 'webRTCUDPPortRange')
+            },
+            services: {
+                autofillAddressEnabled:
+                    mkSetting('services', 'autofillAddressEnabled'),
+                autofillCreditCardEnabled:
+                    mkSetting('services', 'autofillCreditCardEnabled'),
+                autofillEnabled:
+                    mkSetting('services', 'autofillEnabled'),
+                passwordSavingEnabled:
+                    mkSetting('services', 'passwordSavingEnabled'),
+                safeBrowsingEnabled:
+                    mkSetting('services', 'safeBrowsingEnabled'),
+                safeBrowsingExtendedReportingEnabled:
+                    mkSetting('services',
+                              'safeBrowsingExtendedReportingEnabled'),
+                searchSuggestEnabled:
+                    mkSetting('services', 'searchSuggestEnabled'),
+                spellingServiceEnabled:
+                    mkSetting('services', 'spellingServiceEnabled'),
+                translationEnabled:
+                    mkSetting('services', 'translationEnabled')
+            },
+            websites: {
+                adMeasurementEnabled:
+                    mkSetting('websites', 'adMeasurementEnabled'),
+                doNotTrackEnabled:
+                    mkSetting('websites', 'doNotTrackEnabled'),
+                fledgeEnabled:
+                    mkSetting('websites', 'fledgeEnabled'),
+                hyperlinkAuditingEnabled:
+                    mkSetting('websites', 'hyperlinkAuditingEnabled'),
+                privacySandboxEnabled:
+                    mkSetting('websites', 'privacySandboxEnabled'),
+                protectedContentEnabled:
+                    mkSetting('websites', 'protectedContentEnabled'),
+                referrersEnabled:
+                    mkSetting('websites', 'referrersEnabled'),
+                thirdPartyCookiesAllowed:
+                    mkSetting('websites', 'thirdPartyCookiesAllowed'),
+                topicsEnabled:
+                    mkSetting('websites', 'topicsEnabled')
+            }
+        };
+        installNs('privacy', privacyNs);
+    }
+    installPrivacy();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -5083,8 +5190,6 @@
                 'onMenuItemActivated', 'onSurroundingTextChanged',
                 'onReset'],
                []);
-        fillNs('privacy', [],
-               []);
         fillNs('nativeMessaging', [], []);
     }
 
@@ -5095,7 +5200,7 @@
     // noted.  Nothing claims to work that doesn't.
     var unsupportedNames = [
         'windows', 'identity', 'gcm',
-        'nativeMessaging', 'privacy',
+        'nativeMessaging',
         'scripting', 'offscreen', 'omnibox', 'devtools',
         'fontSettings', 'userScripts',
         'declarativeNetRequest', 'declarativeContent',

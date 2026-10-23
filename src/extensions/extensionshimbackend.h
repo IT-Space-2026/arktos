@@ -455,6 +455,20 @@ private:
     // typed 'unsupported' — no fake values anywhere.
     QJsonObject invokeSystem(const QString &method,
                              const QJsonObject &args);
+    // MD31: chrome.privacy — ChromeSetting-shaped members over the
+    // browser's real settings.  'privacy' gates the whole namespace
+    // like Chrome's declared-grant requirement; methods ride the
+    // "<sub>.<member>.<op>" vocabulary (op = get/set/clear).  The
+    // eight members with an honest mapping write the real persona
+    // store and re-apply live (cookiejar/interceptor/engine attrs,
+    // autofill, search suggestions); the rest of Chrome's published
+    // vocabulary stays typed 'unsupported'.  set() claims control
+    // (last writer wins, like Chrome's layering); clear() by the
+    // controller restores the pre-extension value.  onChange
+    // details carry the acting extension's id so shapedPayload can
+    // resolve each observer's own levelOfControl.
+    QJsonObject invokePrivacy(const QString &method,
+                              const QJsonObject &args);
     // MD23: chrome.cookies — reads over the RC15 persistent mirror
     // (the jar's on-disk shadow, fed by the engine's cookie signals;
     // the C++ jar's live mirror is the no-rust read path), writes go
@@ -589,6 +603,9 @@ private:
     // MD28: the served-subset vocabulary + window-degradation caveat
     // is recorded once per context, not on every remove.
     bool m_browsingDataNoted = false;
+    // MD31: the served-member vocabulary + flattened control caveat
+    // is recorded once per context, not on every get/set.
+    bool m_privacyNoted = false;
 };
 
 #endif // EXTENSIONSHIMBACKEND_H

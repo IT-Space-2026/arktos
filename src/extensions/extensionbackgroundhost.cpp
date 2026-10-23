@@ -2169,6 +2169,11 @@ QString eventGate(const QString &name)
     // contexts — the same grant invokeTabGroups applies per call.
     if (ns == QLatin1String("tabGroups"))
         return QStringLiteral("tabGroups");
+    // MD31: privacy.<member>.onChange reaches only
+    // 'privacy'-declaring contexts — the same grant invokePrivacy
+    // applies per call.
+    if (ns == QLatin1String("privacy"))
+        return QStringLiteral("privacy");
     return QString();
 }
 
@@ -2322,6 +2327,33 @@ QJsonObject ExtensionBackgroundRuntime::shapedPayload(
                                   + QLatin1Char('/'))))
             return payload;
         return QJsonObject();
+    }
+    // MD31: privacy.<member>.onChange details carry the acting
+    // extension's id under __controller — levelOfControl is a
+    // per-extension verdict (the same call Chrome's extension
+    // layering makes), so each observer's copy resolves its own
+    // control level and the carrier field never leaks to JS.
+    if (ns == QLatin1String("privacy")) {
+        const QString controller = payload
+            .value(QLatin1String("__controller")).toString();
+        QJsonObject shaped = payload;
+        QJsonArray argList =
+            payload.value(QLatin1String("__args")).toArray();
+        if (!argList.isEmpty() && argList.first().isObject()) {
+            QJsonObject details = argList.first().toObject();
+            details.insert(
+                QStringLiteral("levelOfControl"),
+                controller.isEmpty()
+                    ? QStringLiteral("controllable_by_this_extension")
+                    : controller == extensionId
+                        ? QStringLiteral("controlled_by_this_extension")
+                        : QStringLiteral(
+                              "controlled_by_other_extensions"));
+            argList[0] = details;
+            shaped.insert(QStringLiteral("__args"), argList);
+        }
+        shaped.remove(QLatin1String("__controller"));
+        return shaped;
     }
     if (ns != QLatin1String("tabs")
             && ns != QLatin1String("windows")

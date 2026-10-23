@@ -38,12 +38,12 @@ matching every member of the namespace (or a dotted sub-path such as
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
 # stores this tree already has.  They stay in this block — still
-# typed today — but are queued: privacy -> MD31,
-# userScripts -> MD32, fontSettings -> MD33.  Entries leave the
-# declared set only when the row lands the implementation (downloads
-# left with MD24, sessions with MD25, tabGroups with MD26,
-# topSites with MD27, browsingData with MD28, dns with MD29,
-# system with MD30).
+# typed today — but are queued: userScripts -> MD32,
+# fontSettings -> MD33.  Entries leave the declared set only when
+# the row lands the implementation (downloads left with MD24,
+# sessions with MD25, tabGroups with MD26, topSites with MD27,
+# browsingData with MD28, dns with MD29, system with MD30,
+# privacy with MD31).
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
@@ -73,7 +73,6 @@ chrome.platformKeys.*: unsupported
 chrome.power.*: unsupported
 chrome.printerProvider.*: unsupported
 chrome.printing.*: unsupported
-chrome.privacy.*: unsupported
 chrome.processes.*: unsupported
 chrome.readingList.*: unsupported
 chrome.search.*: unsupported
@@ -192,6 +191,27 @@ chrome.system.*: invalid-argument
 chrome.system.*: not-found
 chrome.system.*: unsupported
 chrome.system.*: unimplemented
+# MD31: chrome.privacy is served over the browser's real settings —
+# 'privacy' gates the whole namespace like Chrome's declared grant
+# (no-permission undeclared).  Every sub-namespace member answers
+# get/set/clear in the ChromeSetting vocabulary: the eight mapped
+# members (websites.thirdPartyCookiesAllowed/hyperlinkAuditing
+# Enabled/referrersEnabled/doNotTrackEnabled, network.
+# networkPredictionEnabled/webRTCIPHandlingPolicy, services.
+# passwordSavingEnabled/searchSuggestEnabled) read/write the persona's
+# persisted toggles and re-apply live; set() claims control (last
+# writer wins — levelOfControl resolves per extension) and the
+# controller's clear() restores the pre-extension value.  The rest
+# of Chrome's published vocabulary (safeBrowsing*, autofill*,
+# translationEnabled, the Privacy Sandbox family, ChromeOS members)
+# stays typed 'unsupported'; the two webRTCIPHandlingPolicy values
+# the bool+process-flag pair cannot express and non-'regular'
+# scopes are typed 'unsupported' too.  The rest are the calls'
+# correct verdicts (mistyped/missing args, unreachable members).
+chrome.privacy.*: no-permission
+chrome.privacy.*: invalid-argument
+chrome.privacy.*: unsupported
+chrome.privacy.*: unimplemented
 # MD23: chrome.cookies is served over the RC15 persistent mirror
 # (reads) + QWebEngineCookieStore live jar (writes land both).
 # 'cookies' gates the namespace; url-bearing ops additionally need
