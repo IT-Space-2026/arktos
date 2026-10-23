@@ -2151,6 +2151,11 @@ QString eventGate(const QString &name)
     // applies per call.
     if (ns == QLatin1String("history"))
         return QStringLiteral("history");
+    // MD23: cookies.onChanged reaches only 'cookies'-declaring
+    // contexts; shapedPayload additionally withholds it per cookie
+    // domain coverage.
+    if (ns == QLatin1String("cookies"))
+        return QStringLiteral("cookies");
     return QString();
 }
 
@@ -2286,6 +2291,25 @@ QJsonObject ExtensionBackgroundRuntime::shapedPayload(
         const QJsonObject &payload) const
 {
     const QString ns = name.section(QLatin1Char('.'), 0, 0);
+    // MD23: cookies.onChanged carries a cookie object — Chrome
+    // withholds the event entirely from extensions whose
+    // host_permissions don't cover the cookie's domain.  An empty
+    // answer tells fanOut to skip this context (the payload is
+    // never legitimately empty — every broadcast rides __args).
+    if (ns == QLatin1String("cookies")) {
+        const QJsonObject change =
+            payload.value(QLatin1String("__args")).toArray().first()
+                .toObject();
+        QString domain = change.value(QLatin1String("cookie")).toObject()
+            .value(QLatin1String("domain")).toString();
+        if (domain.startsWith(QLatin1Char('.')))
+            domain = domain.mid(1);
+        if (requestVisibleTo(extensionId,
+                             QUrl(QStringLiteral("https://") + domain
+                                  + QLatin1Char('/'))))
+            return payload;
+        return QJsonObject();
+    }
     if (ns != QLatin1String("tabs")
             && ns != QLatin1String("windows")
             && ns != QLatin1String("contextMenus")
@@ -2356,7 +2380,12 @@ int ExtensionBackgroundRuntime::fanOut(
         if (!gate.isEmpty()
                 && !m_extPermissions.value(extId).contains(gate))
             continue;
-        emit bridge->hostEvent(name, shapedPayload(extId, name, payload));
+        const QJsonObject shaped = shapedPayload(extId, name, payload);
+        // MD23: an empty shaped answer is a withhold — coverage
+        // dropped the event for this context entirely.
+        if (shaped.isEmpty() && !payload.isEmpty())
+            continue;
+        emit bridge->hostEvent(name, shaped);
         ++delivered;
         // Push-then-wake — a throttled hidden page (host or
         // offscreen document) drains the delivery promptly instead

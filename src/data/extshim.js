@@ -4260,6 +4260,55 @@
     }
     installHistory();
 
+    // --- chrome.cookies -------------------------------------------------
+    // MD23: same posture as history/bookmarks — the object answers
+    // in every extension context and the 'cookies' grant plus host
+    // coverage are enforced per call by the backend (invokeCookies),
+    // so the namespace is always installed.  Reads ride the RC15
+    // persistent mirror, set/remove write the live engine store and
+    // the mirror; details objects pass through verbatim.
+    function installCookies() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.cookies; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var ckNs = {
+            __arktosShim: true,
+            onChanged: makeEvent('cookies.onChanged')
+        };
+        var ckArgs = {
+            get: function (a) { return a[0] || {}; },
+            getAll: function (a) { return a[0] || {}; },
+            set: function (a) { return a[0] || {}; },
+            remove: function (a) { return a[0] || {}; },
+            getAllCookieStores: function () { return {}; }
+        };
+        for (var mk in ckArgs) {
+            (function (m, map) {
+                ckNs[m] = function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('cookies', m, map(a));
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mk, ckArgs[mk]);
+        }
+        installNs('cookies', ckNs);
+    }
+    installCookies();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -4512,7 +4561,7 @@
     // on* properties yield real shim events whose registrations are
     // noted.  Nothing claims to work that doesn't.
     var unsupportedNames = [
-        'windows', 'cookies', 'identity', 'gcm',
+        'windows', 'identity', 'gcm',
         'nativeMessaging', 'privacy', 'topSites',
         'scripting', 'offscreen', 'omnibox', 'devtools',
         'fontSettings', 'tabGroups', 'userScripts',

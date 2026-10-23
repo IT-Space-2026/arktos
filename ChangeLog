@@ -875,6 +875,14 @@ UI:
   history.onVisitRemoved fanning out to every hosted context that
   declared "history", including visits and deletes made through the
   browser's own UI (MD22).
+- chrome.cookies is live for extensions that declare the grant plus
+  host coverage: get/getAll answer Chrome's Cookie shape out of the
+  durable cookie mirror (the jar's on-disk shadow), set/remove write
+  the live engine jar and the mirror together so a follow-up get sees
+  its own change, getAllCookieStores reports the one served store
+  with its live tab ids, and cookies.onChanged fans out — withheld
+  per cookie domain from contexts whose host_permissions don't cover
+  it — for changes made through the API or the browser itself (MD23).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

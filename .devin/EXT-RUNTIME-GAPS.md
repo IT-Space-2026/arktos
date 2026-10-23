@@ -38,8 +38,8 @@ matching every member of the namespace (or a dotted sub-path such as
 # MD07 triage (.devin/EXT-DISPATCH-AUDIT.md): several "dead"
 # namespaces turned out to be servable through dispatch/state over
 # stores this tree already has.  They stay in this block — still
-# typed today — but are queued: cookies -> MD23,
-# downloads -> MD24, sessions -> MD25,
+# typed today — but are queued: downloads -> MD24,
+# sessions -> MD25,
 # tabGroups -> MD26, topSites -> MD27, browsingData -> MD28,
 # dns -> MD29, system -> MD30, privacy -> MD31, userScripts -> MD32,
 # fontSettings -> MD33.  Entries leave the declared set only when the
@@ -51,7 +51,6 @@ chrome.browsingData.*: unsupported
 chrome.certificateProvider.*: unsupported
 chrome.chromeOs.*: unsupported
 chrome.contentSettings.*: unsupported
-chrome.cookies.*: unsupported
 chrome.debugger.*: unsupported
 chrome.declarativeContent.*: unsupported
 chrome.declarativeNetRequest.*: unsupported
@@ -154,6 +153,19 @@ chrome.history.*: no-permission
 chrome.history.*: invalid-argument
 chrome.history.*: scheme-refused
 chrome.history.*: no-store
+# MD23: chrome.cookies is served over the RC15 persistent mirror
+# (reads) + QWebEngineCookieStore live jar (writes land both).
+# 'cookies' gates the namespace; url-bearing ops additionally need
+# host coverage (no-host-access); the rest are the ops' correct
+# verdicts (bad/missing args, non-http(s) set urls refused,
+# partitionKey unsupported — no CHIPS, mirror write failure).
+chrome.cookies.*: no-permission
+chrome.cookies.*: invalid-argument
+chrome.cookies.*: no-host-access
+chrome.cookies.*: scheme-refused
+chrome.cookies.*: unsupported
+chrome.cookies.*: no-store
+chrome.cookies.*: store-failed
 chrome.action.setIcon: invalid-image-data
 chrome.action.setIcon: invalid-path
 chrome.browserAction.setIcon: invalid-image-data

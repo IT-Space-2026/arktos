@@ -36,6 +36,7 @@ struct AcIcons;
 struct AcDlwpolicy;
 struct AcPrivacy;
 struct AcUrlclean;
+struct AcCookies;
 struct RcNotes;
 struct RcSettings;
 struct RcProfiles;
@@ -115,6 +116,11 @@ public:
     // MD06: the per-persona URL-sanitize policy — ac_urlclean_call
     // drives it; release with ac_urlclean_close.
     AcUrlclean *urlclean(const QString &profileId = QString());
+    // MD23: the per-persona RC15 cookie store — the Chromium lane's
+    // durable mirror of the engine jar (CookieJar writes it from the
+    // QWebEngineCookieStore signals; chrome.cookies reads it);
+    // release with ac_cookies_close.
+    AcCookies *cookies(const QString &profileId = QString());
     // AcNotes — the facade typedef of RcNotes (arktos_core.h).
     RcNotes *notes(const QString &profileId = QString());
 

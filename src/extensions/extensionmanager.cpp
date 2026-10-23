@@ -1300,13 +1300,16 @@ QStringList ExtensionManager::runtimeServes()
     // stop condemning an extension; the rest move out of the flat
     // "will not work" tier into "partially supported".  Surfaces the
     // runtime does NOT serve (declarativeNetRequest*, blocking
-    // webRequest, cookies, nativeMessaging, privacy, downloads, ...)
+    // webRequest, nativeMessaging, privacy, downloads, ...)
     // stay absent on purpose — they keep the raw engine verdict.
     static const QStringList served = {
         // MD21: chrome.bookmarks rides the RC05 store through
         // BookmarksManager — the namespace is fully served.
         QStringLiteral("bookmarks"),
         QStringLiteral("contextMenus"),
+        // MD23: chrome.cookies reads the RC15 persistent mirror and
+        // writes the engine jar + mirror — the namespace is served.
+        QStringLiteral("cookies"),
         // MD22: chrome.history rides the RC04 store through
         // HistoryManager — the namespace is fully served.
         QStringLiteral("history"),

@@ -121,6 +121,13 @@ class QWebEngineProfile;
 //                  the namespace and its onVisited/onVisitRemoved
 //                  fan-out; transition/typedCount the store never
 //                  records answer 'link'/0 with a recorded note
+//   cookies.*    — MD23: get/getAll/getAllCookieStores/set/remove
+//                  over the RC15 persistent mirror (reads) plus the
+//                  QWebEngineCookieStore live jar (set/remove write
+//                  both); 'cookies' gates the namespace, host
+//                  coverage scopes urls and per-cookie domains;
+//                  onChanged rides the engine-store signal tap,
+//                  withheld per cookie-domain coverage
 //   runtime.*    — context bookkeeping (getViews counts); MD18
 //                  lifecycle ops: reload rides ExtensionManager's
 //                  unload+load, requestUpdateCheck rides
@@ -327,6 +334,18 @@ private:
                               const QJsonObject &args);
     void historyFanOut(const QString &name,
                        const QJsonArray &eventArgs);
+    // MD23: chrome.cookies — reads over the RC15 persistent mirror
+    // (the jar's on-disk shadow, fed by the engine's cookie signals;
+    // the C++ jar's live mirror is the no-rust read path), writes go
+    // to the QWebEngineCookieStore live jar AND the mirror so a
+    // synchronous get() sees its own set.  'cookies' gates the
+    // namespace; every url-bearing op additionally requires host
+    // coverage (no 'tabs' shortcut — same gate webRequest rides) and
+    // getAll drops rows on uncovered domains.  onChanged fans out
+    // through the engine-store tap, eventGate-scoped to
+    // 'cookies'-declaring contexts and withheld per cookie domain.
+    QJsonObject invokeCookies(const QString &method,
+                              const QJsonObject &args);
     QJsonObject invokeExtension(const QString &method,
                                 const QJsonObject &args);
     QJsonObject invokeSidebarAction(const QString &method,
@@ -411,6 +430,10 @@ private:
     // MD22: the untracked transition-type approximation is recorded
     // once per context, not on every getVisits.
     bool m_histTransitionNoted = false;
+    // MD23: the onChanged 'cause' caveat (Qt signals distinguish no
+    // eviction/expiration/overwrite causes) — recorded once per
+    // context.
+    bool m_cookieCauseNoted = false;
 };
 
 #endif // EXTENSIONSHIMBACKEND_H

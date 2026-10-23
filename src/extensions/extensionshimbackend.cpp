@@ -24,6 +24,7 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserpaths.h"
+#include "cookiejar.h"
 #include "engineinterface.h"
 #include "extensionbackgroundhost.h"
 #include "extensioncommands.h"
@@ -56,8 +57,16 @@
 #include <qtimer.h>
 #include <qvariant.h>
 
+#include <qnetworkcookie.h>
+#include <qwebenginecookiestore.h>
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
+
+#if defined(ARKTOS_RUSTCORE)
+#include "rustcorebridge.h"
+#include <arktos_core.h>
+#include <rustcore.h>
+#endif
 
 #include <algorithm>
 #include <limits>
@@ -670,6 +679,262 @@ void tapHistEvents(HistoryManager *manager)
         });
 }
 
+// -------------------------------------------------------------------
+// MD23: chrome.cookies — the persistent-mirror read side + the
+// engine-store signal tap behind onChanged.  Records travel in the
+// RC15 wire shape ({"container","name","value","domain","path",
+// "expires" ms|null,"secure","httpOnly","sameSite" 0..3,"hostOnly",
+// "created"}); the no-rust read path derives the same shape from the
+// C++ jar's live QNetworkCookie mirror so every filter runs on one
+// pipeline.
+// -------------------------------------------------------------------
+
+// QNetworkCookie -> the RC15 record shape (container "": the
+// extension store is always the default partition — the ambient
+// profile's jar).
+QJsonObject cookieRecordJson(const QNetworkCookie &cookie)
+{
+    QString domain = cookie.domain();
+    const bool hostOnly = !domain.startsWith(QLatin1Char('.'));
+    if (!hostOnly)
+        domain = domain.mid(1);
+    QJsonObject o;
+    o.insert(QLatin1String("container"), QString());
+    o.insert(QLatin1String("name"),
+             QString::fromUtf8(cookie.name()));
+    o.insert(QLatin1String("value"),
+             QString::fromUtf8(cookie.value()));
+    o.insert(QLatin1String("domain"), domain);
+    o.insert(QLatin1String("path"), cookie.path().isEmpty()
+             ? QStringLiteral("/") : cookie.path());
+    if (cookie.isSessionCookie())
+        o.insert(QLatin1String("expires"), QJsonValue());
+    else
+        o.insert(QLatin1String("expires"),
+                 double(cookie.expirationDate().toMSecsSinceEpoch()));
+    o.insert(QLatin1String("secure"), cookie.isSecure());
+    o.insert(QLatin1String("httpOnly"), cookie.isHttpOnly());
+    o.insert(QLatin1String("sameSite"), int(cookie.sameSitePolicy()));
+    o.insert(QLatin1String("hostOnly"), hostOnly);
+    o.insert(QLatin1String("created"),
+             double(QDateTime::currentMSecsSinceEpoch()));
+    return o;
+}
+
+// The Chrome Cookie object for a record: domain re-derives the
+// leading dot from hostOnly, expires-ms becomes seconds
+// expirationDate (omitted on session cookies), sameSite answers in
+// Chrome's enum vocabulary.  Arktos serves one store — "0".
+QJsonObject chromeCookieJson(const QJsonObject &rec,
+                             const QString &storeId)
+{
+    const QString domain = rec.value(QLatin1String("domain")).toString();
+    const bool hostOnly = rec.value(QLatin1String("hostOnly")).toBool();
+    QJsonObject o;
+    o.insert(QLatin1String("name"), rec.value(QLatin1String("name")));
+    o.insert(QLatin1String("value"), rec.value(QLatin1String("value")));
+    o.insert(QLatin1String("domain"), hostOnly
+             ? domain : QStringLiteral(".") + domain);
+    o.insert(QLatin1String("hostOnly"), hostOnly);
+    o.insert(QLatin1String("path"), rec.value(QLatin1String("path")));
+    o.insert(QLatin1String("secure"), rec.value(QLatin1String("secure")));
+    o.insert(QLatin1String("httpOnly"),
+             rec.value(QLatin1String("httpOnly")));
+    const QJsonValue exp = rec.value(QLatin1String("expires"));
+    const bool session = exp.isNull() || exp.isUndefined();
+    o.insert(QLatin1String("session"), session);
+    if (!session)
+        o.insert(QLatin1String("expirationDate"),
+                 exp.toDouble() / 1000.0);
+    static const char *names[] = {
+        "unspecified", "no_restriction", "lax", "strict"};
+    const int ss = qBound(0, rec.value(QLatin1String("sameSite")).toInt(),
+                          3);
+    o.insert(QLatin1String("sameSite"), QLatin1String(names[ss]));
+    o.insert(QLatin1String("storeId"), storeId);
+    return o;
+}
+
+// The Chrome Cookie object straight from a QNetworkCookie — the
+// onChanged tap's conversion (it needs no RC15 round trip).
+QJsonObject chromeCookieJson(const QNetworkCookie &cookie,
+                             const QString &storeId)
+{
+    QString domain = cookie.domain();
+    const bool hostOnly = !domain.startsWith(QLatin1Char('.'));
+    QJsonObject o;
+    o.insert(QLatin1String("name"),
+             QString::fromUtf8(cookie.name()));
+    o.insert(QLatin1String("value"),
+             QString::fromUtf8(cookie.value()));
+    o.insert(QLatin1String("domain"), domain);
+    o.insert(QLatin1String("hostOnly"), hostOnly);
+    o.insert(QLatin1String("path"), cookie.path().isEmpty()
+             ? QStringLiteral("/") : cookie.path());
+    o.insert(QLatin1String("secure"), cookie.isSecure());
+    o.insert(QLatin1String("httpOnly"), cookie.isHttpOnly());
+    const bool session = cookie.isSessionCookie();
+    o.insert(QLatin1String("session"), session);
+    if (!session)
+        o.insert(QLatin1String("expirationDate"),
+                 cookie.expirationDate().toMSecsSinceEpoch() / 1000.0);
+    static const char *names[] = {
+        "unspecified", "no_restriction", "lax", "strict"};
+    o.insert(QLatin1String("sameSite"),
+             QLatin1String(names[qBound(0, int(cookie.sameSitePolicy()),
+                                      3)]));
+    o.insert(QLatin1String("storeId"), storeId);
+    return o;
+}
+
+#ifdef ARKTOS_RUSTCORE
+// Legacy-lane anchor, identical to CookieJar::ensureRustCookies:
+// the process-global store must be (re)bound to this profile's
+// cookies.db — rc_set_data_dir alone never opens it, so every
+// rc_cookies_* call without it errors as "not been called".
+void legacyCookiesLane(const QString &profileId)
+{
+    rustCoreEnsureDataDirFor(profileId);
+    rc_cookies_open(nullptr);
+}
+#endif
+
+// Every default-partition record the mirror holds — facade handle
+// first, the legacy rc_* spelling over the per-call anchor second,
+// and the C++ jar's live mirror last (the no-rust read path and the
+// same FFI-failure fallback the facade consumers keep).
+QJsonArray cookieMirrorRows(CookieJar *jar)
+{
+#ifdef ARKTOS_RUSTCORE
+    AcCookies *h = nullptr;
+    const QString profileId = jar->profileId();
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->cookies(profileId);
+    if (!h)
+        legacyCookiesLane(profileId);
+    char *raw = h
+        ? ac_cookies_list(h, "")
+        : rc_cookies_list("");
+    ac_cookies_close(h);
+    if (raw) {
+        const QByteArray out(raw);
+        if (h)
+            ac_string_free(raw);
+        else
+            rc_string_free(raw);
+        const QJsonArray rows = QJsonDocument::fromJson(out).array();
+        if (!rows.isEmpty() || out.trimmed() == "[]")
+            return rows;
+        // A malformed reply falls through to the live mirror — the
+        // C++ jar still carries the engine's truth.
+    }
+#endif
+    QJsonArray rows;
+    const QList<QNetworkCookie> cookies = jar->cookies();
+    for (const QNetworkCookie &c : cookies)
+        rows.append(cookieRecordJson(c));
+    return rows;
+}
+
+// The send-match records for one url — the RC15 for_url lane (or
+// the C++ jar's canonical cookiesForUrl without rustcore), each
+// normalized to the record shape the filters run on.
+QJsonArray cookieRowsForUrl(CookieJar *jar, const QUrl &url)
+{
+#ifdef ARKTOS_RUSTCORE
+    AcCookies *h = nullptr;
+    const QString profileId = jar->profileId();
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->cookies(profileId);
+    if (!h)
+        legacyCookiesLane(profileId);
+    const QByteArray request = QJsonDocument(QJsonObject{
+        {QStringLiteral("url"), url.toString()},
+        {QStringLiteral("container"), QString()},
+        {QStringLiteral("first_party"), QJsonValue()},
+        {QStringLiteral("now_ms"), 0}}).toJson(QJsonDocument::Compact);
+    char *raw = h
+        ? ac_cookies_for_url(
+              h, reinterpret_cast<const uint8_t *>(request.constData()),
+              size_t(request.size()))
+        : rc_cookies_for_url(
+              reinterpret_cast<const uint8_t *>(request.constData()),
+              size_t(request.size()));
+    ac_cookies_close(h);
+    if (raw) {
+        const QByteArray out(raw);
+        if (h)
+            ac_string_free(raw);
+        else
+            rc_string_free(raw);
+        return QJsonDocument::fromJson(out).array();
+    }
+#endif
+    QJsonArray rows;
+    const QList<QNetworkCookie> cookies = jar->cookiesForUrl(url);
+    for (const QNetworkCookie &c : cookies)
+        rows.append(cookieRecordJson(c));
+    return rows;
+}
+
+// Engine-store signal -> chrome.cookies.onChanged broadcast.  Qt's
+// cookieAdded/cookieRemoved distinguish neither evictions nor
+// expirations nor overwrites — the cause honestly answers
+// "explicit" for every change (each backend records the caveat in
+// its notes once).
+void cookieBroadcast(const QJsonObject &changeInfo)
+{
+    ExtensionBackgroundRuntime::instance()->broadcastEvent(
+        QStringLiteral("cookies.onChanged"),
+        QJsonObject{{QStringLiteral("__args"),
+                     QJsonArray{changeInfo}}});
+}
+
+QPointer<CookieJar> s_cookieTapTarget;
+QList<QMetaObject::Connection> s_cookieTapConns;
+
+// Lazily binds the ambient jar's engine store signals to the event
+// fan-out; re-points when the ambient persona (and therefore the
+// jar/store) changes — cookie events must describe the profile the
+// extension reads through this namespace.
+void tapCookieEvents(CookieJar *jar)
+{
+    if (s_cookieTapTarget == jar)
+        return;
+    for (const QMetaObject::Connection &conn : s_cookieTapConns)
+        QObject::disconnect(conn);
+    s_cookieTapConns.clear();
+    s_cookieTapTarget = jar;
+    if (!jar || !jar->profile())
+        return;
+    QWebEngineCookieStore *store = jar->profile()->cookieStore();
+    if (!store)
+        return;
+    const QPointer<QWebEngineCookieStore> weak = store;
+    s_cookieTapConns << QObject::connect(
+        store, &QWebEngineCookieStore::cookieAdded, store,
+        [weak](const QNetworkCookie &cookie) {
+            if (!weak)
+                return;
+            cookieBroadcast(QJsonObject{
+                {QStringLiteral("removed"), false},
+                {QStringLiteral("cause"), QStringLiteral("explicit")},
+                {QStringLiteral("cookie"),
+                 chromeCookieJson(cookie, QStringLiteral("0"))}});
+        });
+    s_cookieTapConns << QObject::connect(
+        store, &QWebEngineCookieStore::cookieRemoved, store,
+        [weak](const QNetworkCookie &cookie) {
+            if (!weak)
+                return;
+            cookieBroadcast(QJsonObject{
+                {QStringLiteral("removed"), true},
+                {QStringLiteral("cause"), QStringLiteral("explicit")},
+                {QStringLiteral("cookie"),
+                 chromeCookieJson(cookie, QStringLiteral("0"))}});
+        });
+}
+
 // MD13: chrome.windows create/update share this prop application —
 // bounds land first (frame-inclusive move, matching Chrome's
 // outer-bounds vocabulary), then window state so a maximized or
@@ -863,6 +1128,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeBookmarks(method, args);
     if (ns == QLatin1String("history"))
         return invokeHistory(method, args);
+    if (ns == QLatin1String("cookies"))
+        return invokeCookies(method, args);
     if (ns == QLatin1String("extension"))
         return invokeExtension(method, args);
     if (ns == QLatin1String("sidebarAction"))
@@ -4205,6 +4472,393 @@ QJsonObject ExtensionShimBackend::invokeHistory(
                       QJsonArray{QJsonObject{
                           {QStringLiteral("allHistory"), true},
                           {QStringLiteral("urls"), QJsonArray()}}});
+        return okReply();
+    }
+
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.cookies — MD23.  Reads answer out of the RC15 persistent
+// mirror (the jar's on-disk shadow the CookieJar signals keep
+// current; the C++ jar's live mirror covers no-rust and FFI
+// failure); set/remove write the QWebEngineCookieStore live jar AND
+// the mirror synchronously, so a same-context get() sees its own
+// change.  The engine's cookieAdded/cookieRemoved then fire the
+// onChanged broadcast through tapCookieEvents — one event per
+// landed change, API-driven ones included, so nothing is emitted
+// twice.
+//
+// Chrome's gate shape: 'cookies' unlocks the namespace (ER16);
+// host_permissions scope what a context may touch — every
+// url-bearing op requires coverage of that url (the same
+// requestVisibleTo check webRequest rides; 'tabs' does NOT cover
+// cookie access), and getAll drops any row on an uncovered domain.
+// Arktos serves exactly one CookieStore, id "0" — the persistent
+// jar of the ambient persona (the profile extensions host on);
+// any other storeId is Chrome's no-such-store empty answer.
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::invokeCookies(
+        const QString &method, const QJsonObject &args)
+{
+    // ER16 shape: Chrome exposes the namespace only under the
+    // declared 'cookies' grant — the bridge object answers a direct
+    // call from any code in the context, so the gate runs here too.
+    if (!manifestPermissions().contains(QLatin1String("cookies")))
+        return errReply(QStringLiteral("no-permission"));
+
+    CookieJar *jar =
+        CookieJar::instanceFor(BrowserPaths::activeProfileId());
+    if (!jar || !jar->profile())
+        return errReply(QStringLiteral("no-store"));
+    tapCookieEvents(jar);
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    if (!m_cookieCauseNoted) {
+        m_cookieCauseNoted = true;
+        recordNote(QStringLiteral(
+            "cookies.onChanged: Qt's cookie-store signals distinguish "
+            "neither evictions, expirations nor overwrites — cause "
+            "answers 'explicit' for every change"));
+    }
+
+    // The only store this runtime serves.  A details.storeId naming
+    // anything else is Chrome's no-such-store empty answer, not an
+    // error.
+    const auto knownStore = [](const QJsonObject &details) {
+        const QString id = details.value(QLatin1String("storeId"))
+            .toString();
+        return id.isEmpty() || id == QLatin1String("0");
+    };
+    const QString kStoreId = QStringLiteral("0");
+
+    // Host coverage — Chromium fails url-bearing ops whose url the
+    // extension's host_permissions don't cover; cookie access has no
+    // 'tabs' shortcut.
+    const auto urlCovered = [this, runtime](const QString &url) {
+        return runtime->requestVisibleTo(m_extensionId, QUrl(url));
+    };
+    const auto domainCovered = [this, runtime](const QString &domain) {
+        return runtime->requestVisibleTo(
+            m_extensionId, QUrl(QStringLiteral("https://") + domain
+                                + QLatin1Char('/')));
+    };
+
+    if (method == QLatin1String("getAllCookieStores")) {
+        // One store — the persistent jar — with the live tab ids
+        // bound to its profile, Chrome's {id,tabIds} shape.
+        QJsonArray tabIds;
+        for (BrowserMainWindow *window
+             : ExtensionEventHub::browsingWindows()) {
+            if (!window || !window->tabWidget())
+                continue;
+            TabWidget *tw = window->tabWidget();
+            for (int i = 0; i < tw->count(); ++i) {
+                WebView *view = tw->webView(i);
+                if (!ExtensionEventHub::trackable(view)
+                        || !view->page())
+                    continue;
+                if (view->page()->profile() == jar->profile())
+                    tabIds.append(idFor(view));
+            }
+        }
+        return okReply(QJsonArray{QJsonObject{
+            {QStringLiteral("id"), kStoreId},
+            {QStringLiteral("tabIds"), tabIds}}});
+    }
+
+    if (method == QLatin1String("get")) {
+        const QJsonValue urlArg = args.value(QLatin1String("url"));
+        const QJsonValue nameArg = args.value(QLatin1String("name"));
+        if (!urlArg.isString() || !nameArg.isString()
+                || nameArg.toString().isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        const QString url = urlArg.toString();
+        const QString name = nameArg.toString();
+        const QUrl qurl(url);
+        if (!qurl.isValid() || qurl.host().isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        if (!knownStore(args))
+            return okReply();
+        if (!urlCovered(url))
+            return errReply(QStringLiteral("no-host-access"));
+        // for_url answers RFC6265 send order — the first name match
+        // is the cookie Chrome's get() returns.
+        const QJsonArray rows = cookieRowsForUrl(jar, qurl);
+        for (const QJsonValue &v : rows) {
+            const QJsonObject rec = v.toObject();
+            if (rec.value(QLatin1String("name")).toString() != name)
+                continue;
+            // The cookie's own domain needs coverage too — a parent-
+            // domain row is not reachable through a child url alone.
+            if (!domainCovered(
+                    rec.value(QLatin1String("domain")).toString()))
+                return okReply();
+            return okReply(chromeCookieJson(rec, kStoreId));
+        }
+        return okReply();
+    }
+
+    if (method == QLatin1String("getAll")) {
+        if (!knownStore(args))
+            return okReply(QJsonArray());
+        if (args.contains(QLatin1String("partitionKey"))) {
+            // No CHIPS partitions in this jar — an explicit
+            // partitionKey filter can only match nothing.
+            return okReply(QJsonArray());
+        }
+        QJsonArray rows;
+        if (args.value(QLatin1String("url")).isString()) {
+            const QUrl qurl(args.value(QLatin1String("url")).toString());
+            if (!qurl.isValid() || qurl.host().isEmpty())
+                return errReply(QStringLiteral("invalid-argument"));
+            if (!urlCovered(qurl.toString()))
+                return errReply(QStringLiteral("no-host-access"));
+            rows = cookieRowsForUrl(jar, qurl);
+        } else {
+            rows = cookieMirrorRows(jar);
+        }
+        const QString fName =
+            args.value(QLatin1String("name")).toString();
+        QString fDomain =
+            args.value(QLatin1String("domain")).toString();
+        if (fDomain.startsWith(QLatin1Char('.')))
+            fDomain = fDomain.mid(1);
+        const QString fPath =
+            args.value(QLatin1String("path")).toString();
+        const bool filterSecure = args.contains(QLatin1String("secure"));
+        const bool secure = args.value(QLatin1String("secure")).toBool();
+        const bool filterSession =
+            args.contains(QLatin1String("session"));
+        const bool session =
+            args.value(QLatin1String("session")).toBool();
+        QJsonArray out;
+        for (const QJsonValue &v : rows) {
+            const QJsonObject rec = v.toObject();
+            const QString domain =
+                rec.value(QLatin1String("domain")).toString();
+            const QJsonValue exp = rec.value(QLatin1String("expires"));
+            if (!fName.isEmpty()
+                    && rec.value(QLatin1String("name")).toString()
+                           != fName)
+                continue;
+            // Chrome: the filter domain matches the cookie's domain
+            // or any subdomain of it.
+            if (!fDomain.isEmpty() && domain != fDomain
+                    && !domain.endsWith(QStringLiteral(".") + fDomain))
+                continue;
+            if (!fPath.isEmpty()
+                    && rec.value(QLatin1String("path")).toString()
+                           != fPath)
+                continue;
+            if (filterSecure
+                    && rec.value(QLatin1String("secure")).toBool()
+                           != secure)
+                continue;
+            if (filterSession
+                    && (exp.isNull() || exp.isUndefined()) != session)
+                continue;
+            // Per-cookie access: the extension must hold host
+            // coverage of the cookie's domain — the same check
+            // Chrome applies before a Cookie object leaves.
+            if (!domainCovered(domain))
+                continue;
+            out.append(chromeCookieJson(rec, kStoreId));
+        }
+        return okReply(out);
+    }
+
+    if (method == QLatin1String("set")) {
+        const QString url = args.value(QLatin1String("url")).toString();
+        const QString name = args.value(QLatin1String("name")).toString();
+        const QUrl qurl(url);
+        if (url.isEmpty() || !qurl.isValid())
+            return errReply(QStringLiteral("invalid-argument"));
+        const QString scheme = qurl.scheme();
+        if (scheme != QLatin1String("http")
+                && scheme != QLatin1String("https"))
+            return errReply(QStringLiteral("scheme-refused"));
+        if (qurl.host().isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        if (!knownStore(args))
+            return okReply();
+        if (args.contains(QLatin1String("partitionKey")))
+            return errReply(QStringLiteral("unsupported"));
+        if (!urlCovered(url))
+            return errReply(QStringLiteral("no-host-access"));
+
+        QNetworkCookie cookie(name.toUtf8(),
+                              args.value(QLatin1String("value"))
+                                  .toString().toUtf8());
+        // Domain: absent -> host cookie on the url's host; present ->
+        // a domain cookie that must cover the url's host (the jar
+        // marks domain cookies with a leading dot, verbatim Qt).
+        QString domain =
+            args.value(QLatin1String("domain")).toString();
+        if (domain.startsWith(QLatin1Char('.')))
+            domain = domain.mid(1);
+        if (!domain.isEmpty()) {
+            const QString host = qurl.host();
+            if (host != domain
+                    && !host.endsWith(QStringLiteral(".") + domain))
+                return errReply(QStringLiteral("invalid-argument"));
+            cookie.setDomain(QStringLiteral(".") + domain);
+        } else {
+            cookie.setDomain(qurl.host());
+        }
+        // Path: absent -> the RFC6265 default-path of the url (the
+        // directory up to and including the rightmost '/').
+        QString path = args.value(QLatin1String("path")).toString();
+        if (path.isEmpty()) {
+            const QString p = qurl.path();
+            const int slash = p.lastIndexOf(QLatin1Char('/'));
+            path = slash <= 0 ? QStringLiteral("/")
+                              : p.left(slash + 1);
+        }
+        if (!path.startsWith(QLatin1Char('/')))
+            return errReply(QStringLiteral("invalid-argument"));
+        cookie.setPath(path);
+        cookie.setSecure(args.value(QLatin1String("secure")).toBool());
+        cookie.setHttpOnly(
+            args.value(QLatin1String("httpOnly")).toBool());
+        const QString ss =
+            args.value(QLatin1String("sameSite")).toString();
+        if (ss == QLatin1String("no_restriction"))
+            cookie.setSameSitePolicy(QNetworkCookie::SameSite::None);
+        else if (ss == QLatin1String("lax"))
+            cookie.setSameSitePolicy(QNetworkCookie::SameSite::Lax);
+        else if (ss == QLatin1String("strict"))
+            cookie.setSameSitePolicy(QNetworkCookie::SameSite::Strict);
+        else if (!ss.isEmpty()
+                 && ss != QLatin1String("unspecified"))
+            return errReply(QStringLiteral("invalid-argument"));
+        if (args.contains(QLatin1String("expirationDate"))) {
+            const double secs =
+                args.value(QLatin1String("expirationDate")).toDouble();
+            if (secs <= 0)
+                return errReply(QStringLiteral("invalid-argument"));
+            cookie.setExpirationDate(
+                QDateTime::fromMSecsSinceEpoch(qint64(secs * 1000)));
+        }
+
+        // Live first — the engine lands it asynchronously and fires
+        // the onChanged tap; the mirror write is synchronous so a
+        // same-context get() sees the set before the engine ack.
+        QWebEngineCookieStore *store = jar->profile()->cookieStore();
+        if (!store)
+            return errReply(QStringLiteral("no-store"));
+        store->setCookie(cookie, qurl);
+#ifdef ARKTOS_RUSTCORE
+        {
+            AcCookies *h = nullptr;
+            const QString profileId = jar->profileId();
+            if (RustCoreBridge *bridge = RustCoreBridge::serving())
+                h = bridge->cookies(profileId);
+            if (!h)
+                legacyCookiesLane(profileId);
+            const QByteArray json = QJsonDocument(
+                cookieRecordJson(cookie)).toJson(QJsonDocument::Compact);
+            const AcStatus st = h
+                ? ac_cookies_set(
+                      h, reinterpret_cast<const uint8_t *>(
+                             json.constData()), size_t(json.size()))
+                : rc_cookies_set(
+                      reinterpret_cast<const uint8_t *>(
+                          json.constData()), size_t(json.size()));
+            ac_cookies_close(h);
+            if (st != AC_OK)
+                return errReply(QStringLiteral("store-failed"));
+        }
+#endif
+        return okReply(chromeCookieJson(cookieRecordJson(cookie),
+                                        kStoreId));
+    }
+
+    if (method == QLatin1String("remove")) {
+        const QJsonValue urlArg = args.value(QLatin1String("url"));
+        const QJsonValue nameArg = args.value(QLatin1String("name"));
+        if (!urlArg.isString() || !nameArg.isString()
+                || nameArg.toString().isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        const QString url = urlArg.toString();
+        const QString name = nameArg.toString();
+        const QUrl qurl(url);
+        if (!qurl.isValid() || qurl.host().isEmpty())
+            return errReply(QStringLiteral("invalid-argument"));
+        if (!knownStore(args))
+            return okReply();
+        if (!urlCovered(url))
+            return errReply(QStringLiteral("no-host-access"));
+        // Chrome removes the cookie get() would return — the first
+        // name match in send order.
+        const QJsonArray rows = cookieRowsForUrl(jar, qurl);
+        for (const QJsonValue &v : rows) {
+            const QJsonObject rec = v.toObject();
+            if (rec.value(QLatin1String("name")).toString() != name)
+                continue;
+            const QString domain =
+                rec.value(QLatin1String("domain")).toString();
+            if (!domainCovered(domain))
+                return okReply();
+            QWebEngineCookieStore *store =
+                jar->profile()->cookieStore();
+            if (!store)
+                return errReply(QStringLiteral("no-store"));
+            // Chromium deletes by exact stored identity — hand back
+            // the verbatim cookie object the engine reported (the
+            // same discipline handleCookieAdded/setCookies keep), not
+            // a record rebuilt from the mirror.
+            const QString recPath =
+                rec.value(QLatin1String("path")).toString();
+            QNetworkCookie doomed;
+            for (const QNetworkCookie &c : jar->cookies()) {
+                QString cDomain = c.domain();
+                if (cDomain.startsWith(QLatin1Char('.')))
+                    cDomain = cDomain.mid(1);
+                if (QString::fromUtf8(c.name()) == name
+                        && cDomain == domain && c.path() == recPath) {
+                    doomed = c;
+                    break;
+                }
+            }
+            if (doomed.name().isEmpty()) {
+                doomed = QNetworkCookie(
+                    rec.value(QLatin1String("name")).toString().toUtf8(),
+                    rec.value(QLatin1String("value")).toString().toUtf8());
+                doomed.setDomain(
+                    rec.value(QLatin1String("hostOnly")).toBool()
+                        ? domain : QStringLiteral(".") + domain);
+                doomed.setPath(recPath);
+            }
+            store->deleteCookie(doomed);
+#ifdef ARKTOS_RUSTCORE
+            {
+                AcCookies *h = nullptr;
+                const QString profileId = jar->profileId();
+                if (RustCoreBridge *bridge = RustCoreBridge::serving())
+                    h = bridge->cookies(profileId);
+                if (!h)
+                    legacyCookiesLane(profileId);
+                const QByteArray d = domain.toUtf8();
+                const QByteArray n =
+                    rec.value(QLatin1String("name")).toString().toUtf8();
+                const QByteArray p =
+                    rec.value(QLatin1String("path")).toString().toUtf8();
+                if (h)
+                    ac_cookies_remove(h, d.constData(), n.constData(),
+                                      p.constData(), "");
+                else
+                    rc_cookies_remove(d.constData(), n.constData(),
+                                      p.constData(), "");
+                ac_cookies_close(h);
+            }
+#endif
+            QJsonObject removed{{QStringLiteral("url"), url},
+                                {QStringLiteral("name"), name},
+                                {QStringLiteral("storeId"), kStoreId}};
+            return okReply(removed);
+        }
         return okReply();
     }
 

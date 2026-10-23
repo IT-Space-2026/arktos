@@ -43,6 +43,7 @@
 #include "browsermainwindow.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
+#include "cookiejar.h"
 #include "extensionactionbar.h"
 #include "extensionbackgroundhost.h"
 #include "extensioncommands.h"
@@ -65,6 +66,7 @@
 #include <qframe.h>
 #include <qmenu.h>
 #include <qsignalspy.h>
+#include <qwebenginecookiestore.h>
 #include <qwebengineview.h>
 
 class tst_ExtensionManager : public QObject
@@ -114,6 +116,7 @@ private slots:
     void extensionManagementMutations();
     void extensionBookmarks();
     void extensionHistory();
+    void extensionCookies();
     void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
@@ -527,17 +530,19 @@ void tst_ExtensionManager::inspectManifest_data()
         << QStringList() << QStringList();
     // ER19: runtime-served 'unsupported' members migrate to
     // 'unverified' — the honest tier is "partially supported", not
-    // "will not work".  'cookies' is genuinely dead and stays.
+    // "will not work".  MD23 serves 'cookies' (it migrates too);
+    // 'gcm' is genuinely dead and stays.
     QTest::newRow("runtime-served apis migrate")
         << QByteArray("{\"manifest_version\":3,\"name\":\"served\","
                       "\"version\":\"1.0\","
                       "\"permissions\":[\"notifications\",\"tabs\","
-                      "\"bookmarks\",\"cookies\"]}")
+                      "\"bookmarks\",\"cookies\",\"gcm\"]}")
         << true << 3 << QStringLiteral("served") << false
-        << (QStringList() << QStringLiteral("cookies"))
+        << (QStringList() << QStringLiteral("gcm"))
         << (QStringList() << QStringLiteral("notifications")
                           << QStringLiteral("tabs")
-                          << QStringLiteral("bookmarks"))
+                          << QStringLiteral("bookmarks")
+                          << QStringLiteral("cookies"))
         << QStringList()
         << QStringList() << QStringList();
     QTest::newRow("fatal core api optional")
@@ -1297,7 +1302,8 @@ void tst_ExtensionManager::runtimeHealthRegrade()
         root, QStringLiteral("tst-regrade"), QStringLiteral("1.0.0"),
         QString(), {QStringLiteral("scripting"),
                     QStringLiteral("notifications"),
-                    QStringLiteral("cookies")});
+                    QStringLiteral("cookies"),
+                    QStringLiteral("gcm")});
     QVERIFY(!dir.isEmpty());
 
     // Runtime armed (the suite's normal env — pin it so a stray
@@ -1310,13 +1316,16 @@ void tst_ExtensionManager::runtimeHealthRegrade()
         ExtensionManager::inspectManifest(dir);
     QVERIFY(served.valid);
     // scripting leaves fatalMissing and was always 'unverified';
-    // notifications migrates unsupported -> unverified; cookies is
-    // genuinely dead and stays the missingApis marker.
+    // notifications migrates unsupported -> unverified, and MD23's
+    // cookies service moves it the same way; gcm is genuinely dead
+    // and stays the missingApis marker.
     QVERIFY(served.fatalMissing.isEmpty());
     QVERIFY(served.unverified.contains(QLatin1String("scripting")));
     QVERIFY(served.unverified.contains(QLatin1String("notifications")));
+    QVERIFY(served.unverified.contains(QLatin1String("cookies")));
     QVERIFY(!served.unsupported.contains(QLatin1String("notifications")));
-    QVERIFY(served.unsupported.contains(QLatin1String("cookies")));
+    QVERIFY(!served.unsupported.contains(QLatin1String("cookies")));
+    QVERIFY(served.unsupported.contains(QLatin1String("gcm")));
     // Regraded: the same extension that EXT21 condemned is
     // Limited-or-better — its remaining gaps are honest, not fatal.
     QCOMPARE(ExtensionManager::classifyHealth(
@@ -8772,6 +8781,348 @@ void tst_ExtensionManager::extensionHistory()
              QStringLiteral("no-permission"));
 
     QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
+}
+
+// MD23 — chrome.cookies over the RC15 persistent mirror plus the
+// live QWebEngineCookieStore.  A dedicated temp persona is bound as
+// the ambient profile — invokeCookies resolves exactly this jar —
+// and a REAL hosted extension (cookies grant + host_permissions on
+// *.example.test) drives bridge->invoke so the coverage gate runs
+// against the runtime's registered grants.  Covers set/get on a
+// covered host (the task's verify hint), the mirror read-back,
+// the engine store's landed write, onChanged fan-out (emit +
+// per-domain withhold), remove, stores listing, arg refusals and
+// the 'cookies' manifest gate.
+void tst_ExtensionManager::extensionCookies()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // Fixture: cookies grant + host coverage of *.example.test.
+    // Loaded BEFORE the ambient persona switch — ExtensionManager's
+    // engine handle binds the profile(s) prepared for the ambient
+    // persona, and the runtime's permission/coverage maps fill on
+    // load regardless of which profile hosts the worker.
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extck-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-cookies\","
+                "\"version\":\"1.0\",\"permissions\":[\"cookies\"],"
+                "\"host_permissions\":[\"https://*.example.test/*\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write("self.__ck=[];\n"
+                "try{chrome.cookies.onChanged.addListener("
+                "function(ci){self.__ck.push({ev:ci});});}"
+                "catch(e){}\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    // Leftovers are persistent across standalone runs — drop any
+    // stale 'tst-cookies' registration or loadExtension no-ops.
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.name == QLatin1String("tst-cookies"))
+            manager->removeExtension(info.id);
+    }
+    auto loaded = std::make_shared<QString>();
+    auto loadErr = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded, loadErr](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name != QLatin1String("tst-cookies"))
+            return;
+        if (info.error.isEmpty())
+            *loaded = info.id;
+        else
+            *loadErr = info.error;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && loadErr->isEmpty()
+           && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString extId = *loaded;
+    QVERIFY2(!extId.isEmpty(), qPrintable(QStringLiteral(
+        "fixture loaded (err=%1)").arg(*loadErr)));
+    manager->setExtensionEnabled(extId, true);
+    auto unload = qScopeGuard([manager, extId, dir]() {
+        manager->setExtensionEnabled(extId, false);
+        manager->removeExtension(extId);
+        QDir(dir).removeRecursively();
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(extId)
+            && runtime->host(extId)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    // Same ambient-persona binding the MD22 leg uses — the runtime's
+    // permission/coverage maps are already filled from the manifest,
+    // so the switch only re-points which jar invokeCookies serves.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstextck%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    CookieJar *jar = CookieJar::instanceFor(profileId);
+    QVERIFY(jar);
+    QCOMPARE(jar->profileId(), profileId);
+    QVERIFY(jar->profile() && jar->profile()->cookieStore());
+    // The cookie store is backed by the network service, which only
+    // exists once a page does (same bring-up cookieStoreIsolation
+    // documents) — a trivial load spins the engine up so the live
+    // setCookie leg below actually lands.
+    {
+        QWebEnginePage spinUp(jar->profile());
+        QSignalSpy loadSpy(&spinUp, &QWebEnginePage::loadFinished);
+        spinUp.load(QUrl(QStringLiteral("about:blank")));
+        QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 15000);
+    }
+    auto unbind = qScopeGuard([prevId, profileId]() {
+        CookieJar::releaseFor(profileId);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+
+    ChromeBridge *bridge = runtime->host(extId)->bridge();
+    QVERIFY(bridge);
+    QSignalSpy hostEvents(bridge, &ChromeBridge::hostEvent);
+    auto invoke = [&](const QString &m, const QJsonObject &args) {
+        return bridge->invoke(QStringLiteral("cookies"), m, args);
+    };
+
+    // NOTE: the runtime's hostCovers wildcard is a single path
+    // segment ('*' does not cross '/'), so the covered url is the
+    // host root.
+    const QString url =
+        QStringLiteral("https://www.example.test/");
+    auto hostEventsFor = [&](const QString &name) {
+        QList<QVariantList> out;
+        for (const QVariantList &args : hostEvents)
+            if (!args.isEmpty() && args.at(0).toString() == name)
+                out.append(args);
+        return out;
+    };
+
+    // set on a covered host — Chrome's Cookie shape answers with the
+    // store id; the record lands in the mirror synchronously.
+    QJsonObject reply = invoke(QStringLiteral("set"), QJsonObject{
+        {QStringLiteral("url"), url},
+        {QStringLiteral("name"), QStringLiteral("sid")},
+        {QStringLiteral("value"), QStringLiteral("v1")},
+        {QStringLiteral("path"), QStringLiteral("/")},
+        {QStringLiteral("secure"), true},
+        {QStringLiteral("httpOnly"), true},
+        {QStringLiteral("sameSite"), QStringLiteral("lax")}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    {
+        const QJsonObject c =
+            reply.value(QLatin1String("result")).toObject();
+        QCOMPARE(c.value(QLatin1String("name")).toString(),
+                 QStringLiteral("sid"));
+        QCOMPARE(c.value(QLatin1String("domain")).toString(),
+                 QStringLiteral("www.example.test"));
+        QCOMPARE(c.value(QLatin1String("hostOnly")).toBool(), true);
+        QCOMPARE(c.value(QLatin1String("path")).toString(),
+                 QStringLiteral("/"));
+        QCOMPARE(c.value(QLatin1String("secure")).toBool(), true);
+        QCOMPARE(c.value(QLatin1String("httpOnly")).toBool(), true);
+        QCOMPARE(c.value(QLatin1String("sameSite")).toString(),
+                 QStringLiteral("lax"));
+        QCOMPARE(c.value(QLatin1String("session")).toBool(), true);
+        QCOMPARE(c.value(QLatin1String("storeId")).toString(),
+                 QStringLiteral("0"));
+    }
+
+    // The engine store took the live write (lands asynchronously).
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QList<QNetworkCookie> cs = jar->cookies();
+        for (const QNetworkCookie &c : cs)
+            if (c.name() == "sid" && c.value() == "v1")
+                return true;
+        return false;
+    }(), 15000);
+
+    // get — mirror read answers the same row; a miss answers null.
+    reply = invoke(QStringLiteral("get"), QJsonObject{
+        {QStringLiteral("url"), url},
+        {QStringLiteral("name"), QStringLiteral("sid")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result"))
+                 .toObject().value(QLatin1String("value")).toString(),
+             QStringLiteral("v1"));
+    reply = invoke(QStringLiteral("get"), QJsonObject{
+        {QStringLiteral("url"), url},
+        {QStringLiteral("name"), QStringLiteral("absent")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).isNull()
+            || reply.value(QLatin1String("result")).isUndefined());
+
+    // getAll — the row answers under the store filter and the url
+    // send-match alike; unknown store id is Chrome's empty answer.
+    reply = invoke(QStringLiteral("getAll"), QJsonObject{
+        {QStringLiteral("domain"),
+         QStringLiteral("example.test")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().size() >= 1);
+    reply = invoke(QStringLiteral("getAll"), QJsonObject{
+        {QStringLiteral("url"), url},
+        {QStringLiteral("name"), QStringLiteral("sid")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+    reply = invoke(QStringLiteral("getAll"), QJsonObject{
+        {QStringLiteral("storeId"), QStringLiteral("zzz")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+
+    // getAllCookieStores — one served store, Chrome's {id,tabIds}.
+    reply = invoke(QStringLiteral("getAllCookieStores"), QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    {
+        const QJsonArray stores =
+            reply.value(QLatin1String("result")).toArray();
+        QCOMPARE(stores.size(), 1);
+        QCOMPARE(stores.at(0).toObject()
+                     .value(QLatin1String("id")).toString(),
+                 QStringLiteral("0"));
+        QVERIFY(stores.at(0).toObject()
+                .value(QLatin1String("tabIds")).isArray());
+    }
+
+    // onChanged — the engine's cookieAdded rode the tap into the
+    // hosted context: removed:false, cause 'explicit', the Cookie.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("cookies.onChanged")).isEmpty(),
+        15000);
+    {
+        const QVariantList last =
+            hostEventsFor(QStringLiteral("cookies.onChanged")).last();
+        const QJsonObject ci = last.at(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray().at(0).toObject();
+        QCOMPARE(ci.value(QLatin1String("removed")).toBool(), false);
+        QCOMPARE(ci.value(QLatin1String("cookie")).toObject()
+                     .value(QLatin1String("name")).toString(),
+                 QStringLiteral("sid"));
+    }
+
+    // Host coverage — an uncovered domain fails url-bearing ops with
+    // the typed verdict; a covered op still answers.
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("url"),
+                  QStringLiteral("https://uncovered.test/x")},
+                 {QStringLiteral("name"), QStringLiteral("a")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+    QCOMPARE(invoke(QStringLiteral("set"), QJsonObject{
+                 {QStringLiteral("url"),
+                  QStringLiteral("https://uncovered.test/")},
+                 {QStringLiteral("name"), QStringLiteral("a")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+
+    // The onChanged withhold: an engine-side change on an uncovered
+    // domain reaches neither the mirror-served context's event list.
+    {
+        hostEvents.clear();
+        QNetworkCookie foreign(QStringLiteral("x").toUtf8(),
+                               QStringLiteral("1").toUtf8());
+        foreign.setDomain(QStringLiteral("uncovered.test"));
+        foreign.setPath(QStringLiteral("/"));
+        jar->profile()->cookieStore()->setCookie(
+            foreign, QUrl(QStringLiteral("https://uncovered.test/")));
+        QTest::qWait(1200);
+        QVERIFY(hostEventsFor(QStringLiteral("cookies.onChanged"))
+                    .isEmpty());
+    }
+
+    // remove — the cookie get() would return goes away in the live
+    // jar AND the mirror; the reply is Chrome's details echo.
+    reply = invoke(QStringLiteral("remove"), QJsonObject{
+        {QStringLiteral("url"), url},
+        {QStringLiteral("name"), QStringLiteral("sid")}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("name")).toString(),
+             QStringLiteral("sid"));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("storeId")).toString(),
+             QStringLiteral("0"));
+    reply = invoke(QStringLiteral("get"), QJsonObject{
+        {QStringLiteral("url"), url},
+        {QStringLiteral("name"), QStringLiteral("sid")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).isNull()
+            || reply.value(QLatin1String("result")).isUndefined());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("cookies.onChanged")).isEmpty(),
+        15000);
+    {
+        const QVariantList last =
+            hostEventsFor(QStringLiteral("cookies.onChanged")).last();
+        const QJsonObject ci = last.at(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray().at(0).toObject();
+        QCOMPARE(ci.value(QLatin1String("removed")).toBool(), true);
+    }
+
+    // Refused shapes — missing url/name, non-http(s) set urls.
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("remove"), QJsonObject{
+                 {QStringLiteral("url"), url}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("set"), QJsonObject{
+                 {QStringLiteral("url"),
+                  QStringLiteral("file:///x")},
+                 {QStringLiteral("name"), QStringLiteral("a")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("scheme-refused"));
+    QCOMPARE(invoke(QStringLiteral("bogus"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // The manifest gate — a sibling backend without 'cookies' hears
+    // no-permission on every member.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extckb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-ck-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0031"),
+        QStringLiteral("tst-ck-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("cookies"),
+                 QStringLiteral("get"), QJsonObject{
+                     {QStringLiteral("url"), url},
+                     {QStringLiteral("name"), QStringLiteral("a")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(QStringLiteral("cookies"),
+                 QStringLiteral("getAll"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
     QDir(dirB).removeRecursively();
 }
 
