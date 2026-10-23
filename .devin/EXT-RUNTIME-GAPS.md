@@ -134,6 +134,7 @@ chrome.webRequest.*: unsupported
 # constraints (globs, cookieStoreId) refuse the same way.
 chrome.scripting.*: unsupported
 # --- domain refusals — correct replies, kept visible ---------------
+chrome.alarms.create: invalid-argument
 chrome.action.setIcon: invalid-image-data
 chrome.action.setIcon: invalid-path
 chrome.browserAction.setIcon: invalid-image-data

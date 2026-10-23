@@ -845,6 +845,15 @@ UI:
   sync in Arktos), and a health note says so. Chrome's quota bounds
   are enforced on writes, so oversized sets fail atomically the way
   extensions expect (MD19).
+- chrome.alarms now matches Chrome's edge contract: create() refuses
+  the argument shapes Chrome rejects (when+delayInMinutes together,
+  no schedule at all, or a name given both as the argument and inside
+  alarmInfo), an unnamed alarm lives under Chrome's empty-string
+  default name so get/clear/onAlarm serve it and a second unnamed
+  create replaces it, a periodInMinutes under Chrome's MV3
+  thirty-second floor clamps to half a minute with a recorded health
+  note instead of silently spinning, and getAll answers in creation
+  order (MD20).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

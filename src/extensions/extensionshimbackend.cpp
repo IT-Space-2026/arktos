@@ -56,6 +56,8 @@
 #include <qwebenginepage.h>
 #include <qwebengineprofile.h>
 
+#include <algorithm>
+
 namespace {
 
 // Reply shapes: every invoke() answers {ok:true,result:...} or
@@ -769,9 +771,11 @@ QJsonObject ExtensionShimBackend::invokeStorage(const QString &method,
 
 void ExtensionShimBackend::fireAlarm(const QString &name)
 {
-    const Alarm alarm = m_alarms.value(name);
-    if (alarm.name.isEmpty())
+    // MD20: membership, not the name — Chrome's default "" alarm
+    // fires onAlarm like any named one.
+    if (!m_alarms.contains(name))
         return;
+    const Alarm alarm = m_alarms.value(name);
     QJsonObject payload;
     payload.insert(QStringLiteral("name"), alarm.name);
     payload.insert(QStringLiteral("scheduledTime"),
@@ -814,27 +818,68 @@ QJsonObject ExtensionShimBackend::invokeAlarms(const QString &method,
     if (!manifestPermissions().contains(QLatin1String("alarms")))
         return errReply(QStringLiteral("no-permission"));
     if (method == QLatin1String("create")) {
-        const QString name =
-            args.value(QStringLiteral("name")).toString();
         const QJsonObject info =
             args.value(QStringLiteral("info")).toObject();
+        // MD20 edges, matching Chrome's AlarmsCreateFunction:
+        // alarmInfo.name is the object-form name spelling — giving
+        // it both ways is a Chrome argument error — and an unnamed
+        // alarm lives under "" (Chrome's default name), so a second
+        // unnamed create replaces the first.
+        const QString argName =
+            args.value(QStringLiteral("name")).toString();
+        const QJsonValue infoName =
+            info.value(QStringLiteral("name"));
+        if (!argName.isEmpty() && infoName.isString())
+            return errReply(QStringLiteral("invalid-argument"));
+        const QString name = argName.isEmpty()
+            ? infoName.toString()
+            : argName;
+        // Chrome refuses a create that both fixes and offsets the
+        // first fire — or that specifies no schedule at all.
+        const bool hasWhen = info.contains(QStringLiteral("when"));
+        const bool hasDelay =
+            info.contains(QStringLiteral("delayInMinutes"));
+        const bool hasPeriod =
+            info.contains(QStringLiteral("periodInMinutes"));
+        if ((hasWhen && hasDelay)
+                || (!hasWhen && !hasDelay && !hasPeriod))
+            return errReply(QStringLiteral("invalid-argument"));
         Alarm alarm;
         alarm.name = name;
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
-        if (info.contains(QStringLiteral("when"))) {
+        if (hasWhen) {
             alarm.scheduledTime =
                 qint64(info.value(QStringLiteral("when")).toDouble());
         } else {
-            // delayInMinutes — fractional is allowed; clamp the floor
-            // so a 0 delay can't spin the timer thread.
-            const double delayMin = qMax(0.002,
-                info.value(QStringLiteral("delayInMinutes"))
-                    .toDouble(0.0));
-            alarm.scheduledTime = now + qint64(delayMin * 60000.0);
+            // delayInMinutes — or, with neither first-fire spelling
+            // given, periodInMinutes doubles as the delay (Chrome's
+            // documented fallback).  The reported schedule stays the
+            // requested one; the timer interval keeps its own floor.
+            const double delayMin = info.value(
+                hasDelay ? QStringLiteral("delayInMinutes")
+                         : QStringLiteral("periodInMinutes"))
+                    .toDouble(0.0);
+            alarm.scheduledTime =
+                now + qint64(qMax(0.0, delayMin) * 60000.0);
         }
-        alarm.periodInMinutes =
+        // MD20: Chrome's MV3 floor — a repeating period under 30
+        // seconds would spin the timer, so clamp to the floor and
+        // record the note Chrome writes to the console.  One-shot
+        // delays keep their requested schedule: hosted contexts run
+        // like Chrome's unpacked extensions, where the dev minimum
+        // lifts the first-fire clamp.
+        double period =
             info.value(QStringLiteral("periodInMinutes"))
                 .toDouble(0.0);
+        if (period > 0.0 && period < 0.5) {
+            recordNote(QStringLiteral(
+                "alarms.create: periodInMinutes %1 for '%2' below "
+                "Chrome's 30-second MV3 floor — clamped to 0.5")
+                .arg(period).arg(name));
+            period = 0.5;
+        }
+        alarm.periodInMinutes = period;
+        alarm.order = ++m_alarmSeq;
         alarm.timer = new QTimer(this);
         alarm.timer->setSingleShot(alarm.periodInMinutes <= 0);
         alarm.timer->setInterval(
@@ -850,23 +895,37 @@ QJsonObject ExtensionShimBackend::invokeAlarms(const QString &method,
     if (method == QLatin1String("get")) {
         const QString name =
             args.value(QStringLiteral("name")).toString();
-        const Alarm a = m_alarms.value(name);
-        return okReply(a.name.isEmpty() ? QJsonValue(QJsonValue::Undefined)
-                                      : alarmJson(a));
+        // MD20: the "" default name is a real key — membership, not
+        // an empty name, decides a miss.
+        return okReply(m_alarms.contains(name)
+                ? alarmJson(m_alarms.value(name))
+                : QJsonValue(QJsonValue::Undefined));
     }
     if (method == QLatin1String("getAll")) {
+        // MD20: Chrome iterates the per-extension alarm list in
+        // creation order (a replaced alarm re-appends at the end);
+        // sort by the sequence minted at create — QHash order is
+        // nondeterministic.
+        QList<Alarm> sorted = m_alarms.values();
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const Alarm &a, const Alarm &b) {
+                      return a.order < b.order;
+                  });
         QJsonArray all;
-        for (const Alarm &a : m_alarms)
+        for (const Alarm &a : sorted)
             all.append(alarmJson(a));
         return okReply(all);
     }
     if (method == QLatin1String("clear")) {
         const QString name =
             args.value(QStringLiteral("name")).toString();
+        // MD20: clearing the "" unnamed alarm answers true like
+        // Chrome — the empty name is a valid key.
+        const bool had = m_alarms.contains(name);
         const Alarm a = m_alarms.take(name);
         if (a.timer)
             a.timer->deleteLater();
-        return okReply(!a.name.isEmpty());
+        return okReply(had);
     }
     if (method == QLatin1String("clearAll")) {
         for (const Alarm &a : m_alarms) {

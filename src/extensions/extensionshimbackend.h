@@ -56,7 +56,12 @@ class QWebEngineProfile;
 //                  namespace (ER16)
 //   alarms.*     — QTimer-backed alarms so onAlarm really fires (the
 //                  hosted page's binding is present-but-inert);
-//                  'alarms' permission gates the namespace (ER16)
+//                  'alarms' permission gates the namespace (ER16).
+//                  MD20 edges: Chrome's MV3 30s periodInMinutes floor
+//                  clamps with a recorded note, unnamed alarms live
+//                  under Chrome's "" default (object-form
+//                  alarmInfo.name honoured, both-forms refused),
+//                  getAll answers in creation order
 //   tabs.*       — query/get/create/update over a live
 //                  BrowserMainWindow/TabWidget snapshot; ids are
 //                  session-stable via the registry below
@@ -340,9 +345,14 @@ private:
         QString name;
         qint64 scheduledTime = 0;   // ms since epoch
         double periodInMinutes = 0;
+        // MD20: creation sequence — Chrome's getAll iterates its
+        // per-extension alarm list in creation order (a replaced
+        // alarm re-appends at the end); QHash order would scramble it.
+        quint64 order = 0;
         QTimer *timer = nullptr;
     };
     QHash<QString, Alarm> m_alarms;
+    quint64 m_alarmSeq = 0;
     static QJsonObject alarmJson(const Alarm &alarm);
 
     QJsonObject m_sidePanelOptions;

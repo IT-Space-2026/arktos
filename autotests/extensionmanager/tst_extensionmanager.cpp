@@ -92,6 +92,7 @@ private slots:
     void relayPortChurn();
     void extensionShimBackend();
     void extensionStorageExtras();
+    void extensionAlarmEdges();
     void extensionTabsOps();
     void extensionTabsZoomCapture();
     void extensionMessageRelay();
@@ -3044,6 +3045,190 @@ void tst_ExtensionManager::extensionStorageExtras()
     QDir(BrowserPaths::dataFilePath(
         QStringLiteral("extstorage")) + QLatin1Char('/') + id)
         .removeRecursively();
+    QDir(dir).removeRecursively();
+}
+
+// MD20 — chrome.alarms edge parity on a bare backend: Chrome's
+// create() argument checks (when+delayInMinutes together or no
+// schedule at all refuse; the name may ride alarmInfo itself but
+// never both forms at once), unnamed alarms live under Chrome's ""
+// default name (get/clear/onAlarm all serve it, a second unnamed
+// create replaces), the MV3 30s periodInMinutes floor clamps with
+// a recorded note, and getAll answers in creation order with a
+// replaced alarm re-appending at the end.
+void tst_ExtensionManager::extensionAlarmEdges()
+{
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extalarm-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-alarm\","
+                "\"version\":\"1.0\",\"permissions\":[\"alarms\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0004"),
+        QStringLiteral("tst-alarm"), dir);
+
+    auto create = [&backend](const QString &name,
+                             const QJsonObject &info) {
+        return backend.invoke(
+            QStringLiteral("alarms"), QStringLiteral("create"),
+            QJsonObject{{QStringLiteral("name"), name},
+                        {QStringLiteral("info"), info}});
+    };
+    auto getAllNames = [&backend]() {
+        QStringList names;
+        const QJsonArray all = backend.invoke(
+            QStringLiteral("alarms"), QStringLiteral("getAll"),
+            QJsonObject()).value(QLatin1String("result")).toArray();
+        for (const QJsonValue &v : all)
+            names.append(v.toObject().value(
+                QStringLiteral("name")).toString());
+        return names;
+    };
+
+    // --- Chrome's create() argument validation --------------------
+    QCOMPARE(create(QStringLiteral("both"),
+                    QJsonObject{{QStringLiteral("when"), 1.0},
+                                {QStringLiteral("delayInMinutes"),
+                                 1.0}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(create(QStringLiteral("none"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(create(QStringLiteral("arg"),
+                    QJsonObject{{QStringLiteral("name"),
+                                 QStringLiteral("obj")},
+                                {QStringLiteral("delayInMinutes"),
+                                 60.0}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QVERIFY(getAllNames().isEmpty());
+
+    // --- unnamed alarms under Chrome's "" default -----------------
+    QVERIFY(create(QString(), QJsonObject{
+            {QStringLiteral("delayInMinutes"), 30.0}})
+        .value(QLatin1String("ok")).toBool());
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("name"), QString()}});
+    QVERIFY(reply.value(QLatin1String("result")).isObject());
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("name")).toString(), QString());
+    // A second unnamed create replaces the first like Chrome —
+    // getAll still shows exactly one "" alarm.
+    QVERIFY(create(QString(), QJsonObject{
+            {QStringLiteral("delayInMinutes"), 45.0}})
+        .value(QLatin1String("ok")).toBool());
+    QCOMPARE(getAllNames(), (QStringList{QString()}));
+    // The unnamed alarm fires onAlarm with its "" name.
+    QSignalSpy fireSpy(&backend, &ExtensionShimBackend::pushEvent);
+    QVERIFY(create(QString(), QJsonObject{
+            {QStringLiteral("delayInMinutes"), 0.002}})
+        .value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(fireSpy.size() >= 1, 10000);
+    QCOMPARE(fireSpy.first().at(0).toString(),
+             QStringLiteral("alarms.onAlarm"));
+    QCOMPARE(fireSpy.first().at(1).toJsonObject()
+             .value(QLatin1String("name")).toString(), QString());
+    // The fired one-shot already self-removed like Chrome; clear('')
+    // on a live unnamed alarm answers true.
+    QVERIFY(create(QString(), QJsonObject{
+            {QStringLiteral("delayInMinutes"), 60.0}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("clear"),
+        QJsonObject{{QStringLiteral("name"), QString()}});
+    QCOMPARE(reply.value(QLatin1String("result")).toBool(), true);
+
+    // --- object-form alarmInfo.name rides the create --------------
+    QVERIFY(create(QString(), QJsonObject{
+            {QStringLiteral("name"), QStringLiteral("objname")},
+            {QStringLiteral("delayInMinutes"), 30.0}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("name"),
+                     QStringLiteral("objname")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("name")).toString(),
+             QStringLiteral("objname"));
+
+    // --- MV3 30s period floor + recorded note ----------------------
+    QVERIFY(create(QStringLiteral("spin"),
+                   QJsonObject{{QStringLiteral("delayInMinutes"),
+                                30.0},
+                               {QStringLiteral("periodInMinutes"),
+                                0.1}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("name"),
+                     QStringLiteral("spin")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("periodInMinutes")).toDouble(),
+             0.5);
+    const int noteCount = backend.notes().size();
+    bool sawFloorNote = false;
+    for (const QString &n : backend.notes())
+        if (n.contains(QLatin1String("30-second"))
+                && n.contains(QLatin1String("spin")))
+            sawFloorNote = true;
+    QVERIFY(sawFloorNote);
+    // A period at the floor records no note.
+    QVERIFY(create(QStringLiteral("calm"),
+                   QJsonObject{{QStringLiteral("delayInMinutes"),
+                                30.0},
+                               {QStringLiteral("periodInMinutes"),
+                                1.0}})
+        .value(QLatin1String("ok")).toBool());
+    QCOMPARE(backend.notes().size(), noteCount);
+
+    // --- periodInMinutes doubles as delay when no first-fire ------
+    QVERIFY(create(QStringLiteral("peronly"),
+                   QJsonObject{{QStringLiteral("periodInMinutes"),
+                                2.0}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("name"),
+                     QStringLiteral("peronly")}});
+    QVERIFY(reply.value(QLatin1String("result")).toObject()
+            .value(QLatin1String("scheduledTime")).toDouble()
+            > QDateTime::currentMSecsSinceEpoch() + 100000.0);
+
+    // --- getAll answers in Chrome's creation order ----------------
+    backend.invoke(QStringLiteral("alarms"),
+                   QStringLiteral("clearAll"), QJsonObject());
+    QVERIFY(create(QStringLiteral("first"),
+                   QJsonObject{{QStringLiteral("delayInMinutes"),
+                                30.0}}).value(QLatin1String("ok"))
+            .toBool());
+    QVERIFY(create(QStringLiteral("second"),
+                   QJsonObject{{QStringLiteral("delayInMinutes"),
+                                40.0}}).value(QLatin1String("ok"))
+            .toBool());
+    QVERIFY(create(QStringLiteral("third"),
+                   QJsonObject{{QStringLiteral("delayInMinutes"),
+                                50.0}}).value(QLatin1String("ok"))
+            .toBool());
+    QCOMPARE(getAllNames(), (QStringList{
+        QStringLiteral("first"), QStringLiteral("second"),
+        QStringLiteral("third")}));
+    // A replaced alarm re-appends at the end like Chrome's list.
+    QVERIFY(create(QStringLiteral("first"),
+                   QJsonObject{{QStringLiteral("delayInMinutes"),
+                                35.0}}).value(QLatin1String("ok"))
+            .toBool());
+    QCOMPARE(getAllNames(), (QStringList{
+        QStringLiteral("second"), QStringLiteral("third"),
+        QStringLiteral("first")}));
+
     QDir(dir).removeRecursively();
 }
 
