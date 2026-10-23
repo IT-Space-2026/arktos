@@ -97,16 +97,16 @@ chrome.wallpaper.*: unsupported
 # --- served namespaces, deliberately unserved members --------------
 # MD07 queued carve-outs (still typed today — entries stay):
 #   tabs unserved members -> MD10 ops/state, MD11 zoom+capture,
-#     MD12 connect; extension.isAllowed* -> MD15; management
-#     read ops -> MD16, mutations -> MD17; runtime reload /
-#     requestUpdateCheck / setUninstallURL -> MD18; storage
-#     getKeys/setAccessLevel/sync/quota -> MD19; alarms edges -> MD20.
+#     MD12 connect; management read ops -> MD16, mutations -> MD17;
+#     runtime reload / requestUpdateCheck / setUninstallURL -> MD18;
+#     storage getKeys/setAccessLevel/sync/quota -> MD19;
+#     alarms edges -> MD20.
+# (extension.isAllowed* left with MD15 — invokeExtension answers the
+#  honest capability verdicts now.)
 # tabs members beyond the implemented set are typed stubs;
 # sendMessage frameId!=0 is unsupported (page agent lives in the main
 # frame only).
 chrome.tabs.*: unsupported
-chrome.extension.isAllowedFileSchemeAccess: unsupported
-chrome.extension.isAllowedIncognitoAccess: unsupported
 chrome.idle.getAutoLockDelay: unsupported
 chrome.notifications.*: unsupported
 chrome.permissions.remove: unsupported

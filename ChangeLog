@@ -805,6 +805,11 @@ UI:
   in the toolbar strip so extensions that swap their icon at runtime
   (a locked/unlocked badge, say) actually change the button face
   (MD14).
+- chrome.extension.isAllowedIncognitoAccess and
+  isAllowedFileSchemeAccess now answer through the host backend
+  instead of a page-side stub — both honestly reply false today,
+  since Arktos hosts extensions on the regular profile only and
+  never grants file: scheme access (MD15).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

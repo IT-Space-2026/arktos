@@ -73,7 +73,10 @@ class QWebEngineProfile;
 //                  ungated like Chrome.  Everything else is typed
 //                  no-permission/unsupported.
 //   extension.*  — reloadView, the one cross-context capability the
-//                  shim's getViews handles carry (ER15)
+//                  shim's getViews handles carry (ER15); the
+//                  isAllowed*Access pair answer the honest
+//                  capability verdicts (MD15 — both false: regular-
+//                  profile hosting, no file: grant)
 //   sidebarAction.* — panel/title/icon bookkeeping in the same
 //                  recorded-options model sidePanel uses (ER15);
 //                  open/close/toggle answer typed unsupported;

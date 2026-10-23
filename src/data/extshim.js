@@ -1677,6 +1677,24 @@
     }
 
     // --- chrome.extension (legacy alias surface) ----------------------
+    // The isAllowed*Access verdicts live host-side in invokeExtension
+    // — the bridge call is what lets a future incognito/file: grant
+    // surface flip the answer in one place.  Today's truthful reply
+    // is false either way, which is also the bridge-failure fallback
+    // (never a typed gap for a question we can answer).
+    function extensionAccessQuery(method, cb) {
+        var p = call('extension', method, {});
+        if (cb)
+            p.then(function (v) { answerCb(cb, v === true); },
+                   function () { cb(false); });
+        return p;
+    }
+    var extAllowedIncognitoRef = function (cb) {
+        return extensionAccessQuery('isAllowedIncognitoAccess', cb);
+    };
+    var extAllowedFileSchemeRef = function (cb) {
+        return extensionAccessQuery('isAllowedFileSchemeAccess', cb);
+    };
     if (typeof chrome !== 'undefined') {
         installNs('extension', {
             getURL: function (p) {
@@ -1692,12 +1710,8 @@
             getViews: extensionGetViews,
             getBackgroundPage: extensionGetBackgroundPage,
             inIncognitoContext: false,
-            isAllowedIncognitoAccess: function (cb) {
-                return okCall(false, cb);
-            },
-            isAllowedFileSchemeAccess: function (cb) {
-                return okCall(false, cb);
-            },
+            isAllowedIncognitoAccess: extAllowedIncognitoRef,
+            isAllowedFileSchemeAccess: extAllowedFileSchemeRef,
             onRequest: makeEvent('extension.onRequest'),
             lastError: null
         });
@@ -4053,9 +4067,18 @@
             forceMember(ext, 'getBackgroundPage',
                         extensionGetBackgroundPage,
                         'chrome.extension.getBackgroundPage');
-            fillNs('extension', ['onRequest', 'onRequestExternal'],
-                   ['isAllowedIncognitoAccess',
-                    'isAllowedFileSchemeAccess']);
+            fillNs('extension', ['onRequest', 'onRequestExternal']);
+            // MD15: the isAllowed* verdicts are identity overrides
+            // like getViews — a native member answers from
+            // Chromium's extension registry, which the hosted
+            // context is not part of; the bridge call reaches
+            // invokeExtension's authoritative verdict instead.
+            forceMember(ext, 'isAllowedIncognitoAccess',
+                        extAllowedIncognitoRef,
+                        'chrome.extension.isAllowedIncognitoAccess');
+            forceMember(ext, 'isAllowedFileSchemeAccess',
+                        extAllowedFileSchemeRef,
+                        'chrome.extension.isAllowedFileSchemeAccess');
             if (ext.inIncognitoContext === undefined) {
                 try { ext.inIncognitoContext = false; }
                 catch (e) {}

@@ -2564,15 +2564,23 @@ QJsonObject ExtensionShimBackend::invokeManagement(
 }
 
 // -------------------------------------------------------------------
-// chrome.extension — ER15.  The one bridge op the shim cannot answer
-// in-page: a getViews() handle's location.reload() — the real
-// capability Chrome's Window reference would carry, routed to the
-// context's actual page.
+// chrome.extension — ER15.  reloadView is the one bridge op the shim
+// cannot answer in-page: a getViews() handle's location.reload() —
+// the real capability Chrome's Window reference would carry, routed
+// to the context's actual page.  The isAllowed*Access pair are
+// capability verdicts: Arktos hosts every extension context on the
+// regular profile (there is no incognito extension split) and the
+// loader never grants file: scheme access, so both honestly answer
+// false today — routed through invoke anyway so the day either grant
+// surface exists the answer flips here, not in a page-side stub.
 // -------------------------------------------------------------------
 
 QJsonObject ExtensionShimBackend::invokeExtension(
         const QString &method, const QJsonObject &args)
 {
+    if (method == QLatin1String("isAllowedIncognitoAccess")
+            || method == QLatin1String("isAllowedFileSchemeAccess"))
+        return okReply(false);
     if (method == QLatin1String("reloadView")) {
         const QString contextId =
             args.value(QStringLiteral("contextId")).toString();

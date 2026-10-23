@@ -104,6 +104,7 @@ private slots:
     void extensionTabConnect();
     void extensionWindowsFidelity();
     void extensionActionIcon();
+    void extensionAllowedAccess();
     void extensionScripting();
     void extensionScriptCss();
     void extensionContentScriptRegistration();
@@ -7280,6 +7281,48 @@ void tst_ExtensionManager::extensionActionIcon()
     QDir(dir).removeRecursively();
 }
 
+// MD15 — chrome.extension.isAllowedIncognitoAccess /
+// isAllowedFileSchemeAccess.  The verdicts route through
+// invokeExtension: Arktos hosts every extension context on the
+// regular profile (no incognito split) and the loader never grants
+// file: scheme access, so both answer {ok:true,false} — the truth,
+// not a typed stub.
+void tst_ExtensionManager::extensionAllowedAccess()
+{
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extaccess-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-access\","
+                "\"version\":\"1.0\"}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0008"),
+        QStringLiteral("tst-access"), dir);
+
+    for (const char *m : {"isAllowedIncognitoAccess",
+                          "isAllowedFileSchemeAccess"}) {
+        const QJsonObject reply = backend.invoke(
+            QStringLiteral("extension"), QLatin1String(m),
+            QJsonObject());
+        QVERIFY2(reply.value(QLatin1String("ok")).toBool(), m);
+        QVERIFY2(reply.value(QLatin1String("result")).isBool(), m);
+        QVERIFY2(!reply.value(QLatin1String("result")).toBool(), m);
+    }
+    // Unserved extension members still degrade typed.
+    QCOMPARE(backend.invoke(QStringLiteral("extension"),
+                            QStringLiteral("bogus"),
+                            QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    QDir(dir).removeRecursively();
+}
+
 // ER07 — chrome.scripting.executeScript.  A fixture extension
 // declaring 'scripting' + <all_urls> drives the real call from its
 // hosted background: func/args/files forms land in the shared agent
@@ -12091,6 +12134,48 @@ void tst_ExtensionManager::extensionIntrospection()
         "chrome.extension.getViews({type:'background'}).length"
         "===1&&chrome.extension.getViews({type:'background'})[0]"
         "===window")).toBool(), true);
+
+    // --- extension.isAllowed*Access -------------------------------
+    // MD15: the verdicts ride the bridge to invokeExtension — both
+    // honestly false today (regular-profile hosting, no file:
+    // grant), and crucially NOT typed stubs: a regression to the old
+    // fillNs member would reject 'unsupported' and fail here.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral(
+            "!!(chrome.extension"
+            "&&typeof chrome.extension.isAllowedIncognitoAccess"
+            "==='function'"
+            "&&String(chrome.extension.isAllowedIncognitoAccess)"
+            ".indexOf('[native code]')<0"
+            "&&typeof chrome.extension.isAllowedFileSchemeAccess"
+            "==='function'"
+            "&&String(chrome.extension.isAllowedFileSchemeAccess)"
+            ".indexOf('[native code]')<0)")).toBool(),
+        20000);
+    hostA->page()->runJavaScript(QStringLiteral(
+        "self.__aa=undefined;Promise.all(["
+        "chrome.extension.isAllowedIncognitoAccess(),"
+        "chrome.extension.isAllowedFileSchemeAccess()])"
+        ".then(function(v){self.__aa='ok:'+v[0]+','+v[1];},"
+        "function(e){self.__aa='err:'+(e.code||e.message);});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral("!!self.__aa")).toBool(),
+        20000);
+    QCOMPARE(eval(hostA->page(), QStringLiteral("self.__aa"))
+                 .toString(),
+             QStringLiteral("ok:false,false"));
+    // The callback convention answers the same honest false.
+    hostA->page()->runJavaScript(QStringLiteral(
+        "self.__aacb=undefined;chrome.extension"
+        ".isAllowedFileSchemeAccess(function(v){self.__aacb=v;});"
+        "'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral(
+            "self.__aacb!==undefined")).toBool(),
+        20000);
+    QCOMPARE(eval(hostA->page(), QStringLiteral("self.__aacb"))
+                 .toBool(),
+             false);
 
     // --- sibling popup context ------------------------------------
     auto *popupView = new QWebEngineView;
