@@ -1493,6 +1493,23 @@ static void withDefaultSessionStore(int mwOp, const QJsonObject &fields,
     rustCoreEnsureDataDirFor(QStringLiteral("default"));
     legacyOp();
 }
+
+// The AcSession-handle spelling — ops with no mw endpoint yet (the
+// restoring flag pair) mint a bound handle on the shared core and
+// fall back to the flat rc_* lane when the bridge cannot serve.
+template <typename F, typename G>
+static void withDefaultSessionStore(F facadeOp, G legacyOp)
+{
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        if (AcSession *s = bridge->session(QStringLiteral("default"))) {
+            facadeOp(s);
+            ac_session_close(s);
+            return;
+        }
+    }
+    rustCoreEnsureDataDirFor(QStringLiteral("default"));
+    legacyOp();
+}
 #endif
 
 void markSessionStart()

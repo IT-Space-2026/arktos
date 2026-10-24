@@ -4120,6 +4120,7 @@ fn notes_surface() {
 // MD04: the download-interception decision layer over the C ABI —
 // pure ops on a NULL store, the store-bound ops on a profile-bound
 // settings handle, the records/rules lanes, and the facade spelling.
+#[test]
 fn dlwpolicy_surface() {
     let _g = guard();
     let root = tmpdir("dlwpolicy");

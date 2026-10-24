@@ -1020,14 +1020,23 @@ static QStringList sessionStoreProfileIds()
         const QString id = entry.fileName();
         if (!BrowserPaths::isProfileId(id))
             continue;
-        // MS08: the "does this persona hold a saved session" verdict
-        // is the facade's — ac_session_exists on the bound handle;
-        // the legacy spelling re-anchors the process-global store per
-        // candidate like every other rc_* consumer.
-        const SessionAccess access(id);
-        if (access.h ? ac_session_exists(access.h) != 0
-                     : rc_session_exists() != 0)
+        // MS08 + MB07: the "does this persona hold a saved session"
+        // verdict is the facade's — SessionExists over the envelope
+        // ({"exists":bool} payload); the legacy spelling re-anchors
+        // the process-global store per candidate like every other
+        // rc_* consumer when the bridge cannot serve.
+        if (RustCoreBridge *bridge = sessionAccess(id)) {
+            const QJsonValue r = bridge->mwQuery(
+                AcMw::Session, AcMw::SessionExists,
+                QJsonObject{{QLatin1String("profile"), id}});
+            if (r.isObject()
+                    && r.toObject()
+                           .value(QLatin1String("exists"))
+                           .toBool())
+                ids.append(id);
+        } else if (rc_session_exists() != 0) {
             ids.append(id);
+        }
     }
     if (ids.removeAll(QStringLiteral("default")))
         ids.prepend(QStringLiteral("default"));
