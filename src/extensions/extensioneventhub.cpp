@@ -37,6 +37,7 @@
 #include <qjsonarray.h>
 #include <qmenu.h>
 #include <qtimer.h>
+#include <qvariant.h>
 #include <qurl.h>
 #include <qwebengineloadinginfo.h>
 #include <qwebenginepage.h>
@@ -254,6 +255,29 @@ void ExtensionEventHub::emitNavEvent(WebView *view,
                                                            details);
 }
 
+void ExtensionEventHub::emitNavTargetCreated(WebView *view,
+                                             int sourceTabId,
+                                             const QUrl &url)
+{
+    if (!m_tabs.contains(view))
+        return;
+    // Chrome's shape: tabId/url/timeStamp plus sourceTabId and
+    // sourceFrameId — no frameId/parentFrameId members on this event.
+    QJsonObject details;
+    details.insert(QStringLiteral("tabId"),
+                   ExtensionShimBackend::tabIdFor(view));
+    details.insert(QStringLiteral("url"), url.toString());
+    details.insert(QStringLiteral("sourceTabId"), sourceTabId);
+    // The page-level createWindow has no subframe granularity — the
+    // opener is always the main frame.
+    details.insert(QStringLiteral("sourceFrameId"), 0);
+    details.insert(QStringLiteral("timeStamp"),
+                   double(QDateTime::currentMSecsSinceEpoch()));
+    ExtensionBackgroundRuntime::instance()->broadcastEvent(
+        QStringLiteral("webNavigation.onCreatedNavigationTarget"),
+        details);
+}
+
 // ER04 — the page-side DocumentCreation probe's report, arriving over
 // the page's arktosExt channel object (ExtensionPageBridge's
 // 'navDomReady' op).  Browser-scoped, not extension-scoped:
@@ -344,11 +368,25 @@ void ExtensionEventHub::wireView(WebView *view)
             // browser-internal document, not a navigation: Chrome
             // fires no webNavigation events for it.
             it->internalPage = webPage->generatedPageCommitPending();
-            if (!it->internalPage)
+            if (!it->internalPage) {
+                // MD36 — a createWindow()-spawned tab reports
+                // onCreatedNavigationTarget ahead of its first
+                // onBeforeNavigate: Chrome's ordering, and the
+                // earliest moment the target url is honestly known
+                // (createWindow returns before the engine names the
+                // destination).  A first commit that never comes —
+                // an opener handle only ever document.writes — just
+                // keeps the note; a removed tab drops it silently.
+                if (it->pendingNavSourceId != -1) {
+                    const int sourceTabId = it->pendingNavSourceId;
+                    it->pendingNavSourceId = -1;
+                    emitNavTargetCreated(view, sourceTabId, url);
+                }
                 emitNavEvent(
                     view,
                     QStringLiteral("webNavigation.onBeforeNavigate"),
                     url);
+            }
         });
     }
     if (!page)
@@ -609,6 +647,31 @@ bool ExtensionEventHub::tracked(const WebView *view) const
     return m_tabs.contains(const_cast<WebView *>(view));
 }
 
+void ExtensionEventHub::noteNavTarget(WebView *view, WebView *source)
+{
+    if (!view || !source || !m_tracking)
+        return;
+    // Untrackable ends produce no event: an otr/tor opener has no
+    // extension-visible tabId to name, and an otr/tor spawn never
+    // registers in m_tabs at all.
+    if (!trackable(view) || !trackable(source))
+        return;
+    const int sourceTabId = ExtensionShimBackend::tabIdFor(source);
+    auto it = m_tabs.find(view);
+    if (it != m_tabs.end()) {
+        // tabsChanged already ran the isNew branch inside
+        // TabWidget::getView — the note lands directly.
+        it->pendingNavSourceId = sourceTabId;
+        return;
+    }
+    m_pendingNavSources.insert(view, sourceTabId);
+    // A spawn that never registers (a detached standalone window, or
+    // a strip entry removed before its first scan) must not hold the
+    // note forever — drop it on the view's own teardown.
+    connect(view, &QObject::destroyed, this,
+            [this, view]() { m_pendingNavSources.remove(view); });
+}
+
 void ExtensionEventHub::armRequestProbes()
 {
     for (auto it = m_tabs.constBegin(); it != m_tabs.constEnd(); ++it)
@@ -855,6 +918,18 @@ void ExtensionEventHub::syncNow()
                 // baseline silently.
                 if (m_firstScanDone)
                     emitTabCreated(view);
+                // MD36: claim a createWindow() opener note left by
+                // noteNavTarget — the spawn preceded this
+                // registration (a new window's first tab).  The same
+                // first-scan silence as onCreated applies; the note
+                // clears either way so it can never go stale.
+                const int navSourceId =
+                    m_pendingNavSources.value(view, -1);
+                if (navSourceId != -1) {
+                    m_pendingNavSources.remove(view);
+                    if (m_firstScanDone)
+                        tab.pendingNavSourceId = navSourceId;
+                }
             } else {
                 if (tab.windowObject != window) {
                     // A tear-between-windows: the WebView identity

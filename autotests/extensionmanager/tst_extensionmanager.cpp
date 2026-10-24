@@ -137,6 +137,7 @@ private slots:
     void extensionFontSettings();
     void extensionDeclarativeNetRequest();
     void extensionIdentity();
+    void extensionNavTargetCreated();
     void extensionNotifications();
     void extensionIdle();
     void extensionCommands();
@@ -18324,6 +18325,181 @@ void tst_ExtensionManager::extensionIdentity()
                  .value(QLatin1String("error")).toString(),
              QStringLiteral("unimplemented"));
 
+    QDir(dir).removeRecursively();
+}
+
+// MD36: chrome.webNavigation.onCreatedNavigationTarget — a
+// createWindow-spawned tab reports its opener.  A hosted recorder
+// extension holding the webNavigation grant listens on the real
+// event surface; a BrowserMainWindow's source tab drives
+// testCreateWindow (the AUTOTESTS seam for the same
+// WebPage::createWindow path a target=_blank click takes), then the
+// spawned view loads a data: document so the event lands ahead of
+// that tab's first onBeforeNavigate, carrying Chrome's
+// {sourceTabId, sourceFrameId, tabId, url, timeStamp} shape.  A
+// plain newTab() load is the control — no opener, no event.
+void tst_ExtensionManager::extensionNavTargetCreated()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extnavt-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-navtarget\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\","
+                "\"tabs\",\"webNavigation\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "self.__extEvents=[];\n"
+            "self.__extRec=function(n){return function(){\n"
+            " self.__extEvents.push({n:n,a:Array.prototype.slice"
+            ".call(arguments).map(function(v){\n"
+            "  try{return JSON.parse(JSON.stringify(v));}catch(e){\n"
+            "   return String(v);}})});};};\n"
+            "['onCreatedNavigationTarget','onBeforeNavigate',\n"
+            " 'onCommitted'].forEach(function(e){\n"
+            " chrome.webNavigation[e].addListener(\n"
+            "  self.__extRec('webNavigation.'+e));});\n"
+            "chrome.tabs.onCreated.addListener(\n"
+            " self.__extRec('tabs.onCreated'));\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    ExtensionEventHub *hub = ExtensionEventHub::instance();
+
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-navtarget")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer timer;
+        timer.start();
+        while (!result->isValid() && timer.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+
+    // --- tracked source tab ----------------------------------------
+    hub->setTracking(true);
+    hub->syncNow();   // silent baseline
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    hub->syncNow();
+    WebView *source = tw->webView(0);
+    QVERIFY(source && source->webPage());
+    QVERIFY(hub->tracked(source));
+    const int sourceTabId = ExtensionShimBackend::tabIdFor(source);
+
+    // The spawn — createWindow runs on the SOURCE page, tags the
+    // fresh view with its opener, and the hub consumes the tag when
+    // tabsChanged registers the new tab.
+    QWebEnginePage *targetPage = source->webPage()->testCreateWindow(
+        QWebEnginePage::WebBrowserTab);
+    QVERIFY(targetPage && targetPage != source->page());
+    hub->syncNow();
+    WebView *target = nullptr;
+    for (int i = 0; i < tw->count(); ++i) {
+        WebView *v = tw->webView(i);
+        if (v && v->page() == targetPage)
+            target = v;
+    }
+    QVERIFY2(target, "createWindow spawn must land in the strip");
+    QVERIFY(hub->tracked(target));
+    const int targetTabId = ExtensionShimBackend::tabIdFor(target);
+    QVERIFY(targetTabId != sourceTabId);
+
+    // The target's first navigation — the event's url comes from the
+    // real commit, emitted ahead of that tab's onBeforeNavigate.
+    const QString targetUrl =
+        QStringLiteral("data:text/html,<title>nt</title>ok");
+    target->load(QUrl(targetUrl));
+
+    // Control: a plain newTab() has no opener tag — its load must
+    // produce no onCreatedNavigationTarget row.
+    WebView *plain = tw->makeNewTab(true);
+    QVERIFY(plain);
+    hub->syncNow();
+    const int plainTabId = ExtensionShimBackend::tabIdFor(plain);
+    plain->load(QUrl(QStringLiteral(
+        "data:text/html,<title>plain</title>ok")));
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(id)->page(), QStringLiteral(
+            "(self.__extEvents||[]).some(function(e){"
+            "return e.n==='webNavigation.onCreatedNavigationTarget'"
+            "&&e.a[0]&&e.a[0].tabId===%1;})")
+            .arg(targetTabId)).toBool(),
+        30000);
+
+    // Details shape + ordering: sourceTabId names the opener, the
+    // event precedes the new tab's own onBeforeNavigate, and the
+    // control tab produced none.
+    const QJsonObject probe = QJsonDocument::fromJson(
+        eval(runtime->host(id)->page(), QStringLiteral(
+            "(function(){var evs=self.__extEvents||[];"
+            "var out={t:null,ti:-1,firstNav:-1,plain:false,"
+            "tabCreated:false};"
+            "for(var i=0;i<evs.length;++i){var e=evs[i],d=e.a[0];"
+            " if(e.n==='webNavigation.onCreatedNavigationTarget'&&d){"
+            "  if(d.tabId===%1){out.t=d;out.ti=i;}"
+            "  if(d.tabId===%2)out.plain=true;}"
+            " if(out.firstNav<0&&e.n==='webNavigation.onBeforeNavigate'"
+            "  &&d&&d.tabId===%1)out.firstNav=i;"
+            " if(e.n==='tabs.onCreated'&&d&&d.id===%1)"
+            "  out.tabCreated=true;}"
+            "return JSON.stringify(out);})()")
+            .arg(targetTabId).arg(plainTabId)).toString().toUtf8())
+        .object();
+    const QJsonObject t = probe.value(QLatin1String("t")).toObject();
+    QVERIFY2(!t.isEmpty(), "onCreatedNavigationTarget details");
+    QCOMPARE(t.value(QLatin1String("sourceTabId")).toInt(-1),
+             sourceTabId);
+    QCOMPARE(t.value(QLatin1String("sourceFrameId")).toInt(-1), 0);
+    QCOMPARE(t.value(QLatin1String("tabId")).toInt(-1), targetTabId);
+    QVERIFY(t.value(QLatin1String("url")).toString()
+                .startsWith(QLatin1String("data:text/html")));
+    QVERIFY(t.value(QLatin1String("timeStamp")).toDouble() > 0);
+    QVERIFY2(probe.value(QLatin1String("firstNav")).toInt(-1)
+                 > probe.value(QLatin1String("ti")).toInt(-1),
+             "onCreatedNavigationTarget precedes the new tab's "
+             "onBeforeNavigate");
+    QVERIFY2(probe.value(QLatin1String("tabCreated")).toBool(),
+             "tabs.onCreated still lands for the spawned tab");
+    QVERIFY2(!probe.value(QLatin1String("plain")).toBool(),
+             "a plain newTab() load reports no navigation target");
+
+    delete window;
+    hub->syncNow();
     QDir(dir).removeRecursively();
 }
 

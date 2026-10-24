@@ -996,6 +996,12 @@ UI:
   Chrome's own renderer-side binding. The rest of the identity
   namespace is Google-account machinery and stays a typed
   unsupported (MD35).
+- chrome.webNavigation.onCreatedNavigationTarget now fires for
+  hosted extensions: a link or script that opens a new tab or window
+  (target=_blank, window.open) reports Chrome's details shape —
+  sourceTabId and sourceFrameId naming the opener, tabId and url for
+  the navigation target — ahead of that tab's own onBeforeNavigate
+  (MD36).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

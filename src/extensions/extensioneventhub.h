@@ -60,6 +60,12 @@ struct ContextMenuInfo;
 //                        with the loadingChanged failure detail)
 //                        onHistoryStateUpdated/onReferenceFragment-
 //                        Updated for same-document url changes
+//                        onCreatedNavigationTarget (WebPage::
+//                        createWindow notes the spawned view's
+//                        opener; the note becomes the new tab's
+//                        sourceTabId/sourceFrameId details, emitted
+//                        ahead of that tab's first onBeforeNavigate
+//                        once the real target url is known)
 //   chrome.contextMenus  the EXT15 registry rendered into the real
 //                        page context menu; clicks deliver onClicked
 //                        (info, tab), and the menu's show/hide
@@ -122,6 +128,17 @@ public:
                                    const QString &itemId,
                                    const Engine::ContextMenuInfo &info,
                                    WebView *view);
+
+    // MD36 — chrome.webNavigation.onCreatedNavigationTarget.
+    // WebPage::createWindow runs on the SOURCE page, so the opener is
+    // known at target birth and recorded here.  Order-agnostic: the
+    // spawned view may already be tracked (tabsChanged fires inside
+    // TabWidget::getView, before createWindow can speak) or register
+    // on a later scan (a new window's first tab) — the note waits in
+    // m_pendingNavSources until the isNew branch claims it.  The
+    // event itself emits ahead of the target's first
+    // onBeforeNavigate, when the engine has named the real url.
+    void noteNavTarget(WebView *view, WebView *source);
 
     // ER04 — the page-side DocumentReady probe's report, arriving as
     // ExtensionPageBridge's 'navDomReady' op.  Emits
@@ -206,6 +223,12 @@ private:
     void emitNavEvent(WebView *view, const QString &name,
                       const QUrl &url, const QJsonObject &extra
                       = QJsonObject());
+    // MD36: webNavigation.onCreatedNavigationTarget — its details
+    // carry sourceTabId/sourceFrameId where the other nav events
+    // carry frameId/parentFrameId, so it gets its own emitter
+    // instead of borrowing emitNavEvent's main-frame fields.
+    void emitNavTargetCreated(WebView *view, int sourceTabId,
+                              const QUrl &url);
 
     static QJsonObject tabJson(WebView *view);
     static QJsonObject windowJson(BrowserMainWindow *window, bool focused);
@@ -264,8 +287,17 @@ private:
         // a collapsed group keep their entry; membership still names
         // them, so they stay tracked rather than firing onRemoved.
         QString groupId;
+        // MD36: a createWindow()-spawned tab's opener tab id, -1
+        // otherwise — consumed at the first real navigation, where
+        // onCreatedNavigationTarget rides ahead of onBeforeNavigate.
+        int pendingNavSourceId = -1;
     };
     QHash<WebView *, TrackedTab> m_tabs;
+    // MD36: opener notes for spawned views not yet registered —
+    // consumed by the isNew branch.  Entries are bounded: only
+    // trackable views are noted, noteNavTarget drops them on the
+    // view's destroyed(), and registration always consumes.
+    QHash<WebView *, int> m_pendingNavSources;
 
     // MD26: one snapshot per group per window — the diff source for
     // onCreated/onUpdated/onMoved/onRemoved.  QObject-identity keys

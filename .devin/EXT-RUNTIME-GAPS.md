@@ -97,8 +97,9 @@ chrome.wallpaper.*: unsupported
 # tabs members beyond the implemented set (deprecated MV2 spellings
 # executeScript/insertCSS/removeCSS/sendRequest, detectLanguage,
 # print/toggleReaderMode) — sendMessage frameId!=0 is unsupported
-# (page agent lives in the main frame only).  Queued second wave:
-# webNavigation.onCreatedNavigationTarget -> MD36, action
+# (page agent lives in the main frame only).  Second-wave status:
+# webNavigation.onCreatedNavigationTarget landed in MD36 (the
+# createWindow opener tag -> hub correlation); still queued: action
 # getUserSettings honesty -> MD37.
 chrome.tabs.*: unsupported
 chrome.idle.getAutoLockDelay: unsupported
@@ -467,8 +468,8 @@ each surviving emit site in the dispatch was re-traced to a declared
 entry.  Second-wave queue: declarativeNetRequest subset -> MD34
 (blocking/redirect verdicts already execute in
 PrivacyRequestInterceptor), identity.getRedirectURL -> MD35,
-webNavigation.onCreatedNavigationTarget -> MD36, action
-getUserSettings/onUserSettingsChanged -> MD37.  Unchanged stays:
+webNavigation.onCreatedNavigationTarget -> MD36 (all three landed),
+action getUserSettings/onUserSettingsChanged -> MD37.  Unchanged stays:
 runtime grant UI (permissions.request/remove, sidePanel/sidebarAction
 open) is MW-SHELL territory; ChromeOS/device namespaces; MV2-deprecated
 spellings (tabs.executeScript family, declarativeContent); surfaces

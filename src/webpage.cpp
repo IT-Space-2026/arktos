@@ -30,6 +30,7 @@
 #include "browserprofile.h"
 #include "browsertheme.h"
 #include "containermanager.h"
+#include "extensioneventhub.h"
 #include "extensionpagebridge.h"
 #include "fileaccesshandler.h"
 #include "historymanager.h"
@@ -1487,13 +1488,27 @@ QWebEnginePage *WebPage::createWindow(QWebEnginePage::WebWindowType type)
     WebView *sourceView = qobject_cast<WebView*>(WebEnginePageAdapter::forPage(this)->view());
     if (sourceView && sourceView->tabWidget()) {
         if (WebView *webView = sourceView->tabWidget()->getView(
-                    m_openTargetBlankLinksIn, sourceView))
+                    m_openTargetBlankLinksIn, sourceView)) {
+            // MD36 — chrome.webNavigation.onCreatedNavigationTarget:
+            // createWindow runs on the SOURCE page, so the opener is
+            // known at target birth.  The spawn may already have
+            // registered with the event hub — tabsChanged fires
+            // inside getView — so the note is order-agnostic.  A
+            // CurrentTab placement reuses the source view itself:
+            // no new target, no note.
+            if (webView != sourceView)
+                ExtensionEventHub::instance()->noteNavTarget(
+                    webView, sourceView);
             return webView->webPage();
+        }
     }
     // Detached page (no TabWidget above the view): open a standalone
     // window on the same profile so private browsing propagates.
     WebView *webView = new WebView(profile());
     webView->setAttribute(Qt::WA_DeleteOnClose);
+    if (sourceView)
+        ExtensionEventHub::instance()->noteNavTarget(webView,
+                                                     sourceView);
     webView->show();
     return webView->webPage();
 }
