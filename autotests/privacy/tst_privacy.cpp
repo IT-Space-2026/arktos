@@ -44,6 +44,7 @@
 #include <cookiejar.h>
 #include <fingerprintprotector.h>
 #include <privacyrequestinterceptor.h>
+#include <urlcleaner.h>
 #include <webpage.h>
 
 #include <qcryptographichash.h>
@@ -120,6 +121,7 @@ private slots:
     void fingerprintDefaultOnMigration();
 
     void privacyStoreFacade();
+    void urlcleanStoreFacade();
 
 private:
     QByteArray m_savedFlags;
@@ -1938,6 +1940,159 @@ void tst_Privacy::privacyStoreFacade()
             .isEmpty());
 #else
     QSKIP("rustcore privacy module not built");
+#endif
+}
+
+// MD06: the rustcore urlclean module's store view — the granular
+// urlcleanStoreCall endpoint (clean/enabled/set_enabled/params/
+// ruleset_get/ruleset_set/ruleset_reset/clean_policy/defaults) plus
+// the copy-path consult UrlCleaner::cleanedUrl makes through the
+// same profile-bound AcUrlclean.  The persona's urlclean.json rows
+// and the Qt-owned urlcleaner/extraParams + privacy/urlCleaning
+// keys round-trip through the real bridge end to end.
+void tst_Privacy::urlcleanStoreFacade()
+{
+#if defined(ARKTOS_RUSTCORE)
+    // Same moved-root trick privacyStoreFacade uses: the bridge was
+    // minted under the "Arktos" app name, so re-answer under that
+    // name for the leg's duration — the guard restores it even when
+    // an assert fails mid-leg.
+    struct AppNameRestore {
+        QString saved;
+        AppNameRestore() : saved(QCoreApplication::applicationName()) {}
+        ~AppNameRestore() {
+            QCoreApplication::setApplicationName(saved);
+        }
+    } nameGuard;
+    QCoreApplication::setApplicationName(QStringLiteral("Arktos"));
+    if (!RustCoreBridge::serving())
+        QSKIP("facade bridge does not serve under the moved root");
+
+    typedef PrivacyRequestInterceptor P;
+    const QString pid = BrowserPaths::activeProfileId();
+    const QUrl dirty(QStringLiteral("https://e.com/?utm_source=x&id=1"));
+
+    // clean: the copy-purpose consult strips the vendored ruleset's
+    // params and keeps real ones — and reports the verdict fields.
+    QJsonObject r = P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("clean")},
+              {QLatin1String("url"), QString::fromUtf8(dirty.toEncoded())},
+              {QLatin1String("purpose"), QLatin1String("copy")}});
+    QCOMPARE(r.value(QLatin1String("url")).toString(),
+             QStringLiteral("https://e.com/?id=1"));
+    QCOMPARE(r.value(QLatin1String("changed")).toBool(), true);
+    QCOMPARE(r.value(QLatin1String("enabled")).toBool(), true);
+
+    // set_enabled: the copy toggle is facade-authored state in the
+    // persona's urlclean.json — flip it and the same consult passes
+    // dirty URLs through; UrlCleaner::cleanedUrl consults the same
+    // module for the copy path, so the toggle gates it end to end.
+    r = P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("set_enabled")},
+              {QLatin1String("purpose"), QLatin1String("copy")},
+              {QLatin1String("value"), false}});
+    QCOMPARE(r.value(QLatin1String("set")).toBool(), true);
+    r = P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("clean")},
+              {QLatin1String("url"), QString::fromUtf8(dirty.toEncoded())},
+              {QLatin1String("purpose"), QLatin1String("copy")}});
+    QCOMPARE(r.value(QLatin1String("enabled")).toBool(), false);
+    QCOMPARE(r.value(QLatin1String("changed")).toBool(), false);
+    QCOMPARE(UrlCleaner::cleanedUrl(dirty), dirty);
+    r = P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("set_enabled")},
+              {QLatin1String("purpose"), QLatin1String("copy")},
+              {QLatin1String("value"), true}});
+    QCOMPARE(r.value(QLatin1String("set")).toBool(), true);
+    QCOMPARE(UrlCleaner::cleanedUrl(dirty),
+             QUrl(QStringLiteral("https://e.com/?id=1")));
+    // The nav toggle is the Qt-owned privacy/urlCleaning row — the
+    // facade refuses to write it (empty answer = consult failed,
+    // callers keep their local gate).
+    QVERIFY(P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("set_enabled")},
+              {QLatin1String("purpose"), QLatin1String("nav")},
+              {QLatin1String("value"), false}}).isEmpty());
+    // ...but purpose "nav" reads it — the shared strip_flag read the
+    // pipeline snapshot carries.
+    {
+        ProfileSettings s;
+        s.setValue(QLatin1String("privacy/urlCleaning"), false);
+    }
+    r = P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("enabled")},
+              {QLatin1String("purpose"), QLatin1String("nav")}});
+    QCOMPARE(r.value(QLatin1String("enabled")).toBool(), false);
+    {
+        ProfileSettings s;
+        s.setValue(QLatin1String("privacy/urlCleaning"), true);
+    }
+
+    // ruleset: a profile override replaces the shared set — only its
+    // own params strip — and stays per-persona.
+    r = P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("ruleset_set")},
+              {QLatin1String("ruleset"),
+               QJsonObject{{QLatin1String("version"), 1},
+                           {QLatin1String("params"),
+                            QJsonArray{QLatin1String("only_this")}}}}});
+    QCOMPARE(r.value(QLatin1String("set")).toBool(), true);
+    r = P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("clean")},
+              {QLatin1String("url"),
+               QLatin1String("https://e.com/?only_this=1&utm_source=x&id=2")},
+              {QLatin1String("purpose"), QLatin1String("copy")}});
+    QCOMPARE(r.value(QLatin1String("url")).toString(),
+             QStringLiteral("https://e.com/?utm_source=x&id=2"));
+    r = P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("ruleset_get")}});
+    QCOMPARE(r.value(QLatin1String("source")).toString(),
+             QStringLiteral("profile"));
+    // A second persona never sees the override.
+    r = P::urlcleanStoreCall(
+        QStringLiteral("md06other"),
+        {{QLatin1String("op"), QLatin1String("ruleset_get")}});
+    QVERIFY(r.value(QLatin1String("source")).toString()
+            != QLatin1String("profile"));
+    r = P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("ruleset_reset")}});
+    QCOMPARE(r.value(QLatin1String("reset")).toBool(), true);
+    // Reset re-arms the shared set — utm_* strips again.
+    QCOMPARE(UrlCleaner::cleanedUrl(dirty),
+             QUrl(QStringLiteral("https://e.com/?id=1")));
+
+    // clean_policy: the snapshot composite merges the legacy
+    // urlcleaner/extraParams key into the served ruleset document.
+    {
+        ProfileSettings s;
+        s.setValue(QLatin1String("urlcleaner/extraParams"),
+                   QStringList{QStringLiteral("md06extra")});
+    }
+    r = P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("clean_policy")}});
+    {
+        ProfileSettings s;
+        s.remove(QLatin1String("urlcleaner/extraParams"));
+    }
+    QCOMPARE(r.value(QLatin1String("nav_enabled")).toBool(), true);
+    QCOMPARE(r.value(QLatin1String("copy_enabled")).toBool(), true);
+    const QJsonArray merged = r.value(QLatin1String("ruleset"))
+        .toObject().value(QLatin1String("params")).toArray();
+    QVERIFY(merged.contains(QJsonValue(QLatin1String("md06extra"))));
+
+    // params answers the effective strip list; defaults is the pure
+    // op; a refused op answers the empty object callers fall back on.
+    r = P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("params")}});
+    QVERIFY(r.value(QLatin1String("params")).toArray()
+            .contains(QJsonValue(QLatin1String("utm_*"))));
+    QVERIFY(P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("defaults")}})
+            .value(QLatin1String("copy_enabled")).toBool());
+    QVERIFY(P::urlcleanStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("bogus")}}).isEmpty());
+#else
+    QSKIP("rustcore urlclean module not built");
 #endif
 }
 
