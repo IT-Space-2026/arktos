@@ -113,6 +113,56 @@
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
 
+#if defined(ARKTOS_RUSTCORE)
+#include "rustcorebridge.h"
+
+#include <arktos_core.h>
+#include <rustcore.h>
+
+#include <qjsondocument.h>
+#include <qjsonobject.h>
+
+#include <string.h>
+
+// MD02: one granular call into rustcore's navpolicy module — the
+// untrusted-input scheme floors below live there now.  The ops read
+// no store, so a default-bound AcPolicy serves like
+// WebPermissionManager's permPolicyCall; with no bridge serving yet
+// the legacy rc_* spelling runs under the same explicit default
+// anchor.  A NULL answer maps to *answered=false — the caller then
+// runs the local floor, so an FFI failure can never silently allow
+// or refuse a url.
+static bool navPolicyBool(const QJsonObject &request, bool *answered)
+{
+    AcPolicy *h = nullptr;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->policy(QString());
+    if (!h)
+        rustCoreEnsureDataDirFor(QLatin1String("default"));
+    const QByteArray json =
+        QJsonDocument(request).toJson(QJsonDocument::Compact);
+    char *raw = h
+        ? ac_nav_call(h,
+                      reinterpret_cast<const uint8_t *>(json.constData()),
+                      size_t(json.size()))
+        : rc_nav_call(
+              reinterpret_cast<const uint8_t *>(json.constData()),
+              size_t(json.size()));
+    ac_policy_close(h);
+    if (!raw) {
+        *answered = false;
+        return false;
+    }
+    // The scalar ops answer the literal "true"/"false" — QJsonDocument
+    // has no scalar root, so the compact text is compared directly.
+    const QByteArray out = QByteArray::fromRawData(raw, int(strlen(raw)));
+    *answered = out == "true" || out == "false";
+    const bool verdict = out == "true";
+    rc_string_free(raw);
+    return verdict;
+}
+#endif
+
 WebView::WebView(QWidget *parent)
     : QWebEngineView(parent)
     , m_progress(0)
@@ -1169,12 +1219,34 @@ void WebView::loadFinished()
 
 bool WebView::isUrlAllowedOnUntrustedInput(const QUrl &url)
 {
+#if defined(ARKTOS_RUSTCORE)
+    // MD02: the SEC02 floor answers from navpolicy — the local check
+    // stays as the FFI-failure fallback.
+    bool answered = false;
+    const bool allowed = navPolicyBool({
+        {QLatin1String("op"), QLatin1String("untrusted_input")},
+        {QLatin1String("scheme"), url.scheme()},
+    }, &answered);
+    if (answered)
+        return allowed;
+#endif
     return url.scheme() != QLatin1String("javascript");
 }
 
 bool WebView::isUrlAllowedFromPageLink(const QUrl &url)
 {
     const QString scheme = url.scheme();
+#if defined(ARKTOS_RUSTCORE)
+    // MD02: the stricter page-link tier is the navpolicy "page_link"
+    // op — same local fallback shape.
+    bool answered = false;
+    const bool allowed = navPolicyBool({
+        {QLatin1String("op"), QLatin1String("page_link")},
+        {QLatin1String("scheme"), scheme},
+    }, &answered);
+    if (answered)
+        return allowed;
+#endif
     return isUrlAllowedOnUntrustedInput(url)
         && scheme != QLatin1String("data")
         && scheme != QLatin1String("blob");

@@ -195,6 +195,11 @@ public:
     // The container a host is ruled into — the default (empty) id
     // when nothing matches or the ruling container no longer exists.
     QString containerIdForHost(const QString &host) const;
+    // CONT04: canonical form of a rule key — see the siteRules()
+    // comment for the normalization contract.  WebPage passes this
+    // into the navpolicy manifest so the rust lookup walks the same
+    // canonical labels the local hash does.
+    static QString normalizeSiteHost(const QString &host);
 
 signals:
     void containersChanged();
@@ -206,9 +211,6 @@ private:
     void removeRegistry(const QString &id) const;
     void removeStorageTree(const QString &path) const;
     QString storageNameFor(const QString &id) const;
-    // CONT04: canonical form of a rule key — see the siteRules()
-    // comment for the normalization contract.
-    static QString normalizeSiteHost(const QString &host);
     // Rewrites containers/<id>/sites from m_siteRules — the hash is
     // authoritative, the per-container list the persisted mirror.
     void saveSiteRules(const QString &id) const;

@@ -44,6 +44,10 @@
 #include <webview.h>
 #include "qtest_arktos.h"
 
+#if defined(ARKTOS_RUSTCORE)
+#include <sitedecisionstore.h>
+#endif
+
 class tst_WebPage : public QObject
 {
     Q_OBJECT
@@ -67,6 +71,7 @@ private slots:
     void acceptNavigationRequest_data();
     void acceptNavigationRequest();
     void externalProtocolPrompt();
+    void navPolicyRules();
     void createPlugin();
     void createWindow();
     void popupBlocking();
@@ -521,6 +526,77 @@ void tst_WebPage::externalProtocolPrompt()
     QVERIFY(answerModal(QMessageBox::Cancel));
     QTest::qWait(200);
     QCOMPARE(m_openedUrls.count(), 2);
+}
+
+// MD02: the per-profile override rows navpolicy consults — a
+// "nav-block" host never commits and "nav-scheme" rules reshape the
+// external-protocol gate, all written through the persona's
+// site-decision store and read live by the consult.
+void tst_WebPage::navPolicyRules()
+{
+#if !defined(ARKTOS_RUSTCORE)
+    QSKIP("nav-policy override rows are served by rustcore only",
+          SkipAll);
+#else
+    SubWebPage page;
+    const QString pid = BrowserProfile::profileIdFor(page.profile());
+    static const char navBlock[] = "nav-block";
+    static const char navScheme[] = "nav-scheme";
+
+    // nav-block: a ruled host never commits, whatever the frame —
+    // the suffix walk covers subdomains.
+    QVERIFY(SiteDecisionStore::set(pid, navBlock,
+        QLatin1String("blocked.example"), QLatin1String("block")));
+    QVERIFY(!page.call_acceptNavigationRequest(
+        QUrl("https://blocked.example/"),
+        QWebEnginePage::NavigationTypeLinkClicked, true));
+    QVERIFY(!page.call_acceptNavigationRequest(
+        QUrl("https://www.blocked.example/x"),
+        QWebEnginePage::NavigationTypeLinkClicked, false));
+    QVERIFY(SiteDecisionStore::remove(pid, navBlock,
+        QLatin1String("blocked.example")));
+    // The consult reads the store live — a removed rule stops firing.
+    QVERIFY(page.call_acceptNavigationRequest(
+        QUrl("https://blocked.example/"),
+        QWebEnginePage::NavigationTypeLinkClicked, true));
+
+    // nav-scheme "block" drops the external navigation without ever
+    // queuing the consent prompt — answerModal times out proving none
+    // arrived.
+    QVERIFY(SiteDecisionStore::set(pid, navScheme,
+        QLatin1String("mailto"), QLatin1String("block")));
+    m_openedUrls.clear();
+    QVERIFY(!page.call_acceptNavigationRequest(
+        QUrl("mailto:foo@bar.com"),
+        QWebEnginePage::NavigationTypeLinkClicked, true));
+    QVERIFY(!answerModal(QMessageBox::Cancel, 400));
+    QCOMPARE(m_openedUrls.count(), 0);
+
+    // nav-scheme "external" is the standing pre-consent: still
+    // refused in-page, but the url reaches the trapped desktop
+    // handler with no prompt.
+    QVERIFY(SiteDecisionStore::set(pid, navScheme,
+        QLatin1String("mailto"), QLatin1String("external")));
+    QVERIFY(!page.call_acceptNavigationRequest(
+        QUrl("mailto:foo@bar.com"),
+        QWebEnginePage::NavigationTypeLinkClicked, true));
+    QVERIFY(!QApplication::activeModalWidget());
+    QTRY_VERIFY_WITH_TIMEOUT(!m_openedUrls.isEmpty(), 2000);
+    QCOMPARE(m_openedUrls.last(), QUrl("mailto:foo@bar.com"));
+
+    // On a browser-handled scheme only "block" is honored — the
+    // engine cannot render mailto: no matter what a rule asks for.
+    QVERIFY(SiteDecisionStore::set(pid, navScheme,
+        QLatin1String("data"), QLatin1String("block")));
+    QVERIFY(!page.call_acceptNavigationRequest(
+        QUrl("data:text/html,<p>x</p>"),
+        QWebEnginePage::NavigationTypeLinkClicked, true));
+
+    QVERIFY(SiteDecisionStore::remove(pid, navScheme,
+        QLatin1String("mailto")));
+    QVERIFY(SiteDecisionStore::remove(pid, navScheme,
+        QLatin1String("data")));
+#endif
 }
 
 // The QtWebKit createPlugin() extension point (NPAPI) has no WebEngine

@@ -570,7 +570,16 @@ fn decide_mid(m: &Value) -> Value {
         && (scheme == "http" || scheme == "https")
         && !field_bool(m, "otr")
     {
-        let host = url_host(url);
+        // The caller pushes ContainerManager::normalizeSiteHost's
+        // canonical key as "container_host" — its www-fold and
+        // trailing-dot trim need the public-suffix table that stays
+        // Qt-side; an absent key falls back to the raw url host, an
+        // explicit empty one means "unnormalizable" — no rule, same
+        // as the empty candidate the local walk produces.
+        let host = match m.get("container_host").and_then(|x| x.as_str()) {
+            Some(h) => h.to_string(),
+            None => url_host(url),
+        };
         if !host.is_empty() {
             if let Some(id) = store_lookup(KIND_CONTAINER, &host) {
                 let current = field_str(m, "container");
@@ -1109,6 +1118,36 @@ mod tests {
                 mid("uuid-b", false, "https://www.bank.example/")["action"],
                 "divert"
             );
+            // The caller-pushed canonical key wins over the raw url
+            // host — a www-folded lookup reaches the rule the raw
+            // labels cannot, and an explicit "" spells "unnormalizable"
+            // (the local walk produces an empty candidate, never a
+            // raw-host probe).
+            sitedecisions::set("container", "fold.example", "uuid-a")
+                .unwrap();
+            assert_eq!(
+                decide(&json!({
+                    "phase": "mid", "url": "https://www.fold.example./",
+                    "is_main_frame": true, "container": "uuid-b",
+                    "container_host": "fold.example",
+                }))["action"],
+                "divert"
+            );
+            assert_eq!(
+                decide(&json!({
+                    "phase": "mid", "url": "https://www.fold.example./",
+                    "is_main_frame": true, "container": "uuid-b",
+                }))["action"],
+                "continue"
+            );
+            assert_eq!(
+                decide(&json!({
+                    "phase": "mid", "url": "https://fold.example/",
+                    "is_main_frame": true, "container": "uuid-b",
+                    "container_host": "",
+                }))["action"],
+                "continue"
+            );
         });
     }
 
@@ -1256,13 +1295,16 @@ mod tests {
             "url": "http://example.com/", "shaped": true,
             "enabled": true, "gesture": gesture,
         });
-        assert_eq!(popup_decide(&m(json!(false)))["action"], "block");
-        assert_eq!(
-            popup_decide(&m(json!(false)))["reason"],
-            "popup-no-gesture"
-        );
-        assert_eq!(popup_decide(&m(json!(true)))["action"], "block");
+        // Every read runs under the store guard too — parallel tests
+        // flip the process-global store mid-run, and an unguarded
+        // popup_decide can transiently observe a sibling's "allow".
         with_store(|| {
+            assert_eq!(popup_decide(&m(json!(false)))["action"], "block");
+            assert_eq!(
+                popup_decide(&m(json!(false)))["reason"],
+                "popup-no-gesture"
+            );
+            assert_eq!(popup_decide(&m(json!(true)))["action"], "block");
             sitedecisions::set("popup", "example.com", "allow").unwrap();
             assert_eq!(
                 popup_decide(&m(json!(false)))["action"],

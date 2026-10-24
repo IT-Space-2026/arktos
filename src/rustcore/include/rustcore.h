@@ -294,9 +294,14 @@ char *rc_perm_call(const uint8_t *jsonUtf8, size_t len);
  * rc_nav_decide: one navigation manifest (JSON; {"url","type",
  *   "is_main_frame", "current_url", "current_is_managed",
  *   "target_is_dir", "target_is_managed", "otr", "container",
- *   "pdf_viewer", "pdf_sanitize", "gesture", "phase"}) -> verdict
- *   JSON.  Phases: "pre" | "mid" | "claim"; an absent/unknown phase
- *   runs all three and reports the first non-continue verdict.
+ *   "container_host", "pdf_viewer", "pdf_sanitize", "gesture",
+ *   "phase"}) -> verdict JSON.  "container_host" carries the
+ *   caller's canonical rule key (www-folded, root-dots trimmed —
+ *   the fold needs the public-suffix table that stays caller-side);
+ *   absent means "look the raw url host up", an explicit "" means
+ *   "unnormalizable — no rule".  Phases: "pre" | "mid" | "claim";
+ *   an absent/unknown phase runs all three and reports the first
+ *   non-continue verdict.
  *   NULL on malformed input — the adapter fails OPEN (treat NULL
  *   as "continue", never as a block).
  *
