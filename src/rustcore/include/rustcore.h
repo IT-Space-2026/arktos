@@ -771,10 +771,23 @@ typedef struct RcSettings RcSettings;
  *   {"op":"restore"}                  -> {"startup_default":int,
  *                                        "crash_restore":"ask"|
  *                                        "always"|"never"}
+ *   {"op":"lifecycle"}                -> {"suspend_idle_ms":int,
+ *                                        "memory_purge":b,
+ *                                        "lazy_restore":b,
+ *                                        "lazy_restore_pinned":b} —
+ *                                        the tab-lifecycle rows the
+ *                                        Settings dialog owns under
+ *                                        tabs/ + performance/,
+ *                                        resolved with the same
+ *                                        defaults + arithmetic the
+ *                                        C++ ran
  * Store keys: session/snapshotIntervalMs, session/snapshotMaxWaitMs,
  * session/dirtyOn{Tabs,Chrome,Sidebar,Lifecycle}, session/maxAgeDays,
  * session/maxWindows, session/maxTabsPerWindow, session/crashRestore,
- * session/startupModeDefault — all optional; the compiled-in
+ * session/startupModeDefault — plus the lifecycle op's Qt-owned rows
+ * tabs/suspendTabs, tabs/suspendTabsMinutes, tabs/memoryPurge,
+ * performance/lazyRestoreTabs, performance/alwaysLoadPinnedTabs —
+ * all optional; the compiled-in
  * constants (3000/15000 ms, every class dirty, no caps, "ask",
  * StartPageStartup) are the defaults so a missing or mistyped row
  * can never change behavior.  NULL return on malformed input or a

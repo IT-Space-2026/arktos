@@ -15,6 +15,8 @@
 //!                | {"op":"retention"}                -> {"max_age_days","max_windows","max_tabs_per_window"}
 //!                | {"op":"stale"}                    -> {"stale","age_ms","max_age_days"}
 //!                | {"op":"restore"}                  -> {"startup_default","crash_restore"}
+//!                | {"op":"lifecycle"}                -> {"suspend_idle_ms","memory_purge",
+//!                                                     "lazy_restore","lazy_restore_pinned"}
 //!                | {"op":"policy"}                   -> the whole resolved set
 //!
 //! Store keys (leaves under the bound scope's "session/" prefix —
@@ -41,6 +43,23 @@
 //!   startupModeDefault   int   the BrowserApplication::StartupMode
 //!                              ordinal startupMode() falls back to
 //!                              when no preference was ever stored
+//!
+//! The "lifecycle" op reads OUTSIDE the session/ prefix — it resolves
+//! the Qt-owned tab-lifecycle rows the Settings dialog writes under
+//! their own groups, so the dialog and the policy answer can never
+//! diverge (verbatim parity with TabWidget::loadSettings):
+//!   tabs/suspendTabs            bool  idle-suspend master switch (off)
+//!   tabs/suspendTabsMinutes     int   idle minutes before suspend (30)
+//!   tabs/memoryPurge            bool  the background freeze-pulse (on)
+//!   performance/lazyRestoreTabs bool  restored tabs defer first load
+//!                                     until activation (off)
+//!   performance/alwaysLoadPinnedTabs bool  pinned tabs exempt from the
+//!                                     lazy defer (on)
+//! suspend_idle_ms is suspendTabs ? suspendTabsMinutes * 60000 : 0 —
+//! the same arithmetic the C++ ran, including an out-of-band minutes
+//! value passing through unsanitized (a negative reads as "never
+//! idle" exactly like it did before).  The energy-saver's 10-minute
+//! pin is live state, not stored policy — it stays Qt-side.
 //!
 //! Mirroring rules (kept 1:1 with the pre-refactor C++):
 //!   * every missing or mistyped row resolves to the C++ constant —
@@ -132,6 +151,26 @@ fn startup_default(s: Option<&RcSettings>) -> i64 {
         .unwrap_or(DEFAULT_STARTUP_MODE)
 }
 
+/// The tab-lifecycle read — the Settings dialog's own rows under
+/// "tabs/" and "performance/", resolved with the same defaults and
+/// arithmetic TabWidget::loadSettings ran inline.  A missing or
+/// mistyped row answers the C++ default verbatim.
+fn lifecycle(s: Option<&RcSettings>) -> Value {
+    let flag_at = |key: &str, default: bool| {
+        s.and_then(|s| s.get_bool(key).ok()).unwrap_or(default)
+    };
+    let suspend = flag_at("tabs/suspendTabs", false);
+    let minutes = s
+        .and_then(|s| s.get_int("tabs/suspendTabsMinutes").ok())
+        .unwrap_or(30);
+    json!({
+        "suspend_idle_ms": if suspend { minutes.saturating_mul(60_000) } else { 0 },
+        "memory_purge": flag_at("tabs/memoryPurge", true),
+        "lazy_restore": flag_at("performance/lazyRestoreTabs", false),
+        "lazy_restore_pinned": flag_at("performance/alwaysLoadPinnedTabs", true),
+    })
+}
+
 /// The dirty-on-what verdict for one change class.  Unknown kinds
 /// answer true — the pre-refactor code marked every change, so an
 /// unrecognized class errs toward saving.
@@ -167,6 +206,7 @@ fn resolved(s: Option<&RcSettings>) -> Value {
         "max_tabs_per_window": tabs,
         "crash_restore": crash_restore(s),
         "startup_default": startup_default(s),
+        "lifecycle": lifecycle(s),
     })
 }
 
@@ -235,6 +275,7 @@ pub fn call_json(s: Option<&RcSettings>, manifest: &Value) -> RcResult<Value> {
             "startup_default": startup_default(s),
             "crash_restore": crash_restore(s),
         })),
+        "lifecycle" => Ok(lifecycle(s)),
         _ => fail(RcStatus::InvalidArgument, "unknown sesspolicy op"),
     }
 }
@@ -275,9 +316,20 @@ mod tests {
         assert_eq!(d["max_tabs_per_window"], 0);
         assert_eq!(d["crash_restore"], "ask");
         assert_eq!(d["startup_default"], 2);
+        assert_eq!(d["lifecycle"]["suspend_idle_ms"], 0);
+        assert_eq!(d["lifecycle"]["memory_purge"], true);
+        assert_eq!(d["lifecycle"]["lazy_restore"], false);
+        assert_eq!(d["lifecycle"]["lazy_restore_pinned"], true);
 
         // Bound ops refuse a NULL store, never guess.
-        for op in ["snapshot", "retention", "stale", "restore", "policy"] {
+        for op in [
+            "snapshot",
+            "retention",
+            "stale",
+            "restore",
+            "policy",
+            "lifecycle",
+        ] {
             // snapshot/retention/restore/policy degrade to defaults —
             // they compose over an absent store the same way the C++
             // constants did; only "stale" genuinely needs the dir.
@@ -383,6 +435,56 @@ mod tests {
             .unwrap();
         let v = call_json(Some(&s), &json!({"op": "restore"})).unwrap();
         assert_eq!(v["crash_restore"], "ask");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn lifecycle_parity() {
+        let root = tmpdir("lifecycle");
+        let s = store(&root, Some("work"));
+        // Pristine: the C++ defaults verbatim — suspend off, purge
+        // on, lazy restore off with the pinned exemption on.
+        let v = call_json(Some(&s), &json!({"op": "lifecycle"})).unwrap();
+        assert_eq!(v["suspend_idle_ms"], 0);
+        assert_eq!(v["memory_purge"], true);
+        assert_eq!(v["lazy_restore"], false);
+        assert_eq!(v["lazy_restore_pinned"], true);
+        // The dialog's own rows resolve — suspend on at 10 minutes,
+        // purge off, lazy on with the pinned exemption dropped.
+        s.set("tabs/suspendTabs", settings::Value::Bool(true))
+            .unwrap();
+        s.set("tabs/suspendTabsMinutes", settings::Value::Int(10))
+            .unwrap();
+        s.set("tabs/memoryPurge", settings::Value::Bool(false))
+            .unwrap();
+        s.set(
+            "performance/lazyRestoreTabs",
+            settings::Value::Bool(true),
+        )
+        .unwrap();
+        s.set(
+            "performance/alwaysLoadPinnedTabs",
+            settings::Value::Bool(false),
+        )
+        .unwrap();
+        let v = call_json(Some(&s), &json!({"op": "lifecycle"})).unwrap();
+        assert_eq!(v["suspend_idle_ms"], 600_000);
+        assert_eq!(v["memory_purge"], false);
+        assert_eq!(v["lazy_restore"], true);
+        assert_eq!(v["lazy_restore_pinned"], false);
+        // The resolved "policy" set carries the same object.
+        let v = call_json(Some(&s), &json!({"op": "policy"})).unwrap();
+        assert_eq!(v["lifecycle"]["suspend_idle_ms"], 600_000);
+        // A mistyped row answers what QVariant::toInt() did — 0 on
+        // an unparseable string (the default only covers an absent
+        // key) — never a panic.
+        s.set(
+            "tabs/suspendTabsMinutes",
+            settings::Value::Str("soon".into()),
+        )
+        .unwrap();
+        let v = call_json(Some(&s), &json!({"op": "lifecycle"})).unwrap();
+        assert_eq!(v["suspend_idle_ms"], 0);
         let _ = std::fs::remove_dir_all(&root);
     }
 

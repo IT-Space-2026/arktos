@@ -1977,7 +1977,7 @@ pub unsafe extern "C" fn ac_session_restoring(h: *const AcSession) -> i32 {
 /// manifest to rc_sesspolicy_call under this handle's profile anchor.
 /// Same grammar as rustcore.h's rc_sesspolicy_call:
 /// {"op":"defaults"|"policy"|"snapshot"|"dirty"|"retention"|"stale"|
-/// "restore", ...}.  Each call opens a fresh RcSettings on the bound
+/// "restore"|"lifecycle", ...}.  Each call opens a fresh RcSettings on the bound
 /// scope (the AcDlwpolicy per-op-open shape — reads the file as
 /// committed) so a mid-process settings write is honored; "defaults"
 /// skips the open entirely.  NULL + stashed error on failure — the

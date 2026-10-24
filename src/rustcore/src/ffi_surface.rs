@@ -4553,6 +4553,28 @@ fn sesspolicy_surface() {
     })
     .unwrap();
     assert!(v.contains("\"dirty\":true"));
+
+    // The lifecycle op resolves the Qt-owned tab rows verbatim —
+    // pristine answers the C++ defaults, a dialog row lands live.
+    let lc = b"{\"op\":\"lifecycle\"}";
+    let v = take_str(unsafe {
+        crate::rc_sesspolicy_call(h, lc.as_ptr(), lc.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"suspend_idle_ms\":0"));
+    assert!(v.contains("\"memory_purge\":true"));
+    assert!(v.contains("\"lazy_restore\":false"));
+    assert!(v.contains("\"lazy_restore_pinned\":true"));
+    let suspend_key = cs("tabs/suspendTabs");
+    assert_eq!(
+        unsafe { crate::rc_settings_set_bool(h, suspend_key.as_ptr(), 1) },
+        RcStatus::Ok
+    );
+    let v = take_str(unsafe {
+        crate::rc_sesspolicy_call(h, lc.as_ptr(), lc.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"suspend_idle_ms\":1800000"));
     unsafe { crate::rc_settings_close(h) };
 
     // The facade spelling on the same profile — one store, two

@@ -407,7 +407,7 @@ int      ac_session_restoring(const AcSession *h);
  * startup-mode fallback, read from the bound profile's "session/"
  * settings rows.  Same manifest grammar as rustcore.h's
  * rc_sesspolicy_call: {"op":"defaults"|"policy"|"snapshot"|"dirty"|
- * "retention"|"stale"|"restore", ...}.  NULL + stashed error on
+ * "retention"|"stale"|"restore"|"lifecycle", ...}.  NULL + stashed error on
  * failure — the caller keeps its compiled-in consult, never
  * guesses.  Read-only: fires no change callbacks.  Free the result
  * with ac_string_free(). */

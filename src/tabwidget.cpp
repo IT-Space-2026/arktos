@@ -102,7 +102,13 @@
 #include "webviewsearch.h"
 
 #ifdef ARKTOS_RUSTCORE
+#include "browserpaths.h"
+#include "rustcorebridge.h"
+
+#include <arktos_core.h>
 #include <rustcore.h>
+
+#include <string.h>
 #endif
 
 #include <qabstractproxymodel.h>
@@ -4759,6 +4765,52 @@ QUrl TabWidget::guessUrlFromStringCpp(const QString &string, bool privateContext
     return fallbackUrl();
 }
 
+#ifdef ARKTOS_RUSTCORE
+// MD08: one granular call into rustcore's sesspolicy module — the
+// same consult autosaver.cpp/browserapplication.cpp run.  The
+// profile-bound AcSession is minted per call — cheap, and a
+// mid-process settings-dialog save lands without a stale cached
+// document.  With no bridge serving the rc_* spelling runs against a
+// bound RcSettings (an empty id binds "default" like every other
+// store consumer).  An empty verdict means "run the direct
+// ProfileSettings reads" — an FFI failure can never silently change
+// the timers.
+static QJsonObject sessionPolicyCall(const QString &profileId,
+                                     const QJsonObject &request)
+{
+    AcSession *h = nullptr;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->session(profileId);
+    RcSettings *s = nullptr;
+    if (!h) {
+        const QByteArray root = BrowserPaths::dataRoot().toUtf8();
+        const QByteArray id = profileId.isEmpty()
+            ? QByteArrayLiteral("default") : profileId.toUtf8();
+        s = rc_settings_open(root.constData(), id.constData());
+        if (!s)
+            return QJsonObject();
+    }
+    const QByteArray json =
+        QJsonDocument(request).toJson(QJsonDocument::Compact);
+    char *raw = h
+        ? ac_session_policy(h,
+                            reinterpret_cast<const uint8_t *>(json.constData()),
+                            size_t(json.size()))
+        : rc_sesspolicy_call(s,
+                             reinterpret_cast<const uint8_t *>(json.constData()),
+                             size_t(json.size()));
+    ac_session_close(h);
+    if (s)
+        rc_settings_close(s);
+    if (!raw)
+        return QJsonObject();
+    QByteArray out = QByteArray::fromRawData(raw, int(strlen(raw)));
+    out.detach();
+    rc_string_free(raw);
+    return QJsonDocument::fromJson(out).object();
+}
+#endif // ARKTOS_RUSTCORE
+
 /*
    Somewhere in the browser interface a users wants to open a url
 
@@ -4842,31 +4894,55 @@ void TabWidget::loadSettings()
     setTwoLevelStrip(
         settings.value(QLatin1String("containerDisplay"), 1).toInt() != 0);
 
+    // MD08: the idle-suspend / purge / lazy-restore reads are
+    // session-lifecycle policy — the facade resolves the dialog's own
+    // rows off the bound persona's store; an empty verdict keeps the
+    // direct ProfileSettings reads verbatim (an FFI failure can never
+    // silently change the timers).
+    QJsonObject lifecycle;
+#ifdef ARKTOS_RUSTCORE
+    lifecycle = sessionPolicyCall(
+        profileId(),
+        QJsonObject{
+            {QLatin1String("op"), QLatin1String("lifecycle")}});
+#endif
+
     // SLEEP01: opt-in idle suspend — disabled unless the user turns
     // it on in Settings > Tabs.
-    const bool suspend =
-        settings.value(QLatin1String("suspendTabs"), false).toBool();
-    const int suspendMinutes =
-        settings.value(QLatin1String("suspendTabsMinutes"), 30).toInt();
-    m_suspendIdleMs = suspend ? qint64(suspendMinutes) * 60 * 1000 : 0;
+    if (lifecycle.contains(QLatin1String("suspend_idle_ms"))) {
+        m_suspendIdleMs =
+            lifecycle.value(QLatin1String("suspend_idle_ms")).toInteger();
+    } else {
+        const bool suspend =
+            settings.value(QLatin1String("suspendTabs"), false).toBool();
+        const int suspendMinutes =
+            settings.value(QLatin1String("suspendTabsMinutes"), 30).toInt();
+        m_suspendIdleMs = suspend ? qint64(suspendMinutes) * 60 * 1000 : 0;
+    }
     updateSleepTimer();
 
     // MEM06: the periodic background purge — on by default.  It is
     // the light-touch counterpart to suspend above: instead of
     // unloading the page it freeze-pulses hidden tabs so the engine
     // reclaims the soft retention MEM05 measured.
-    m_memoryPurge =
-        settings.value(QLatin1String("memoryPurge"), true).toBool();
+    m_memoryPurge = lifecycle.contains(QLatin1String("memory_purge"))
+        ? lifecycle.value(QLatin1String("memory_purge")).toBool(true)
+        : settings.value(QLatin1String("memoryPurge"), true).toBool();
     updatePurgeTimer();
 
     // PREFUI04: lazy session restore — restored tabs defer their
     // first load until activation; pinned tabs can be exempted.
     settings.endGroup();
     settings.beginGroup(QLatin1String("performance"));
-    m_lazyRestoreTabs = settings.value(
-        QLatin1String("lazyRestoreTabs"), false).toBool();
-    m_lazyRestorePinnedTabs = settings.value(
-        QLatin1String("alwaysLoadPinnedTabs"), true).toBool();
+    m_lazyRestoreTabs = lifecycle.contains(QLatin1String("lazy_restore"))
+        ? lifecycle.value(QLatin1String("lazy_restore")).toBool(false)
+        : settings.value(
+              QLatin1String("lazyRestoreTabs"), false).toBool();
+    m_lazyRestorePinnedTabs =
+        lifecycle.contains(QLatin1String("lazy_restore_pinned"))
+        ? lifecycle.value(QLatin1String("lazy_restore_pinned")).toBool(true)
+        : settings.value(
+              QLatin1String("alwaysLoadPinnedTabs"), true).toBool();
     settings.endGroup();
 }
 
