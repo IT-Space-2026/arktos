@@ -38,7 +38,7 @@ Rules for the agent working this file:
 | MD04 | rustcore `dlwpolicy` — download interception policy (auto/save-as/block, mime) | done | 0 | dlwpolicy live (landed w/ MD09 leftovers): verdict/external_gate/engine_claim/row_remove/rules+rule_*/records_* ops behind rc_dlw_call+ac_dlw_call on AcDlwpolicy, downloads.json per-persona w/ legacy download_N_* fallback + Exit-policy quirk; fixed 2 parity bugs (row_remove manifest now carries live remove_policy — persisted row lagged autosave; load() parses ISODateWithMs w/ TextDate fallback) + test wiped downloads.json per leg via records_clear; verified: cargo dlwpolicy 10/10, make -j1 clean, tst_downloadmanager 46/46 offscreen --disable-gpu (was 26p/20f), no-rust TU syntax clean |
 | MD05 | rustcore `privacy` — GPC header decision + tracker-strip unified in policy store | done | 0 | privacy verified live (landed w/ MD09 leftovers): per-persona Sec-GPC via ac_privacy_gpc/rc_privacy_gpc — request-time generation-cached consult in interceptRequest + installGpcSignal DOM twin via gpcSignalEnabledForProfile; flags/flag/gpc/verdict/defaults ops on AcPrivacy over bound persona settings.json w/ FFI-null local fallback; unified {gpc,strip,adblock} verdict feeds AdBlockManager::load + strip shared w/ urlclean; verified: cargo 433/433, acprobe OK incl privacy legs, new tst_privacy privacyStoreFacade leg drives the real bridge path (72/72 offscreen --disable-gpu), app make current, no-rust TU syntax clean |
 | MD06 | rustcore `urlclean` — tracking-param strip / URL sanitize for nav + clipboard | done | 0 | urlclean verified live (landed w/ MD09 leftovers): clean/enabled/set_enabled/params/ruleset_*/clean_policy/defaults ops behind rc_urlclean_call+ac_urlclean_call on AcUrlclean over profiles/<id>/urlclean.json two-tier store (Qt-owned urlcleaner/extraParams + privacy/urlCleaning reads only); UrlCleaner copy path + NavigationPolicy::strippedUrl nav path consult facade w/ FFI-null local fallback, merged ruleset rides interceptor snapshot; new tst_privacy urlcleanStoreFacade leg drives the real bridge incl UrlCleaner toggle+ruleset end-to-end; verified: cargo 433/433 (urlclean 9/9), acprobe OK incl urlclean legs, make -j1 clean, tst_privacy 73/73 + tst_urlcleaner 26/26 + tst_navigationpolicy 16/16 offscreen --disable-gpu, no-rust TU syntax clean |
-| MD07 | Extension dispatch gaps — remaining chrome.* surfaces behind shim dispatch | pending | 0 | retry: prior 5 runs killed by 2GB cap — make -j1, CARGO_BUILD_JOBS=1 or detached cargo |
+| MD07 | Extension dispatch gaps — remaining chrome.* surfaces behind shim dispatch | done | 0 | audit closed out: all 24 first-wave rows (MD10-MD33) landed; every typed emit site re-traced to a declared gaps entry; stale observe-only premise corrected — queued MD34 DNR subset (interceptor blocks/redirects), MD35 identity.getRedirectURL, MD36 onCreatedNavigationTarget, MD37 action.getUserSettings; stays re-confirmed w/ reasons; EXT-DISPATCH-AUDIT delta + GAPS comments updated; docs-only — verify: taskcheck rc=0, gaps block parses 232 entries |
 | MD08 | Session snapshot policy — autosaver/dirty-tracking decisions into sessions module | pending | 0 | retry: prior 5 runs killed by 2GB cap — make -j1, CARGO_BUILD_JOBS=1 or detached cargo |
 | MD09 | Popup-block decision — WebView popup gate unified into navpolicy | done | 4 | popup gate unified behind navpolicy popup_decide + record ops via ac_nav_call/rc_nav_call (ABI v11); PopupBlocker consults facade w/ FFI-failure local fallback; verified cargo 431/431, make -j2 clean, tst_popupblocker 10/10 offscreen, acprobe OK incl popup legs, no-rust TU clean |
 | MD10 | tabs core ops + tabObject honesty — remove/reload/duplicate/move/highlight/goBack/goForward/discard + real pinned/discarded/groupId + query filters | done | 0 | chrome.tabs ops (remove/reload/duplicate/move/highlight/goBack/goForward/discard + getAllInWindow/getSelected) dispatch onto TabWidget/WebView; tabObject+query report real pinned/audible/discarded/muted/autoDiscardable/groupId/highlighted/windowType — tst_extensionmanager extensionTabsOps + ShimBackend/ChromeNavLock/EventSurfaces/TabMessaging legs PASS offscreen |
@@ -65,6 +65,10 @@ Rules for the agent working this file:
 | MD31 | chrome.privacy subset — map servable ChromeSetting members to real settings | done | 0 | chrome.privacy subset live: 8 members mapped to real settings w/ control claims + clear-restore; extensionPrivacy leg + neighbors PASS |
 | MD32 | chrome.userScripts.* over ER09 registry machinery | done | 0 | chrome.userScripts over the ER09 registry: third front keyed api userScripts (per-front id scoping on unregister/update, unfiltered wipe drops only own kind); register/unregister/getScripts/update answer MV3 RegisteredUserScript shapes (strict ExtensionFileSource js, no css, USER_SCRIPT/MAIN world + worldId recorded w/ shared-realm note, globs typed unsupported, always-persist); configureWorld/getWorldConfigurations/resetWorldConfiguration record WorldProperties to ProfileSettings w/ uninstall cleanup; userScripts-grant gated; extshim ns + runtimeServes/unsupported lists + GAPS updated — verify: make -j2 clean, extensionUserScripts leg + 12 adjacent legs PASS offscreen --disable-gpu, no-rust TU clean, cargo 432/433 (pre-existing profilevault flake) |
 | MD33 | chrome.fontSettings subset — getFontList/getFont/default sizes | done | 0 | chrome.fontSettings subset live: getFontList over QFontDatabase, getFont/setFont/clearFont + get/set/clear{Default,DefaultFixed,Minimum}FontSize over real engine defaults persisted to websettings rows + live applySettings; fontSettings grant gates; math + non-Zyyy script typed unsupported, flattened control w/ clear-restore + on*Changed __controller shaping; verified: make -j2 clean, extensionFontSettings leg + 8 adjacent legs PASS offscreen --disable-gpu, no-rust TU clean |
+| MD34 | chrome.declarativeNetRequest subset over the live blocking interceptor | pending | 0 | queued by MD07 re-audit — PrivacyRequestInterceptor does info.block/redirect (observe-only premise was stale) |
+| MD35 | chrome.identity.getRedirectURL — derived chromiumapp origin, rest of ns stays dead | pending | 0 | queued by MD07 re-audit |
+| MD36 | webNavigation.onCreatedNavigationTarget — source-tab correlation via createWindow | pending | 0 | queued by MD07 re-audit |
+| MD37 | chrome.action getUserSettings/onUserSettingsChanged honesty + openPopup typing | pending | 0 | queued by MD07 re-audit |
 
 ## Task details
 
@@ -344,3 +348,65 @@ defaults; set*/clear* write the real default settings where an
 honest mapping exists, typed unsupported otherwise.  'fontSettings'
 permission gates.  Verify: leg asserts getFontList non-empty and a
 default-size read.
+
+### MD34
+chrome.declarativeNetRequest subset over the LIVE blocking
+interceptor — the first MD07 audit's "observe-only" premise was
+stale: PrivacyRequestInterceptor already info.block()s and
+info.redirect()s on the IO thread (privacyrequestinterceptor.cpp:
+176-222), and the permission family is already recognised
+(extensionmanager.cpp:1179-1287).  Serve updateSessionRules/
+updateDynamicRules/getSessionRules/getDynamicRules +
+getEnabledRulesets/updateEnabledRulesets over a per-extension rule
+registry; static manifest rulesets
+(declarative_net_request.rule_resources) load from the bundle.
+Conditions: urlFilter, initiatorDomains/excludedInitiatorDomains,
+resourceTypes/excludedResourceTypes, requestMethods/
+excludedRequestMethods, domainType, regexFilter via
+QRegularExpression (RE2-incompatible constructs refused honestly
+through isRegexSupported).  Actions: block/redirect/upgradeScheme/
+allow/allowAllRequests; modifyHeaders for REQUEST headers only via
+info.setHttpHeader — response-header legs stay typed unsupported
+(no response hook at our layer).  Evaluation runs on the
+interceptor's IO-thread snapshot lane like NavigationPolicy::
+evaluate; precedence = priority then session > dynamic > static.
+getMatchedRules/testMatchOutcome ride the same evaluator
+('declarativeNetRequestFeedback' gates match reporting);
+onRuleMatchedDebug stays debug-channel.  Gate: declarative
+NetRequest/WithHostAccess declared grants like Chrome; host-access
+coverage applies to initiator scoping.  Verify: parity leg —
+fixture ruleset blocks a temp-profile request, redirect lands,
+priority/order precedence holds, verdicts typed.
+
+### MD35
+chrome.identity.getRedirectURL — the one member of the dead
+identity namespace that is honestly derivable:
+https://<id>.chromiumapp.org/ plus the optional path suffix.
+Ungated like Chrome.  Install a single-member namespace so the
+derived URL answers while every other member stays typed
+'unsupported' under the existing wildcard.  Verify: leg asserts
+the derived URL shape on a temp profile.
+
+### MD36
+chrome.webNavigation.onCreatedNavigationTarget — the missing
+source-tab event.  WebPage::createWindow runs on the SOURCE page,
+so the opener view is known at tab birth; correlate it with the
+hub's view registration (emitTabCreated, extensioneventhub.cpp:
+203) to emit {sourceTabId, sourceFrameId:0, url, tabId, timeStamp}
+through emitNavEvent like the same-document legs (:536-566).
+Surgical diffs only in the shared files (webpage.cpp/webview.cpp/
+tabwidget.cpp).  onTabReplaced stays honest-absent — no
+replacement flow exists.  Verify: leg opens a target=_blank tab
+and asserts the event carries the right source/new ids.
+
+### MD37
+chrome.action residual honesty.  getUserSettings answers the real
+pin state — the EXT08 strip renders one button per enabled
+extension (browsermainwindow.cpp:2291), so isOnToolbar is the
+strip-membership truth (true today; wire it so a future pin
+toggle surfaces honestly).  onUserSettingsChanged installs as an
+honest never-firing event (no pin UI).  openPopup stays typed
+unsupported — no programmatic popup surface.  Same members on
+browserAction where Chrome mirrors.  Verify: leg asserts
+{isOnToolbar:true} for an enabled fixture and openPopup's typed
+verdict.

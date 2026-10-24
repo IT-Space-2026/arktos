@@ -200,3 +200,53 @@ dispatch-only.  `documentIds` targets stay unminted (no frame ids).
   entries gain `# queued -> MDnn` annotations only.
 - No new engine JS APIs anywhere in the queue — every row is
   dispatch + Qt/rustcore state.
+
+## Re-audit delta (MD07 close-out, 2026-10-24)
+
+All first-wave rows (MD10-MD33) landed.  The dispatch was re-traced
+against the current tree — every `errReply`/`err` typed-unsupported
+site maps to a declared gaps entry or a member unreachable from the
+bundle (JS proxies only expose installed members; a native-takeover
+fillNs stub answers 'unsupported' for anything it must cover).
+
+Corrected premise: the original audit listed
+chrome.declarativeNetRequest + declarativeContent under "stays —
+blocking interception engine we cannot provide".  That holds for
+declarativeContent's action-enable channel (MV2-deprecated anyway),
+but NOT for declarativeNetRequest: PrivacyRequestInterceptor runs
+info.block(true)/info.redirect() on the IO thread for every resource
+type (privacyrequestinterceptor.cpp:176-222), and the permission
+family is already recognised in the review/registry vocabulary
+(extensionmanager.cpp:1179-1287).  A real subset is servable ->
+MD34.
+
+Newly found feasible members -> queued:
+
+| surface | row | backing |
+|---------|-----|---------|
+| chrome.declarativeNetRequest subset | MD34 | live blocking/redirect interceptor + per-extension rule registry; request-header modifyHeaders via setHttpHeader; response-header legs stay typed |
+| chrome.identity.getRedirectURL | MD35 | derived https://<id>.chromiumapp.org/; rest of namespace stays dead |
+| webNavigation.onCreatedNavigationTarget | MD36 | createWindow knows the opener view; correlate with hub registration |
+| chrome.action getUserSettings/onUserSettingsChanged | MD37 | EXT08 strip renders one button per enabled extension — isOnToolbar is honest strip membership; openPopup stays typed (no popup surface) |
+
+Re-confirmed stays (unchanged): runtime grant UI
+(permissions.request/remove, sidePanel.open, sidebarAction.*) is
+MW-SHELL surface work; ChromeOS/device namespaces; native-messaging
+host surfaces; desktopCapture/displaySource/tabCapture (no capture
+pipeline); webRequest response-side events + onAuthRequired (no
+response/auth channel at our layer); subframe addressing
+(webNavigation beyond frameId 0, scripting documentIds,
+runtime.getFrameId); readingList (a store would write data no UI
+consumes); tts (no speech engine in tree); power (no portable
+inhibit API); search (Chrome allowlist-only); favicon
+(chrome://favicon internals); MV2-deprecated spellings
+(tabs.executeScript/insertCSS/removeCSS/sendRequest,
+declarativeContent); webNavigation.onTabReplaced (no replacement
+flow — the event honestly never fires); notifications.onShowSettings
+(ChromeOS); management launchApp/generateAppForLink/setLaunchType;
+idle.getAutoLockDelay; i18n/tabs detectLanguage (no CLD).
+
+Observed fallback edge (not queued): the fillNs native-takeover
+stub list for tabs lacks 'group'/'ungroup' — on a native binding
+takeover those members go undefined rather than typed.  Repair-path
+only; the real proxy serves them.

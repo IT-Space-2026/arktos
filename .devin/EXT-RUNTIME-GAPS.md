@@ -42,6 +42,11 @@ matching every member of the namespace (or a dotted sub-path such as
 # sessions with MD25, tabGroups with MD26, topSites with MD27,
 # browsingData with MD28, dns with MD29, system with MD30, privacy
 # with MD31, userScripts with MD32, fontSettings with MD33).
+# MD07 re-audit (close-out): two more dead-namespace members were
+# found servable and queued — declarativeNetRequest -> MD34 (the
+# interceptor DOES block/redirect; the audit's observe-only premise
+# was stale) and identity.getRedirectURL -> MD35 (derived origin).
+# Entries stay until the row lands.
 chrome.accessibilityFeatures.*: unsupported
 chrome.audio.*: unsupported
 chrome.autofill.*: unsupported
@@ -82,16 +87,16 @@ chrome.tts.*: unsupported
 chrome.vpnProvider.*: unsupported
 chrome.wallpaper.*: unsupported
 # --- served namespaces, deliberately unserved members --------------
-# MD07 queued carve-outs (still typed today — entries stay):
-#   tabs unserved members -> MD10 ops/state, MD11 zoom+capture,
-#     MD12 connect; management read ops -> MD16, mutations -> MD17;
-#     alarms edges -> MD20.
-# (extension.isAllowed* left with MD15 — invokeExtension answers the
-#  honest capability verdicts now; storage getKeys/setAccessLevel/
-#  sync-persistence/quota landed with MD19.)
-# tabs members beyond the implemented set are typed stubs;
-# sendMessage frameId!=0 is unsupported (page agent lives in the main
-# frame only).
+# MD07's carve-outs all landed: tabs ops/state MD10, zoom+capture
+# MD11, connect MD12; management read MD16 + mutations MD17; alarms
+# edges MD20; extension.isAllowed* MD15; storage getKeys/
+# setAccessLevel/sync-persistence/quota MD19.  What remains typed:
+# tabs members beyond the implemented set (deprecated MV2 spellings
+# executeScript/insertCSS/removeCSS/sendRequest, detectLanguage,
+# print/toggleReaderMode) — sendMessage frameId!=0 is unsupported
+# (page agent lives in the main frame only).  Queued second wave:
+# webNavigation.onCreatedNavigationTarget -> MD36, action
+# getUserSettings honesty -> MD37.
 chrome.tabs.*: unsupported
 chrome.idle.getAutoLockDelay: unsupported
 chrome.notifications.*: unsupported
@@ -422,6 +427,19 @@ services, blocking interception, missing UI surfaces like
 sidePanel/omnibox).  A queued entry is removed from the fenced block
 only by the run that lands it — until then the typed error is the
 honest answer and the test contract stands.
+
+Close-out re-audit (MD07): every first-wave row (MD10-MD33) landed;
+each surviving emit site in the dispatch was re-traced to a declared
+entry.  Second-wave queue: declarativeNetRequest subset -> MD34
+(blocking/redirect verdicts already execute in
+PrivacyRequestInterceptor), identity.getRedirectURL -> MD35,
+webNavigation.onCreatedNavigationTarget -> MD36, action
+getUserSettings/onUserSettingsChanged -> MD37.  Unchanged stays:
+runtime grant UI (permissions.request/remove, sidePanel/sidebarAction
+open) is MW-SHELL territory; ChromeOS/device namespaces; MV2-deprecated
+spellings (tabs.executeScript family, declarativeContent); surfaces
+with no engine hook (webRequest response-side + blocking-family
+events, subframe addressing, i18n/tabs detectLanguage).
 
 ## Out of scope by design
 
