@@ -31,15 +31,17 @@ namespace Engine { struct ContextMenuInfo; }
 //   - private-mode and the page-link scheme gate: Qt legs — the
 //     verdicts move to MD02 navpolicy / profile context facade when
 //     those land (thin-blocked, see .devin/MW-SHELL.md).
-//   - tor-binary availability: TorManager::resolveBinary() probe
-//     until MB04's ac_engine_caps table reports it.
+//   - tor-binary availability: TorManager::resolveBinary() probe.
+//     ac_engine_caps (MS05 port of MB04) does NOT cover it — the
+//     `tor` row grades per-engine SOCKS5 support (always
+//     qtwebengine here), never whether a daemon/binary resolves.
 class WebViewController
 {
 public:
     // Inputs the widget gathers once per menu invocation.
     struct ContextMenuEnv {
         bool privateMode = false;       // BrowserApplication::isPrivate()
-        bool torAvailable = false;      // -> ac_engine_caps (MB04)
+        bool torAvailable = false;      // resolveBinary() probe — not caps
         // isUrlAllowedFromPageLink() on info.linkUrl / info.mediaUrl —
         // the CONT07 cross-context gate (Qt leg until MD02).
         bool linkUrlAllowed = false;

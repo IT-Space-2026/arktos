@@ -35,13 +35,19 @@ use std::ptr;
 use std::sync::{LazyLock, Mutex};
 
 use crate::error::{self, RcStatus};
-use crate::{bookmarks, icons, notes, notify, profiles, settings, util};
+use crate::{
+    bookmarks, caps, icons, notes, notify, profiles, settings, util,
+};
 
 /// The facade ABI version — AC_API_VERSION in arktos_core.h.  Bump
 /// on every ABI-affecting addition; never renumber existing symbols
 /// or enum values.  v3 added AcCookies (RC15).  v4 added AcIcons
 /// (RC16).  v5 added AcContainers (RC19).  v6 added AcNotes (RC21).
-pub const AC_API_VERSION: u32 = 6;
+/// v7 added ac_engine_caps (MS05 — the MB04 table, ported from the
+/// mw-bridge lane where it landed as part of ABI v9; this branch's
+/// surface has no mw envelope or event lane, so the numbering is
+/// local until the lanes merge).
+pub const AC_API_VERSION: u32 = 7;
 
 const AC_CAP_SETTINGS: u64 = 0x01;
 const AC_CAP_PROFILES: u64 = 0x02;
@@ -460,6 +466,66 @@ pub unsafe extern "C" fn ac_set_change_callback(
             notify::set_core_callback(core as usize, cb, userdata);
         }
     }));
+}
+
+/// The static per-engine capability matrix as JSON (v7; MB04,
+/// ported from the mw-bridge lane) — what each engine supports
+/// when its backend is present, graded
+/// supported|partial|unsupported with a note wherever the grade
+/// needs the caveat.  `engine_id` selects one row —
+/// "qtwebengine" | "servo" | "webkit", with the Qt backend->id()
+/// spelling "webengine" accepted as the qtwebengine alias;
+/// NULL/"" emits the whole matrix.  The table is static by design:
+/// backend PRESENCE is a runtime question this call does not
+/// answer (the servo artifact probe, WPE linkage).  `*out`
+/// receives the UTF-8 document — caller frees with
+/// ac_buffer_free.  AC_ERR_INVALID on an unknown id or NULL out;
+/// the message is stashed for ac_last_error.
+///
+/// # Safety
+/// `engine_id` must be NUL-terminated UTF-8 or NULL; `out` must
+/// point to writable AcBuffer storage.
+#[no_mangle]
+pub unsafe extern "C" fn ac_engine_caps(
+    engine_id: *const c_char,
+    out: *mut crate::RcBuffer,
+) -> RcStatus {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(out) = (unsafe { out.as_mut() }) else {
+            error::set_error("null out buffer");
+            return RcStatus::InvalidArgument;
+        };
+        out.data = ptr::null_mut();
+        out.len = 0;
+        let id = if engine_id.is_null() {
+            ""
+        } else {
+            match unsafe { util::cstr(engine_id) } {
+                Some(s) => s,
+                None => {
+                    error::set_error("bad engine_id pointer");
+                    return RcStatus::InvalidArgument;
+                }
+            }
+        };
+        let json = if id.is_empty() {
+            Some(caps::matrix_json())
+        } else {
+            caps::engine_json(id)
+        };
+        match json {
+            Some(j) => {
+                error::clear_error();
+                crate::buffer_out(out, j.into_bytes());
+                RcStatus::Ok
+            }
+            None => {
+                error::set_error(&format!("unknown engine id '{id}'"));
+                RcStatus::InvalidArgument
+            }
+        }
+    }))
+    .unwrap_or(RcStatus::Crypto)
 }
 
 // ---- module accessors ----------------------------------------------------

@@ -94,15 +94,15 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 
 | Site | Verdict | Notes / Needs |
 |------|---------|---------------|
-| `contextMenuEvent` :305 | done | MS04: entry set/order/enabled is `WebViewController::contextMenuModel(info, env)` — the widget gathers env + renders.  env legs still Qt (thin-blocked): CONT07 scheme gate → MD02, private-mode + tor probe → context/caps facade (MB04); opensearch reads already rc_ose-bound. |
+| `contextMenuEvent` :305 | done | MS04: entry set/order/enabled is `WebViewController::contextMenuModel(info, env)` — the widget gathers env + renders.  env legs still Qt (thin-blocked): CONT07 scheme gate → MD02, private-mode → profile context facade; tor probe stays `resolveBinary()` — caps (MS05) grades per-engine `tor` support, never binary/daemon presence; opensearch reads already rc_ose-bound. |
 | `contextMenuInfo` :273 | keep | engine request→neutral struct translation. |
 | `isUrlAllowedOnUntrustedInput` :1160 / `isUrlAllowedFromPageLink` :1165 | thin-blocked:MD02 | scheme allowlist verdict (callers: drops, middle-click, context menu, tor hand-off). |
 | `loadUrlInView` :811 | thin-blocked:MD02 | referer-header + same-profile decision on hand-off. |
 | `openPageUrlInPrivateTab`/`PrivateWindow`/`TorWindow` :710/:734/:775 | thin-blocked:MD02 | context/profile routing of a page-supplied url (tor vs clearnet OTR pick). |
 | `openUrlInTarget`/`getView` chain :787 | keep | view construction/placement mechanics (decisions upstream). |
 | `wheelEvent` :618 | keep | Ctrl+wheel input → zoom. |
-| `levelForZoom`/`zoomIn`/`zoomOut`/`resetZoom` :1062-1149 | thin | zoom-level table + stepping policy → facade (settings/defaults); apply stays engine-side.  Engine zoom support → caps (MS05). |
-| `applyZoom` :1085 | thin | `zoomTextOnly` read → ac_settings; font-scaling engine calls keep. |
+| `levelForZoom`/`zoomIn`/`zoomOut`/`resetZoom` :1062-1149 | thin-blocked | MS05: the zoom-level table + stepping policy is a defaults decision, not a capability check — no domains module and no ac_settings key covers zoom-step defaults; inventing one would add surface the audit never verified.  Engine zoom reachability: zoom actions only ever reach WebView (qtwebengine); engine tabs keep zoom engine-side. |
+| `applyZoom` :1085 | keep | MS05: `zoomTextOnly` is a session-scoped runtime toggle (BrowserApplication static, never persisted) — routing it through ac_settings would invent persistence = behavior change.  Font-scaling engine calls keep. |
 | `containerId` :261 | thin | profile→container lookup → ac_containers. |
 | `searchRequested` :875 | thin | `selectionSearchInBackground` via ac_settings + engine lookup via opensearch. |
 | `imageSearchRequested` :921 | thin | image engine via opensearch facade. |
@@ -130,7 +130,7 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 | `saveState`/`restoreState` :884/:924 | thin | same store route; field layout + compat migration logic stays Qt (it's the blob's codec). |
 | `lastTabClosed` :1045 | thin | `quitAsLastTabClosed` via ac_settings. |
 | `setupMenu` :1064 | keep + thin | construction keeps; embedded decisions thin: tor-binary gate :1101 (caps), container-menu hide :1115 (mode/caps), `canRestoreSession` :1527 — MS08 done: per-persona existence verdict now `ac_session_exists` on bound handles, lock-store enable :1667 (rc_cred), BiDi tor gate :1719 (caps), updates tor gate :1793 (caps/mode). |
-| devtools rows refresh :1733 | thin | `capabilities().devTools` per tab → ac_engine_caps (MS05, needs MB04); today reads adapter-local caps. |
+| devtools rows refresh :1733 | done | MS05: verdict is `EngineCaps::featureUsable(id, "devtools", capabilities().devTools)` — ac_engine_caps first, adapter-local caps as Unknown/no-rust fallback; identical enable/tooltip outcomes (servo+webkit unsupported, qtwebengine supported).  Refresh also hooks tabsChanged now — an engine swap replaces the widget at the same index without a currentChanged. |
 | `aboutToShowViewMenu` :1830 | keep | label sync. |
 | `updateReaderState` :1839 | thin | reader/PiP availability per tab → caps (MS06); checked-state from engine objects keep. |
 | `aboutToShowTextEncodingMenu`/`viewTextEncoding` :1882/:1910 | keep | menu + per-page engine setting writes. |
@@ -148,9 +148,9 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 | `downloadManager`/`fileSaveAs` :3255/:3275 | keep | raises sidebar / delegates to DownloadManager (interception policy is MD04, engine-side). |
 | `showSettingsPage`/`showHistoryPage` :3288/:3318 | keep | widget-tab management. |
 | `updateStatusbar`/`updateTorCircuitLabel`/`updateWindowTitle` :3370/:3381/:3451 | keep | display. |
-| `previewEngineTabDocument`/`filePrint`/`printRequested` :3521/:3544/:3556 | thin | print capability verdict (pdfView? engineTab? refusal) → ac_engine_caps (MS05, needs MB04). |
+| `previewEngineTabDocument`/`filePrint`/`printRequested` :3521/:3544/:3556 | done | MS05: the engine-tab print verdict is a caps read — `pdf_viewer` usable would mean a document pipeline exists; every EngineTab-hostable backend grades it unsupported, so the honest refusal is registry-sourced (a caps-usable backend with no staged PdfView logs the gap and still refuses — no EngineTab print path exists to fake). |
 | `closeEvent` :3597 | thin | `confirmClosingMultipleTabs`/`confirmExit` via ac_settings; QMessageBox keep. |
-| `editFind*`/`zoomIn`/`zoomNormal`/`zoomOut`/`viewFullScreen`/`viewPageSource` :3676-3753 | keep | delegate to tab/engine; zoom gating → caps (MS05). |
+| `editFind*`/`zoomIn`/`zoomNormal`/`zoomOut`/`viewFullScreen`/`viewPageSource` :3676-3753 | keep | MS05 verified: no capability check exists to replace — find/zoom reach WebView only (engine tabs return nullptr for currentTab()/webViewSearch(), servo's findText already answers an honest empty result); the delegates stay pure input forwarding. |
 | `goHome` :3755 | thin | `homePageMode` + `MainWindow/home` via ac_settings. |
 | `webSearch`/`selectLineEdit`/`swapFocus` :3774/:3266/:3817 | keep | focus policy. |
 | `clearPrivateData` :3798 | keep | dialog keep; MS08 verified the undo-stack wipe targets the per-run in-memory recently-closed list — no session-store surface applies. |
@@ -298,11 +298,14 @@ instances and manager-owned stores that haven't been facade-bound.
   disabled-reason) + `hoverStatusText`; webview.cpp:558 renders it and
   keeps menu build/exec/strings; engine-adapter hover sink
   (browsermainwindow.cpp:642) consumes the same verdict.  env inputs
-  still Qt-legged (thin-blocked): CONT07 gate → MD02, private/tor
-  availability → context + MB04 caps.  MS10 applied the same shape to
+  still Qt-legged (thin-blocked): CONT07 gate → MD02, private-mode →
+  profile context; tor-binary probe stays Qt (caps covers per-engine
+  support, not daemon presence).  MS10 applied the same shape to
   tabbar.cpp:538 — TabBarController owns the strip menu model.
 - **MS05 zoom/find/print/devtools caps** (~5 sites): browsermainwindow.cpp
-  :1733, :3521-3581, webview zoom :1062-1149 — all `needs:task:MB04`.
+  :1733, :3521-3581 — DONE via `EngineCaps` (ac_engine_caps read cache,
+  rustcore ABI v7).  webview zoom :1062-1149 thin-blocked (no
+  zoom-defaults facade surface); find has no check to replace.
 - **MS06 capability chrome** (~6 sites): browsermainwindow.cpp:2510,
   :1115/:1719/:1793, engineindicator.cpp:69/102, updateReaderState:1839 —
   `needs:task:MB04`.

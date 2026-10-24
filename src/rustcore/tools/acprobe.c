@@ -722,6 +722,32 @@ int main(int argc, char **argv)
               strcmp(cb_last_profile, "work") == 0,
           "notes mutations stamp the bound profile");
 
+    /* ---- engine capability matrix (MS05; MB04 port) -------------------
+     * No core needed — the registry is static.  The matrix, the
+     * backend->id() alias, and a refused id. */
+    {
+        AcBuffer caps = {NULL, 0};
+        CHECK(ac_engine_caps(NULL, &caps) == AC_OK, "caps matrix");
+        CHECK(buf_contains(caps.data, caps.len, "\"qtwebengine\"") &&
+                  buf_contains(caps.data, caps.len, "\"servo\"") &&
+                  buf_contains(caps.data, caps.len, "\"webkit\"") &&
+                  buf_contains(caps.data, caps.len, "\"features\"") &&
+                  buf_contains(caps.data, caps.len, "\"state\""),
+              "matrix covers all three engines");
+        ac_buffer_free(caps);
+        caps.data = NULL;
+        caps.len = 0;
+        /* The Qt backend spelling resolves as the qtwebengine alias. */
+        CHECK(ac_engine_caps("webengine", &caps) == AC_OK &&
+                  buf_contains(caps.data, caps.len, "\"qtwebengine\""),
+              "webengine alias resolves");
+        ac_buffer_free(caps);
+        caps.data = NULL;
+        caps.len = 0;
+        CHECK(ac_engine_caps("nonexistent", &caps) == AC_ERR_INVALID,
+              "unknown engine id refused");
+    }
+
     /* ---- close-out ---------------------------------------------------- */
     ac_settings_close(gs);
     ac_settings_close(ps);

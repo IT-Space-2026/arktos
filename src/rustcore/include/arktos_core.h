@@ -56,8 +56,12 @@ extern "C" {
  * v3 adds the AcCookies module (RC15).
  * v4 adds the AcIcons module (RC16).
  * v5 adds the AcContainers module (RC19).
- * v6 adds the AcNotes module (RC21). */
-#define AC_API_VERSION 6u
+ * v6 adds the AcNotes module (RC21).
+ * v7 adds ac_engine_caps (MS05 — the MB04 table ported from the
+ * mw-bridge lane, where it is part of ABI v9; this branch has no
+ * mw envelope or event lane, so the numbering is local until the
+ * lanes merge). */
+#define AC_API_VERSION 7u
 
 /* ac_capabilities() bits — one per module. */
 #define AC_CAP_SETTINGS   0x01ull
@@ -563,6 +567,49 @@ AcStatus ac_notes_remove(AcNotes *h, int64_t row, int64_t count);
 AcStatus ac_notes_sync(AcNotes *h);
 int      ac_notes_is_persistent(const AcNotes *h); /* 0 on volatile */
 int      ac_notes_is_dirty(const AcNotes *h);
+
+/* ---- engine capability matrix (v7; MB04, ported from mw-bridge) ---
+ *
+ * The static per-engine feature registry the self-describing
+ * bridge needs — the honest grade for each engine, filled from the
+ * reporting code that already exists (Engine::Capabilities plus
+ * the feature plumbing: PDF01/PDF02, ExtensionManager's MV3-only
+ * rule + EXT-RUNTIME-GAPS, the SEC05 permission broker, ENG05's
+ * Tor/container stays-on-Chromium rule, the WK07/WK11/WK16/WK18/
+ * WK19/WK21 WebKit verifications).
+ *
+ * engine_id selects one row: "qtwebengine" | "servo" | "webkit",
+ * with the Qt backend->id() spelling "webengine" accepted as the
+ * qtwebengine alias.  NULL/"" emits the whole matrix.  Output is
+ * UTF-8 JSON, caller-freed with ac_buffer_free:
+ *
+ *   one row:   {"v":1,"engine","display","backend_ids",
+ *               "features":{"<name>":{"state":"supported"|
+ *                                     "partial"|"unsupported",
+ *                                     "note"?}}}
+ *   the matrix: {"v":1,"engines":[<row>...]}
+ *
+ * Feature keys (stable, append-only): devtools, pdf_viewer,
+ * extensions_mv2, extensions_mv3, webchannel, otr_profile, tor,
+ * containers, reader_mode, downloads, sessions, favicons,
+ * opensearch, site_permissions, autofill — plus the
+ * Engine::Capabilities primitives request_interception,
+ * declarative_blocking, script_injection, script_evaluation,
+ * cookie_filter, per_page_settings, lifecycle_discard,
+ * context_menu_info, certificate_override.  A "partial" always
+ * carries the note explaining the gap — a bare partial would be a
+ * lie of omission.
+ *
+ * The table is STATIC: it reports what each engine supports when
+ * its backend is present, never whether the backend resolved this
+ * run — presence stays a Qt-side runtime question (servo artifact
+ * probe, WPE linkage).
+ *
+ * Returns AC_ERR_INVALID on an unknown engine id or NULL out; the
+ * message is stashed for ac_last_error.  Needs no AcCore — the
+ * registry is static.
+ */
+AcStatus ac_engine_caps(const char *engine_id, AcBuffer *out);
 
 #ifdef __cplusplus
 }

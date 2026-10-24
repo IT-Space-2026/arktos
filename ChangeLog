@@ -1677,6 +1677,15 @@ Build, tests & tools:
   really generates; every kept fixture — test.html, rules.txt,
   hostile_rules.txt, myhistory.txt, suggestions.txt, the xbel and
   opensearch testfile*.xml sets — has a live consumer proven by grep.
+- Engine-capability gating now consults the shared capability
+  registry (MS05): the Development Tools menu rows read the facade's
+  per-engine `devtools` grade instead of each backend's local flag,
+  and the engine-tab print refusal is sourced from the registry's
+  document-pipeline grade. Both answer identically to before; the
+  devtools rows additionally refresh when a tab's engine is swapped
+  in place (the swap replaces the tab widget without a tab-change
+  signal, so the rows could previously stay stale until switching
+  tabs).
 0.2 (unreleased) — Qt 6 port in progress
 Build system:
     The Rust components are now the default code path: a plain `qmake` auto-detects a cargo toolchain (PATH, then ~/.cargo/bin) and builds rustcore (credential/autofill/session/bookmark/history stores, the OpenSearch engine registry, per-site decisions, url-strip, blocklist, TLS probe), rustdl (accelerated downloads) and the adblock-rust engine as part of `make`. The C++ implementations remain as the no-toolchain fallback — opt out with `qmake CONFIG+=no-rust` or per crate with `CONFIG-=rustcore` / `CONFIG-=rustdl` / `CONFIG-=adblock_rust`. With no Rust toolchain at all qmake warns loudly and builds the Qt paths so the tree always configures.

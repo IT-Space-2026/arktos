@@ -108,6 +108,7 @@ HEADERS += \
     $$PWD/downloadgraph.h \
     $$PWD/downloadmanager.h \
     $$PWD/energysaver.h \
+    $$PWD/enginecaps.h \
     $$PWD/fingerprintprotector.h \
     $$PWD/modelmenu.h \
     $$PWD/modeltoolbar.h \
@@ -206,6 +207,7 @@ SOURCES += \
     $$PWD/downloadgraph.cpp \
     $$PWD/downloadmanager.cpp \
     $$PWD/energysaver.cpp \
+    $$PWD/enginecaps.cpp \
     $$PWD/fingerprintprotector.cpp \
     $$PWD/modelmenu.cpp \
     $$PWD/modeltoolbar.cpp \

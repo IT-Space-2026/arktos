@@ -145,6 +145,7 @@ mod bidi;
 mod blocklist;
 mod bookmarkhtml;
 mod bookmarks;
+mod caps;
 mod clearplan;
 mod confusables_table;
 mod containers;

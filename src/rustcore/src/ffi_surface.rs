@@ -2588,7 +2588,7 @@ fn facade_init_and_accessors() {
     let croot = cs(&root);
 
     // housekeeping
-    assert_eq!(crate::facade::ac_api_version(), 6);
+    assert_eq!(crate::facade::ac_api_version(), 7);
     assert_ne!(crate::facade::ac_capabilities(), 0);
 
     // rejected configs fail clean with a stashed error
@@ -4107,4 +4107,89 @@ fn notes_surface() {
     assert_eq!(unsafe { crate::facade::ac_notes_is_persistent(an) }, 1);
     unsafe { crate::facade::ac_notes_close(an) };
     unsafe { crate::facade::ac_shutdown(core) };
+}
+
+// ---- MS05: the engine capability matrix (MB04 port) ----------------------
+//
+// ac_engine_caps over the C ABI: no core needed, the registry is
+// static.  The interesting seams are the engine-id resolution
+// (canonical vs the Qt backend->id() spelling), the bad-argument
+// paths, and the schema the JSON emits.
+
+fn caps_json(engine_id: *const std::os::raw::c_char) -> Option<String> {
+    let mut out = out_buf();
+    let st = unsafe { crate::facade::ac_engine_caps(engine_id, &mut out) };
+    if st != RcStatus::Ok {
+        assert!(out.data.is_null(), "a failed caps call leaves no buffer");
+        return None;
+    }
+    let v = take_buf(&mut out);
+    Some(String::from_utf8(v).unwrap())
+}
+
+#[test]
+fn facade_engine_caps() {
+    // NULL emits the whole matrix — all three engines, v1 schema.
+    let all = caps_json(ptr::null()).expect("matrix");
+    let doc: serde_json::Value = serde_json::from_str(&all).unwrap();
+    assert_eq!(doc["v"], 1);
+    let engines = doc["engines"].as_array().unwrap();
+    assert_eq!(engines.len(), 3);
+    for e in engines {
+        let features = e["features"].as_object().unwrap();
+        for req in [
+            "devtools",
+            "pdf_viewer",
+            "extensions_mv2",
+            "extensions_mv3",
+            "webchannel",
+            "otr_profile",
+            "tor",
+            "containers",
+            "reader_mode",
+            "downloads",
+            "sessions",
+            "favicons",
+            "opensearch",
+            "site_permissions",
+            "autofill",
+        ] {
+            assert!(features.contains_key(req), "{} misses {}", e["engine"], req);
+        }
+    }
+
+    // Canonical id and the backend->id() spelling resolve the same row.
+    let qe = caps_json(cs("qtwebengine").as_ptr()).unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&qe).unwrap();
+    assert_eq!(doc["engine"], "qtwebengine");
+    assert_eq!(doc["features"]["devtools"]["state"], "supported");
+    assert_eq!(
+        caps_json(cs("webengine").as_ptr()).unwrap(),
+        qe
+    );
+
+    // Honesty pins: servo devtools and webkit MV3 stay off.
+    let servo: serde_json::Value = serde_json::from_str(
+        &caps_json(cs("servo").as_ptr()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(servo["features"]["devtools"]["state"], "unsupported");
+    let wk: serde_json::Value = serde_json::from_str(
+        &caps_json(cs("webkit").as_ptr()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(wk["features"]["extensions_mv3"]["state"], "unsupported");
+
+    // Unknown id fails clean with a stashed error; NULL out too.
+    assert!(caps_json(cs("gecko").as_ptr()).is_none());
+    assert!(!unsafe { crate::facade::ac_last_error() }.is_null());
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_engine_caps(
+                cs("qtwebengine").as_ptr(),
+                ptr::null_mut(),
+            )
+        },
+        RcStatus::InvalidArgument
+    );
 }
