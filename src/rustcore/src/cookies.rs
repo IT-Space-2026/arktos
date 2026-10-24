@@ -4,8 +4,8 @@
 //!
 //! The honest two-mode split (the task's engine-owned reality check):
 //!
-//!   * **authoritative** (role 0) — the store IS the jar.  A Servo or
-//!     WPE backend applies its CRUD/matching results to traffic; the
+//!   * **authoritative** (role 0) — the store IS the jar.  A Servo
+//!     backend applies its CRUD/matching results to traffic; the
 //!     file on disk is the source of truth.
 //!   * **mirror** (role 1) — the engine owns the jar (Chromium's
 //!     QWebEngineCookieStore cannot be displaced; the C++ CookieJar's

@@ -4,8 +4,8 @@ Groundwork for the selectable-engine effort (user directive: the Qt UI
 shell stays; the web engine becomes selectable per tab).  This document
 is the ENG01 coupling audit + interface spec — the refactor it sketched
 has since landed: `src/engine/engineinterface.h` is the live boundary
-behind three backends (QtWebEngine, Servo, WPE WebKit), and the
-per-tab switcher is shipping.  The audit table below is the historical
+behind two backends (QtWebEngine, Servo), and the per-tab switcher is
+shipping.  The audit table below is the historical
 record of what had to move; the Backends table reflects today's state.
 
 Maintained by `.devin/check-engine-audit.sh` (wired into `make check`):
@@ -19,7 +19,11 @@ an engine dependency without documenting it and the gate fails.
 |---|--------|--------|
 | 0 | QtWebEngine (Chromium 140.0.7339.225, Qt 6.12.0) | default backend — full capability set |
 | 1 | Servo | landed — `src/engine/servobackend.*` over the `servo-embed` shim (multi-view post-ENG36) |
-| 2 | WPE WebKit | landed — `src/engine/webkitbackend.*`, capability-gated (WK21 measured devTools/extensions unavailable) |
+
+(WPE WebKit shipped as backend 2 through the WK01–WK21 lane and was
+removed — the spike docs and `src/engine/webkitbackend.*` are gone
+from the tree; sessions carrying `engine:"webkit"` degrade to
+WebEngine at the flat url.)
 
 ### Qt 6.12 gotcha — named-profile storage paths MUST go through `QWebEngineProfileBuilder`
 

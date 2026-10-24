@@ -14,8 +14,8 @@ Two capability surfaces exist and MUST NOT diverge:
 
 - `Engine::Backend::capabilities()` — the C++ struct the adapter itself
   reports; runtime-measured where the answer depends on the resolved
-  artifact (Servo's `se_set_load_gate` probe, WebKit's dlsym-gated
-  suspend/reply exports, the unlinked-TU all-false).
+  artifact (Servo's `se_set_load_gate` probe, the unlinked-TU
+  all-false).
 - `ac_engine_caps(engine_id)` — the rustcore facade table the thin
   shell consumes (bridge lane MB04, **pending** at time of writing —
   `../arora-mwbridge/.devin/Arora-Task-Bridge.md`).  Schema per MB04:
@@ -33,16 +33,16 @@ than the gap — chrome degrades on the table, not on try-and-fail.
 
 | Requirement | Interface surface | Honest-degradation rule |
 |---|---|---|
-| Stable id + human name | `Backend::id()` (`"webengine"`, `"servo"`, `"webkit"`), `displayName()` | id is the caps/selector key; never rename shipped ids |
-| Process/engine init | `Backend::initialize()` | false ⇒ probe drops the backend; the option never reaches chrome (Servo missing cdylib, WebKit unlinked TU) |
+| Stable id + human name | `Backend::id()` (`"webengine"`, `"servo"`), `displayName()` | id is the caps/selector key; never rename shipped ids |
+| Process/engine init | `Backend::initialize()` | false ⇒ probe drops the backend; the option never reaches chrome (Servo missing cdylib) |
 | Capability report | `Backend::capabilities()` | measured, not aspirational — see §9 |
 | Pre-flight refusal reason | `Backend::pageUnavailableReason()` | non-empty ⇒ engine-switcher entries render disabled with this text; `createPage` may still hard-refuse (returns nullptr ⇒ `TabWidget::addEngineTab` shows the status message, never a doomed tab) |
-| Selector caveat | `Backend::engineNote()` | one honest line (Servo: experimental/debug-artifact warning; WebKit: early-backend note) |
+| Selector caveat | `Backend::engineNote()` | one honest line (Servo: experimental/debug-artifact warning) |
 | Factory triple | `createProfile(ProfileOptions)` / `createPage(Profile)` / `createView(Page)` | the ONLY construction path `EngineTab` uses; a backend that cannot isolate profiles still returns an honest Profile object carrying persona identity (Servo's shared context) |
 
 Registration is self-service: a static-init
-`EngineRegistry::addProbe()` from the backend's own TU (servobackend.cpp
-:1798, webkitbackend.cpp :5201) so subproject binaries linking
+`EngineRegistry::addProbe()` from the backend's own TU
+(servobackend.cpp) so subproject binaries linking
 engineregistry.o never need the engine TU.  The registry lists, never
 owns — backends parent to qApp.
 
@@ -52,7 +52,7 @@ owns — backends parent to qApp.
 |---|---|
 | Load/stop/reload/current url | `Page::load/stop/reload/url()` |
 | History walk | `canGoBack/canGoForward/back/forward` |
-| Session-history stack | `historyCount`, `currentHistoryIndex`, `historyItems`, `backItems(max)`, `forwardItems(max)`, `goToHistoryEntry` — linear stack, oldest-first, index-addressed (WebKit maps its BackForwardList; Servo keeps an adapter-side recordNavigation stack) |
+| Session-history stack | `historyCount`, `currentHistoryIndex`, `historyItems`, `backItems(max)`, `forwardItems(max)`, `goToHistoryEntry` — linear stack, oldest-first, index-addressed (Servo keeps an adapter-side recordNavigation stack) |
 | Zoom | `setZoomFactor/zoomFactor` |
 | Scroll snapshot | `scrollPosition()` (undo-close restore; null point = nothing to restore) |
 | View binding | `Page::view()` — reverse lookup to the painted widget; nullptr while headless/detached |
@@ -75,7 +75,7 @@ honest shape for a missing surface:
 `certificateError(CertificateErrorInfo, bool*)`,
 `contextMenuRequested(ContextMenuInfo)`.
 
-Failure pairing rule (WebKit WK09 is the model): a failed load claims
+Failure pairing rule: a failed load claims
 its error before `loadFinished(false)` so the engine's own error page
 can never emit a fake-success pair behind it; progress notifies are
 gated on the live load so the cancel-time reset never lands after the
@@ -89,13 +89,13 @@ settings, the request-policy hook, the download handoff.  Containers
 
 | Requirement | Interface surface | Per-engine reality |
 |---|---|---|
-| Identity | `storageName()`, `isOffTheRecord()` | Servo: name carries persona only — engine state is process-global, `isOffTheRecord` honest-false (swap path refuses private tabs).  WebKit: ephemeral session for OTR, named data/cache dirs per WK11 |
+| Identity | `storageName()`, `isOffTheRecord()` | Servo: name carries persona only — engine state is process-global, `isOffTheRecord` honest-false (swap path refuses private tabs) |
 | Persona binding | `Profile::profileId()` (RC09 — `arktosProfileId` tag → storageName parse → ambient) | every profile-bound facade store keys on this; a foreign name must resolve to ambient, never crash |
 | User agent | `setUserAgent` | |
-| Request policy hook | `setRequestPolicy/requestPolicy` | only live when `requestInterception`/`declarativeBlocking` is true — see §5 |
-| Cookie gate | `setCookieFilter(CookieAttempt)` | per-attempt functor; must be thread-safe (WebEngine invokes on the IO thread).  WebKit: no per-attempt API — policy fixed at session materialization, bit stays false |
+| Request policy hook | `setRequestPolicy/requestPolicy` | only live when `requestInterception` is true — see §5 |
+| Cookie gate | `setCookieFilter(CookieAttempt)` | per-attempt functor; must be thread-safe (WebEngine invokes on the IO thread).  An engine without a per-attempt API fixes policy at session materialization — bit stays false |
 | Script collection | `insertScript/removeScript/scripts` | `scriptInjection` bit says whether they reach pages (Servo records but never injects — honest) |
-| Storage wipes | `clear(StorageAreas)` | map onto what the engine persists; unsupported areas are explicit no-ops (WebKit: VisitedLinksArea) |
+| Storage wipes | `clear(StorageAreas)` | map onto what the engine persists; unsupported areas are explicit no-ops |
 | Attribute bag | `setProfileAttribute(name, value)` | free-form, namespaced per backend; unknown keys ignored |
 
 Profile creation ownership: `createProfile` may return shared objects
@@ -113,23 +113,16 @@ honest lanes:
   `RequestPolicy::decide()`.  `RequestDecision` = Allow | Block |
   Redirect (+ `referer` override, + `stubBody/stubMime` for engines
   that serve responses but cannot re-issue — Servo).
-- **Declarative lane** (`caps.declarativeBlocking`, WebKit WK18):
-  `RequestPolicy::contentBlockerJson()` renders the rules to Safari
-  content-blocker JSON compiled into a WebKitUserContentFilterStore
-  filter.  Narrower by nature: `$redirect` degrades to block,
-  inexpressible rules are dropped-and-counted in `meta`, never faked.
-
-Degradation rules a backend MUST honor: Redirect on an engine that can
-only serve (no re-issue) takes the prefilled `stubBody` or degrades to
-Allow; WebKit's NEW_WINDOW redirect degrades to refusal; Servo's gate
-answers deny with an empty 403 reply.
+Degradation rules a backend MUST honor: Redirect on an engine that
+can only serve (no re-issue) takes the prefilled `stubBody` or degrades
+to Allow; Servo's gate answers deny with an empty 403 reply.
 
 ### 6. Download hooks (Profile::downloadRequested + DownloadRequest)
 
 The handoff: backend emits `Profile::downloadRequested(
 Engine::DownloadRequest*)` at the one point the engine knows the
-suggested name + response MIME (WebKit: `decide-destination`; refusing
-there must *cancel*, not return false — a default-dir write is worse).
+suggested name + response MIME (refusing there must *cancel*, not
+return false — a default-dir write is worse).
 `TabWidget::addEngineTab` binds `DownloadManager` only when
 `caps.downloads` (tabwidget.cpp :1290).
 
@@ -140,7 +133,7 @@ split `setDownloadDirectory/setDownloadFileName` (+ getters — the name
 dialog resolves before accept), `page()` (nullable; WebEngine keeps a
 guarded snapshot — PRIV10), signals `stateChanged/receivedBytesChanged/
 totalBytesChanged`.  Honest no-ops are required where the engine lacks
-the verb (WebKit pause/resume).  `Page::download(url)` is the
+the verb.  `Page::download(url)` is the
 chrome-initiated leg.
 
 ### 7. Permission surfacing
@@ -150,10 +143,10 @@ No `Engine::PermissionRequest` type exists yet — the surface today is:
 - WebEngine: `QWebEnginePage::permissionRequested` →
   `WebPermissionManager::handleRequest(QWebEnginePermission)` (webpage.cpp :431).
 - Portable path: `WebPermissionManager::handleRequest(parent, origin,
-  type, resolve)` — the engine-neutral overload WebKit WK19 calls after
-  mapping `WebKitPermissionRequest` subtypes (geolocation/notifications/
-  pointer-lock prompt; media/device-info deny-list; EME/data-access/XR
-  deny outright).
+  type, resolve)` — the engine-neutral overload a foreign backend
+  calls after mapping its permission-request subtypes
+  (geolocation/notifications/pointer-lock prompt;
+  media/device-info deny-list; EME/data-access/XR deny outright).
 - Servo: no permission delegate exists in the shim — nothing surfaces,
   which is the honest "none".
 
@@ -172,10 +165,8 @@ compiled `$redirect` stub table), `arktos-cert-error:` /
 interstitials).  Contract: a backend that wants these pages registers
 its engine's scheme-serving mechanism in `initialize()`/context setup
 and reuses the SAME serving halves backend-0's handlers expose — never
-a parallel implementation.  WebKit WK17 does this via
-`webkit_web_context_register_uri_scheme` on the shared context with the
-same security flags.  Servo: no scheme-serving hook → interstitial/file
-flows simply never occur there (caps stay honest).
+a parallel implementation.  Servo: no scheme-serving hook →
+interstitial/file flows simply never occur there (caps stay honest).
 
 External schemes (mailto:, intent:, …): the SEC02 consent prompt is the
 contract — refuse the navigation, queue the dialog, hand consent to the
@@ -195,17 +186,13 @@ backend reports false.
 - Servo: false — servo's devtools crate speaks the Firefox remote
   protocol on a TCP listener; the BiDi panel's CDP client cannot read
   it, so no fake channel is wired (ENG35).
-- WebKit: false — WK21 measured no WebKitWebInspector API export and no
-  inspector gresource in the resolved build.
 
 ### 10. Extension runtime surface
 
 `caps.extensions` — WebExtension-style add-ons.  WebEngine-only today:
 the whole `src/extensions/` chain (manager, action bar, background host,
 chrome.* shim, event hub, page bridge, request watcher) is engine-bound
-per ENGINE.md and rides this bit.  WebKit WK21 measured
-`webkit_web_extension_new` as a compiled-out `return nullptr` stub ⇒
-false.  Servo: none ⇒ false.  A backend reporting false yields zero
+per ENGINE.md and rides this bit.  Servo: none ⇒ false.  A backend reporting false yields zero
 popup-bearing extensions and every extension chrome surface stays
 hidden — honest "none", not a degraded install path.
 
@@ -216,9 +203,7 @@ The user-script half is NOT extensions — it rides
 
 `Page::action(StandardAction)` returns the engine-owned QAction chrome
 menus/toolbars mirror — nullptr = disabled entry, always.  Coverage is
-per-backend: WebEngine maps the full set; Servo only Back + Reload;
-WebKit currently none (its context menu presents WebKit's own item
-model as a Qt popup via the `contextMenuRequested` marshal — WK19).
+per-backend: WebEngine maps the full set; Servo only Back + Reload.
 `caps.contextMenuInfo` says whether a full `ContextMenuInfo` hit-test
 payload can be produced — Servo emits no `contextMenuRequested` at all.
 
@@ -231,28 +216,25 @@ payload can be produced — Servo emits no `contextMenuRequested` at all.
 - `runJavaScriptLifted(source, cb, worldId)` — trusted chrome-script
   injection past the JSCTL page-script gate; `worldId` selects an
   isolated world (`Engine::ArktosChannelWorld` = SEC24's private world).
-  Servo: single world, id ignored.  WebKit: named worlds real, but an
-  unanchored name gets a transient context — global state does not
-  survive between evals.
+  Servo: single world, id ignored.
 - `toHtml(cb)` — serialized source for View Source.  Servo: empty
   callback.
 - `insertScript/removeScript/scripts` per-page and per-profile —
   `InjectionPoint` maps DocumentCreation→start / DocumentReady+
-  Deferred→end on two-point engines (WebKit collapses DocumentReady and
-  Deferred honestly); `runsOnSubFrames`→all-frames; `worldId`→named
-  world where supported.
+  Deferred→end on engines with two injection points;
+  `runsOnSubFrames`→all-frames; `worldId`→named world where supported.
 
 ### 13. Lifecycle, memory, misc
 
 | Surface | Contract |
 |---|---|
-| `setLifecycleState/lifecycleState` (Active/Frozen/Discarded) | Frozen = "loaded but not compositing"; Discarded frees resources.  `lifecycleDiscard` bit says Discard actually frees.  WebKit: suspend/resume are dlsym-optional exports — absent ⇒ Frozen degrades to unmap+focus_out with JS timers running (honest); Discarded = terminate WebProcess + reload on wake (bf list survives).  Servo: state recorded, engine-side no-op |
+| `setLifecycleState/lifecycleState` (Active/Frozen/Discarded) | Frozen = "loaded but not compositing"; Discarded frees resources.  `lifecycleDiscard` bit says Discard actually frees.  Servo: state recorded, engine-side no-op |
 | `isLoading/recentlyAudible/isOffTheRecord` | SLEEP01's suspend gate + privacy gates; no-concept answers false |
-| `renderProcessId` | per-tab process identity for the memory widget; -1 = '—' (WebKit WPE 2.54 exposes no WebProcess pid, Servo is in-process) |
+| `renderProcessId` | per-tab process identity for the memory widget; -1 = '—' (Servo is in-process) |
 | `residentMemoryKb/memoryIsShared` | ENG26: in-process engines report the HOST figure and set memoryIsShared so the UI labels it instead of faking per-tab |
-| `setPageAttribute(name, on)` | free-form per-page attribute bag; `perPageSettings` bit says the engine has per-page settings objects at all.  Unknown keys are ignored — WebKit's impl is deliberately inert while its WebKitSettings live per webview |
-| `findText/FindResult` | async everywhere; WebKit synthesizes `activeMatch` locally (count authoritative, ordinal best-effort); Servo emits an empty result |
-| `certificateError` + `CertificateErrorInfo` | SEC06: signal + AcceptOnce = session-scoped, never persisted.  `certificateOverride` bit = the engine accepts the decision.  WebKit WK19: load-failed-with-tls-errors → nonce interstitial → `allow_tls_certificate_for_host`.  Servo: no delegate — the bit stays false and the interstitial flow never runs |
+| `setPageAttribute(name, on)` | free-form per-page attribute bag; `perPageSettings` bit says the engine has per-page settings objects at all.  Unknown keys are ignored |
+| `findText/FindResult` | async everywhere; Servo emits an empty result |
+| `certificateError` + `CertificateErrorInfo` | SEC06: signal + AcceptOnce = session-scoped, never persisted.  `certificateOverride` bit = the engine accepts the decision.  Servo: no delegate — the bit stays false and the interstitial flow never runs |
 
 ## The caps path (backend → facade → chrome)
 
@@ -263,7 +245,6 @@ false):
 | Bit | Gates (adapter surface it certifies) | Chrome consumers today |
 |---|---|---|
 | `requestInterception` | `Profile::setRequestPolicy` live decide() consult | servo-smoke gate install (main.cpp :5495); adblock installOnProfile |
-| `declarativeBlocking` | `RequestPolicy::contentBlockerJson` → compiled filter store | (WK18 lane; subresource coverage honest-shape flag) |
 | `scriptInjection` | `Profile/Page::insertScript` reaches pages | — (install paths assume it; consumers degrade on the bit) |
 | `scriptEvaluation` | `runJavaScript` result channel is real | engine-smoke asserts the 1+1 round-trip only when set (main.cpp :4195) |
 | `cookieFilter` | `Profile::setCookieFilter` per-attempt honored | cookie-policy install paths |
@@ -286,17 +267,17 @@ the C++ bit that certifies it today:
 | `devtools` | DevToolsWindow inspect / BiDi channel | `devTools` |
 | `pdf_viewer` | built-in viewer (Chromium PDFium) OR shell PdfView stack-over (EngineTab::showPdfDocument — shell-owned, every backend gets it) | partial-on-non-Chromium by design |
 | `extensions_mv2` / `extensions_mv3` | src/extensions/* chain | `extensions` (MV3 partial even on Chromium — Bitwarden-class is `partial` at best per MB04 spec) |
-| `webchannel` | QWebChannel transport the arktos-channel.js/autofill-capture/reader assets need | WebKit WK16: message-handler transport exists, QWebChannel wire shim does NOT — page assets inject inertly ⇒ partial |
-| `otr_profile` | `ProfileOptions::offTheRecord` real isolation | Servo false (shared context); WebKit ephemeral session true |
+| `webchannel` | QWebChannel transport the arktos-channel.js/autofill-capture/reader assets need | Servo: no transport — page assets inject inertly ⇒ unsupported |
+| `otr_profile` | `ProfileOptions::offTheRecord` real isolation | Servo false (shared context) |
 | `tor` | SOCKS5 + tor profile path | Chromium only (ENG05 — swap path refuses) |
 | `containers` | per-ProfileOptions::dataPath isolation | Servo false |
 | `reader_mode` | reader driver via runJavaScriptLifted + channel world | needs scriptEvaluation+webchannel legs |
 | `downloads` | DownloadRequest handoff | `downloads` |
 | `sessions` | per-tab history serialize/restore (AcSession facade) | engine-serialized blobs are WebEngine-bound — partial elsewhere |
-| `favicons` | `iconChanged` emission | WebKit opt-in favicon db; Servo none |
+| `favicons` | `iconChanged` emission | Servo none |
 | `opensearch` | provider install/search URLs | engine-neutral (app-side) ⇒ supported |
-| `site_permissions` | §7 surfacing path | WebEngine full / WebKit partial / Servo none |
-| `autofill` | autofill.js DOM fill + capture bridge | partial on WebKit (DOM fill runs, capture path is WebEngine-bridge-gated); none on Servo |
+| `site_permissions` | §7 surfacing path | WebEngine full / Servo none |
+| `autofill` | autofill.js DOM fill + capture bridge | none on Servo |
 
 Until MB04 lands, chrome keeps reading `Backend::capabilities()`
 directly — MS05/MS06 are gated on `needs:task:MB04` for exactly this
@@ -308,20 +289,20 @@ notes above), never a hand-copied matrix that can drift.
 
 `Engine::Capabilities` as each `capabilities()` reports it today:
 
-| Bit | webengine (Chromium 140) | servo | webkit (WPE 2.54) |
+| Bit | webengine (Chromium 140) | servo |
 |---|---|---|---|
-| requestInterception | ✔ | ◐ only if artifact exports `se_set_load_gate` | ✔ navigation-level veto (NEW_WINDOW redirect→refuse; response lane observe-only) |
-| declarativeBlocking | ✘ | ✘ | ✔ WK18 filter-store; $redirect→block, inexpressible dropped+counted |
-| scriptInjection | ✔ | ✘ (recorded, never injected) | ✔ 2 injection points, named worlds |
-| scriptEvaluation | ✔ | ✘ one-way, cb gets invalid QVariant | ✔ `_with_reply` dlsym-gated (one-way without it) |
-| cookieFilter | ✔ | ✘ | ✘ 3-state session policy only (WK12); per-host exceptions ungated |
-| perPageSettings | ✔ | ✘ | ✔ (WebKitSettings per webview; free-form key bag inert) |
-| lifecycleDiscard | ✔ | ✘ (state stored only) | ✔ Frozen=suspend iff export present else unmap+focus_out; Discard=kill+reload |
-| contextMenuInfo | ✔ | ✘ | ✔ WK19 hit-test marshal + WebKit-item popup |
-| certificateOverride | ✔ | ✘ | ✔ WK19 session-scoped `allow_tls_certificate_for_host` |
-| devTools | ✔ | ✘ (Firefox-remote-proto only) | ✘ WK21: no inspector API/gresource |
-| extensions | ✔ | ✘ | ✘ WK21: extension API is a compiled-out stub |
-| downloads | ✔ | ✘ (no delegate) | ✔ decide-destination handoff; pause/resume no-ops |
+| requestInterception | ✔ | ◐ only if artifact exports `se_set_load_gate` |
+
+| scriptInjection | ✔ | ✘ (recorded, never injected) |
+| scriptEvaluation | ✔ | ✘ one-way, cb gets invalid QVariant |
+| cookieFilter | ✔ | ✘ |
+| perPageSettings | ✔ | ✘ |
+| lifecycleDiscard | ✔ | ✘ (state stored only) |
+| contextMenuInfo | ✔ | ✘ |
+| certificateOverride | ✔ | ✘ |
+| devTools | ✔ | ✘ (Firefox-remote-proto only) |
+| extensions | ✔ | ✘ |
+| downloads | ✔ | ✘ (no delegate) |
 
 Contract-area notes per engine:
 
@@ -335,15 +316,6 @@ Contract-area notes per engine:
   `EngineTab::restartEngine()`, `pageUnavailableReason` on dead engine,
   `engineNote` (experimental/debug-artifact warning), N concurrent
   views post-ENG36.  Standard actions: Back+Reload only.
-- **webkit** — compile-but-inert when unlinked (initialize() false ⇒
-  never registers; caps all-false).  Linked: the WK08-WK19 stack above.
-  Gaps beyond the bits: `renderProcessId`=-1, `action()` all-nullptr,
-  `findTextFinished` count-authoritative/ordinal-best-effort,
-  response-policy observe-only, unanchored world eval transient,
-  QWebChannel-dependent assets (arktos-channel.js, autofill capture,
-  reader) inert until a transport shim lands.  Cookie policy edge:
-  KeepUntilTimeLimit's 90-day cap inexpressible (persists like
-  KeepUntilExpire); VisitedLinksArea wipe is a no-op.
 
 ## Rules for a new backend (checklist)
 

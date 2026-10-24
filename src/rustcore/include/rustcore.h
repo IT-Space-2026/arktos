@@ -1003,7 +1003,7 @@ RcStatus rc_sitedec_reset(void);
 /* ------------------------------------------------------------------ */
 /* RC15: per-profile cookie database                                   */
 /*                                                                      */
-/* The Servo/WPE jar's persistent home — and Chromium's durable       */
+/* The Servo jar's persistent home — and Chromium's durable          */
 /* mirror (Chromium's QWebEngineCookieStore stays engine-owned; a     */
 /* mirror-role db is the honest "the engine owns the jar" shadow).    */
 /* Storage is cookies.db under the profile dir (or the anchored data  */
@@ -1026,7 +1026,7 @@ RcStatus rc_cookies_open(const char *path_or_null);
 int rc_cookies_is_open(void);
 
 /* The declared mode: 0 authoritative (this file IS the jar —        */
-/* Servo/WPE), 1 mirror (an engine owns the jar — Chromium's         */
+/* Servo), 1 mirror (an engine owns the jar — Chromium's             */
 /* durable shadow), -1 on error.  Read from the db's meta table.     */
 int64_t rc_cookies_role(void);
 

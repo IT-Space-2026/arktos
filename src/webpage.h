@@ -139,8 +139,8 @@ public:
 
     // SEC02: the scheme allowlist behind confirmAndOpenExternalUrl —
     // schemes the engine/app itself serves; anything else is a
-    // desktop hand-off needing consent.  WK17: shared with the WPE
-    // backend's decide-policy path so both engines run the same list.
+    // desktop hand-off needing consent.  WK17: shared with foreign
+    // backends' decide-policy paths so every engine runs the same list.
     static bool isBrowserHandledScheme(const QString &scheme);
 
     // SEC02/WK17: the consent prompt behind the external-scheme
@@ -160,8 +160,8 @@ public:
     // verified.  Session-scoped like the whitelist it reads; nothing
     // is persisted.
     static bool certificateErrorOverridden(const QString &host);
-    // WK19: a foreign backend (WPE WebKit) records its session
-    // cert-error overrides here — WebKit's network session holds the
+    // WK19: a foreign backend records its session
+    // cert-error overrides here — the engine's network session holds the
     // certificate exception itself, this flag only feeds the padlock
     // red verdict so a foreign tab can't wear green over a chain the
     // user proceeded past.

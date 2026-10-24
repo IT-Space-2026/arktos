@@ -4071,10 +4071,10 @@ static int engineSmoke()
         Engine::Profile *profile =
             backend->createProfile(options, &host);
         report(trace.id, QStringLiteral("profile"), profile != nullptr);
-        // WK07: a registered backend that declares it cannot host a
-        // page right now (WebKit before WK08) skips the page/view
-        // legs — the declared reason is the honest report, not a
-        // FAIL on a surface the backend never claimed.
+        // A registered backend that declares it cannot host a page
+        // right now skips the page/view legs — the declared reason is
+        // the honest report, not a FAIL on a surface the backend
+        // never claimed.
         const QString unavailable = backend->pageUnavailableReason();
         Engine::Page *page = nullptr;
         QWidget *view = nullptr;
@@ -6484,7 +6484,7 @@ int main(int argc, char **argv)
     // ENG12: the servo lifecycle guard — swap/reload/refusal matrix
     // over the real backend (skips when the artifact is absent).
     // quick_exit, not return: even past shutdownEngine() this lane's
-    // static teardown still SIGSEGVs (rust-core facade + linked WPE
+    // static teardown still SIGSEGVs (rust-core facade + servo shim
     // teardown ordering) — the verdict is already printed.
     if (args.contains(QLatin1String("--servo-smoke")))
         std::quick_exit(servoLifecycleSmoke());
@@ -15413,12 +15413,19 @@ int main(int argc, char **argv)
                 "function(m,s,r){"
                 "if(m&&m.__arktosHealthProbe)r({pong:true});});\n"));
         putFixture(QStringLiteral("arktos-health-limited"),
-            QStringLiteral("\"notifications\",\"storage\""),
+            // 'downloads' stays in unsupportedPermissions and is not
+            // runtimeServes'd — a live worker plus a genuinely
+            // unserved nonfatal API must still grade Limited.
+            // ('notifications' used to fill this role; the hosted
+            // runtime serves it now.)
+            QStringLiteral("\"downloads\",\"storage\""),
             QByteArray(
                 "chrome.runtime.onInstalled.addListener("
                 "function(){});\n"));
         putFixture(QStringLiteral("arktos-health-dead"),
-            QStringLiteral("\"notifications\",\"webNavigation\""),
+            // 'downloads' keeps the declared-missing-API half real —
+            // notifications/webNavigation are runtimeServes'd now.
+            QStringLiteral("\"downloads\",\"webNavigation\""),
             QByteArray(
                 "throw new Error('eval crash — same shape as "
                 "Bitwarden on the missing chrome.* namespaces');\n"));
@@ -15533,10 +15540,19 @@ int main(int argc, char **argv)
                     }
                 }
 
-                check(bw.health == EH::NotSupported,
+                // The bundled zip gets a hosted background like every
+                // enabled extension: when the shimmed host reaches
+                // Ready, the ER19 verdict override reports the truth —
+                // the extension runs partially (Limited).  When the
+                // host fails to boot, the engine probe's dead worker
+                // stands (NotSupported).  Both are terminal verdicts
+                // with the same missing-API list; either is honest —
+                // Healthy/Unknown is the only wrong answer.
+                check(bw.health == EH::Limited
+                          || bw.health == EH::NotSupported,
                       QStringLiteral(
-                          "bundled bitwarden reports Not supported "
-                          "(got %1)")
+                          "bundled bitwarden reports a terminal "
+                          "verdict (got %1)")
                           .arg(static_cast<int>(bw.health)));
                 check(!bw.healthReason.isEmpty(),
                       QStringLiteral("bitwarden reason populated"));

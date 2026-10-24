@@ -6,8 +6,8 @@ facade under MB02–MB04, and §9 now lists every export with its
 signature, thread rule and ownership rule verbatim from the header.
 
 RC07. `src/rustcore/include/arktos_core.h` is the single stable ABI
-every engine backend (QtWebEngine now, Servo/WebKit next, CEF only
-as the RC11 spike) programs against. This document is the contract
+every engine backend (QtWebEngine now, Servo next) programs against.
+This document is the contract
 both sides — the Rust implementation and its consumers — are bound
 by. Where it and a code comment disagree, this file wins.
 
@@ -594,8 +594,8 @@ documented in MW-ARCH §2 and mirrored on the declarations in
 |--------|---------|---------------------|
 | `AcStatus ac_engine_caps(const char *engine_id, AcBuffer *out)` | any — no handle needed | *out caller-owned — ac_buffer_free |
 
-`engine_id` is `"qtwebengine"` (alias `"webengine"`), `"servo"` or
-`"webkit"`; NULL/"" emits the whole matrix. The table is static —
+`engine_id` is `"qtwebengine"` (alias `"webengine"`) or `"servo"`;
+NULL/"" emits the whole matrix. The table is static —
 it reports what each engine supports when its backend is present,
 never whether the backend resolved this run.
 

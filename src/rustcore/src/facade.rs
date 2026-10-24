@@ -652,11 +652,11 @@ pub extern "C" fn ac_events_topics() -> *mut c_char {
 /// what each engine supports when its backend is present, graded
 /// supported|partial|unsupported with a note wherever the grade
 /// needs the caveat.  `engine_id` selects one row —
-/// "qtwebengine" | "servo" | "webkit", with the Qt backend->id()
+/// "qtwebengine" | "servo", with the Qt backend->id()
 /// spelling "webengine" accepted as the qtwebengine alias;
 /// NULL/"" emits the whole matrix.  The table is static by design:
 /// backend PRESENCE is a runtime question this call does not
-/// answer (the servo artifact probe, WPE linkage).  `*out`
+/// answer (the servo artifact probe).  `*out`
 /// receives the UTF-8 document — caller frees with
 /// ac_buffer_free.  AC_ERR_INVALID on an unknown id or NULL out;
 /// the message is stashed for ac_last_error.

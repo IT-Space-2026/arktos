@@ -686,8 +686,8 @@ static bool navPolicyBool(const QJsonObject &request, bool *answered)
 // friends — can only be serviced by handing the url to the desktop,
 // which launches an external program.  That is a shell-out and needs
 // explicit consent; a web page must never trigger it silently (SEC02).
-// WK17: a WebPage static so the WPE backend's decide-policy path
-// runs the identical allowlist instead of a drifting copy.
+// WK17: a WebPage static so a foreign backend's decide-policy
+// path runs the identical allowlist instead of a drifting copy.
 bool WebPage::isBrowserHandledScheme(const QString &scheme)
 {
 #if defined(ARKTOS_RUSTCORE)
@@ -707,8 +707,8 @@ bool WebPage::isBrowserHandledScheme(const QString &scheme)
         QStringLiteral("abp"),
         // The nonce-backed interstitial carriers are browser-served
         // too — backend-0 never reaches this check for them (their
-        // action resolution returns earlier) but the WPE decide-policy
-        // path runs the same list first.
+        // action resolution returns earlier) but a foreign decide-
+        // policy path runs the same list first.
         QStringLiteral("arktos-cert-error"),
         QStringLiteral("arktos-file"),
         QStringLiteral("arktos-http-warning"),
@@ -2052,7 +2052,7 @@ static QString certErrorKey(const QWebEngineCertificateError &error)
 // the key cannot be matched post-hoc (Qt never sees the committed
 // chain), so host granularity it is.
 // WK19: hosts a foreign backend granted a session cert-error override
-// — keyed by bare host (the WebKit network session holds the actual
+// — keyed by bare host (the engine network session holds the actual
 // certificate exception; this set exists only so certificateError-
 // Overridden's red verdict reaches non-WebEngine tabs).
 static QSet<QString> &foreignCertOverrideHosts()
@@ -2157,8 +2157,8 @@ QString WebPage::certificateErrorHtml(const QWebEngineCertificateError &error)
             m_certErrorNonce);
 }
 
-// WK19: shared with the WPE backend — the markup is identical, the
-// carrier is the engine-neutral CertificateErrorInfo.  typeName is
+// WK19: shared with foreign backends — the markup is identical,
+// the carrier is the engine-neutral CertificateErrorInfo.  typeName is
 // the backend's symbolic error name (QWebEngineCertificateError::Type
 // key / GTlsCertificateFlags decode), nonce the published page's id.
 QString WebPage::certificateErrorHtml(

@@ -52,90 +52,6 @@ equals(ARKTOS_SERVO_ENABLED, true) {
     SOURCES += $$PWD/servobackend.cpp
 }
 
-# WK06: the WPE WebKit backend gate mirrors the servo stanza — the
-# auto-enable lives in .qmake.conf (pkg-config resolves wpe-webkit-2.0
-# + wpe-platform-2.0 once .devin/webkit-env.sh is sourced, or a system
-# WPE >= 2.54 install supplies them); explicit opt-outs always win:
-# `qmake CONFIG-=webkit`, `nowebkit=1` or `webkit=0`.
-equals(webkit, 0)|!isEmpty(nowebkit)|contains(CONFIG, nowebkit): \
-    CONFIG -= webkit
-
-isEmpty(ARKTOS_WEBKIT_PKGCONFIG) {
-    # .qmake.conf normally probes first; repeat it so the .pri still
-    # resolves correctly when parsed without the project root.
-    system(pkg-config --exists wpe-webkit-2.0 wpe-platform-2.0 wpe-platform-headless-2.0): \
-        ARKTOS_WEBKIT_PKGCONFIG = true
-}
-ARKTOS_WEBKIT_ENABLED = false
-contains(CONFIG, webkit)|!isEmpty(webkit):!equals(webkit, 0):isEmpty(nowebkit): \
-    ARKTOS_WEBKIT_ENABLED = true
-
-equals(ARKTOS_WEBKIT_ENABLED, true) {
-    # Compile-but-inert like servobackend: the TU is in the build
-    # whenever the backend is enabled — a `qmake webkit=1` build on a
-    # host whose pkg-config cannot resolve the WPE packages still
-    # compiles webkitbackend.cpp, and the backend simply reports the
-    # engine unavailable at runtime (initialize() false,
-    # pageUnavailableReason() set).  ARKTOS_WEBKIT_LINKED marks the
-    # builds where the libraries actually resolve and are linked.
-    DEFINES += ARKTOS_WEBKIT
-    HEADERS += $$PWD/webkitbackend.h
-    SOURCES += $$PWD/webkitbackend.cpp
-    equals(ARKTOS_WEBKIT_PKGCONFIG, true) {
-        DEFINES += ARKTOS_WEBKIT_LINKED
-        CONFIG += link_pkgconfig
-        PKGCONFIG += wpe-webkit-2.0 wpe-platform-2.0 wpe-platform-headless-2.0
-        # WK20: the dmabuf -> EGLImage -> GL texture import compiles in
-        # only when the system EGL/GLESv2 dev files resolve — without
-        # them the backend stays raster-only (ARKTOS_WEBKIT_GL unset).
-        system(pkg-config --exists egl glesv2) {
-            DEFINES += ARKTOS_WEBKIT_GL
-            PKGCONFIG += egl glesv2
-        }
-        # WK14: dlsym() for the optional webkit_web_view_suspend/
-        # resume exports — folded into libc on glibc >= 2.34, a stub
-        # archive elsewhere, harmless either way.
-        unix:!mac: LIBS += -ldl
-        # The ~/wpe sideloaded-glibc recipe (.devin/webkit-env.sh +
-        # ~/wpe/ACQUIRED.md): every binary carrying the backend TU —
-        # app, tools, autotests — links libWPEWebKit, so every binary
-        # needs the sid ld.so interp + transitive DT_RPATH + the
-        # g_sort_array compat shim + explicit sid libc/libm for the
-        # GLIBC_2.4x versioned refs.  Applied only when the env
-        # contract is present — a system WPE on a new-enough host
-        # glibc links plain.  `webkit=0` builds stay clean of all of
-        # it.
-        unix:!mac {
-            ARKTOS_WPE_PREFIX_Q = $$(ARKTOS_WPE_PREFIX)
-            ARKTOS_WPE_LIBDIR_Q = $$(ARKTOS_WPE_LIBDIR)
-            ARKTOS_WPE_GLIBC_Q = $$(ARKTOS_WPE_GLIBC)
-            ARKTOS_WPE_DYNAMIC_LINKER_Q = $$(ARKTOS_WPE_DYNAMIC_LINKER)
-            ARKTOS_WPE_COMPAT_Q = $$(ARKTOS_WPE_COMPAT)
-            # WK08: bake the prefix into the binary — the sandbox
-            # whitelist (add_path_to_sandbox) needs it at runtime even
-            # when webkit-env.sh was never sourced (autotests, plain
-            # app launch); the env var still wins when set.
-            !isEmpty(ARKTOS_WPE_PREFIX_Q): \
-                DEFINES += ARKTOS_WPE_PREFIX_DIR=\\\"$$ARKTOS_WPE_PREFIX_Q\\\"
-            !isEmpty(ARKTOS_WPE_DYNAMIC_LINKER_Q): \
-            !isEmpty(ARKTOS_WPE_LIBDIR_Q): \
-            !isEmpty(ARKTOS_WPE_GLIBC_Q) {
-                LIBS += -L$$ARKTOS_WPE_LIBDIR_Q
-                !isEmpty(ARKTOS_WPE_COMPAT_Q): \
-                    LIBS += -Wl,--no-as-needed $$ARKTOS_WPE_COMPAT_Q \
-                            -Wl,--as-needed
-                LIBS += $$ARKTOS_WPE_GLIBC_Q/libc.so.6 \
-                        $$ARKTOS_WPE_GLIBC_Q/libm.so.6
-                QMAKE_LFLAGS += \
-                    -Wl,--dynamic-linker,$$ARKTOS_WPE_DYNAMIC_LINKER_Q \
-                    -Wl,--disable-new-dtags
-                QMAKE_RPATHDIR += $$ARKTOS_WPE_LIBDIR_Q \
-                                  $$ARKTOS_WPE_GLIBC_Q
-            }
-        }
-    }
-}
-
 # ENG10: announce the resolved backend set once per qmake run (the .pri
 # is included from many sub-projects which do not share variable scope,
 # so gate on the consuming .pro being src.pro itself) — a dropped engine
@@ -144,8 +60,6 @@ equals(_PRO_FILE_, $$clean_path($$PWD/../src.pro)) {
     ARKTOS_BACKENDS = webengine
     equals(ARKTOS_SERVO_ENABLED, true): \
         ARKTOS_BACKENDS += servo
-    equals(ARKTOS_WEBKIT_ENABLED, true): \
-        ARKTOS_BACKENDS += webkit
     message(Arktos engine backends: $$join(ARKTOS_BACKENDS, " + "))
     equals(ARKTOS_SERVO_ENABLED, true) {
         isEmpty(ARKTOS_SERVO_ARTIFACTS): \
@@ -176,23 +90,5 @@ equals(_PRO_FILE_, $$clean_path($$PWD/../src.pro)) {
         isEmpty(ARKTOS_SERVO_ARTIFACTS): \
             message(no servo-embed artifact under \
                     spikes/servo/servo-embed/target/)
-    }
-    equals(ARKTOS_WEBKIT_ENABLED, true) {
-        !equals(ARKTOS_WEBKIT_PKGCONFIG, true): \
-            warning(ARKTOS_WEBKIT is compiled in but pkg-config cannot \
-                    resolve wpe-webkit-2.0 + wpe-platform-2.0 — the \
-                    backend compiles inert and reports unavailable \
-                    until the WPE stack is installed (source \
-                    .devin/webkit-env.sh for the user-local ~/wpe \
-                    prefix))
-    } else {
-        equals(ARKTOS_WEBKIT_PKGCONFIG, true): \
-            message(webkit opted out — WPE WebKit packages resolvable; \
-                    re-enable with qmake webkit=1)
-        !equals(ARKTOS_WEBKIT_PKGCONFIG, true): \
-            message(no WPE WebKit pkg-config packages — the webkit \
-                    backend is out of this build (source \
-                    .devin/webkit-env.sh for the ~/wpe stack, or \
-                    qmake webkit=1 to force an inert backend))
     }
 }

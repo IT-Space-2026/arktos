@@ -8,14 +8,11 @@
 //! exists, not from aspiration:
 //!
 //!   * `Engine::Capabilities` — the Qt-side honest-degradation
-//!     struct (src/engine/engineinterface.h) and its three backend
+//!     struct (src/engine/engineinterface.h) and its two backend
 //!     implementations: WebEngineBackend::capabilities()
-//!     (all-true), ServoBackend::capabilities() (near-empty;
+//!     (all-true) and ServoBackend::capabilities() (near-empty;
 //!     requestInterception is runtime-conditional on the resolved
-//!     servo-embed artifact exporting se_set_load_gate),
-//!     WebkitBackend::capabilities() (the WK07 spike-verified
-//!     table — devTools and extensions measured false on the WPE
-//!     build, downloads true).
+//!     servo-embed artifact exporting se_set_load_gate).
 //!   * Feature plumbing — PdfSupport (PDF01 interception is
 //!     QWebEnginePage-bound; PDF02's PdfView shell is
 //!     engine-neutral but only the WebEngine fetch pipeline
@@ -23,8 +20,8 @@
 //!     MV2 packages are rejected outright" + the declared
 //!     residual-gap set in .devin/EXT-RUNTIME-GAPS.md —
 //!     Bitwarden-class extensions run with typed gaps, never
-//!     full parity), WebPermissionManager (SEC05 broker — the
-//!     WebKit backend maps its permission-request signal into
+//!     full parity), WebPermissionManager (SEC05 broker — a
+//!     foreign backend maps its permission-request signal into
 //!     the same broker for the covered types, unmapped types
 //!     deny outright), the arktosAutofill QWebChannel bridge
 //!     (page side lives only on QWebEnginePage), ReaderMode
@@ -209,69 +206,6 @@ const SERVO_FEATURES: &[Feature] = &[
     ("certificate_override", State::Unsupported, ""),
 ];
 
-const WEBKIT_FEATURES: &[Feature] = &[
-    ("devtools", State::Unsupported,
-     "WK21 measured: the WPE build exports no WebKitWebInspector \
-      API and the inspector gresource is not installed"),
-    ("pdf_viewer", State::Unsupported,
-     "the PdfView shell can host staged documents but remote-PDF \
-      interception is QWebEnginePage-bound and WPE has no viewer"),
-    ("extensions_mv2", State::Unsupported, ""),
-    ("extensions_mv3", State::Unsupported,
-     "the WebKitWebExtension entry points are compiled-out stubs \
-      on this build (WK21)"),
-    ("webchannel", State::Partial,
-     "the WK16 arktosChannel is a script-message bridge with reply \
-      in an isolated world — a real two-way channel, not \
-      QWebChannel object transport"),
-    ("otr_profile", State::Supported,
-     "ephemeral WebKitNetworkSession (WK11)"),
-    ("tor", State::Unsupported,
-     "no Tor lane is wired; the SOCKS5 surface exists engine-side \
-      (WEBKIT-TOR study) but nothing consumes it"),
-    ("containers", State::Partial,
-     "dataPath-rooted sessions implement the storage-isolation \
-      contract (WK11) but container tabs never spawn on this \
-      backend — context-bound spawns stay on WebEngine (ENG05)"),
-    ("reader_mode", State::Unsupported,
-     "ReaderMode is WebView-bound; engine tabs hide the control \
-      (the backend's eval/toHtml primitives exist but nothing \
-      drives them for this)"),
-    ("downloads", State::Partial,
-     "the DownloadRequest handoff works — decide-destination is \
-      WPE's only request point and pause/resume stay honest \
-      no-ops (WK19)"),
-    ("sessions", State::Partial,
-     "url and engine tag round-trip; the per-tab state blob only \
-      understands WebEngine's serialize format, so a WebKit tab \
-      restores at its flat url"),
-    ("favicons", State::Supported,
-     "WK09 favicon tracking feeds iconChanged"),
-    ("opensearch", State::Supported,
-     "app-side opensearch registry"),
-    ("site_permissions", State::Partial,
-     "the SEC05 broker covers the mapped request types \
-      (geolocation, notifications, mouse lock, media deny-list); \
-      unmapped WebKit request types deny outright"),
-    ("autofill", State::Unsupported,
-     "the arktosAutofill bridge is QWebChannel-bound"),
-    // Engine primitives.
-    ("request_interception", State::Supported,
-     "the live decide consult gates navigations"),
-    ("declarative_blocking", State::Supported,
-     "WK18 rules compile into a WebKitUserContentFilterStore \
-      filter; inexpressible rules are counted, not faked"),
-    ("script_injection", State::Supported, ""),
-    ("script_evaluation", State::Supported, ""),
-    ("cookie_filter", State::Unsupported,
-     "WebKitCookieManager offers only a 3-state accept policy — no \
-      per-attempt CookieAttempt functor"),
-    ("per_page_settings", State::Supported, ""),
-    ("lifecycle_discard", State::Supported, ""),
-    ("context_menu_info", State::Supported, ""),
-    ("certificate_override", State::Supported, ""),
-];
-
 const ENGINES: &[EngineRow] = &[
     EngineRow {
         engine: "qtwebengine",
@@ -286,12 +220,6 @@ const ENGINES: &[EngineRow] = &[
         display: "Servo (servo-embed shim)",
         backend_ids: &["servo"],
         features: SERVO_FEATURES,
-    },
-    EngineRow {
-        engine: "webkit",
-        display: "WebKit (WPE)",
-        backend_ids: &["webkit"],
-        features: WEBKIT_FEATURES,
     },
 ];
 
@@ -395,7 +323,7 @@ mod tests {
         // same row.
         assert_eq!(engine_json("webengine"), engine_json("qtwebengine"));
         assert!(engine_json("servo").is_some());
-        assert!(engine_json("webkit").is_some());
+        assert!(engine_json("webkit").is_none());
         assert!(engine_json("gecko").is_none());
         assert!(engine_json("").is_none());
     }
@@ -415,10 +343,6 @@ mod tests {
         assert_eq!(servo["features"]["devtools"]["state"], "unsupported");
         assert_eq!(servo["features"]["downloads"]["state"], "unsupported");
         assert_eq!(servo["features"]["extensions_mv3"]["state"], "unsupported");
-        let wk: serde_json::Value =
-            serde_json::from_str(&engine_json("webkit").unwrap()).unwrap();
-        assert_eq!(wk["features"]["devtools"]["state"], "unsupported");
-        assert_eq!(wk["features"]["declarative_blocking"]["state"], "supported");
     }
 
     #[test]
@@ -427,9 +351,9 @@ mod tests {
             serde_json::from_str(&matrix_json()).unwrap();
         assert_eq!(doc["v"], CAPS_SCHEMA_VERSION);
         let engines = doc["engines"].as_array().unwrap();
-        assert_eq!(engines.len(), 3);
+        assert_eq!(engines.len(), 2);
         let ids: Vec<&str> =
             engines.iter().map(|e| e["engine"].as_str().unwrap()).collect();
-        assert_eq!(ids, ["qtwebengine", "servo", "webkit"]);
+        assert_eq!(ids, ["qtwebengine", "servo"]);
     }
 }

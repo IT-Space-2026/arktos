@@ -449,7 +449,7 @@ char    *ac_session_policy(const AcSession *h,
 /* ---- cookies: per-profile cookie database (RC15) --------------------
  *
  * The bound profile's profiles/<id>/cookies.db — SQLite/WAL like
- * history.db, container-partitioned rows.  This is the Servo/WPE
+ * history.db, container-partitioned rows.  This is the Servo
  * jar's persistent home (declare AC_COOKIES_AUTHORITATIVE) AND
  * Chromium's durable mirror (Chromium's QWebEngineCookieStore stays
  * engine-owned — declare AC_COOKIES_MIRROR and this db is its
@@ -780,10 +780,9 @@ AcStatus ac_mw_dispatch(AcCore *core, const uint8_t *req,
  * reporting code that already exists (Engine::Capabilities plus
  * the feature plumbing: PDF01/PDF02, ExtensionManager's MV3-only
  * rule + EXT-RUNTIME-GAPS, the SEC05 permission broker, ENG05's
- * Tor/container stays-on-Chromium rule, the WK07/WK11/WK16/WK18/
- * WK19/WK21 WebKit verifications).
+ * Tor/container stays-on-Chromium rule).
  *
- * engine_id selects one row: "qtwebengine" | "servo" | "webkit",
+ * engine_id selects one row: "qtwebengine" | "servo",
  * with the Qt backend->id() spelling "webengine" accepted as the
  * qtwebengine alias.  NULL/"" emits the whole matrix.  Output is
  * UTF-8 JSON, caller-freed with ac_buffer_free:
@@ -808,7 +807,7 @@ AcStatus ac_mw_dispatch(AcCore *core, const uint8_t *req,
  * The table is STATIC: it reports what each engine supports when
  * its backend is present, never whether the backend resolved this
  * run — presence stays a Qt-side runtime question (servo artifact
- * probe, WPE linkage).
+ * probe).
  *
  * Returns AC_ERR_INVALID on an unknown engine id or NULL out; the
  * message is stashed for ac_last_error.  Needs no AcCore — the

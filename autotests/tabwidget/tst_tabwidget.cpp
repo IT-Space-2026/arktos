@@ -3271,9 +3271,10 @@ void tst_TabWidget::engineSessionRestore()
     }
 
 #ifdef ARKTOS_RUSTCORE
-    // Crafted manifest: engine tags no build offers (servo on a
-    // webkit=0 build, webkit, garbage) — every one restores as a
-    // WebView at the flat url; the foreign state blob is ignored.
+    // Crafted manifest: engine tags no build offers (a servo-less
+    // build's "servo", stale "webkit" tags from old sessions, and
+    // garbage) — every one restores as a WebView at the flat url;
+    // the foreign state blob is ignored.
     {
         QJsonObject state;
         state.insert(QLatin1String("current"), 0);

@@ -4992,12 +4992,12 @@ fn caps_json(engine_id: *const std::os::raw::c_char) -> Option<String> {
 
 #[test]
 fn facade_engine_caps() {
-    // NULL emits the whole matrix — all three engines, v1 schema.
+    // NULL emits the whole matrix — both engines, v1 schema.
     let all = caps_json(ptr::null()).expect("matrix");
     let doc: serde_json::Value = serde_json::from_str(&all).unwrap();
     assert_eq!(doc["v"], 1);
     let engines = doc["engines"].as_array().unwrap();
-    assert_eq!(engines.len(), 3);
+    assert_eq!(engines.len(), 2);
     for e in engines {
         let features = e["features"].as_object().unwrap();
         for req in [
@@ -5031,17 +5031,14 @@ fn facade_engine_caps() {
         qe
     );
 
-    // Honesty pins: servo devtools and webkit MV3 stay off.
+    // Honesty pin: servo devtools stays off.
     let servo: serde_json::Value = serde_json::from_str(
         &caps_json(cs("servo").as_ptr()).unwrap(),
     )
     .unwrap();
     assert_eq!(servo["features"]["devtools"]["state"], "unsupported");
-    let wk: serde_json::Value = serde_json::from_str(
-        &caps_json(cs("webkit").as_ptr()).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(wk["features"]["extensions_mv3"]["state"], "unsupported");
+    // The removed WebKit backend resolves to no row.
+    assert!(caps_json(cs("webkit").as_ptr()).is_none());
 
     // Unknown id fails clean with a stashed error; NULL out too.
     assert!(caps_json(cs("gecko").as_ptr()).is_none());

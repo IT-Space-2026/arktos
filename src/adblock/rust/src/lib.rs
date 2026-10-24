@@ -17,8 +17,6 @@ use std::os::raw::c_char;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
-mod contentblocker;
-
 use adblock::request::Request;
 use adblock::resources::{MimeType, Resource, ResourceType};
 use adblock::Engine;

@@ -1886,8 +1886,8 @@ void BrowserMainWindow::updateReaderState()
         }
     }
     // MS06: presence/enabled is a caps verdict now — reader_mode is
-    // graded per engine (the servo and webkit rows mark it
-    // unsupported with the note "engine tabs hide the control").  An
+    // graded per engine (the servo row marks it unsupported with the
+    // note "engine tabs hide the control").  An
     // Unknown grade — no-rust build, widget tab, an id the registry
     // cannot resolve — falls back to "a WebView owns this tab", the
     // pre-MS06 answer verbatim.

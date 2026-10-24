@@ -568,8 +568,8 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     } else if (const QString scope = extensionsEngineScope();
                !scope.isEmpty()) {
         // MS06: the caps rollup narrows the .ui promise to the tabs
-        // the runtime reaches — a registered servo/webkit backend
-        // means some tabs exist where extensions never run.
+        // the runtime reaches — a registered servo backend means
+        // some tabs exist where extensions never run.
         extensionsHintLabel->setText(
             extensionsHintLabel->text() + QLatin1Char(' ') + scope);
     }

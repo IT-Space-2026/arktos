@@ -39,8 +39,8 @@ public:
 
     // WK17: the engine-agnostic serving halves — the SEC02 initiator
     // allowlist and the directory-listing builder, shared with the
-    // non-WebEngine scheme adapters (WPE WebKit's URISchemeRequest
-    // path) so a second backend refuses and serves identically.
+    // non-WebEngine scheme adapters (Servo's custom-protocol path)
+    // so a second backend refuses and serves identically.
     // directoryListing() is the GUI-thread work replyToJob() always
     // did; iconSizePx is caller-supplied (backend-0 reads it from
     // QWebEngineSettings, other engines pick their own metric).

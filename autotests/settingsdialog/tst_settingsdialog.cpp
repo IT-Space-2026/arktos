@@ -4787,7 +4787,7 @@ void tst_SettingsDialog::capsAnnotations()
 #if defined(ARKTOS_RUSTCORE)
     // MS06: every render-engine combo row carries the caps rollup on
     // its tooltip — the webengine row grades everything usable but
-    // limited extensions; a servo/webkit row (when that backend is
+    // limited extensions; a servo row (when that backend is
     // registered this build) names its missing chrome features.
     bool sawChromiumTip = false;
     for (int i = 0; i < dialog.renderEngineCombo->count(); ++i) {
@@ -4799,8 +4799,7 @@ void tst_SettingsDialog::capsAnnotations()
             QVERIFY(tip.contains(QLatin1String("extensions")));
             QVERIFY(!tip.contains(QLatin1String("unsupported")));
             sawChromiumTip = true;
-        } else if (id == QLatin1String("servo")
-                   || id == QLatin1String("webkit")) {
+        } else if (id == QLatin1String("servo")) {
             QVERIFY(tip.contains(QLatin1String("extensions")));
         }
     }

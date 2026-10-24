@@ -119,7 +119,7 @@
 //!     matching (host-only/domain reach, RFC6265 §5.1.4 paths, secure
 //!     gating, SameSite send filter), Set-Cookie parse, toRawForm
 //!     import/export and an authoritative/mirror role flag that
-//!     honestly reports whether the file IS the jar (Servo/WPE) or a
+//!     honestly reports whether the file IS the jar (Servo) or a
 //!     durable copy behind an engine-owned one (Chromium).
 //!   * containers (RC19): the Firefox-style container registry —
 //!     a typed specialization over the profile scope's settings

@@ -112,7 +112,7 @@ void EngineTab::wirePage()
     // MIG06 wiring for foreign-engine pages.  The profile's persona id
     // routes the write into the same profile-bound HistoryManager a
     // Chromium tab uses (facade-backed — ac_history under the shared
-    // AcCore when the rustcore lane is linked), so a Servo or WebKit
+    // AcCore when the rustcore lane is linked), so a Servo
     // visit lands in the same history.db as a Chromium one.
     // Off-the-record profiles never reach the manager — the private
     // browsing guarantee is unchanged.
