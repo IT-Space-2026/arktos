@@ -201,7 +201,8 @@ private:
     bool confirmSafeToSave(const QString &fileName);
     void removePartialFile();
 
-    QString saveFileName(const QString &directory) const;
+    QString saveFileName(const QString &directory,
+                         const QString &wantedName = QString()) const;
 
     // Backend-neutral accessors — the same card drives a Chromium
     // request or the rustdl engine behind these.
@@ -254,6 +255,11 @@ private:
 
     friend class DownloadManager;
     friend class DownloadModel;
+    // MD24: chrome.downloads reads card state (backend handle, OTR
+    // flag, mime, interrupt reason) and drives the card's own actions
+    // (pause/stop/open/show) — the same surgical view DownloadModel
+    // gets.
+    friend class ExtensionShimBackend;
 };
 
 class AutoSaver;
@@ -367,6 +373,12 @@ public slots:
     // WebEngine downloads can only be initiated from a page; there is no
     // profile-level download() entry point.
     void download(Engine::Page *page, const QUrl &url, bool requestFileName = false);
+    // MD24: same entry point chrome.downloads.download rides — the
+    // extension's 'filename' suggestion (a Chrome-relative path under
+    // the download directory) travels with the request and resolves in
+    // the item's own sanitize+uniquify naming pass.
+    void download(Engine::Page *page, const QUrl &url, bool requestFileName,
+                  const QString &suggestedFileName);
     void handleDownloadRequested(Engine::DownloadRequest *download);
     void cleanup();
     // CLR01: the OTR-scoped clear — drops only the off-the-record
@@ -401,6 +413,11 @@ private:
     // Consumed by the next downloadRequested for a download issued
     // through download() with requestFileName set.
     bool m_requestFileNameNext;
+    // MD24: consumed by the next DownloadItem's naming pass — keyed to
+    // the request url so a name suggestion can never bleed into an
+    // unrelated download (external handoff, a request that dies before
+    // an item is minted, another caller's download).
+    QPair<QUrl, QString> m_extSuggestedName;
 
     friend class DownloadModel;
     friend class DownloadItem;

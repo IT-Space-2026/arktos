@@ -52,6 +52,12 @@ Core / Qt 6 port:
   accounted for — the next start reports whether the previous run
   exited cleanly, was terminated by a signal, or died uncleanly, so
   a crash never masquerades as a normal quit or vice versa.
+- Sessions are now saved and restored per profile (RC13): each
+  profile's windows live in their own session file under
+  profiles/<id>/session.dat, so windows of different personas no
+  longer travel in one aggregate. Restored tabs also remember their
+  scroll position, and private/off-the-record tabs are still
+  excluded — a window that is private-only saves nothing at all.
 - Command-line URL arguments treated as untrusted input (SEC09).
 - GPU crash safe mode: Qt 6.12's WebEngine can trap (SIGTRAP) on a
   display-compositor CHECK on some driver stacks, killing the whole
@@ -759,6 +765,250 @@ UI:
   so Bitwarden shows "2026.9.3" while built-in components with no
   manifest on disk show an honest "—". When an update check finds a
   newer package the cell reads "1.0.0 → 2.0.0 available" (EXT09).
+- Extensions can now drive the real tab strip through chrome.tabs:
+  remove, reload, duplicate, move, highlight, goBack/goForward and
+  discard (which parks the tab into the same sleeping state the
+  memory-saver uses) all act on live tabs instead of answering a
+  typed stub, and the deprecated getAllInWindow/getSelected aliases
+  resolve through tabs.query. Tab objects and query filters report
+  actual state — pinned, audible, muted, discarded, autoDiscardable,
+  highlighted and group id — so extensions like Bitwarden that probe
+  tab state before acting see the truth (MD10).
+- chrome.tabs zoom and page capture are live: getZoom/setZoom ride
+  the real per-tab zoom machinery (the status-bar zoom readout and
+  reload reapplication stay in step) and get/setZoomSettings record
+  the requested mode/scope, with 'disabled' refusing further
+  setZoom calls. captureVisibleTab returns the visible tab as a png
+  or jpeg data url, gated by the same tabs/host-coverage rule that
+  decides whether an extension may see a tab's URL — an uncovered
+  extension gets a typed refusal, never pixels (MD11).
+- chrome.tabs.connect is live: an extension can open a long-lived
+  Port into a covered tab's content-script context and exchange
+  postMessage traffic both ways, with onConnect on the page end,
+  sender.tab on the connecting port and onDisconnect propagating in
+  both directions — gated by the same host-coverage rule
+  tabs.sendMessage applies (MD12).
+- chrome.windows answers honestly end to end: get/getCurrent/
+  getLastFocused/getAll honour getInfo.populate by returning the
+  window's tabs array (URL and title still scrubbed for extensions
+  without host coverage) and getInfo.windowTypes as a real filter,
+  the reported window state is the actual minimized/maximized/
+  fullscreen state rather than a hardcoded "normal", bounds come
+  with the object, and update/create accept the same left/top/
+  width/height/state/drawAttention vocabulary Chrome does —
+  Bitwarden-style pop-out flows land where the extension asked
+  (MD13).
+- chrome.action/browserAction.setIcon is live: path details resolve
+  to bundle-relative files inside the extension's own directory (the
+  same escape hygiene every other bundle path gets) and imageData
+  details carry the raw pixels across — the recorded override lands
+  in the toolbar strip so extensions that swap their icon at runtime
+  (a locked/unlocked badge, say) actually change the button face
+  (MD14).
+- chrome.extension.isAllowedIncognitoAccess and
+  isAllowedFileSchemeAccess now answer through the host backend
+  instead of a page-side stub — both honestly reply false today,
+  since Arktos hosts extensions on the regular profile only and
+  never grants file: scheme access (MD15).
+- chrome.management's read side is live for extensions that declare
+  the grant: getAll/get enumerate the real installed-extension
+  records with the same ExtensionInfo shape getSelf answers (enabled
+  state and install provenance included), and
+  getPermissionWarningsById/getPermissionWarningsByManifest derive
+  their warning strings from the manifest's grant list — the same
+  wording the install consent review shows. An undeclaring caller
+  still gets Chrome's no-permission answer (MD16).
+- chrome.management's mutation side is live for extensions that
+  declare the grant: setEnabled toggles an installed extension,
+  uninstall removes it, and uninstallSelf removes the caller itself —
+  each through the same engine paths the Settings > Extensions
+  surface drives, with Chrome's typed answers for invalid ids,
+  unknown extensions and built-in (non-modifiable) components.
+  management.onEnabled/onDisabled/onUninstalled fan out to every
+  hosted extension context that declared "management" (and to the
+  mutator's own event surface), so extensions observing lifecycle
+  changes see them live; removed extensions stop answering the read
+  members instead of lingering as ghosts (MD17).
+- chrome.runtime's lifecycle trio is live: reload() restarts the
+  calling extension through the same unload+load path the engine
+  drives, requestUpdateCheck() runs a real self-update check and
+  answers Chrome's status vocabulary (update_available also fires
+  runtime.onUpdateAvailable; concurrent requests throttle like
+  Chrome), and setUninstallURL() persists the page an extension asks
+  to show — removing that extension now opens it in a new tab the
+  way Chrome does instead of dropping the record (MD18).
+- chrome.storage's missing surface is live: getKeys enumerates an
+  area's keys, setAccessLevel is recorded with Chrome's
+  TRUSTED/UNTRUSTED_CONTEXTS vocabulary, and chrome.storage.sync now
+  persists under the profile like chrome.storage.local instead of
+  evaporating with the session — it cannot roam (there is no cloud
+  sync in Arktos), and a health note says so. Chrome's quota bounds
+  are enforced on writes, so oversized sets fail atomically the way
+  extensions expect (MD19).
+- chrome.alarms now matches Chrome's edge contract: create() refuses
+  the argument shapes Chrome rejects (when+delayInMinutes together,
+  no schedule at all, or a name given both as the argument and inside
+  alarmInfo), an unnamed alarm lives under Chrome's empty-string
+  default name so get/clear/onAlarm serve it and a second unnamed
+  create replaces it, a periodInMinutes under Chrome's MV3
+  thirty-second floor clamps to half a minute with a recorded health
+  note instead of silently spinning, and getAll answers in creation
+  order (MD20).
+- chrome.bookmarks is live for extensions that declare the grant:
+  get/getChildren/getRecent/getTree/getSubTree/search read the real
+  bookmark tree, and create/move/update/remove/removeTree drive the
+  same undoable manager ops the bookmark dialogs use — so the model,
+  toolbar and autosave stay consistent — with Chrome's typed answers
+  for unknown ids, fixed-root edits, leaf parents, refused URL
+  schemes and non-empty-folder removes. ids "0"/"1"/"2" name the
+  root, bookmarks bar and Other folders like Chrome, and
+  bookmarks.onCreated/onRemoved/onChanged/onMoved fan out to every
+  hosted context that declared "bookmarks" — including changes made
+  through the browser's own UI (MD21).
+- chrome.history is live for extensions that declare the grant:
+  search answers Chrome's per-url HistoryItem shape (space-delimited
+  terms AND-matched on url/title, the last-24-hours default window,
+  the 100-result cap), getVisits reports the per-visit rows for one
+  url, addUrl records a visit, and deleteUrl/deleteRange/deleteAll
+  run the same retention path Clear Private Data uses so the store,
+  models and icon sweep stay consistent — with history.onVisited and
+  history.onVisitRemoved fanning out to every hosted context that
+  declared "history", including visits and deletes made through the
+  browser's own UI (MD22).
+- chrome.cookies is live for extensions that declare the grant plus
+  host coverage: get/getAll answer Chrome's Cookie shape out of the
+  durable cookie mirror (the jar's on-disk shadow), set/remove write
+  the live engine jar and the mirror together so a follow-up get sees
+  its own change, getAllCookieStores reports the one served store
+  with its live tab ids, and cookies.onChanged fans out — withheld
+  per cookie domain from contexts whose host_permissions don't cover
+  it — for changes made through the API or the browser itself (MD23).
+- chrome.downloads is live for extensions that declare the grant:
+  download() issues a real download through the same policy path a
+  page-issued one runs (the 'filename' suggestion lands as a
+  Chrome-relative path under the download directory), search/erase
+  enumerate the same records the download sidebar renders, and
+  pause/resume/cancel/open/show/showDefaultFolder/removeFile/
+  getFileIcon drive the cards' own actions — with
+  downloads.onCreated/onChanged/onErased fanning out to every hosted
+  context that declared "downloads", including downloads started
+  from the browser itself. The Chrome download-shelf surface stays
+  a typed refusal — Arktos has no shelf (MD24).
+- chrome.sessions is live for extensions that declare the grant:
+  getDevices honestly answers the empty list (Arktos has no sync
+  service, so no other device can report), getRecentlyClosed
+  enumerates the same recently-closed records the "Recently Closed
+  Tabs" menu drives — merged across windows, newest first, capped
+  at Chrome's MAX_SESSION_RESULTS — and restore() rebuilds a closed
+  tab through the same undo path the menu uses, addressed by the
+  sessionId serial each record carries. sessions.onChanged fans out
+  to every hosted context that declared "sessions", including
+  closes, restores and clears made through the browser's own UI
+  (MD25).
+- chrome.tabGroups is live for extensions that declare the grant:
+  get/query enumerate the same groups the strip renders — Chrome's
+  integer ids, palette-named colors, title, collapsed state —
+  update() renames/recolors/collapses through the same setters the
+  context menu drives, move() relocates the whole run on the strip
+  (a cross-window request gets a typed refusal, not a torn run),
+  and ungroup() dissolves groups atomically. Membership itself is
+  Chrome-shaped: tabs.group() creates or joins a group with all the
+  listed tabs at once, tabs.ungroup() drops them out, and every
+  tab's groupId reports the same integer the API minted.
+  tabGroups.onCreated/onUpdated/onMoved/onRemoved fan out to every
+  hosted context that declared "tabGroups" — including groups made,
+  edited or dissolved through the browser's own context menus —
+  while tabs.onUpdated's changeInfo.groupId tracks membership flips,
+  and a collapsed group's hidden members stay in the tab list like
+  Chrome's instead of reporting as closed (MD26).
+- chrome.topSites is live for extensions that declare the grant:
+  get() answers Chrome's MostVisitedURL list — the most-visited
+  hosts ranked by visit count off the same history rollup the
+  location completer ranks, each host's newest visit supplying the
+  entry's url and title (MD27).
+- chrome.browsingData is live for extensions that declare the grant:
+  remove() plus removeHistory/removeCookies/removeDownloads/
+  removeCache/removeFormData run the same clear plan the browser's
+  own Clear Private Data dialog uses — a "since" timestamp bounds
+  the history wipe to an exact window — and settings() reports which
+  Chrome data types the browser can actually clear. Data types the
+  browser cannot remove selectively are reported as unsupported
+  rather than silently skipped (MD28).
+- chrome.dns is live for extensions that declare the grant:
+  resolve() answers Chrome's DnsResolveInfo shape — {addresses:
+  [...]} — resolved through the system resolver off the UI thread;
+  a name that cannot resolve reports a typed failure instead of
+  hanging the extension (MD29).
+- chrome.system is live for extensions that declare the per-surface
+  grants: system.memory/cpu/display/storage getInfo answer Chrome's
+  shapes with the machine's real values — memory capacity, per-core
+  CPU time, the connected display list and the profile volume's
+  capacity — instead of a blanket unsupported (MD30).
+- chrome.privacy is live for extensions that declare the grant: the
+  ChromeSetting-shaped members that have a real Arktos setting
+  behind them — third-party cookies, hyperlink auditing, referrers,
+  do-not-track, network prediction, WebRTC IP handling, password
+  saving and search suggestions — get/set/clear the same values the
+  browser's own settings drive and apply live, reporting Chrome's
+  levelOfControl vocabulary as extensions claim and release each
+  member (clear restores the value held before the extension took
+  over). Members with no honest equivalent stay a typed unsupported
+  rather than a fake toggle (MD31).
+- chrome.userScripts is live for extensions that declare the grant:
+  register/unregister/getScripts/update run through the same dynamic
+  content-script registry as chrome.scripting.registerContentScripts
+  — every match pattern is re-proven against the extension's host
+  coverage before the spec is armed, and registered scripts fire in
+  the extension's isolated agent world on the next matching
+  navigation, never the page's own world. configureWorld records
+  Chrome's world properties for getWorldConfigurations to echo back;
+  the glob matchers stay a typed unsupported rather than a
+  half-matched accept (MD32).
+- chrome.fontSettings is live for extensions that declare the
+  grant: getFontList answers the installed system families, and the
+  standard/serif/sans-serif/fixed/cursive/fantasy families plus the
+  default, fixed and minimum font sizes get/set/clear the same
+  persisted values the browser's own font settings drive —
+  re-applying to live pages without a restart and reporting
+  Chrome's levelOfControl vocabulary as extensions claim and
+  release each member (clear restores the value held before the
+  extension took over). Chrome's 'math' family and per-script fonts
+  stay a typed unsupported rather than a fake mapping (MD33).
+- chrome.declarativeNetRequest is live for extensions that declare
+  the grant: session and dynamic rule updates (validated,
+  duplicate/missing-id and quota errors in Chrome's vocabulary, the
+  dynamic set persisted across restarts), manifest rule_resources
+  static rulesets with enable/disable overrides, and the block /
+  redirect / upgradeScheme / allow / allowAllRequests /
+  request-header modifyHeaders actions now act on real traffic
+  through the request interceptor. Conditions cover urlFilter and
+  regexFilter (RE2-incompatible constructs refused by
+  isRegexSupported), initiator/request domains and exclusions,
+  resource types, request methods and first/third-party scoping;
+  declarativeNetRequestWithHostAccess scopes matching to the
+  extension's host permissions, and declarativeNetRequestFeedback
+  unlocks getMatchedRules, testMatchOutcome and onRuleMatchedDebug.
+  Response-side header ops and tab-bound conditions stay a typed
+  unsupported rather than a fake no-op (MD34).
+- chrome.identity.getRedirectURL answers for every hosted extension:
+  the derived https://<id>.chromiumapp.org/<path> origin an OAuth
+  flow registers as its callback, synchronous and ungated like
+  Chrome's own renderer-side binding. The rest of the identity
+  namespace is Google-account machinery and stays a typed
+  unsupported (MD35).
+- chrome.webNavigation.onCreatedNavigationTarget now fires for
+  hosted extensions: a link or script that opens a new tab or window
+  (target=_blank, window.open) reports Chrome's details shape —
+  sourceTabId and sourceFrameId naming the opener, tabId and url for
+  the navigation target — ahead of that tab's own onBeforeNavigate
+  (MD36).
+- chrome.action.getUserSettings answers the real pin state for
+  hosted extensions: isOnToolbar is the action strip's membership
+  truth (one button per enabled extension declaring an action popup)
+  rather than a frozen true, so disabling an extension flips the
+  answer. onUserSettingsChanged installs as an honest never-firing
+  event while no pin toggle exists, and openPopup answers a typed
+  unsupported instead of a bare TypeError (MD37).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now
@@ -4594,3 +4844,20 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   Typed javascript: is untouched, so typed bookmarklets keep
   working; ordinary fields (the bookmark dialog's address box)
   are unaffected.
+- Bookmark descriptions survive saves from the Rust bookmark store
+  (RC05): the store now writes <desc> as a child element on folders
+  and bookmarks — the only shape the XBEL reader binds — instead of a
+  bookmark-only attribute foreign readers ignore, and folder
+  descriptions are no longer dropped on save. Descriptions made or
+  imported under a Rust build now read back identically in no-rust
+  builds and in third-party XBEL tools; files written in the interim
+  attribute shape still parse.
+- Servo and WebKit tabs now belong to the window's profile (RC09):
+  pages on those engines record visits, titles and icons into the
+  same per-profile history a Chromium tab writes, and they honor that
+  profile's ad-blocking rules and download manager instead of the
+  browser-wide defaults. A Servo or WebKit tab opened in a named
+  profile keeps its history and filters inside that profile, and
+  private windows still record nothing. Engine capabilities stay
+  honest — features a backend cannot deliver remain disabled in the
+  engine menu rather than silently pretending parity.

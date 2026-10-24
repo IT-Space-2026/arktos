@@ -164,7 +164,10 @@ static QJsonObject clearPlanOp(const QString &name, const QString &scope,
 }
 
 // The window a period name maps to, or -1 for an unrecognized name —
-// the same vocabulary rustcore's parse_period() accepts.
+// the same vocabulary rustcore's parse_period() accepts.  MD28:
+// "secs:<digits>" is the exact-window form (chrome.browsingData's
+// `since` is an absolute timestamp the named windows cannot express);
+// digits only — signs, whitespace and units refuse like the crate.
 static qint64 clearPlanPeriodSecs(const QString &period)
 {
     const QString p = period.trimmed().toLower();
@@ -178,6 +181,18 @@ static qint64 clearPlanPeriodSecs(const QString &period)
         return 86400;
     if (p == QLatin1String("week") || p == QLatin1String("last-week"))
         return 604800;
+    if (p.startsWith(QLatin1String("secs:"))) {
+        const QString digits = p.mid(5);
+        if (digits.isEmpty())
+            return -1;
+        for (const QChar c : digits) {
+            if (!c.isDigit() || c.unicode() > 0x7f)
+                return -1;
+        }
+        bool ok = false;
+        const qint64 secs = digits.toLongLong(&ok);
+        return ok ? secs : -1;
+    }
     return -1;
 }
 

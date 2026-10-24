@@ -46,6 +46,14 @@ class QUrl;
 //     Settings dialog's Site Permissions list;
 //   - session hosts, held in memory only — off-the-record pages
 //     never persist.
+//
+// MD09: under ARKTOS_RUSTCORE the verdict itself — enabled flag,
+// scheme floor, suffix-matched allow list — and both layers live in
+// rustcore's navpolicy module behind one JSON consult (the "popup"
+// kind of sitedecisions.json + a process-global session overlay).
+// This class keeps the singleton, the changed() signal and the
+// no-rust path; every consult falls back to the local spelling on
+// an FFI failure.
 class PopupBlocker : public QObject
 {
     Q_OBJECT
@@ -81,7 +89,7 @@ public:
     void removeAllowedHost(const QString &host);
 
     // The persistent list, for the Settings audit table.
-    QStringList allowedHosts() const { return m_allowed; }
+    QStringList allowedHosts() const;
     void clearAllowedHosts();
 
     // Test hook: drop the session overlay (persistent hosts stay).

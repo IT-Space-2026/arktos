@@ -8,7 +8,16 @@ in parallel with the main lane on the sibling checkout at
 Rust browser-core migration: moving engine-agnostic services (settings,
 profiles, history, bookmarks, cookie/storage policy, trust data) into
 src/rustcore behind one stable C ABI (`arktos_core.h`), then making the
-engine backends consume it. CEF is a spike (RC11) — never a port.
+engine backends consume it.
+
+CEF SCOPE (user directive): the RC rows run first — after they finish,
+the CEF01–CEF15 rows implement a real CEF backend under the existing Qt
+Widgets chrome (Qt stays; only the Chromium embed changes). CEF01 is a
+GATE row: RC11 concluded NO-GO but explicitly excluded extension
+research — CEF01 first evaluates whether CEF's chrome runtime really
+hosts MV3 extensions (Bitwarden shape).  If yes the no-go is
+overridden on the extension-fidelity driver and the port proceeds;
+if no it blocks the remaining CEF rows.  Read the row's AMENDMENT.
 
 Your job in THIS run:
 

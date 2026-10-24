@@ -1,12 +1,18 @@
 //! RCORE03: the canonical session store — saveSession /
 //! restoreLastSession's serialization lives here, engine-neutral.
+//! RC13 makes it per-profile: each persona owns
+//! `profiles/<id>/session.dat` (the app writes one manifest per
+//! persona, engines bind one through the facade), plus a
+//! `session.state` lifecycle file carrying the clean-shutdown flag /
+//! crash-dirty marker / last-exit record the "restore previous
+//! session?" decision reads on every engine alike.
 //!
-//! On-disk format (`<data dir>/session.dat`) is a versioned binary
+//! On-disk format (`<profile dir>/session.dat`) is a versioned binary
 //! schema owned by the crate:
 //!
 //! ```text
 //!   magic   "ARSS" (4 bytes)
-//!   version u32 = 3        (v1/v2 blobs — no v3 tails — still decode)
+//!   version u32 = 4        (v1-v3 blobs — no v4 tails — still decode)
 //!   windows u32 count, then per window:
 //!     shell   u32 len + bytes   — opaque window-chrome blob (the
 //!                               Qt shell's own serialization; the
@@ -25,6 +31,10 @@
 //!       pinned    u8 (0/1)        — v3: TABS04 pin flag
 //!       title     u32 len + utf8  — v3: TABS12 rename override
 //!                                   ("" = live page title)
+//!       hasScroll u8 (0/1)        — v4: RC13 recorded viewport
+//!       scrollX   f64 le          —   position (only when hasScroll
+//!       scrollY   f64 le          —   is 1); absent = the tab's
+//!                                   engine blob owns the answer
 //!     groups  u32 count, then per group:
 //!       id     u32 len + utf8
 //!       name   u32 len + utf8
@@ -51,6 +61,22 @@
 //!   "profile":"<persona-id>",
 //!   "activeContainer":"<container-id>"}]}
 //! ```
+//!
+//! Two manifest keys never reach disk: `"private":true` on a window
+//! drops the whole window record, on a tab drops just that tab (the
+//! saved current index remaps onto the survivors, mirroring the C++
+//! writer's own off-the-record skip) — a producer that serializes a
+//! private view cannot leak it through the store.  A tab may also
+//! carry `"scroll":{"x":N,"y":N}` (v4): the viewport position an
+//! engine backend recorded at save time.
+//!
+//! The lifecycle file `<profile dir>/session.state` is JSON
+//! `{version, active, lastExit, crashCount, restoring}` written
+//! atomically: `active` arms at session start and clears only on a
+//! recorded exit, so a still-armed marker on the next boot IS the
+//! crash signal; `restoring` is the restore-loop guard (armed before
+//! tabs reopen, cleared by the next successful save — a mid-restore
+//! crash reads back armed and prompts instead of looping).
 //!
 //! Corrupt-blob resilience is a core property: every count is bounds-
 //! checked against the remaining bytes before a single allocation, so
@@ -80,9 +106,12 @@ pub const VERSION: u32 = 1;
 /// per-tab pinned flag + rename override and a per-window active
 /// container header (SESS01); older blobs decode with pinned 0,
 /// title "" and no recorded header (the manifest omits the key).
-const BIN_VERSION: u32 = 3;
+const BIN_VERSION: u32 = 4;
 const BIN_VERSION_V1: u32 = 1;
 pub const FILE_NAME: &str = "session.dat";
+/// The lifecycle marker — RC13's clean-shutdown flag + crash-dirty
+/// record, one per profile dir next to session.dat.
+pub const STATE_FILE_NAME: &str = "session.state";
 
 // Bounds — generous enough for real sessions (data: urls, long
 // histories), small enough that a corrupt count field cannot allocate
@@ -94,6 +123,7 @@ const MAX_GROUPS: usize = 4096;
 const MAX_FIELD: usize = 64 * 1024 * 1024; // per string/field
 const MAX_BLOB: usize = 256 * 1024 * 1024; // per opaque blob
 const MAX_JSON_IN: usize = 512 * 1024 * 1024;
+const MAX_SCROLL: f64 = 1e9; // recorded viewport coordinate magnitude
 
 fn corrupt<T>(msg: impl Into<String>) -> RcResult<T> {
     fail(RcStatus::Corrupt, msg)
@@ -112,6 +142,9 @@ impl Put {
     }
     fn u8(&mut self, v: u8) {
         self.0.push(v);
+    }
+    fn f64(&mut self, v: f64) {
+        self.0.extend_from_slice(&v.to_le_bytes());
     }
     fn bytes(&mut self, b: &[u8]) {
         self.u32(b.len() as u32);
@@ -155,6 +188,14 @@ impl<'a> Take<'a> {
         self.pos += 1;
         Ok(v)
     }
+    fn f64(&mut self) -> RcResult<f64> {
+        if self.remaining() < 8 {
+            return corrupt("session: truncated f64");
+        }
+        let v = f64::from_le_bytes(self.buf[self.pos..self.pos + 8].try_into().unwrap());
+        self.pos += 8;
+        Ok(v)
+    }
     fn bytes(&mut self, cap: usize) -> RcResult<&'a [u8]> {
         let len = self.u32()? as usize;
         if len > cap {
@@ -187,6 +228,9 @@ struct TabRec {
     state: Vec<u8>, // base64 text on the JSON side; stored verbatim
     pinned: bool,
     title: String,
+    // RC13: the recorded viewport position ("scroll":{"x","y"}).
+    // None = no record — the engine-state blob may still carry its own.
+    scroll: Option<(f64, f64)>,
 }
 
 #[derive(Default)]
@@ -260,6 +304,12 @@ fn manifest_to_model(json: &[u8]) -> RcResult<Vec<WindowRec>> {
             status: RcStatus::Corrupt,
             msg: "session manifest: window not an object".into(),
         })?;
+        // RC13: a private window never persists — not even an empty
+        // record.  The C++ writer already skips it; the store enforces
+        // the same rule so no producer can sneak one through.
+        if w.get("private").and_then(Value::as_bool).unwrap_or(false) {
+            continue;
+        }
         let mut rec = WindowRec {
             shell: jstr(w, "shell")?.into_bytes(),
             current: -1,
@@ -293,11 +343,26 @@ fn manifest_to_model(json: &[u8]) -> RcResult<Vec<WindowRec>> {
             if tabs.len() > MAX_TABS {
                 return corrupt("session manifest: too many tabs");
             }
-            for tv in tabs {
+            // RC13: "private":true tabs drop out of the record like
+            // the C++ writer's off-the-record skip — the saved current
+            // index remaps onto the survivors (-1 when the dropped tab
+            // WAS the current one, same as collectSessionSnapshot's
+            // unset index).
+            let mut dropped_before_current = 0i64;
+            let mut dropped_current = false;
+            for (idx, tv) in tabs.iter().enumerate() {
                 let t = tv.as_object().ok_or_else(|| Fail {
                     status: RcStatus::Corrupt,
                     msg: "session manifest: tab not an object".into(),
                 })?;
+                if t.get("private").and_then(Value::as_bool).unwrap_or(false) {
+                    match (idx as i64).cmp(&(rec.current as i64)) {
+                        std::cmp::Ordering::Less => dropped_before_current += 1,
+                        std::cmp::Ordering::Equal => dropped_current = true,
+                        std::cmp::Ordering::Greater => {}
+                    }
+                    continue;
+                }
                 let engine = match t.get("engine") {
                     None | Some(Value::Null) => "webengine".to_string(),
                     _ => jstr(t, "engine")?,
@@ -306,6 +371,32 @@ fn manifest_to_model(json: &[u8]) -> RcResult<Vec<WindowRec>> {
                 if state.len() > MAX_BLOB {
                     return corrupt("session manifest: tab state over cap");
                 }
+                let scroll = match t.get("scroll") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::Object(s)) => {
+                        let x = s.get("x").and_then(Value::as_f64);
+                        let y = s.get("y").and_then(Value::as_f64);
+                        match (x, y) {
+                            (Some(x), Some(y))
+                                if x.is_finite() && y.is_finite()
+                                    && x.abs() <= MAX_SCROLL
+                                    && y.abs() <= MAX_SCROLL =>
+                            {
+                                Some((x, y))
+                            }
+                            _ => {
+                                return corrupt(
+                                    "session manifest: bad 'scroll'",
+                                )
+                            }
+                        }
+                    }
+                    _ => {
+                        return corrupt(
+                            "session manifest: 'scroll' not an object",
+                        )
+                    }
+                };
                 rec.tabs.push(TabRec {
                     url: jstr(t, "url")?,
                     container: jstr(t, "container")?,
@@ -317,7 +408,13 @@ fn manifest_to_model(json: &[u8]) -> RcResult<Vec<WindowRec>> {
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
                     title: jstr(t, "title")?,
+                    scroll,
                 });
+            }
+            if dropped_current {
+                rec.current = -1;
+            } else {
+                rec.current -= dropped_before_current as i32;
             }
         }
         if let Some(gv) = w.get("groups") {
@@ -369,6 +466,16 @@ fn model_to_binary(windows: &[WindowRec]) -> Vec<u8> {
             // v3 fields: pin flag + rename override.
             p.u8(t.pinned as u8);
             p.str(&t.title);
+            // v4 field: recorded scroll position (flag + pair only
+            // when set).
+            match t.scroll {
+                Some((x, y)) => {
+                    p.u8(1);
+                    p.f64(x);
+                    p.f64(y);
+                }
+                None => p.u8(0),
+            }
         }
         p.u32(w.groups.len() as u32);
         for g in &w.groups {
@@ -424,6 +531,13 @@ fn binary_to_model(blob: &[u8]) -> RcResult<Vec<WindowRec>> {
                     r.str()?.to_owned()
                 } else {
                     String::new()
+                },
+                // v1-v3 records carry no scroll tail — they predate
+                // the recorded position and read with none.
+                scroll: if bin_version >= 4 && r.u8()? != 0 {
+                    Some((r.f64()?, r.f64()?))
+                } else {
+                    None
                 },
             });
         }
@@ -493,6 +607,11 @@ fn model_to_manifest(windows: &[WindowRec]) -> Vec<u8> {
                     if !t.title.is_empty() {
                         tab["title"] = json!(t.title);
                     }
+                    // v4: emit the recorded scroll only when set — an
+                    // unrecorded tab keeps the pre-v4 shape.
+                    if let Some((x, y)) = t.scroll {
+                        tab["scroll"] = json!({"x": x, "y": y});
+                    }
                     tab
                 })
                 .collect();
@@ -559,16 +678,41 @@ pub fn exists() -> bool {
 
 /// Validate, encode and atomically install the session file.
 pub fn save(json: &[u8]) -> RcResult<()> {
-    let blob = encode(json)?;
-    let path = session_path()?;
-    store::atomic_write(&path, &blob)
+    save_at(&session_path()?, json)
 }
 
 /// Read + decode the session file into the canonical JSON manifest.
 /// RcStatus::NotFound when no session exists, Corrupt on malformation.
 pub fn load() -> RcResult<Vec<u8>> {
-    let path = session_path()?;
-    let blob = match fs::read(&path) {
+    load_at(&session_path()?)
+}
+
+/// Remove the session file; absent is not an error.
+pub fn clear() -> RcResult<()> {
+    clear_at(&session_path()?)
+}
+
+// ---- path-explicit ops (RC13) ------------------------------------------
+//
+// The profile-bound surface: an AcSession handle (or any caller that
+// already resolved profiles/<id>/) drives these directly instead of
+// re-anchoring the process-global data dir.  Same codec, same atomic
+// install — the two spellings can never diverge on disk.
+
+/// True when `path` names an existing session file.
+pub fn exists_at(path: &std::path::Path) -> bool {
+    path.is_file()
+}
+
+/// save() at an explicit file path.
+pub fn save_at(path: &std::path::Path, json: &[u8]) -> RcResult<()> {
+    let blob = encode(json)?;
+    store::atomic_write(path, &blob)
+}
+
+/// load() at an explicit file path.
+pub fn load_at(path: &std::path::Path) -> RcResult<Vec<u8>> {
+    let blob = match fs::read(path) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return fail(RcStatus::NotFound, "no saved session")
@@ -578,14 +722,198 @@ pub fn load() -> RcResult<Vec<u8>> {
     decode(&blob)
 }
 
-/// Remove the session file; absent is not an error.
-pub fn clear() -> RcResult<()> {
-    let path = session_path()?;
-    match fs::remove_file(&path) {
+/// clear() at an explicit file path.
+pub fn clear_at(path: &std::path::Path) -> RcResult<()> {
+    match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.into()),
     }
+}
+
+// ---- lifecycle marker (RC13) -------------------------------------------
+//
+// session.state sits next to session.dat: {version, active, lastExit,
+// crashCount, restoring} — the clean-shutdown flag + crash-dirty
+// record the "restore previous session?" decision needs on every
+// engine.  A malformed or unreadable file reads as the zero state
+// (an absent marker, not an error): the boot path must never fail on
+// a breadcrumb.
+
+#[derive(Default, Clone)]
+struct Lifecycle {
+    active: bool,
+    last_exit: String,
+    crash_count: u32,
+    restoring: bool,
+}
+
+fn state_path_in(dir: &std::path::Path) -> PathBuf {
+    dir.join(STATE_FILE_NAME)
+}
+
+fn read_state(path: &std::path::Path) -> Lifecycle {
+    let blob = match fs::read(path) {
+        Ok(b) => b,
+        Err(_) => return Lifecycle::default(),
+    };
+    let v: Value = match serde_json::from_slice(&blob) {
+        Ok(v) => v,
+        Err(_) => return Lifecycle::default(),
+    };
+    let obj = match v.as_object() {
+        Some(o) => o,
+        None => return Lifecycle::default(),
+    };
+    Lifecycle {
+        active: obj.get("active").and_then(Value::as_bool).unwrap_or(false),
+        last_exit: obj
+            .get("lastExit")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        crash_count: obj
+            .get("crashCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+        restoring: obj
+            .get("restoring")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    }
+}
+
+fn write_state(path: &std::path::Path, st: &Lifecycle) -> RcResult<()> {
+    let json = serde_json::to_vec(&json!({
+        "version": 1,
+        "active": st.active,
+        "lastExit": st.last_exit,
+        "crashCount": st.crash_count,
+        "restoring": st.restoring,
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec());
+    store::atomic_write(path, &json)
+}
+
+/// Boots the session marker in `dir`: reports whether the previous
+/// run died uncleanly (armed marker still set), records the
+/// "unclean" breadcrumb + bumps the crash counter when it did, then
+/// arms the marker for THIS run.  Mirrors BrowserProfile's
+/// markSessionStart sentinel semantics.
+pub fn mark_start_in(dir: &std::path::Path) -> RcResult<bool> {
+    let path = state_path_in(dir);
+    let mut st = read_state(&path);
+    let was_dirty = st.active;
+    if was_dirty {
+        st.crash_count = st.crash_count.saturating_add(1);
+        st.last_exit = "unclean (crash or external kill)".to_string();
+    }
+    st.active = true;
+    write_state(&path, &st)?;
+    Ok(was_dirty)
+}
+
+/// Records a clean exit in `dir` — disarms the marker, clears the
+/// crash counter, breadcrumbs "clean rc=N".
+pub fn mark_exit_in(dir: &std::path::Path, code: i32) -> RcResult<()> {
+    let path = state_path_in(dir);
+    let mut st = read_state(&path);
+    st.active = false;
+    st.crash_count = 0;
+    st.last_exit = format!("clean rc={code}");
+    write_state(&path, &st)
+}
+
+/// Records a handled signal termination in `dir` — clean for
+/// crash-loop purposes but the breadcrumb says how it died, never a
+/// plain "rc=0".
+pub fn mark_terminated_in(dir: &std::path::Path, signal: i32) -> RcResult<()> {
+    let path = state_path_in(dir);
+    let mut st = read_state(&path);
+    st.active = false;
+    st.crash_count = 0;
+    let name = match signal {
+        15 => "SIGTERM",
+        2 => "SIGINT",
+        1 => "SIGHUP",
+        _ => "signal",
+    };
+    st.last_exit = format!("terminated by signal {signal} ({name})");
+    write_state(&path, &st)
+}
+
+/// True while the session marker in `dir` reads armed — a still-armed
+/// marker at boot means the previous run never recorded an exit.
+pub fn dirty_in(dir: &std::path::Path) -> bool {
+    read_state(&state_path_in(dir)).active
+}
+
+/// The last recorded exit breadcrumb — None when none was written.
+pub fn last_exit_in(dir: &std::path::Path) -> Option<String> {
+    let s = read_state(&state_path_in(dir)).last_exit;
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// The consecutive-unclean count — the crash-loop signal.
+pub fn crash_count_in(dir: &std::path::Path) -> u32 {
+    read_state(&state_path_in(dir)).crash_count
+}
+
+/// Arms/disarms the restore-loop guard in `dir`.
+pub fn set_restoring_in(dir: &std::path::Path, on: bool) -> RcResult<()> {
+    let path = state_path_in(dir);
+    let mut st = read_state(&path);
+    st.restoring = on;
+    write_state(&path, &st)
+}
+
+/// True while the restore guard reads armed — a crash mid-restore
+/// leaves it set so the next boot prompts instead of looping.
+pub fn restoring_in(dir: &std::path::Path) -> bool {
+    read_state(&state_path_in(dir)).restoring
+}
+
+// Anchored variants — the rc_* surface (the data dir IS the bound
+// profile dir for session callers).
+
+fn anchored_dir() -> RcResult<PathBuf> {
+    Ok(store::lock().dir()?.to_path_buf())
+}
+
+pub fn mark_start() -> RcResult<bool> {
+    mark_start_in(&anchored_dir()?)
+}
+
+pub fn mark_exit(code: i32) -> RcResult<()> {
+    mark_exit_in(&anchored_dir()?, code)
+}
+
+pub fn mark_terminated(signal: i32) -> RcResult<()> {
+    mark_terminated_in(&anchored_dir()?, signal)
+}
+
+pub fn dirty() -> bool {
+    anchored_dir().map(|d| dirty_in(&d)).unwrap_or(false)
+}
+
+pub fn last_exit() -> Option<String> {
+    anchored_dir().ok().and_then(|d| last_exit_in(&d))
+}
+
+pub fn crash_count() -> u32 {
+    anchored_dir().map(|d| crash_count_in(&d)).unwrap_or(0)
+}
+
+pub fn set_restoring(on: bool) -> RcResult<()> {
+    set_restoring_in(&anchored_dir()?, on)
+}
+
+pub fn restoring() -> bool {
+    anchored_dir().map(|d| restoring_in(&d)).unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -819,5 +1147,179 @@ mod tests {
     fn empty_session_roundtrips() {
         let v = roundtrip(br#"{"version":1,"windows":[]}"#);
         assert_eq!(v["windows"].as_array().unwrap().len(), 0);
+    }
+
+    // ---- RC13: scroll position -------------------------------------
+
+    #[test]
+    fn scroll_roundtrips_and_omits_when_unset() {
+        let v = roundtrip(
+            br#"{"windows":[{"shell":"","current":0,
+                "tabs":[
+                    {"url":"https://a/","engine":"webengine","state":"",
+                     "scroll":{"x":12.5,"y":340}},
+                    {"url":"https://b/","engine":"servo","state":""}
+                ]}]}"#,
+        );
+        let tabs = v["windows"][0]["tabs"].as_array().unwrap();
+        assert_eq!(tabs[0]["scroll"]["x"], 12.5);
+        assert_eq!(tabs[0]["scroll"]["y"], 340.0);
+        // Unrecorded tabs keep the pre-v4 absence.
+        assert!(tabs[1].get("scroll").is_none());
+    }
+
+    #[test]
+    fn rejects_bad_scroll() {
+        assert!(encode(br#"{"windows":[{"tabs":[{"url":"x","scroll":"hi"}]}]}"#).is_err());
+        assert!(encode(
+            br#"{"windows":[{"tabs":[{"url":"x","scroll":{"x":1}}]}]}"#
+        )
+        .is_err());
+        assert!(encode(
+            br#"{"windows":[{"tabs":[{"url":"x","scroll":{"x":1e30,"y":0}}]}]}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn decodes_v3_blobs_without_scroll() {
+        // A pre-RC13 session.dat (bin v3) still restores — its tabs
+        // read with no recorded scroll.
+        let mut blob = Vec::new();
+        blob.extend_from_slice(MAGIC);
+        blob.extend_from_slice(&3u32.to_le_bytes()); // bin v3
+        blob.extend_from_slice(&1u32.to_le_bytes()); // 1 window
+        blob.extend_from_slice(&0u32.to_le_bytes()); // shell ""
+        blob.extend_from_slice(&0i32.to_le_bytes()); // current
+        blob.extend_from_slice(&1u32.to_le_bytes()); // 1 tab
+        blob.extend_from_slice(&3u32.to_le_bytes());
+        blob.extend_from_slice(b"u:l");
+        blob.extend_from_slice(&0u32.to_le_bytes()); // container
+        blob.extend_from_slice(&0u32.to_le_bytes()); // group
+        blob.extend_from_slice(&9u32.to_le_bytes());
+        blob.extend_from_slice(b"webengine");
+        blob.extend_from_slice(&0u32.to_le_bytes()); // state
+        blob.push(1u8); // pinned
+        blob.extend_from_slice(&1u32.to_le_bytes()); // title "T"
+        blob.extend_from_slice(b"T");
+        blob.extend_from_slice(&0u32.to_le_bytes()); // 0 groups
+        blob.extend_from_slice(&0u32.to_le_bytes()); // profile ""
+        blob.extend_from_slice(&0u32.to_le_bytes()); // activeContainer
+        let out = decode(&blob).expect("v3 blob decodes");
+        let v: Value = serde_json::from_slice(&out).unwrap();
+        let tab = &v["windows"][0]["tabs"][0];
+        assert_eq!(tab["pinned"], true);
+        assert_eq!(tab["title"], "T");
+        assert!(tab.get("scroll").is_none());
+    }
+
+    // ---- RC13: private exclusion ------------------------------------
+
+    #[test]
+    fn private_tabs_and_windows_never_persist() {
+        let v = roundtrip(
+            br#"{"windows":[
+                {"shell":"a","current":2,
+                 "tabs":[
+                    {"url":"https://a/","state":""},
+                    {"url":"https://secret-one/","state":"","private":true},
+                    {"url":"https://b/","state":""},
+                    {"url":"https://c/","state":""}
+                 ]},
+                {"shell":"p","current":0,"private":true,
+                 "tabs":[{"url":"https://secret-window/","state":""}]},
+                {"shell":"c","current":0,
+                 "tabs":[{"url":"https://secret-only/","state":"",
+                          "private":true}]}
+            ]}"#,
+        );
+        let wins = v["windows"].as_array().unwrap();
+        // The private window vanished whole; the mixed window kept
+        // only its public tabs with current remapped 2 -> 1 (the
+        // dropped tab sat before it).
+        assert_eq!(wins.len(), 2);
+        let tabs = wins[0]["tabs"].as_array().unwrap();
+        assert_eq!(tabs.len(), 3);
+        assert_eq!(tabs[0]["url"], "https://a/");
+        assert_eq!(tabs[1]["url"], "https://b/");
+        assert_eq!(tabs[2]["url"], "https://c/");
+        assert_eq!(wins[0]["current"], 1);
+        // The all-private window survives as an empty record (today's
+        // C++ shape) but its tab and its current index are gone.
+        assert_eq!(wins[1]["tabs"].as_array().unwrap().len(), 0);
+        assert_eq!(wins[1]["current"], -1);
+        // Nothing private can be read back anywhere.
+        let text = serde_json::to_string(&v).unwrap();
+        assert!(!text.contains("secret"));
+    }
+
+    #[test]
+    fn dropped_current_tab_resets_index() {
+        // The dropped tab WAS the current one — same unset result the
+        // C++ snapshot produces when the current page is skipped.
+        let v = roundtrip(
+            br#"{"windows":[{"shell":"","current":0,
+                "tabs":[{"url":"https://x/","state":"","private":true},
+                        {"url":"https://y/","state":""}]}]}"#,
+        );
+        assert_eq!(v["windows"][0]["current"], -1);
+    }
+
+    // ---- RC13: lifecycle marker --------------------------------------
+
+    #[test]
+    fn lifecycle_clean_crash_and_guard() {
+        let dir = std::env::temp_dir()
+            .join(format!("rc-sess-lc-{}-a", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        // Fresh boot: no marker, no record.
+        assert!(!dirty_in(&dir));
+        assert_eq!(last_exit_in(&dir), None);
+        assert_eq!(crash_count_in(&dir), 0);
+        assert_eq!(mark_start_in(&dir).unwrap(), false);
+        assert!(dirty_in(&dir));
+
+        // Two consecutive unclean starts — the counter climbs and the
+        // record says how the last run ended.
+        assert_eq!(mark_start_in(&dir).unwrap(), true);
+        assert_eq!(crash_count_in(&dir), 1);
+        assert_eq!(
+            last_exit_in(&dir).as_deref(),
+            Some("unclean (crash or external kill)")
+        );
+        assert_eq!(mark_start_in(&dir).unwrap(), true);
+        assert_eq!(crash_count_in(&dir), 2);
+
+        // A clean exit disarms, resets the counter and breadcrumbs.
+        mark_exit_in(&dir, 0).unwrap();
+        assert!(!dirty_in(&dir));
+        assert_eq!(crash_count_in(&dir), 0);
+        assert_eq!(last_exit_in(&dir).as_deref(), Some("clean rc=0"));
+        assert_eq!(mark_start_in(&dir).unwrap(), false);
+
+        // A handled signal is clean but never reads "rc=0".
+        mark_terminated_in(&dir, 15).unwrap();
+        assert!(!dirty_in(&dir));
+        assert_eq!(
+            last_exit_in(&dir).as_deref(),
+            Some("terminated by signal 15 (SIGTERM)")
+        );
+
+        // The restore guard is its own flag.
+        assert!(!restoring_in(&dir));
+        set_restoring_in(&dir, true).unwrap();
+        assert!(restoring_in(&dir));
+        set_restoring_in(&dir, false).unwrap();
+        assert!(!restoring_in(&dir));
+
+        // A corrupt state file reads as the zero state — a breadcrumb
+        // never fails boot.
+        fs::write(state_path_in(&dir), b"garbage").unwrap();
+        assert!(!dirty_in(&dir));
+        assert_eq!(last_exit_in(&dir), None);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

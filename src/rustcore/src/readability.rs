@@ -15,7 +15,7 @@
 //!   {"ok":bool,           an article was extracted
 //!    "probably":bool,     isProbablyReaderable verdict — the
 //!                         affordance heuristic (reader icon)
-//!    "title","byline","siteName","excerpt","dir",
+//!    "title","byline","siteName","excerpt","dir","lang",
 //!    "length":n,          text length of the extracted content
 //!    "content":"..."}     article fragment — populated iff ok
 //! "ok" mirrors the JS enter() contract: it is false when the document
@@ -322,6 +322,7 @@ pub fn extract_json(html: &[u8], url: Option<&str>) -> RcResult<String> {
         "siteName": "",
         "excerpt": "",
         "dir": "",
+        "lang": "",
         "length": 0,
         "content": "",
     });
@@ -350,6 +351,7 @@ pub fn extract_json(html: &[u8], url: Option<&str>) -> RcResult<String> {
     verdict["excerpt"] =
         Value::String(article.excerpt.unwrap_or_default());
     verdict["dir"] = Value::String(article.dir.unwrap_or_default());
+    verdict["lang"] = Value::String(article.lang.unwrap_or_default());
     verdict["length"] = Value::from(article.length);
     verdict["content"] = Value::String(sanitize(&article.content));
     Ok(verdict.to_string())
@@ -585,5 +587,145 @@ mod tests {
         // and are strings; exact byline/excerpt rules track upstream.
         assert!(v["byline"].is_string());
         assert!(v["excerpt"].is_string());
+    }
+
+    // ---- fixture corpus (RC12) -------------------------------------
+    //
+    // Saved pages of different real-world article shapes, one contract
+    // per fixture: the verdict fields, a body marker that must survive,
+    // and page-clutter markers that must not.
+
+    fn fixture(name: &str) -> Vec<u8> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata/reader")
+            .join(name);
+        std::fs::read(&path).unwrap_or_else(|e| panic!("{path:?}: {e}"))
+    }
+
+    #[test]
+    fn corpus_fixture_verdicts() {
+        // (file, expected ok, marker that must survive, clutter that
+        // must not, expected lang)
+        let cases: &[(&str, bool, &str, &[&str], &str)] = &[
+            (
+                "news-article.html",
+                true,
+                "MARKER_NEWS_LEDE",
+                &["NAVCLUTTER", "ADCLUTTER", "RELATEDCLUTTER",
+                  "FOOTERCLUTTER", "BANNERCLUTTER"],
+                "en",
+            ),
+            (
+                "blog-post.html",
+                true,
+                "MARKER_BLOG_LEDE",
+                &["SIDEBARCLUTTER", "FOOTERCLUTTER"],
+                "en",
+            ),
+            (
+                "recipe-page.html",
+                true,
+                "MARKER_RECIPE_LEDE",
+                &["NAVCLUTTER", "COMMENTCLUTTER", "FOOTERCLUTTER"],
+                "en",
+            ),
+            (
+                "docs-page.html",
+                true,
+                "MARKER_DOCS_LEDE",
+                &["DOCSNAVCLUTTER", "FOOTERCLUTTER"],
+                "en",
+            ),
+            // The SPA shape the tier-3 probe fallback was built for:
+            // bare divs inside <main>, no <article>/<p> copy at all.
+            ("spa-main.html", true, "MARKER_SPA_LEDE", &["NAVCLUTTER"], "hu"),
+            // A link-list page is not an article — the whole pipeline
+            // declines it, probe included.
+            ("search-results.html", false, "", &[], "en"),
+        ];
+        for (name, want_ok, marker, clutter, want_lang) in cases {
+            let html = fixture(name);
+            let v = verdict(
+                &html,
+                Some(&format!("https://example.com/{name}")),
+            );
+            assert_eq!(
+                v["probably"].as_bool().unwrap(),
+                *want_ok,
+                "{name}: probably"
+            );
+            assert_eq!(v["ok"].as_bool().unwrap(), *want_ok, "{name}: ok");
+            assert!(v["lang"].is_string(), "{name}: lang field");
+            if !want_ok {
+                continue;
+            }
+            assert_eq!(
+                v["lang"].as_str().unwrap(),
+                *want_lang,
+                "{name}: lang"
+            );
+            let content = v["content"].as_str().unwrap();
+            assert!(
+                content.contains(marker),
+                "{name}: body marker missing from content"
+            );
+            for bad in *clutter {
+                assert!(!content.contains(bad), "{name}: {bad} survived");
+            }
+            // The fragment is re-sanitized before it leaves the core:
+            // interactive markup can never ride the FFI boundary.
+            for bad in ["<script", "javascript:", "<iframe", "<form"] {
+                assert!(!content.contains(bad), "{name}: {bad} survived");
+            }
+        }
+    }
+
+    #[test]
+    fn corpus_recipe_extracts_story() {
+        // The recipe page extracts its intro — the ingredient/method
+        // card scores below the candidate threshold and drops.  That is
+        // the known upstream weakness this port shares with
+        // Readability.js (list markup earns no paragraph score), so the
+        // behavior here is parity with the JS pipeline it replaced, not
+        // a regression — the test pins the honest outcome rather than a
+        // hoped-for one.
+        let html = fixture("recipe-page.html");
+        let v = verdict(&html, Some("https://example.com/r"));
+        assert!(v["ok"].as_bool().unwrap(), "verdict: {v}");
+        let content = v["content"].as_str().unwrap();
+        assert!(content.contains("MARKER_RECIPE_LEDE"), "{content}");
+        assert!(!content.contains("COMMENTCLUTTER"), "{content}");
+    }
+
+    #[test]
+    fn corpus_hostile_markup_never_survives() {
+        // An article scored well enough to extract but seeded with
+        // every trick the sanitizer is for — the fragment that crosses
+        // the FFI boundary must already be inert.
+        let html = fixture("hostile-article.html");
+        let v = verdict(&html, Some("https://example.com/h"));
+        assert!(v["ok"].as_bool().unwrap(), "verdict: {v}");
+        let content = v["content"].as_str().unwrap();
+        assert!(content.contains("MARKER_HOSTILE_LEDE"), "{content}");
+        assert!(content.contains("MARKER_HOSTILE_TAIL"), "{content}");
+        for bad in [
+            "<script", "onclick", "javascript:", "<iframe", "<form",
+            "<input", "<object",
+        ] {
+            assert!(!content.contains(bad), "{bad} survived: {content}");
+        }
+    }
+
+    #[test]
+    fn extract_is_deterministic() {
+        // The FFI contract requires identical output on repeat calls —
+        // the overlay must never render a different article on retry.
+        for name in ["news-article.html", "spa-main.html"] {
+            let html = fixture(name);
+            let url = Some("https://example.com/page");
+            let first = extract_json(&html, url).expect("first");
+            let second = extract_json(&html, url).expect("second");
+            assert_eq!(first, second, "{name} extraction drifted");
+        }
     }
 }

@@ -102,7 +102,13 @@
 #include "webviewsearch.h"
 
 #ifdef ARKTOS_RUSTCORE
+#include "browserpaths.h"
+#include "rustcorebridge.h"
+
+#include <arktos_core.h>
 #include <rustcore.h>
+
+#include <string.h>
 #endif
 
 #include <qabstractproxymodel.h>
@@ -291,8 +297,11 @@ TabWidget::TabWidget(QWidget *parent)
 
 void TabWidget::clearRecentlyClosedTabs()
 {
+    if (m_recentlyClosedTabs.isEmpty())
+        return;
     m_recentlyClosedTabs.clear();
     m_recentlyClosedTabsAction->setEnabled(false);
+    emit recentlyClosedTabsChanged();
 }
 
 bool TabWidget::hasRecentlyClosedTabs() const
@@ -1259,8 +1268,20 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
     if (!backend)
         return nullptr;
 
+    // RC09: bind the engine profile to this window's persona — the
+    // same storageName contract BrowserProfile uses for
+    // QWebEngineProfiles ("arktos" for the default persona,
+    // "arktos-<id>" for a named one).  Backends resolve the id through
+    // Engine::Profile::profileId() so profile-bound facade stores
+    // (history, cookie/site policy, settings) land on the persona the
+    // tab belongs to instead of an ambient or engine-global context.
+    Engine::ProfileOptions options;
+    const QString personaId = profileId();
+    options.storageName = personaId == QLatin1String("default")
+        ? QStringLiteral("arktos")
+        : QStringLiteral("arktos-") + personaId;
     Engine::Profile *profile =
-        backend->createProfile(Engine::ProfileOptions(), nullptr);
+        backend->createProfile(options, nullptr);
     // ENG35/WK17: profiles on policy-hooked backends (Servo's load
     // gate, WebKit's decide-policy consult) get the adblock binding
     // the way prepareProfile installs the interceptor on Chromium
@@ -1269,14 +1290,14 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
     // (setRequestPolicy would replace it).
     if (profile && (backend->id() == QLatin1String("servo")
                     || backend->id() == QLatin1String("webkit")))
-        AdBlockManager::instance()->installOnProfile(profile);
+        AdBlockManager::instanceFor(personaId)->installOnProfile(profile);
     // WK19: a backend that streams its own transfers (WebKit's
     // WebKitDownload -> Engine::DownloadRequest) needs the same
     // DownloadManager binding prepareProfile gives Chromium
     // profiles — with no consumer the request's decision point
     // cancels itself.
     if (profile && backend->capabilities().downloads)
-        DownloadManager::instance()->installOnProfile(profile);
+        DownloadManager::instanceFor(personaId)->installOnProfile(profile);
     EngineTab *tab = new EngineTab(backend, profile, this);
     // The profile is the tab's context — give it the tab as owner so
     // tab teardown frees it.  Backends that hand out a shared object
@@ -2074,6 +2095,61 @@ void TabWidget::ungroupTabs(const QString &groupId)
     m_tabBar->updateGeometry();
     m_tabBar->update();
     emit tabGroupsChanged();
+}
+
+QString TabWidget::tabGroupOf(const WebView *view) const
+{
+    return m_tabGroups.value(const_cast<WebView*>(view));
+}
+
+// chrome.tabGroups.move's half of the machinery: relocate the whole
+// run so its first member lands at index.  Each member's bar move
+// re-emits tabMoved -> moveTab() — m_groupAdjust keeps the per-tab
+// normalize from dissolving the run mid-relocation (the same guard
+// moveTabIntoGroupRun sets), while the pin-boundary fixup in that
+// slot still applies, matching drag semantics.  A collapsed group's
+// only visible member is the chip; its hidden stack re-inserts after
+// it on expand, so the chip move carries the group.
+bool TabWidget::moveTabGroup(const QString &groupId, int index)
+{
+    if (!m_tabGroupInfo.contains(groupId))
+        return false;
+    QList<WebView*> memberViews;
+    for (const int member : tabGroupMembers(groupId)) {
+        if (WebView *view = webView(member))
+            memberViews.append(view);
+    }
+    if (memberViews.isEmpty())
+        return false;
+    // index is the first member's landing slot in the final strip.
+    const int target =
+        qBound(0, index, count() - memberViews.count());
+    const int before = webViewIndex(memberViews.first());
+    if (before < 0 || before == target)
+        return before >= 0;
+    m_groupAdjust = true;
+    if (target < before) {
+        // Leftward: seat members in strip order — each moveTab
+        // inserts at its slot and shifts the rest right.
+        for (int i = 0; i < memberViews.count(); ++i) {
+            const int cur = webViewIndex(memberViews.at(i));
+            if (cur >= 0 && cur != target + i)
+                m_tabBar->moveTab(cur, target + i);
+        }
+    } else {
+        // Rightward: seat from the last member back so earlier
+        // moves never push a seated member off its slot.
+        for (int i = memberViews.count() - 1; i >= 0; --i) {
+            const int cur = webViewIndex(memberViews.at(i));
+            if (cur >= 0 && cur != target + i)
+                m_tabBar->moveTab(cur, target + i);
+        }
+    }
+    m_groupAdjust = false;
+    m_tabBar->updateGeometry();
+    m_tabBar->update();
+    emit tabGroupsChanged();
+    return true;
 }
 
 // TABGRP02: "Close Group" — every member dies through closeTab() (or
@@ -4258,23 +4334,31 @@ void TabWidget::pushRecentlyClosedTab(WebView *view, int index,
         closed.scrollX = scroll.x();
         closed.scrollY = scroll.y();
     }
+    // MD25: the serial addresses this record across every window's
+    // stack (a process-wide counter — a closed tab can outlive its
+    // window), and lastModified feeds Session.lastModified.
+    static quint64 s_closedSerial = 0;
+    closed.serial = ++s_closedSerial;
+    closed.lastModified = QDateTime::currentMSecsSinceEpoch();
     m_recentlyClosedTabs.prepend(closed);
     while (m_recentlyClosedTabs.size() > m_recentlyClosedTabsSize)
         m_recentlyClosedTabs.removeLast();
     m_recentlyClosedTabsAction->setEnabled(true);
+    emit recentlyClosedTabsChanged();
 }
 
-// Shared undo path for openLastTab() and the recently-closed menu:
-// recreate the tab on its recorded container, then put back the strip
-// slot it was closed from — the pin block first, then a still-living
-// group, otherwise the recorded index clamped to today's strip.
-void TabWidget::restoreClosedTab(const RecentlyClosedTab &closed)
+// Shared undo path for openLastTab(), the recently-closed menu and
+// restoreRecentlyClosed(): recreate the tab on its recorded
+// container, then put back the strip slot it was closed from — the
+// pin block first, then a still-living group, otherwise the recorded
+// index clamped to today's strip.
+WebView *TabWidget::restoreClosedTab(const RecentlyClosedTab &closed)
 {
     // A container deleted since the close degrades to the default —
     // makeNewTabInContainer resolves unknown ids that way already.
     WebView *view = makeNewTabInContainer(closed.containerId, true);
     if (!view)
-        return;
+        return nullptr;
     // The engine cannot inject a serialized back/forward stack (see
     // createTab), so the history blob contributes its current entry;
     // an unreadable blob falls back to the flat url.
@@ -4313,6 +4397,7 @@ void TabWidget::restoreClosedTab(const RecentlyClosedTab &closed)
             view, QPointF(closed.scrollX, closed.scrollY));
     // TABS12: a renamed tab reopens renamed.
     setCustomTitleForPage(tabPageWidget(view), closed.customTitle);
+    return view;
 }
 
 void TabWidget::openLastTab()
@@ -4321,6 +4406,7 @@ void TabWidget::openLastTab()
         return;
     restoreClosedTab(m_recentlyClosedTabs.takeFirst());
     m_recentlyClosedTabsAction->setEnabled(!m_recentlyClosedTabs.isEmpty());
+    emit recentlyClosedTabsChanged();
 }
 
 void TabWidget::aboutToShowRecentTabsMenu()
@@ -4357,6 +4443,44 @@ void TabWidget::aboutToShowRecentTriggeredAction(QAction *action)
         return;
     restoreClosedTab(m_recentlyClosedTabs.takeAt(i));
     m_recentlyClosedTabsAction->setEnabled(!m_recentlyClosedTabs.isEmpty());
+    emit recentlyClosedTabsChanged();
+}
+
+// MD25 — chrome.sessions' read surface: the undo stack as plain
+// records (newest first) so the shim can enumerate closed sessions
+// across windows, and a serial-addressed restore so an extension's
+// held sessionId still resolves after newer entries push above it.
+QList<TabWidget::ClosedTabRecord> TabWidget::recentlyClosedRecords()
+        const
+{
+    QList<ClosedTabRecord> out;
+    out.reserve(m_recentlyClosedTabs.size());
+    for (const RecentlyClosedTab &closed : m_recentlyClosedTabs) {
+        ClosedTabRecord record;
+        record.serial = closed.serial;
+        record.url = closed.url;
+        record.title = closed.title;
+        record.lastModified = closed.lastModified;
+        record.index = closed.index;
+        record.pinned = closed.pinned;
+        out.append(record);
+    }
+    return out;
+}
+
+WebView *TabWidget::restoreRecentlyClosed(quint64 serial)
+{
+    for (int i = 0; i < m_recentlyClosedTabs.size(); ++i) {
+        if (m_recentlyClosedTabs.at(i).serial != serial)
+            continue;
+        WebView *view =
+            restoreClosedTab(m_recentlyClosedTabs.takeAt(i));
+        m_recentlyClosedTabsAction->setEnabled(
+            !m_recentlyClosedTabs.isEmpty());
+        emit recentlyClosedTabsChanged();
+        return view;
+    }
+    return nullptr;
 }
 
 void TabWidget::retranslate()
@@ -4641,6 +4765,52 @@ QUrl TabWidget::guessUrlFromStringCpp(const QString &string, bool privateContext
     return fallbackUrl();
 }
 
+#ifdef ARKTOS_RUSTCORE
+// MD08: one granular call into rustcore's sesspolicy module — the
+// same consult autosaver.cpp/browserapplication.cpp run.  The
+// profile-bound AcSession is minted per call — cheap, and a
+// mid-process settings-dialog save lands without a stale cached
+// document.  With no bridge serving the rc_* spelling runs against a
+// bound RcSettings (an empty id binds "default" like every other
+// store consumer).  An empty verdict means "run the direct
+// ProfileSettings reads" — an FFI failure can never silently change
+// the timers.
+static QJsonObject sessionPolicyCall(const QString &profileId,
+                                     const QJsonObject &request)
+{
+    AcSession *h = nullptr;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->session(profileId);
+    RcSettings *s = nullptr;
+    if (!h) {
+        const QByteArray root = BrowserPaths::dataRoot().toUtf8();
+        const QByteArray id = profileId.isEmpty()
+            ? QByteArrayLiteral("default") : profileId.toUtf8();
+        s = rc_settings_open(root.constData(), id.constData());
+        if (!s)
+            return QJsonObject();
+    }
+    const QByteArray json =
+        QJsonDocument(request).toJson(QJsonDocument::Compact);
+    char *raw = h
+        ? ac_session_policy(h,
+                            reinterpret_cast<const uint8_t *>(json.constData()),
+                            size_t(json.size()))
+        : rc_sesspolicy_call(s,
+                             reinterpret_cast<const uint8_t *>(json.constData()),
+                             size_t(json.size()));
+    ac_session_close(h);
+    if (s)
+        rc_settings_close(s);
+    if (!raw)
+        return QJsonObject();
+    QByteArray out = QByteArray::fromRawData(raw, int(strlen(raw)));
+    out.detach();
+    rc_string_free(raw);
+    return QJsonDocument::fromJson(out).object();
+}
+#endif // ARKTOS_RUSTCORE
+
 /*
    Somewhere in the browser interface a users wants to open a url
 
@@ -4724,31 +4894,55 @@ void TabWidget::loadSettings()
     setTwoLevelStrip(
         settings.value(QLatin1String("containerDisplay"), 1).toInt() != 0);
 
+    // MD08: the idle-suspend / purge / lazy-restore reads are
+    // session-lifecycle policy — the facade resolves the dialog's own
+    // rows off the bound persona's store; an empty verdict keeps the
+    // direct ProfileSettings reads verbatim (an FFI failure can never
+    // silently change the timers).
+    QJsonObject lifecycle;
+#ifdef ARKTOS_RUSTCORE
+    lifecycle = sessionPolicyCall(
+        profileId(),
+        QJsonObject{
+            {QLatin1String("op"), QLatin1String("lifecycle")}});
+#endif
+
     // SLEEP01: opt-in idle suspend — disabled unless the user turns
     // it on in Settings > Tabs.
-    const bool suspend =
-        settings.value(QLatin1String("suspendTabs"), false).toBool();
-    const int suspendMinutes =
-        settings.value(QLatin1String("suspendTabsMinutes"), 30).toInt();
-    m_suspendIdleMs = suspend ? qint64(suspendMinutes) * 60 * 1000 : 0;
+    if (lifecycle.contains(QLatin1String("suspend_idle_ms"))) {
+        m_suspendIdleMs =
+            lifecycle.value(QLatin1String("suspend_idle_ms")).toInteger();
+    } else {
+        const bool suspend =
+            settings.value(QLatin1String("suspendTabs"), false).toBool();
+        const int suspendMinutes =
+            settings.value(QLatin1String("suspendTabsMinutes"), 30).toInt();
+        m_suspendIdleMs = suspend ? qint64(suspendMinutes) * 60 * 1000 : 0;
+    }
     updateSleepTimer();
 
     // MEM06: the periodic background purge — on by default.  It is
     // the light-touch counterpart to suspend above: instead of
     // unloading the page it freeze-pulses hidden tabs so the engine
     // reclaims the soft retention MEM05 measured.
-    m_memoryPurge =
-        settings.value(QLatin1String("memoryPurge"), true).toBool();
+    m_memoryPurge = lifecycle.contains(QLatin1String("memory_purge"))
+        ? lifecycle.value(QLatin1String("memory_purge")).toBool(true)
+        : settings.value(QLatin1String("memoryPurge"), true).toBool();
     updatePurgeTimer();
 
     // PREFUI04: lazy session restore — restored tabs defer their
     // first load until activation; pinned tabs can be exempted.
     settings.endGroup();
     settings.beginGroup(QLatin1String("performance"));
-    m_lazyRestoreTabs = settings.value(
-        QLatin1String("lazyRestoreTabs"), false).toBool();
-    m_lazyRestorePinnedTabs = settings.value(
-        QLatin1String("alwaysLoadPinnedTabs"), true).toBool();
+    m_lazyRestoreTabs = lifecycle.contains(QLatin1String("lazy_restore"))
+        ? lifecycle.value(QLatin1String("lazy_restore")).toBool(false)
+        : settings.value(
+              QLatin1String("lazyRestoreTabs"), false).toBool();
+    m_lazyRestorePinnedTabs =
+        lifecycle.contains(QLatin1String("lazy_restore_pinned"))
+        ? lifecycle.value(QLatin1String("lazy_restore_pinned")).toBool(true)
+        : settings.value(
+              QLatin1String("alwaysLoadPinnedTabs"), true).toBool();
     settings.endGroup();
 }
 
@@ -4998,7 +5192,12 @@ void TabWidget::restorePendingTab(int index)
     if (it == m_pendingRestores.end())
         return;
     const QUrl url = it->url;
+    const QPointF scroll = it->scroll;
     m_pendingRestores.erase(it);
+    // RC13: a deferred tab's recorded scroll rides the stash until the
+    // real load — queue it like an eagerly restored tab's would be.
+    if (scroll.x() >= 0 && scroll.y() >= 0)
+        m_pendingScrollRestore.insert(webView, scroll);
     // SESS01: a hidden-store reinsert fires currentChanged() inside
     // insertTab() — the record's location bar is not back on the
     // stack yet, so the bar is null here (it arrives with
@@ -5075,8 +5274,10 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
                                  : qobject_cast<EngineTab*>(page);
         if (!tab && !foreign)
             continue;
-        if (tab && tab->enginePage() && tab->enginePage()->isOffTheRecord())
+        if (tab && tab->enginePage() && tab->enginePage()->isOffTheRecord()) {
+            ++snap.droppedPrivate;
             continue;
+        }
         if (page == currentPage)
             snap.currentIndex = snap.urls.count();
         if (foreign) {
@@ -5090,6 +5291,7 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
             snap.groupIds.append(QString());
             snap.engines.append(foreign->backend()
                 ? foreign->backend()->id() : QStringLiteral("webengine"));
+            snap.scrolls.append(QPointF(-1, -1));
         } else {
             // PREFUI04: a lazily restored tab never loaded its page —
             // its stashed url + history blob stand in for the live
@@ -5098,12 +5300,36 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
             if (pending != m_pendingRestores.constEnd()) {
                 snap.urls.append(QString::fromUtf8(pending->url.toEncoded()));
                 snap.histories.append(pending->historyState);
+                snap.scrolls.append(pending->scroll);
             } else {
                 snap.urls.append(QString::fromUtf8(tab->url().toEncoded()));
                 if (tab->enginePage()->historyCount() != 0)
                     snap.histories.append(serializePageHistory(tab->enginePage()));
                 else
                     snap.histories.append(QByteArray());
+                // RC13: the recorded restore wins over the live
+                // offset — a pending scroll belongs to a page that
+                // never loaded (or hasn't yet), so scrollPosition()
+                // would report (0,0) and clobber the real record.  A
+                // sleeping tab's captured offsets outrank it the same
+                // way: the discarded page lost its live value.
+                const auto scroll =
+                    m_pendingScrollRestore.constFind(tab);
+                if (scroll != m_pendingScrollRestore.constEnd()) {
+                    snap.scrolls.append(scroll.value());
+                } else {
+                    const auto sleep = m_sleepStates.constFind(tab);
+                    if (sleep != m_sleepStates.constEnd()
+                            && sleep->restoreScroll) {
+                        snap.scrolls.append(
+                            QPointF(sleep->scrollX, sleep->scrollY));
+                    } else if (tab->enginePage()) {
+                        snap.scrolls.append(
+                            tab->enginePage()->scrollPosition());
+                    } else {
+                        snap.scrolls.append(QPointF(-1, -1));
+                    }
+                }
             }
             snap.containers.append(tab->containerId());
             snap.groupIds.append(m_tabGroups.value(tab));
@@ -5146,7 +5372,7 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
 
 QByteArray TabWidget::saveState() const
 {
-    int version = 7; // SESS01: v7 tails with each tab's engine tag
+    int version = 8; // RC13: v8 tails with each tab's scroll offset
     QByteArray data;
     QDataStream stream(&data, QIODevice::WriteOnly);
 
@@ -5177,6 +5403,9 @@ QByteArray TabWidget::saveState() const
     // SESS01: the per-tab engine tags — read back under v>=7.
     stream << snap.engines;
 
+    // RC13: the per-tab scroll offsets — read back under v>=8.
+    stream << snap.scrolls;
+
     return data;
 }
 
@@ -5191,7 +5420,7 @@ bool TabWidget::restoreState(const QByteArray &state)
     qint32 v;
     stream >> marker;
     stream >> v;
-    if (marker != TabWidgetMagic || v < 1 || v > 7)
+    if (marker != TabWidgetMagic || v < 1 || v > 8)
         return false;
 
     TabSessionSnapshot snap;
@@ -5239,6 +5468,11 @@ bool TabWidget::restoreState(const QByteArray &state)
     // truncated tail restores everything on WebEngine.
     if (v >= 7)
         StreamingUtils::readBoundedList(stream, snap.engines);
+    // RC13: v8 tails with each tab's scroll offset — a missing or
+    // truncated tail restores at the top like a blob that never
+    // recorded scroll.
+    if (v >= 8)
+        StreamingUtils::readBoundedList(stream, snap.scrolls);
     if (stream.status() != QDataStream::Ok)
         return false;
 
@@ -5334,6 +5568,13 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
             ? currentWebView()
             : makeNewTabInContainer(containerId, false);
         createdPages.append(webView ? tabPageWidget(webView) : nullptr);
+        // RC13: the recorded scroll offset — (-1,-1) marks a tab with
+        // nothing to restore, matching collect's sentinel.
+        const QPointF savedScroll =
+            snap.scrolls.value(i, QPointF(-1, -1));
+        const bool hasScroll = savedScroll.x() >= 0
+            && savedScroll.y() >= 0
+            && (savedScroll.x() != 0 || savedScroll.y() != 0);
         if (webView) {
             // TABS04: flag the restored pin before the next saved tab
             // is created — the pinned-prefix insert then keeps the
@@ -5360,7 +5601,11 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
                 && !(savedPinned.value(i) && m_lazyRestorePinnedTabs);
             const int index = webViewIndex(webView);
             if (deferred) {
-                m_pendingRestores.insert(webView, {url, historyState});
+                PendingRestore pending;
+                pending.url = url;
+                pending.historyState = historyState;
+                pending.scroll = savedScroll;
+                m_pendingRestores.insert(webView, pending);
                 // The strip reads restored before the first load:
                 // saved title (history store lookup, url fallback)
                 // and the persisted favicon.
@@ -5387,6 +5632,10 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
                 }
             } else {
                 webView->loadUrl(url);
+                // RC13: applied once on the first finished load — the
+                // same once-only pattern TABS05's undo-close uses.
+                if (hasScroll)
+                    m_pendingScrollRestore.insert(webView, savedScroll);
             }
             // TABS12: the saved rename override lands last so it wins
             // over the restored-from-history title above; a tab that
@@ -5532,6 +5781,16 @@ QJsonObject TabWidget::sessionStateJson() const
         const QString title = snap.titles.value(i);
         if (!title.isEmpty())
             tab.insert(QLatin1String("title"), title);
+        // RC13: the recorded scroll offset rides the v4 schema —
+        // "scroll" stays absent when nothing was captured so old
+        // files and readers carry no dead field.
+        const QPointF scroll = snap.scrolls.value(i, QPointF(-1, -1));
+        if (scroll.x() >= 0 && scroll.y() >= 0) {
+            QJsonObject point;
+            point.insert(QLatin1String("x"), scroll.x());
+            point.insert(QLatin1String("y"), scroll.y());
+            tab.insert(QLatin1String("scroll"), point);
+        }
         tabs.append(tab);
     }
     QJsonArray groups;
@@ -5548,6 +5807,13 @@ QJsonObject TabWidget::sessionStateJson() const
     state.insert(QLatin1String("activeContainer"), snap.activeContainerHeader);
     state.insert(QLatin1String("tabs"), tabs);
     state.insert(QLatin1String("groups"), groups);
+    // RC13: a window whose tabs were ALL off-the-record marks itself
+    // private — the store strips the whole record so an all-OTR
+    // window never persists even an empty slot.  A window with any
+    // surviving public tab stays unmarked (its dropped private tabs
+    // are already absent).
+    if (snap.droppedPrivate > 0 && tabs.isEmpty())
+        state.insert(QLatin1String("private"), true);
     return state;
 }
 
@@ -5583,6 +5849,18 @@ bool TabWidget::restoreSessionState(const QJsonObject &state)
         snap.pinned.append(
             tab.value(QLatin1String("pinned")).toBool() ? 1 : 0);
         snap.titles.append(tab.value(QLatin1String("title")).toString());
+        // RC13: the recorded scroll offset — an absent field or the
+        // (-1,-1) sentinel both read as "nothing to restore".
+        const QJsonObject scroll =
+            tab.value(QLatin1String("scroll")).toObject();
+        if (scroll.value(QLatin1String("x")).isDouble()
+                && scroll.value(QLatin1String("y")).isDouble()) {
+            snap.scrolls.append(QPointF(
+                scroll.value(QLatin1String("x")).toDouble(),
+                scroll.value(QLatin1String("y")).toDouble()));
+        } else {
+            snap.scrolls.append(QPointF(-1, -1));
+        }
     }
     const QJsonArray groups = state.value(QLatin1String("groups")).toArray();
     for (const QJsonValue &v : groups) {

@@ -73,6 +73,7 @@
 class AutoSaver;
 class QWebEngineCookieStore;
 class QWebEngineProfile;
+struct AcCookies;
 
 /*!
     Cookie policy and cookie-jar model for the application's
@@ -211,6 +212,20 @@ private:
     void updatePolicySnapshot();
     void applyRules();
     void applyKeepPolicy();
+#if defined(ARKTOS_RUSTCORE)
+    // MD23: the RC15 mirror lane — this jar's profile-bound
+    // AcCookies handle, minted lazily through the shared AcCore.
+    // NULL on an off-the-record jar (a private jar's cookies never
+    // reach the persistent db) and when the bridge cannot serve —
+    // the legacy rc_* spelling then runs over the per-call anchored
+    // store instead.  The mirror ops write the jar's container
+    // partition ("" for the normal profile).
+    AcCookies *rustCookies() const;
+    void rustCookieSet(const QNetworkCookie &cookie) const;
+    void rustCookieRemove(const QNetworkCookie &cookie) const;
+    void rustCookiesClear() const;
+    void ensureRustCookies() const;
+#endif
 
     QWebEngineProfile *m_profile;   // not owned
     QString m_profileId;
@@ -244,6 +259,10 @@ private:
     QStringList m_exceptions_allow;
     QStringList m_exceptions_allowForSession;
     int m_sessionLength;
+#if defined(ARKTOS_RUSTCORE)
+    mutable AcCookies *m_rustCookies = nullptr;
+    mutable bool m_rustRoleDeclared = false;
+#endif
 };
 
 #endif // COOKIEJAR_H

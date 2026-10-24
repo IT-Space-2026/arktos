@@ -127,6 +127,10 @@ signals:
     // strip-level churn (add/close/reorder/title).
     void tabGroupsChanged();
     void lastTabClosed();
+    // MD25: the TABS05 undo stack changed — a tab was queued for
+    // reopen, a record was restored, or the stack was cleared.
+    // chrome.sessions' onChanged rides it; every mutation site emits.
+    void recentlyClosedTabsChanged();
 
     // current tab signals
     void setCurrentTitle(const QString &url);
@@ -325,6 +329,17 @@ public:
     // a warning that reports the real (hidden-inclusive) count.
     void closeTabGroup(const QString &groupId);
 
+    // Membership lookup by view rather than strip index — covers the
+    // collapsed group's DETACHED members and container-level-hidden
+    // tabs that index-based lookups cannot reach.
+    QString tabGroupOf(const WebView *view) const;
+    // Relocates the group so its first visible member lands at index
+    // (a collapsed group moves as its chip; the hidden stack follows
+    // on expand).  Members move under m_groupAdjust so the per-tab
+    // normalize never rips the run apart.  Returns false for an
+    // unknown group or one with no visible member to place.
+    bool moveTabGroup(const QString &groupId, int index);
+
     QByteArray saveState() const;
     bool restoreState(const QByteArray &state);
 #ifdef ARKTOS_RUSTCORE
@@ -353,6 +368,27 @@ public:
     // form resolves it from the process-global private flag.
     static QUrl guessUrlFromString(const QString &url);
     static QUrl guessUrlFromString(const QString &url, bool privateContext);
+
+    // MD25 (chrome.sessions): the undo stack as enumerated records —
+    // newest first, the same order the recently-closed menu shows —
+    // and a restore that addresses records by the serial each entry
+    // carries (list positions shift under a caller holding one, so
+    // the stack never addresses by index).  Plain methods, not slots:
+    // moc cannot parse a nested struct in a slots section.
+    struct ClosedTabRecord {
+        quint64 serial = 0;        // sessions.restore() sessionId key
+        QUrl url;
+        QString title;
+        qint64 lastModified = 0;   // ms since epoch the tab was closed
+        int index = -1;            // strip index at close, -1 hidden
+        bool pinned = false;
+    };
+    QList<ClosedTabRecord> recentlyClosedRecords() const;
+    // Restores the record carrying `serial` — answers the rebuilt
+    // view, nullptr when the serial names no record or the rebuild
+    // failed (the record is consumed either way, matching the
+    // menu/openLastTab semantics).
+    WebView *restoreRecentlyClosed(quint64 serial);
 
 protected:
     void changeEvent(QEvent *event) override;
@@ -628,15 +664,21 @@ private:
         bool scrollValid = false;
         double scrollX = 0.0;
         double scrollY = 0.0;
+        // MD25: a process-stable serial — chrome.sessions.restore()
+        // addresses records by id while list positions shift — and
+        // the close timestamp feeding Session.lastModified.
+        quint64 serial = 0;
+        qint64 lastModified = 0;
     };
     // pushRecentlyClosedTab snapshots the closing tab (closeTab's
     // strip path and closeHiddenTab's filtered-level path share it);
     // restoreClosedTab rebuilds the tab and puts back the recorded
-    // slot.
+    // slot, answering the view it made (nullptr when the tab could
+    // not be recreated).
     void pushRecentlyClosedTab(WebView *view, int index,
                                const QString &containerId,
                                const QString &groupId);
-    void restoreClosedTab(const RecentlyClosedTab &closed);
+    WebView *restoreClosedTab(const RecentlyClosedTab &closed);
 
     // A detached member of a collapsed group: its page widget, its
     // location bar and the tab-strip visuals re-applied on expand.
@@ -670,6 +712,17 @@ private:
         // (EngineTab's backend()->id()); a missing/short list reads
         // "webengine" on restore.
         QStringList engines;
+        // RC13: parallel — the scroll offset enginePage()->
+        // scrollPosition() reported at collect time (or the recorded
+        // restore a pending/deferred tab still carries); (-1,-1) marks
+        // a tab with nothing to restore.  Foreign EngineTabs always
+        // record the sentinel — scrollPosition() is backend-optional.
+        QList<QPointF> scrolls;
+        // RC13: how many off-the-record tabs the pass skipped — the
+        // manifest writer marks the whole window "private" when only
+        // private tabs would have serialized, so an all-OTR window
+        // never persists even an empty record.
+        int droppedPrivate = 0;
         QList<TabGroup> groups;        // group table, first-appearance order
         QString activeContainerHeader; // CONT06: window's level-1 selection
         // SESS01: whether the blob/manifest carried the header at all
@@ -783,6 +836,11 @@ private:
     struct PendingRestore {
         QUrl url;
         QByteArray historyState;
+        // RC13: the scroll offset the session recorded for the tab —
+        // stashed alongside url+history so a re-save of a never-loaded
+        // deferred tab keeps it; restorePendingTab() hands it to
+        // m_pendingScrollRestore before the load.  (-1,-1) = none.
+        QPointF scroll = QPointF(-1, -1);
     };
     QHash<WebView *, PendingRestore> m_pendingRestores;
     // POL02/TPREV02: per-view thumbnail cache for the hover preview —

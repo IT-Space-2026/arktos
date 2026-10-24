@@ -20,6 +20,8 @@
 #include "enginetab.h"
 
 #include "engineinterface.h"
+#include "historymanager.h"
+#include "pdfsupport.h"
 #include "pdfview.h"
 
 #ifdef ARKTOS_SERVO
@@ -105,6 +107,40 @@ void EngineTab::wirePage()
         m_progress = 100;
         emit loadFinished(ok);
     });
+
+    // RC09: feed the app-side history store — the mirror of WebPage's
+    // MIG06 wiring for foreign-engine pages.  The profile's persona id
+    // routes the write into the same profile-bound HistoryManager a
+    // Chromium tab uses (facade-backed — ac_history under the shared
+    // AcCore when the rustcore lane is linked), so a Servo or WebKit
+    // visit lands in the same history.db as a Chromium one.
+    // Off-the-record profiles never reach the manager — the private
+    // browsing guarantee is unchanged.
+    if (m_profile && !m_profile->isOffTheRecord()) {
+        HistoryManager *history =
+            HistoryManager::instanceFor(m_profile->profileId());
+        connect(m_page, &Engine::Page::loadFinished, this,
+                [this, history](bool ok) {
+            // The warning interstitials are chrome, not visited
+            // pages — keep them out of history.  The sanitized
+            // temp-dir PDF copies are viewer staging, not
+            // destinations.
+            const QString scheme = m_page->url().scheme();
+            if (ok && scheme != QLatin1String("arktos-cert-error")
+                && scheme != QLatin1String("arktos-http-warning")
+                && scheme != QLatin1String("arktos-site-block")
+                && !PdfSupport::isManagedPath(m_page->url().toLocalFile()))
+                history->addHistoryEntry(m_page->url().toString());
+        });
+        connect(m_page, &Engine::Page::titleChanged, this,
+                [this, history](const QString &title) {
+            history->updateHistoryEntry(m_page->url(), title);
+        });
+        connect(m_page, &Engine::Page::iconChanged, this,
+                [this, history](const QIcon &icon) {
+            history->setIcon(m_page->url(), icon);
+        });
+    }
 }
 
 bool EngineTab::restartEngine()

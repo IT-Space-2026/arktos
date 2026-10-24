@@ -9,8 +9,8 @@
 # distro series ships. The optional Rust crates (arktos-rustdl,
 # arktos-rustcore) link STATICALLY into the binary via their .a archives
 # (src/rustdl/rustdl.pri, src/rustcore/rustcore.pri), so there are no
-# rust .so artifacts to ship; libservo_embed does not exist in this
-# tree yet (ENG03 gates it).
+# rust .so artifacts to ship; the optional libservo_embed.so Servo
+# backend rides along under %{_libdir}/arktos/lib when the tree built it.
 #
 # Because the runtime is private, AutoReqProv is OFF: a dependency scan
 # would publish the bundled Qt SONAMEs as Provides and emit Requires on
@@ -167,9 +167,9 @@ strip, reader mode, rich download cards and a command palette.
 
 This package bundles the Qt 6.12 runtime and QtWebEngine process
 under /usr/lib/arktos (the upstream build targets a newer Qt than the
-distro series ships), and statically links the optional Rust
-components (arktos-rustdl download engine, arktos-rustcore when built)
-into the binary — there are no separate rust .so artifacts to ship.
+distro series ships), and statically links the Rust components
+(arktos-rustdl download engine, arktos-rustcore browser core) into the
+binary — the dlopen'd Servo backend library rides along when built.
 Arktos is experimental software provided as is.
 
 %prep

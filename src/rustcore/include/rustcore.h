@@ -72,7 +72,10 @@ typedef struct RcBuffer {
 #define RC_AUTOFILL_FILE "autofill-store.dat"
 
 /* Change topics emitted so far: "credentials" (rc_cred_* map),
- * "autofill" (rc_autofill_* record set). */
+ * "autofill" (rc_autofill_* record set), "settings" (rc_settings_*
+ * mutations), "profiles" (rc_profiles_* registry mutations),
+ * "torctl" (RC14: a control reply/event/link-state push is pending),
+ * "icons" (RC16: the icon cache changed). */
 typedef void (*RcChangeCallback)(const char *topicUtf8, void *userdata);
 
 /* --- housekeeping ------------------------------------------------- */
@@ -254,6 +257,63 @@ RcStatus rc_policy_load_snapshot(const uint8_t *jsonUtf8, size_t len);
 char *rc_policy_evaluate(const uint8_t *jsonUtf8, size_t len);
 int rc_policy_cookie_filter(const uint8_t *jsonUtf8, size_t len);
 char *rc_policy_call(const uint8_t *jsonUtf8, size_t len);
+
+/* MD03: the SEC05 web-permission broker's decision layer — the
+ * feature tables (never-prompted captures/clipboard/fonts vs the
+ * ask-capable notifications/geolocation/mouse-lock), the
+ * security-origin key normalization, the remembered-decision
+ * consult and the session-scoped answer map.  Durable rows live in
+ * sitedecisions.json's "webperm" kind under the anchored data dir;
+ * the Qt manager keeps the prompt queue and the engine's
+ * grant()/deny() — this surface only answers questions.
+ *
+ * rc_perm_call: generic granular endpoint {"op":..., params} ->
+ *   JSON result.  Ops: decide (feature gate -> stored -> session ->
+ *   ask), stored (mid-queue recheck), resolve (session-record
+ *   always; persist on remember && !otr), remove (row + both
+ *   session variants), clear (kind + session map), feature_class,
+ *   key_for, session_clear.  NULL on error — callers fail toward
+ *   their own local consult, never a silent grant.
+ *   rc_string_free() the result. */
+char *rc_perm_call(const uint8_t *jsonUtf8, size_t len);
+
+/* MD02: the acceptNavigationRequest-time verdicts — interstitial
+ * carrier classification, the browser-handled scheme allowlist, the
+ * SEC02 external-handoff gate, per-profile scheme/nav-block
+ * overrides, the abp-subscribe rewrite, the staged-pdf viewer
+ * clamp, the file: directory reroute, the CONT04 container divert
+ * and the sanitize-on-view pdf claim — phase-scoped so the Qt
+ * page's kept gates stay in their exact order.  MD09 folds the
+ * pop-up gate in too: the createWindow consult (enabled / shaped /
+ * gesture / scheme floor / suffix-matched allow list) plus the
+ * exception-record ops — persistent rows are sitedecisions.json's
+ * "popup" kind, the session overlay is process-global.  The Qt
+ * side keeps all execution — nonce resolution, tor holds, tab
+ * spawning, dialogs, window/probe creation.
+ *
+ * rc_nav_decide: one navigation manifest (JSON; {"url","type",
+ *   "is_main_frame", "current_url", "current_is_managed",
+ *   "target_is_dir", "target_is_managed", "otr", "container",
+ *   "container_host", "pdf_viewer", "pdf_sanitize", "gesture",
+ *   "phase"}) -> verdict JSON.  "container_host" carries the
+ *   caller's canonical rule key (www-folded, root-dots trimmed —
+ *   the fold needs the public-suffix table that stays caller-side);
+ *   absent means "look the raw url host up", an explicit "" means
+ *   "unnormalizable — no rule".  Phases: "pre" | "mid" | "claim";
+ *   an absent/unknown phase runs all three and reports the first
+ *   non-continue verdict.
+ *   NULL on malformed input — the adapter fails OPEN (treat NULL
+ *   as "continue", never as a block).
+ *
+ * rc_nav_call: generic granular endpoint {"op":..., params} ->
+ *   JSON result.  Ops: decide, browser_scheme, scheme_class,
+ *   rate_limit_interstitial, untrusted_input, page_link,
+ *   staged_viewer, nav_rule, popup_decide, popup_is_allowed,
+ *   popup_allow, popup_remove, popup_list, popup_clear,
+ *   popup_clear_session.  NULL on error — rc_string_free() the
+ *   result. */
+char *rc_nav_decide(const uint8_t *jsonUtf8, size_t len);
+char *rc_nav_call(const uint8_t *jsonUtf8, size_t len);
 
 /* PERF01: monotonic verdict-state generation — bumped by every
  * mutation that could change an evaluate() verdict (snapshot loads,
@@ -444,7 +504,7 @@ void rc_pdfdoc_close(uintptr_t doc);
  *
  * rc_readability_extract: JSON verdict to outJson (rc_buffer_free):
  *   {"ok":bool, "probably":bool, "title", "byline", "siteName",
- *    "excerpt", "dir", "length":n, "content":"..."}
+ *    "excerpt", "dir", "lang", "length":n, "content":"..."}
  * "ok" mirrors the JS enter() contract — false when the page is not
  * article-like or the extractor found nothing; "content" is populated
  * only when ok and arrives re-sanitized against the reader-view
@@ -593,6 +653,26 @@ RcStatus rc_hist_clear(void);
  * clear-private-data plan (CLR01).  Icons are kept. */
 RcStatus rc_hist_clear_since(int64_t sinceMs);
 
+/* Deletes every visit at or before cutoffMs — the bulk retention
+ * expiry behind HistoryManager's daysToExpire rule (the caller
+ * computes the local-time boundary).  Icons are kept.  outRemoved
+ * may be NULL; when given it receives the deleted row count. */
+RcStatus rc_hist_expire_older_than(int64_t cutoffMs,
+                                   int64_t *outRemoved);
+
+/* Filtered listing — the store-side query surface (RC04).  specJson
+ * is an object, all fields optional:
+ *   "term"     case-insensitive substring on url OR title (the
+ *              history dialog's all-columns fixed-string match)
+ *   "from_ms"  inclusive visited_at lower bound (ms-epoch)
+ *   "until_ms" inclusive visited_at upper bound
+ *   "limit"    max rows returned — absent or <0 is unbounded
+ *   "offset"   rows skipped after filtering
+ * Returns a JSON array [{"url","title","ts"}, ...] in the same
+ * deduped newest-first order rc_hist_entry_at iterates.  NULL on a
+ * malformed spec or an unopened store; rc_string_free. */
+char *rc_hist_query(const char *specJsonUtf8);
+
 /* Per-host favicons (the HIST01 persistence folded into the core):
  * PNG blobs keyed by host. */
 RcStatus rc_hist_icon_set(const char *hostUtf8,
@@ -600,22 +680,31 @@ RcStatus rc_hist_icon_set(const char *hostUtf8,
 RcStatus rc_hist_icon_get(const char *hostUtf8, RcBuffer *out);
 RcStatus rc_hist_icon_clear(void);
 
-/* --- session store (RCORE03) ----------------------------------------
- * The canonical session file "<data dir>/session.dat" — a versioned
- * binary schema (magic "ARSS", version 1) written atomically
+/* --- session store (RCORE03; per-profile + lifecycle in RC13) --------
+ * The canonical session file "<profile dir>/session.dat" — a versioned
+ * binary schema (magic "ARSS", bin version 4) written atomically
  * (temp + fsync + rename, 0600) and decoded under strict bounds: a
  * corrupt or truncated file fails RC_CORRUPT whole, so it can never
  * loop the crash-restore prompt or drop part of the window set.
+ * RC13 makes the store per-profile: anchor the data dir to the
+ * persona's profile dir (rc_set_data_dir) and each rc_session_* op
+ * lands on that persona's own file.
  *
  * The C ABI carries the session as a JSON manifest:
  *   {"version":1,"windows":[{"shell":"<base64>","current":0,
- *     "tabs":[{"url","container","group","engine","state":"<base64>"}],
- *     "groups":[{"id","name","color","collapsed"]}]}]}
+ *     "tabs":[{"url","container","group","engine","state":"<base64>",
+ *              "pinned","title","scroll":{"x","y"}}],
+ *     "groups":[{"id","name","color","collapsed"]}],
+ *     "profile","activeContainer"}]}
  * "shell" is the opaque window-chrome blob (the Qt shell's own
  * serialization), "state" the opaque per-tab engine-state blob
  * (WebEngine's serialized history today; a different engine supplies
  * its own bytes — the format survives the swap).  "container" is the
- * tab's container binding, "engine" its engine tag ("webengine").
+ * tab's container binding, "engine" its engine tag ("webengine"),
+ * "scroll" its recorded viewport position (v4, optional).
+ * "private":true on a window or tab is a strip marker — private data
+ * is never persisted; the flagged record drops out of the stored
+ * blob entirely.
  *
  * rc_session_load returns RC_NOT_FOUND when no session exists.
  * rc_session_encode/decode are the pure codec (test seam). */
@@ -629,6 +718,84 @@ RcStatus rc_session_decode(const uint8_t *blob, size_t len,
                            RcBuffer *outJson);
 
 #define RC_SESSION_FILE "session.dat"
+
+/* --- session lifecycle marker (RC13) ---------------------------------
+ * "<profile dir>/session.state" — the clean-shutdown flag +
+ * crash-dirty record + restore-loop guard, so "restore previous
+ * session?" works identically on every engine.  Mirrors
+ * BrowserProfile's markSession* sentinels; a still-armed marker at
+ * boot means the previous run never recorded an exit.
+ *
+ * rc_session_mark_start arms this run's marker and returns 1 when
+ * the previous run died uncleanly (crash counter bumped, "unclean"
+ * breadcrumb written), 0 otherwise, -1 on error.
+ * rc_session_last_exit yields "clean rc=N", "terminated by signal N
+ * (NAME)" or "unclean (crash or external kill)" — RC_NOT_FOUND when
+ * no exit was ever recorded. */
+int      rc_session_mark_start(void);
+RcStatus rc_session_mark_exit(int32_t code);
+RcStatus rc_session_mark_terminated(int32_t signal);
+int      rc_session_dirty(void);
+int      rc_session_crash_count(void);
+RcStatus rc_session_last_exit(RcBuffer *out);
+RcStatus rc_session_set_restoring(int on);
+int      rc_session_restoring(void);
+
+#define RC_SESSION_STATE_FILE "session.state"
+
+typedef struct RcSettings RcSettings;
+
+/* --- session snapshot/restore policy (MD08) -----------------------------
+ * The session pipeline's decision layer — a read-only typed view
+ * over the bound profile's settings store ("session/" prefix).
+ * `h` is the bound profile's RcSettings (rc_settings_open, or the
+ * ac_session_policy per-op open); NULL is legal for the "defaults"
+ * op only — the other reads degrade to the compiled-in constants on
+ * an absent store, except "stale" which genuinely needs the dir.
+ * Manifest grammar:
+ *   {"op":"defaults"}                 -> the resolved default set
+ *   {"op":"policy"}                   -> the whole resolved set
+ *   {"op":"snapshot"}                 -> {"interval_ms","maxwait_ms"}
+ *   {"op":"dirty","kind":<k>}         -> {"dirty":b,"kind":k}; kinds
+ *                                        "tabs"|"chrome"|"sidebar"|
+ *                                        "lifecycle", unknown kinds
+ *                                        answer true (parity with
+ *                                        the old every-change-dirty)
+ *   {"op":"retention"}                -> {"max_age_days","max_windows",
+ *                                        "max_tabs_per_window"}
+ *                                        (0 = no limit)
+ *   {"op":"stale"}                    -> {"stale":b,"age_ms":n|null,
+ *                                        "max_age_days":n} — reads
+ *                                        session.dat's mtime under
+ *                                        the bound scope
+ *   {"op":"restore"}                  -> {"startup_default":int,
+ *                                        "crash_restore":"ask"|
+ *                                        "always"|"never"}
+ *   {"op":"lifecycle"}                -> {"suspend_idle_ms":int,
+ *                                        "memory_purge":b,
+ *                                        "lazy_restore":b,
+ *                                        "lazy_restore_pinned":b} —
+ *                                        the tab-lifecycle rows the
+ *                                        Settings dialog owns under
+ *                                        tabs/ + performance/,
+ *                                        resolved with the same
+ *                                        defaults + arithmetic the
+ *                                        C++ ran
+ * Store keys: session/snapshotIntervalMs, session/snapshotMaxWaitMs,
+ * session/dirtyOn{Tabs,Chrome,Sidebar,Lifecycle}, session/maxAgeDays,
+ * session/maxWindows, session/maxTabsPerWindow, session/crashRestore,
+ * session/startupModeDefault — plus the lifecycle op's Qt-owned rows
+ * tabs/suspendTabs, tabs/suspendTabsMinutes, tabs/memoryPurge,
+ * performance/lazyRestoreTabs, performance/alwaysLoadPinnedTabs —
+ * all optional; the compiled-in
+ * constants (3000/15000 ms, every class dirty, no caps, "ask",
+ * StartPageStartup) are the defaults so a missing or mistyped row
+ * can never change behavior.  NULL return on malformed input or a
+ * store-required op without one — the caller keeps its compiled-in
+ * consult, never guesses.  Read-only: no change topic is emitted.
+ * Free the result with rc_string_free(). */
+char    *rc_sesspolicy_call(const RcSettings *h,
+                            const uint8_t *json, size_t len);
 
 /* --- DEVT03 devtools client ----------------------------------------
  *
@@ -685,11 +852,18 @@ void rc_bidi_free(RcBidiClient *client);
  * rc_history_suggest(term, limit) -> JSON array
  *   [{"url","title","ts","frecency","score"}, ...] ranked rows from the
  *   history store, newest-title representative per url; NULL when the
- *   store is not open. */
+ *   store is not open.
+ *
+ * rc_history_top_hosts(limit) -> JSON array
+ *   [{"host","url","title","visits","first_seen"}, ...] — the hosts
+ *   rollup ranked by visit count (MD27 chrome.topSites), newest
+ *   visit on the host supplying the representative url/title; NULL
+ *   when the store is not open. */
 char *rc_classify_input(const char *inputUtf8,
                         const char *optionsJsonUtf8);
 RcStatus rc_frecency_score(const char *jsonUtf8, int64_t *out);
 char *rc_history_suggest(const char *termUtf8, int64_t limit);
+char *rc_history_top_hosts(int64_t limit);
 
 /* --- command palette matching (CPAL01) --------------------------------
  * The query -> ranked-items decision of the command palette.  The row
@@ -825,6 +999,631 @@ RcStatus rc_sitedec_reload(void);
 
 /* Empty every kind (store file removed). */
 RcStatus rc_sitedec_reset(void);
+
+/* ------------------------------------------------------------------ */
+/* RC15: per-profile cookie database                                   */
+/*                                                                      */
+/* The Servo/WPE jar's persistent home — and Chromium's durable       */
+/* mirror (Chromium's QWebEngineCookieStore stays engine-owned; a     */
+/* mirror-role db is the honest "the engine owns the jar" shadow).    */
+/* Storage is cookies.db under the profile dir (or the anchored data  */
+/* dir on this surface), SQLite/WAL like history.db, partitioned by   */
+/* container id ("" = the default context).                            */
+/*                                                                      */
+/* Records travel as JSON — {"container":"","name":"","value":"",    */
+/* "domain":"","path":"/","expires":ms|null,"secure":b,"httpOnly":b, */
+/* "sameSite":0..3,"hostOnly":b,"created":ms} — the Qt-verified field */
+/* set SiteDecisionStore policy and send-matching need.  Domains      */
+/* normalize (lowercase, no leading dot); the leading-dot-vs-exact    */
+/* distinction lives in hostOnly, Qt-verbatim.  Mutations emit the    */
+/* "cookies" change topic.                                            */
+/*                                                                      */
+/* Opens (or re-asserts) the db.  path NULL resolves to               */
+/* <data dir>/cookies.db; an explicit path binds a profile dir.       */
+RcStatus rc_cookies_open(const char *path_or_null);
+
+/* 1 while a db is open. */
+int rc_cookies_is_open(void);
+
+/* The declared mode: 0 authoritative (this file IS the jar —        */
+/* Servo/WPE), 1 mirror (an engine owns the jar — Chromium's         */
+/* durable shadow), -1 on error.  Read from the db's meta table.     */
+int64_t rc_cookies_role(void);
+
+/* Declare the mode (0 or 1) — persisted so a db reports what it     */
+/* last served.  The ops are identical either way; the flag is the   */
+/* honesty contract, not hidden behavior.                            */
+RcStatus rc_cookies_set_role(int64_t role);
+
+/* Upsert one record JSON (shape above; `len` bytes at `json`).      */
+/* An already-past expiry deletes the row (the Set-Cookie eviction   */
+/* rule); an identical rewrite is a no-op (no notification).         */
+RcStatus rc_cookies_set(const uint8_t *json, size_t len);
+
+/* One cookie by key into *out (rc_buffer_free the record JSON).     */
+/* RC_NOT_FOUND on a miss; container NULL = the default partition.   */
+RcStatus rc_cookies_get(const char *domain, const char *name,
+                        const char *path, const char *container_or_null,
+                        RcBuffer *out);
+
+/* Delete one cookie by key — RC_OK either way. */
+RcStatus rc_cookies_remove(const char *domain, const char *name,
+                           const char *path,
+                           const char *container_or_null);
+
+/* A partition's rows (NULL container = all) as a JSON array of      */
+/* records — caller frees with rc_string_free().                     */
+char *rc_cookies_list(const char *container_or_null);
+
+/* The send-match: which cookies ride a request.  `request` is JSON  */
+/* {"url":"https://h/p","container":"","first_party":"h"|null,       */
+/* "now_ms":0} — first_party engages the SameSite cross-site         */
+/* filter; now_ms 0 = system clock.  Returns a JSON array in         */
+/* RFC6265 §5.4 send order — caller frees with rc_string_free().     */
+char *rc_cookies_for_url(const uint8_t *request, size_t len);
+
+/* Parse + store one Set-Cookie header value against `url` — the     */
+/* authoritative backend's ingest lane.  Returns a verdict JSON      */
+/* {"stored":bool,"reason":...} — caller frees with rc_string_free().*/
+char *rc_cookies_store_header(const char *url, const char *header,
+                              const char *container_or_null);
+
+/* The cookie-policy gate — may this attempt proceed, and with what  */
+/* rewrites.  Consults the sibling sitedecisions.json "cookie" kind  */
+/* (the file CookieJar's exceptions already persist through) plus    */
+/* the caller's policy snapshot.  Input JSON:                        */
+/*   {"host":"h","third_party":b,"block_3p":b,                      */
+/*    "accept_policy":0|1|2 (always/never/first-party),              */
+/*    "keep_policy":0|1|2,"session_length":days(-1 unset),           */
+/*    "filter_tracking":b,"name":"n","session":b,"expires_ms":ms}    */
+/* Output: {"accept":b,"rule":"block"|"tracking"|"third-party"|      */
+/*          "allow"|"session"|"policy","session_only":b,             */
+/*          "expires_cap_ms":ms|null} — caller frees.                */
+char *rc_cookies_gate(const uint8_t *input, size_t len);
+
+/* Import a QNetworkCookie::toRawForm file — one raw line per row,   */
+/* the shape the vendored NetworkCookieJar saveState streams.        */
+/* Lines lacking a Domain attribute are skipped (no request host to  */
+/* key them on).  Returns {"imported":N,"skipped":M} — caller frees. */
+char *rc_cookies_import(const char *path,
+                        const char *container_or_null);
+
+/* Export the partition (NULL container = all) as toRawForm lines —  */
+/* the same file shape rc_cookies_import reads back.  Atomic write.  */
+RcStatus rc_cookies_export(const char *path,
+                           const char *container_or_null);
+
+/* Wipe a partition (NULL container = the whole db). */
+RcStatus rc_cookies_clear(const char *container_or_null);
+
+/* The "clear site data" sweep — drops rows scoped to the host or a  */
+/* subdomain it controls, plus rows on a parent domain the site      */
+/* still receives (CookieJar::removeCookiesForHost verbatim).        */
+RcStatus rc_cookies_remove_for_host(const char *host,
+                                    const char *container_or_null);
+
+/* Row count — a partition, or the whole db on NULL.  -1 on error. */
+int64_t rc_cookies_count(const char *container_or_null);
+
+/* Delete rows expired at/before now_ms. */
+RcStatus rc_cookies_purge_expired(int64_t now_ms);
+
+/* The exit-sweep: drop every session row (also run at open — a     */
+/* persistent db can only have inherited them from a dead run).     */
+RcStatus rc_cookies_purge_session(void);
+
+/* ------------------------------------------------------------------ */
+/* RC16: per-profile site-icon/favicon cache                           */
+/*                                                                      */
+/* Icon records keyed by page-url/origin, pointing at PNG files      */
+/* under the profile's CACHE dir (<data dir>/cache/icons/ on this    */
+/* anchored surface — profiles/<id>/cache/icons for the facade).     */
+/* The cache is disposable by contract: never stored under the data  */
+/* root proper.  Fetch stays Qt/engine-side (the page already has    */
+/* the bytes); this store owns the index, dedup-by-host file naming, */
+/* the expiry sweep and the file lifecycle.  On a profile's first    */
+/* touch the legacy sources are folded in once — the pre-rustcore    */
+/* <profile>/icons/ png files and the history.db icons table —       */
+/* gated by a stamp that survives an explicit clear.                 */
+/*                                                                      */
+/* The icon key is the historyIconKey rule the LocationBarSiteIcon   */
+/* consumers rely on: the lowercase host of the page url, or the     */
+/* whole url when it carries none.  Mutations emit the "icons"       */
+/* change topic.                                                      */
+
+/* Store the favicon PNG for url's icon key; a rewrite carrying      */
+/* identical bytes is a no-op. */
+RcStatus rc_icons_put(const char *urlUtf8, const uint8_t *png,
+                      size_t len);
+
+/* The stored PNG for url's key into *out (rc_buffer_free);          */
+/* RC_NOT_FOUND on a miss. */
+RcStatus rc_icons_get(const char *urlUtf8, RcBuffer *out);
+
+/* Drop the record for url's key — RC_OK either way. */
+RcStatus rc_icons_remove(const char *urlUtf8);
+
+/* Wipe the whole icon cache — the clearIconDatabase equivalent. */
+RcStatus rc_icons_clear(void);
+
+/* Expiry sweep: drop records not refreshed at-or-before cutoffMs;   */
+/* outRemoved may be NULL.  HistoryManager passes its history        */
+/* retention boundary — icons age out with the visits they belong    */
+/* to and re-record on the next load's iconChanged. */
+RcStatus rc_icons_sweep(int64_t cutoffMs, int64_t *outRemoved);
+
+/* Record count; -1 when no data dir is anchored. */
+int64_t rc_icons_count(void);
+
+/* The store's icon key for a url (lowercase host, or the whole url */
+/* when hostless) — caller frees with rc_string_free. */
+char *rc_icons_key(const char *urlUtf8);
+
+/* The index rows as a JSON array [{"key","file","updated","pages"}] */
+/* — caller frees with rc_string_free. */
+char *rc_icons_list(void);
+
+/* ------------------------------------------------------------------ */
+/* RC02: typed per-profile settings store                              */
+/*                                                                     */
+/* Replaces ProfileSettings' persistence — a key-value map of          */
+/* string/bool/int/double/bytes/string-list values under one versioned */
+/* settings.json per scope, written atomically (temp+fsync+rename).    */
+/* The scope binds at open:                                            */
+/*   profile  <data root>/profiles/<id>/settings.json                  */
+/*   global   <data root>/settings.json                                */
+/*                                                                     */
+/* Legacy QSettings ini files are one-shot READ sources: a profile     */
+/* open auto-imports profiles/<id>/settings.ini; the global ini (a     */
+/* path only Qt knows) merges through rc_settings_import_ini with the  */
+/* MPROF04 classification filter — profile scopes take classified      */
+/* keys, the global scope takes the rest, existing keys always win.    */
+/* The ini files are never modified or deleted.  Mutations persist     */
+/* synchronously and emit the "settings" change topic.                 */
+/*                                                                     */
+/* Typed getters convert like QVariant does — an ini-imported "42"     */
+/* serves get_int fine.  Absent keys report RC_NOT_FOUND.              */
+
+typedef struct RcSettings RcSettings;
+
+/* Open the store for profile_id (NULL/empty = global scope) under
+ * data_root.  Returns NULL on error (rc_last_error_message has it). */
+RcSettings *rc_settings_open(const char *data_root,
+                             const char *profile_id_or_null);
+void rc_settings_close(RcSettings *h);
+
+/* One-shot merge of a QSettings ini file, scope-filtered as above.
+ * Idempotent — a second call is a no-op. */
+RcStatus rc_settings_import_ini(RcSettings *h, const char *ini_path);
+
+int rc_settings_contains(RcSettings *h, const char *key);
+
+/* Raw typed fetch: *out receives {"t":"s|b|i|d|x|l","v":...} JSON —
+ * the QVariant-faithful accessor. */
+RcStatus rc_settings_get(RcSettings *h, const char *key, RcBuffer *out);
+
+/* Typed reads — QVariant-style conversion; RC_NOT_FOUND when absent. */
+RcStatus rc_settings_get_string(RcSettings *h, const char *key,
+                                RcBuffer *out);
+RcStatus rc_settings_get_bool(RcSettings *h, const char *key,
+                              int *out);
+RcStatus rc_settings_get_int(RcSettings *h, const char *key,
+                             int64_t *out);
+RcStatus rc_settings_get_double(RcSettings *h, const char *key,
+                                double *out);
+RcStatus rc_settings_get_bytes(RcSettings *h, const char *key,
+                               RcBuffer *out);
+/* String list as a JSON array of strings in *out. */
+RcStatus rc_settings_get_list(RcSettings *h, const char *key,
+                              RcBuffer *out);
+
+/* Typed writes — persist atomically, emit "settings". */
+RcStatus rc_settings_set_string(RcSettings *h, const char *key,
+                                const char *value);
+RcStatus rc_settings_set_bool(RcSettings *h, const char *key,
+                              int value);
+RcStatus rc_settings_set_int(RcSettings *h, const char *key,
+                             int64_t value);
+RcStatus rc_settings_set_double(RcSettings *h, const char *key,
+                                double value);
+RcStatus rc_settings_set_bytes(RcSettings *h, const char *key,
+                               const uint8_t *value, size_t len);
+/* String list as a JSON array of strings. */
+RcStatus rc_settings_set_list(RcSettings *h, const char *key,
+                              const uint8_t *json, size_t len);
+
+/* Drop key (idempotent). */
+RcStatus rc_settings_remove(RcSettings *h, const char *key);
+
+/* Keys under prefix (boundary match: prefix and prefix/…; NULL/empty
+ * lists all) as a JSON array — rc_string_free the result. */
+char *rc_settings_list(RcSettings *h, const char *prefix_or_null);
+
+/* Flush — mutations already write through; kept for the
+ * QSettings::sync() call shape. */
+RcStatus rc_settings_sync(RcSettings *h);
+
+/* ------------------------------------------------------------------ */
+/* RC19: container registry + storage-namespace map                    */
+/*                                                                     */
+/* Firefox-style containers — the registry ContainerManager persists  */
+/* inside profile settings (the "containers" group), so this module   */
+/* is a typed specialization over the settings store: every registry  */
+/* op runs on an RcSettings handle bound to the OWNING persona's      */
+/* scope (the group is a classified persona key — a global-scope      */
+/* handle sees no containers).  The on-disk keys match the C++        */
+/* layout exactly — containers/order (id list in creation order),     */
+/* containers/<id>/name, containers/<id>/color (QColor name() text),  */
+/* containers/<id>/icon (optional — the C++ ignores the key).  A      */
+/* registry written here is what ContainerManager::loadRegistry       */
+/* reads on the next scope open; "order" is authoritative and stale   */
+/* groups are pruned on read, mirroring its hygiene pass.             */
+/*                                                                     */
+/* rc_containers_namespace is the storage-namespace map — the pure   */
+/* derivation ContainerManager::storagePath/cachePathFor/             */
+/* defaultDataPathFor/storageNameFor implement, plus the              */
+/* cookie-partition key the RC15 cookie db partitions rows on.        */
+/* "Always open in <container>" host rules are not here — they live   */
+/* in sitedecisions.json's "container" kind.                          */
+/*                                                                     */
+/* Mutations persist atomically and emit the "containers" change      */
+/* topic.                                                             */
+
+/* The registry as a JSON array of {"id","name","color","icon"} in
+ * creation order — NULL + stashed error on a bad handle.
+ * rc_string_free the result. */
+char *rc_containers_list(RcSettings *h);
+
+/* One row, same shape — NULL when the id is unregistered (a miss is
+ * not an error).  rc_string_free the result. */
+char *rc_containers_get(RcSettings *h, const char *id);
+
+/* Create from JSON {"name","color","icon"?} — the id is minted
+ * library-side (v4 uuid, the C++ hex-with-dashes shape).  Returns the
+ * row JSON or NULL + stashed error.  rc_string_free the result. */
+char *rc_containers_create(RcSettings *h, const uint8_t *json,
+                           size_t len);
+
+/* Patch from JSON {"name"?,"color"?,"icon"?} — absent keys keep
+ * their stored value; "icon":"" or null clears it.  RC_NOT_FOUND on
+ * an unregistered id. */
+RcStatus rc_containers_update(RcSettings *h, const char *id,
+                              const uint8_t *json, size_t len);
+
+/* The store half of deleteContainer — the <id>/ group and its
+ * "order" entry.  RC_NOT_FOUND on an unregistered id.  The on-disk
+ * storage trees are the caller's job — rc_containers_namespace
+ * derives their paths. */
+RcStatus rc_containers_remove(RcSettings *h, const char *id);
+
+/* The storage namespace for a registered id — JSON
+ * {"storage_name","storage_path","cache_path","default_data_path",
+ * "cookie_partition"}.  data_root is the APP data root
+ * (BrowserPaths::dataRoot).  NULL + stashed error on a bad id — the
+ * default ("") container has no namespace of its own.
+ * rc_string_free the result. */
+char *rc_containers_namespace(const char *data_root,
+                              const char *profile_id,
+                              const char *container_id);
+
+/* ------------------------------------------------------------------ */
+/* MD04: download-interception policy (dlwpolicy)                     */
+/*                                                                     */
+/* The DownloadManager's decision layer — a typed specialization    */
+/* over the profile scope's settings store like the container       */
+/* registry, so every op runs on an RcSettings handle bound to the  */
+/* owning persona.  The suggested-name sanitizer, the dangerous-    */
+/* extension/executable-mime threat tables, the save-as prompt      */
+/* gate, the external-handler handoff, the rustdl engine claim,     */
+/* the finished-row removal verdict, the per-profile rule view and  */
+/* the download history records live here.                          */
+/*                                                                     */
+/* The legacy downloadmanager/ keys read from the bound profile's   */
+/* settings.json (Qt still owns their writes); facade-authored      */
+/* rules (always_save_mimes, blocked_extensions) and the record     */
+/* list live in downloads.json beside it — records_list falls back  */
+/* to the legacy download_N_* keys while that file is absent, so    */
+/* pre-move history is never stranded.  The dialogs, the QProcess   */
+/* handoff and the filesystem execution stay caller-side — this     */
+/* surface only answers questions.                                  */
+/*                                                                     */
+/* rc_dlw_call: generic granular endpoint {"op":..., params} ->     */
+/*   JSON result.  `h` is the bound profile's RcSettings            */
+/*   (rc_settings_open, or the ac_dlw_call per-op open); NULL is    */
+/*   legal for the pure ops (sanitize_name, threat, external_argv)  */
+/*   — store-bound ops then error rather than guess rules.  Ops:    */
+/*   verdict, external_gate, engine_claim, row_remove, rules,       */
+/*   rule_get, rule_set, records_list, records_save, records_clear. */
+/*   NULL on error — callers fail toward their own local consult.   */
+/*   rc_string_free() the result.                                   */
+char *rc_dlw_call(RcSettings *h, const uint8_t *jsonUtf8, size_t len);
+
+/* ------------------------------------------------------------------ */
+/* MD05: privacy policy store view (privacy)                          */
+/*                                                                     */
+/* The per-persona privacy/ flag reads — a typed specialization     */
+/* over the profile scope's settings store like dlwpolicy, so every */
+/* op runs on an RcSettings bound to the owning persona.  The       */
+/* request interceptors' snapshot reads, the PRIV08 Sec-GPC         */
+/* decision and the unified tracker-strip/adblock policy read live  */
+/* here; the Qt writers keep owning the keys and all execution      */
+/* (setHttpHeader, script insertion, dialogs).                      */
+/*                                                                     */
+/* rc_privacy_call: generic granular endpoint {"op":..., params} -> */
+/*   JSON result.  `h` is the bound profile's RcSettings            */
+/*   (rc_settings_open, or the ac_privacy_call per-op open); NULL   */
+/*   is legal only for the pure "defaults" op — store-bound ops     */
+/*   error rather than guess a toggle.  Ops: flags (the whole       */
+/*   typed set), flag (one named row), gpc (the Sec-GPC decision    */
+/*   with the tor_mode fold), verdict ({gpc,strip,adblock} — the    */
+/*   unified read the tracker-strip and adblock consumers share),   */
+/*   defaults.  NULL on error — callers keep their local consult.   */
+/*   rc_string_free() the result.                                   */
+/*                                                                     */
+/* rc_privacy_gpc: the request-time Sec-GPC decision on the bound   */
+/*   store — 1 send "Sec-GPC: 1", 0 don't, -1 error (a -1 keeps the */
+/*   caller's verdict-bit fallback).  tor_mode != 0 answers 1       */
+/*   unconditionally — the tor pipeline's uniform-constant rule.    */
+char *rc_privacy_call(RcSettings *h, const uint8_t *jsonUtf8,
+                      size_t len);
+int   rc_privacy_gpc(RcSettings *h, int tor_mode);
+
+/* ------------------------------------------------------------------ */
+/* MD06: URL-sanitize policy (urlclean)                                 */
+/*                                                                     */
+/* The per-profile URL-cleaning decision layer — a typed             */
+/* specialization over the profile scope's settings store plus its   */
+/* own profiles/<id>/urlclean.json, the same two-tier split          */
+/* dlwpolicy made: the legacy urlcleaner/extraParams key is only     */
+/* ever READ through the bound store (Qt keeps the writes — no       */
+/* import step strands a pre-move user's list), while the            */
+/* facade-authored ruleset override (the urlstrip grammar —          */
+/* params/scoped/unwrap/exceptions) and the copy-path toggle live    */
+/* in urlclean.json.  The nav-path enable stays the privacy module's  */
+/* urlCleaning/stripTrackingParams read; the copy path defaults ON.  */
+/*                                                                     */
+/* rc_urlclean_call: generic granular endpoint {"op":..., params} -> */
+/*   JSON result.  `h` is the bound profile's RcSettings             */
+/*   (rc_settings_open, or the ac_urlclean_call per-op open); NULL   */
+/*   is legal only for the pure "defaults" op — store-bound ops      */
+/*   error rather than guess a toggle.  Ops: clean (url, purpose     */
+/*   copy|nav, exempt, unwrap -> {url,changed,removed,unwrapped,     */
+/*   enabled}), enabled, set_enabled (purpose copy only — the nav    */
+/*   key is Qt-owned), params, ruleset_get, ruleset_set,             */
+/*   ruleset_reset, clean_policy (the snapshot-facing composite:     */
+/*   toggles + the merged ruleset doc the loader embeds as           */
+/*   "urlclean_ruleset"), defaults.  Mutating ops emit the           */
+/*   "urlclean" change topic.  NULL on error — callers keep their    */
+/*   local consult.  rc_string_free() the result.                    */
+char *rc_urlclean_call(RcSettings *h, const uint8_t *jsonUtf8,
+                       size_t len);
+
+/* ------------------------------------------------------------------ */
+/* RC20: update-check policy + manifest parse                          */
+/*                                                                     */
+/* UpdateChecker's non-network half — the fetch stays Qt-side        */
+/* (UPD01's manual Help > Check for Updates); everything the reply's */
+/* bytes steer lives here: the GitHub release-manifest parse behind  */
+/* the AUDIT04 trusted-download-URL gate, version normalize/compare, */
+/* the platform asset pick, and the channel rule.                    */
+/*                                                                     */
+/* The check state (lastCheckMs, snoozeUntilMs, skippedVersion,      */
+/* channel) is a typed specialization over the settings store — the  */
+/* GLOBAL scope by design (the check is application-level;           */
+/* "updates" is not an MPROF04 profile group), so state ops take a   */
+/* global-bound RcSettings handle — ac_settings(core, NULL) reaches  */
+/* the same store.  The keys: updates/lastCheckMs (int),             */
+/* updates/snoozeUntilMs (int), updates/skippedVersion (string),     */
+/* updates/channel (string).  Mutations emit the "updates" change    */
+/* topic.                                                            */
+/*                                                                     */
+/* Like torctl this binds no profile, so there is no AcUpdates       */
+/* facade handle — rc_* is the whole surface.                        */
+
+/* UpdateChecker::normalizedVersion — rc_string_free the result;
+ * NULL + stashed error on a bad pointer. */
+char *rc_updates_normalize_version(const char *version);
+
+/* UpdateChecker::compareVersions — -1/0/+1 on the normalized forms
+ * (numeric elementwise when both sides parse, string compare else);
+ * -2 with a stashed error on a bad pointer — never a verdict. */
+int rc_updates_compare_versions(const char *a, const char *b);
+
+/* The AUDIT04 download-URL gate — github.com / *.github.com /
+ * *.githubusercontent.com over https, or the api url's own host with
+ * no scheme downgrade.  1 trusted / 0 refused, -1 on bad input. */
+int rc_updates_is_trusted_url(const char *url, const char *api_url);
+
+/* The channel rule — 1 when a manifest with draft/prerelease flags
+ * is an offer on `channel` ("stable"/"beta", "" = stable), 0 when
+ * not, -1 on an unknown channel or bad pointer. */
+int rc_updates_channel_accepts(const char *channel,
+                               int draft, int prerelease);
+
+/* UpdateChecker::parseReleaseJson — returns JSON {"version",
+ * "title","page_url","draft","prerelease","assets":[{"name","url",
+ * "size"}]} with untrusted asset URLs already dropped, or NULL +
+ * stashed error on malformed input.  rc_string_free the result. */
+char *rc_updates_parse_manifest(const uint8_t *payload, size_t len,
+                                const char *api_url);
+
+/* UpdateChecker::platformAssetsFor — assets_json is the "assets"
+ * array parse_manifest emits (or any [{"name","url","size"}] list).
+ * Returns {"candidates":[{...}],"ambiguous":bool} preference-ordered
+ * — rc_string_free; NULL + stashed error on bad input. */
+char *rc_updates_platform_pick(const char *os,
+                               const char *os_release_id_like,
+                               const uint8_t *assets_json, size_t len);
+
+/* The GLOBAL scope's check state as JSON {"last_check_ms",
+ * "snooze_until_ms","skipped_version","channel"} — rc_string_free;
+ * NULL + stashed error on a bad handle. */
+char *rc_updates_state(RcSettings *h);
+
+/* Stamp the last-check time (ms since epoch). */
+RcStatus rc_updates_record_check(RcSettings *h, int64_t now_ms);
+
+/* Snooze notifications until `until_ms` (<= 0 clears). */
+RcStatus rc_updates_snooze(RcSettings *h, int64_t until_ms);
+
+/* The tag the user dismissed — NULL clears the filter. */
+RcStatus rc_updates_set_skipped(RcSettings *h,
+                                const char *version_or_null);
+
+/* Persist the channel — "stable"/"beta" only; an unknown name is
+ * RC_ERR_INVALID and changes nothing. */
+RcStatus rc_updates_set_channel(RcSettings *h, const char *channel);
+
+/* The notify verdict for a remote tag vs the local version at
+ * now_ms: newer, unskipped, unsnoozed — 1 notify / 0 don't, -1 on
+ * bad input. */
+int rc_updates_should_notify(RcSettings *h, const char *remote_version,
+                             const char *local_version, int64_t now_ms);
+
+/* ------------------------------------------------------------------ */
+/* RC21: per-profile side-panel notes store                            */
+/*                                                                     */
+/* The sidebar's ordered multi-note list — profiles/<id>/notes.json   */
+/* in the C++ writer's byte shape: a compact JSON array of            */
+/* {"body","markdown","title"} objects (QJsonObject's sorted-key      */
+/* emission — both writers produce identical bytes), array order =    */
+/* list order.  The load mirrors the model: missing/unreadable file   */
+/* or a non-array document is an empty store, a non-object element    */
+/* is a blank note, wrong-typed fields default.                       */
+/*                                                                     */
+/* Two bindings: rc_notes_open takes a data root + persona slug (the */
+/* facade lane); rc_notes_open_file takes an explicit file (the      */
+/* standalone NotesModel(storageFile) lane).  A NULL/empty profile   */
+/* id or path mints the VOLATILE off-the-record store the model      */
+/* hands private/tor windows — CRUD in memory, sync() a no-op,       */
+/* nothing reaches disk.                                              */
+/*                                                                     */
+/* Mutations dirty the decoded list and emit the "notes" topic;      */
+/* rc_notes_sync commits atomically (temp+rename+fsync, parent dir   */
+/* created like the C++ mkpath) and rc_notes_close flushes too —     */
+/* the Qt AutoSaver debounce contract carries across unchanged.      */
+
+typedef struct RcNotes RcNotes;
+
+/* Open the persona store: slug → profiles/<id>/notes.json,
+ * NULL/empty → volatile, non-slug → NULL + stashed error.
+ * Release with rc_notes_close. */
+RcNotes *rc_notes_open(const char *data_root, const char *profile_id);
+/* Open a store on an explicit file; NULL/empty → volatile. */
+RcNotes *rc_notes_open_file(const char *path);
+/* Close — a dirty persistent handle flushes first (the model
+ * destructor's saveIfNeccessary).  NULL-tolerant. */
+void rc_notes_close(RcNotes *h);
+
+/* Row count; -1 on a bad handle. */
+int64_t rc_notes_count(const RcNotes *h);
+/* One note as {"body","markdown","title"} JSON; NULL on a bad
+ * handle or out-of-range row (NotFound stashed).  rc_string_free. */
+char *rc_notes_get(const RcNotes *h, int64_t row);
+/* The whole list in the persisted array shape; rc_string_free. */
+char *rc_notes_list(const RcNotes *h);
+
+/* insertNote — {title, body} at the clamped row (out-of-range
+ * positions prepend/append like qBound), markdown cleared; NULL
+ * strings read as "".  Returns the new row, -1 on error. */
+int64_t rc_notes_insert(RcNotes *h, int64_t row, const char *title,
+                        const char *body);
+
+/* Field setters — Qt::EditRole / BodyRole / MarkdownRole.
+ * RC_NOT_FOUND out of range; an identical value is RC_OK with
+ * out_changed=0 (the model's setData false return); out_changed
+ * may be NULL. */
+RcStatus rc_notes_set_title(RcNotes *h, int64_t row, const char *value,
+                            int *out_changed);
+RcStatus rc_notes_set_body(RcNotes *h, int64_t row, const char *value,
+                           int *out_changed);
+RcStatus rc_notes_set_markdown(RcNotes *h, int64_t row, int on,
+                               int *out_changed);
+
+/* removeRows — RC_INVALID on a refused range (negative, empty or
+ * overflowing), the model's false return. */
+RcStatus rc_notes_remove(RcNotes *h, int64_t row, int64_t count);
+
+/* The AutoSaver-fired save(): persists when dirty; a clean or
+ * volatile store is a no-op. */
+RcStatus rc_notes_sync(RcNotes *h);
+
+/* 1 file-backed / 0 volatile (or bad handle) — isPersistent(). */
+int rc_notes_is_persistent(const RcNotes *h);
+/* 1 while uncommitted mutations exist, 0 clean/bad handle. */
+int rc_notes_is_dirty(const RcNotes *h);
+
+/* ------------------------------------------------------------------ */
+/* RC03: profile registry                                              */
+/*                                                                     */
+/* The persona list — <data root>/profiles.json, byte-compatible with */
+/* the MPROF01 writer that ProfileRegistry and ProfileStore share:    */
+/* {"version":1,"profiles":[{id,name,avatar,createdAt}]} emitted in   */
+/* QJsonDocument::Indented layout.  The registry always describes at  */
+/* least "default" — a missing file materializes the synthesized row  */
+/* on open (default_name_or_null seeds its name — the caller's        */
+/* QSettings "profile/name" value or localized fallback), a corrupt   */
+/* file yields the same view without being rewritten.                 */
+/*                                                                     */
+/* ids are filesystem slugs ([a-z0-9_-], <=64); the avatar field is   */
+/* a basename joined under profiles/<id>/ — separators and dot        */
+/* segments are refused.  delete refuses "default" and removes        */
+/* profiles/<id>/ recursively; live-object teardown and the vault     */
+/* wipe stay on the Qt adapter wrapping this primitive.  Mutations    */
+/* persist atomically and emit the "profiles" change topic.           */
+/*                                                                     */
+/* The active id is per-handle process state — the ambient persona    */
+/* BrowserPaths::activeProfileId exposes; never persisted.            */
+
+typedef struct RcProfiles RcProfiles;
+
+/* Open the registry under data_root (a real path — the BrowserPaths
+ * data root).  NULL on error; release with rc_profiles_close. */
+RcProfiles *rc_profiles_open(const char *data_root,
+                             const char *default_name_or_null);
+void rc_profiles_close(RcProfiles *h);
+
+/* Re-read from disk — the seam for callers that changed the file
+ * behind the registry's back. */
+RcStatus rc_profiles_reload(RcProfiles *h);
+
+/* JSON array of {id,name,avatar,createdAt}; rc_string_free. */
+char *rc_profiles_list(RcProfiles *h);
+/* One row as a JSON object; NULL on error (rc_last_error_message). */
+char *rc_profiles_get(RcProfiles *h, const char *id);
+
+/* Create from a display name (slugified unique id + profiles/<id>/);
+ * returns the new id — rc_string_free.  NULL on failure. */
+char *rc_profiles_create(RcProfiles *h, const char *display_name);
+/* Blank names resolve to "Profile" like ProfileStore::renameProfile. */
+RcStatus rc_profiles_rename(RcProfiles *h, const char *id,
+                            const char *name);
+/* Avatar field — basename only; NULL/empty clears.  The PNG itself
+ * is written Qt-side (decode/scale stays there). */
+RcStatus rc_profiles_set_avatar(RcProfiles *h, const char *id,
+                                const char *name_or_null);
+/* Removes the row + profiles/<id>/ recursively; refuses "default"
+ * and non-slug ids. */
+RcStatus rc_profiles_delete(RcProfiles *h, const char *id);
+
+/* Ambient persona — per-handle process state.  set_active resolves
+ * non-slug ids to "default" like BrowserPaths::setActiveProfileId. */
+char *rc_profiles_active(RcProfiles *h);
+RcStatus rc_profiles_set_active(RcProfiles *h, const char *id);
+
+/* Per-profile roots mirroring BrowserPaths exactly — a NULL or
+ * non-slug id resolves to "default".  All rc_string_free results. */
+char *rc_profiles_dir(RcProfiles *h, const char *id);
+char *rc_profiles_cache_dir(RcProfiles *h, const char *id);
+char *rc_profiles_engine_storage_dir(RcProfiles *h, const char *id);
+char *rc_profiles_engine_cache_dir(RcProfiles *h, const char *id);
+char *rc_profiles_settings_dir(RcProfiles *h, const char *id);
+/* profiles/<id>/<avatar field or profile-avatar.png>. */
+char *rc_profiles_avatar_path(RcProfiles *h, const char *id);
+/* <root>/profiles.json — the file this handle owns. */
+char *rc_profiles_file(RcProfiles *h);
+/* Display name -> slug (no handle needed); rc_string_free. */
+char *rc_profiles_slugify(const char *display_name);
 
 /* ------------------------------------------------------------------ */
 /* OSE01: OpenSearch engine registry                                   */
@@ -1025,7 +1824,9 @@ char *rc_ua_spoof_list(void);
 
 /* rc_clearplan(periodUtf8, categories, otrActive) -> plan JSON;
  * rc_string_free.  period: "all"/"everything"/"" or the "hour"/"day"/
- * "week" windows; NULL or an unknown name -> NULL + error. */
+ * "week" windows; "secs:<digits>" (MD28) carries an exact window for
+ * callers starting from an absolute timestamp.  NULL or an unknown
+ * name -> NULL + error. */
 char *rc_clearplan(const char *periodUtf8, uint32_t categories,
                    int otrActive);
 
@@ -1091,6 +1892,65 @@ char *rv_inspect(const char *blobPathUtf8);
 RcStatus rv_rewrap(const char *blobPathUtf8,
                    const uint8_t *oldPass, size_t oldLen,
                    const uint8_t *newPass, size_t newLen);
+
+/* ------------------------------------------------------------------ */
+/* RC14: Tor control-protocol client                                   */
+/*                                                                     */
+/* The Rust port of torcontrol.cpp — the control-spec line protocol    */
+/* over a loopback TCP connection.  Commands are serialized (one in    */
+/* flight at most); every submitted command completes exactly once in  */
+/* take_reply order with the final status code, or -1 when the link    */
+/* died first.  Async 650 event lines and protocol complaints queue    */
+/* separately; every push emits the "torctl" change topic so the Qt    */
+/* side can queue a drain on the GUI thread.                           */
+/*                                                                     */
+/* No-leak contract: rc_tor_open accepts loopback addresses and        */
+/* "localhost" (resolved + re-verified) only, and AUTHENTICATE         */
+/* payloads are held in zeroizing buffers.                             */
+
+#define RC_TOR_CONNECTED 1
+#define RC_TOR_CLOSED    2
+
+typedef struct RcTorCtl RcTorCtl;
+
+/* Synchronous connect with a bounded timeout — a returned handle is
+ * always RC_TOR_CONNECTED.  NULL + rc_last_error_message on refusal
+ * or a non-loopback host. */
+RcTorCtl *rc_tor_open(const char *host, uint16_t port);
+/* Sever the link but keep the handle valid — pending commands flush
+ * as -1 replies and the drain lanes still read.  rc_tor_close frees. */
+void rc_tor_disconnect(RcTorCtl *h);
+void rc_tor_close(RcTorCtl *h);            /* NULL-tolerant */
+int rc_tor_state(RcTorCtl *h);             /* 0 bad handle */
+char *rc_tor_error(RcTorCtl *h);           /* "" when clean; rc_string_free */
+
+/* Queue one command; returns the reply sequence number or -1.
+ * `command` must be a single line (a CRLF payload is rejected, never
+ * split — the injection boundary). */
+int64_t rc_tor_send(RcTorCtl *h, const char *command);
+
+/* AUTHENTICATE lanes: 32-byte cookie as hex token, cookie read from a
+ * file in-library, or a password sent as an escaped QuotedString. */
+int64_t rc_tor_auth_cookie(RcTorCtl *h, const uint8_t *cookie,
+                           size_t len);
+int64_t rc_tor_auth_cookie_file(RcTorCtl *h, const char *path);
+int64_t rc_tor_auth_password(RcTorCtl *h, const uint8_t *pass,
+                             size_t len);
+
+/* GETINFO key ("a b" key lists legal), SETEVENTS space-separated
+ * list, TAKEOWNERSHIP, SIGNAL name (NEWNYM/SHUTDOWN/…). */
+int64_t rc_tor_getinfo(RcTorCtl *h, const char *key);
+int64_t rc_tor_setevents(RcTorCtl *h, const char *list);
+int64_t rc_tor_takeownership(RcTorCtl *h);
+int64_t rc_tor_signal(RcTorCtl *h, const char *name);
+
+/* Drain lanes — call on every "torctl" change topic until empty:
+ * take_reply returns RC_OK with {"seq","code","lines":[...]} JSON in
+ * out (rc_buffer_free), RC_NOT_FOUND when drained; take_event /
+ * take_error return a line (rc_string_free) or NULL when empty. */
+RcStatus rc_tor_take_reply(RcTorCtl *h, RcBuffer *out);
+char *rc_tor_take_event(RcTorCtl *h);
+char *rc_tor_take_error(RcTorCtl *h);
 
 #ifdef __cplusplus
 }

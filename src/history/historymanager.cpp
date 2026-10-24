@@ -93,7 +93,7 @@
 #include <qjsonobject.h>
 #include <qpixmap.h>
 
-#include <rustcore.h>
+#include <arktos_core.h>
 
 // Icons are keyed per host (the HIST01 contract); hostless urls fall
 // back to the whole url so data:/file: icons still behave.
@@ -101,6 +101,74 @@ static QString historyIconKey(const QUrl &url)
 {
     const QString host = url.host().toLower();
     return host.isEmpty() ? url.toString() : host;
+}
+
+// RC08 facade dispatch — every store op prefers this manager's
+// profile-bound AcHistory (its per-op re-assert is the binding
+// ensureRustStore() used to hand the global store).  A null handle
+// means the bridge could not serve; the legacy rc_* spelling over
+// the ensureRustStore() anchor then does the same work.
+static RcStatus histAdd(AcHistory *h, const char *url,
+                        const char *title, int64_t ts)
+{
+    return h ? ac_hist_add(h, url, title, ts)
+             : rc_hist_add(url, title, ts);
+}
+static RcStatus histUpdateTitle(AcHistory *h, const char *url,
+                                const char *title)
+{
+    return h ? ac_hist_update_title(h, url, title)
+             : rc_hist_update_title(url, title);
+}
+static RcStatus histRemove(AcHistory *h, const char *url,
+                           const char *title, int64_t ts)
+{
+    return h ? ac_hist_remove(h, url, title, ts)
+             : rc_hist_remove(url, title, ts);
+}
+static RcStatus histClear(AcHistory *h)
+{
+    return h ? ac_hist_clear(h) : rc_hist_clear();
+}
+static RcStatus histClearSince(AcHistory *h, int64_t sinceMs)
+{
+    return h ? ac_hist_clear_since(h, sinceMs)
+             : rc_hist_clear_since(sinceMs);
+}
+static RcStatus histExpire(AcHistory *h, int64_t cutoffMs,
+                           int64_t *removed)
+{
+    return h ? ac_hist_expire_older_than(h, cutoffMs, removed)
+             : rc_hist_expire_older_than(cutoffMs, removed);
+}
+// RC16: the favicon store moved out of history.db into the per-
+// profile icon cache (cache/icons/ — disposable by contract).  The
+// dispatch below prefers this manager's profile-bound AcIcons; a
+// null handle means the bridge could not serve, and the rc_icons_*
+// spelling over the ensureRustIcons() anchor does the same work.
+// Both spellings take the PAGE url and derive the historyIconKey()
+// rule inside the store — the two sides can never drift apart.
+static RcStatus iconPut(AcIcons *h, const char *url,
+                        const uint8_t *png, size_t len)
+{
+    return h ? ac_icons_put(h, url, png, len)
+             : rc_icons_put(url, png, len);
+}
+static RcStatus iconGet(AcIcons *h, const char *url,
+                        RcBuffer *out)
+{
+    return h ? ac_icons_get(h, url, out)
+             : rc_icons_get(url, out);
+}
+static RcStatus iconClear(AcIcons *h)
+{
+    return h ? ac_icons_clear(h) : rc_icons_clear();
+}
+static RcStatus iconSweep(AcIcons *h, int64_t cutoffMs,
+                          int64_t *removed)
+{
+    return h ? ac_icons_sweep(h, cutoffMs, removed)
+             : rc_icons_sweep(cutoffMs, removed);
 }
 #endif
 
@@ -186,16 +254,62 @@ void HistoryManager::releaseFor(const QString &profileId)
 }
 
 #ifdef ARKTOS_RUSTCORE
+AcHistory *HistoryManager::rustStore() const
+{
+    // The app's data root moved after this handle was minted — its
+    // per-op re-assert would keep writing the OLD root's history.db.
+    // Drop it; the legacy lane re-anchors per op.
+    if (m_hist && RustCoreBridge::rootDrifted()) {
+        ac_hist_close(m_hist);
+        m_hist = nullptr;
+    }
+    if (!m_hist) {
+        if (RustCoreBridge *bridge = RustCoreBridge::serving())
+            m_hist = bridge->history(m_profileId);
+    }
+    // No facade handle — no bridge, or the mint failed (a transient
+    // open error retries on the next call).  Anchor the global store
+    // so the legacy rc_* spellings keep working.
+    if (!m_hist)
+        ensureRustStore();
+    return m_hist;
+}
+
 void HistoryManager::ensureRustStore() const
 {
     // The rustcore history store is a single open database per
     // process; rc_hist_open re-binds it to this profile's file first
-    // (a no-op when already open — one path compare).  Every rc_hist_*
-    // entry point calls this so two live per-profile managers can
-    // never write into each other's stores.
+    // (a no-op when already open — one path compare).  Only the
+    // legacy rc_* fallback still needs this — the facade handle
+    // re-asserts the same path on every ac_hist_* call.
     const QByteArray dbPath = BrowserPaths::profileDataFilePath(
         m_profileId, QLatin1String("history.db")).toUtf8();
     rc_hist_open(dbPath.constData());
+}
+
+AcIcons *HistoryManager::rustIconStore() const
+{
+    // Same drift rule as m_hist: a minted handle pins the root it
+    // was bound against, so a test-mode data-root move drops it.
+    if (m_iconStore && RustCoreBridge::rootDrifted()) {
+        ac_icons_close(m_iconStore);
+        m_iconStore = nullptr;
+    }
+    if (!m_iconStore) {
+        if (RustCoreBridge *bridge = RustCoreBridge::serving())
+            m_iconStore = bridge->icons(m_profileId);
+    }
+    // No facade handle — anchor the process-global data dir at this
+    // profile's dir so the legacy rc_icons_* spelling lands on
+    // profiles/<id>/cache/icons too.
+    if (!m_iconStore)
+        ensureRustIcons();
+    return m_iconStore;
+}
+
+void HistoryManager::ensureRustIcons() const
+{
+    rustCoreEnsureDataDirFor(m_profileId);
 }
 #endif
 
@@ -205,6 +319,12 @@ HistoryManager::~HistoryManager()
     if (m_daysToExpire == -2)
         clear();
     m_saveTimer->saveIfNeccessary();
+#ifdef ARKTOS_RUSTCORE
+    ac_hist_close(m_hist);
+    m_hist = nullptr;
+    ac_icons_close(m_iconStore);
+    m_iconStore = nullptr;
+#endif
 }
 
 QList<HistoryEntry> HistoryManager::history() const
@@ -236,10 +356,10 @@ QIcon HistoryManager::icon(const QUrl &url) const
     const QString key = historyIconKey(url);
     QIcon icon = m_icons.value(key);
     if (icon.isNull()) {
-        ensureRustStore();
-        const QByteArray k = key.toUtf8();
+        const QByteArray u = url.toString().toUtf8();
         RcBuffer out{};
-        if (rc_hist_icon_get(k.constData(), &out) == RC_OK && out.data) {
+        if (iconGet(rustIconStore(), u.constData(), &out) == RC_OK
+                && out.data) {
             QPixmap pixmap;
             if (pixmap.loadFromData(out.data, int(out.len), "PNG"))
                 icon = QIcon(pixmap);
@@ -280,11 +400,10 @@ void HistoryManager::setIcon(const QUrl &url, const QIcon &icon)
     QByteArray png;
     QBuffer buffer(&png);
     if (buffer.open(QIODevice::WriteOnly) && image.save(&buffer, "PNG")) {
-        ensureRustStore();
-        const QByteArray k = key.toUtf8();
-        rc_hist_icon_set(k.constData(),
-                         reinterpret_cast<const uint8_t *>(png.constData()),
-                         size_t(png.size()));
+        const QByteArray u = url.toString().toUtf8();
+        iconPut(rustIconStore(), u.constData(),
+                reinterpret_cast<const uint8_t *>(png.constData()),
+                size_t(png.size()));
     }
 #else
     const QString key = host.isEmpty() ? url.toString() : host;
@@ -315,10 +434,12 @@ void HistoryManager::clearIcons()
 {
     m_icons.clear();
     m_iconMisses.clear();
+    // The pre-rustcore icons/ dir stays cleared on both paths — the
+    // RC16 import leaves it in place and a clearIconDatabase wipe
+    // should not leave the old copy behind.
     QDir(iconStoreDir(m_profileId)).removeRecursively();
 #ifdef ARKTOS_RUSTCORE
-    ensureRustStore();
-    rc_hist_icon_clear();
+    iconClear(rustIconStore());
 #endif
 }
 
@@ -383,10 +504,23 @@ void HistoryManager::checkForExpired()
         return;
 
 #ifdef ARKTOS_RUSTCORE
-    ensureRustStore();
+    AcHistory *store = rustStore();
 #endif
     QDateTime now = QDateTime::currentDateTime();
     int nextTimeout = 0;
+#ifdef ARKTOS_RUSTCORE
+    // The bulk-expiry boundary matching the per-item check below: an
+    // entry is expired when (its date + daysToExpire at its own
+    // time-of-day) is less than a full second ahead of now —
+    // secsTo truncates — i.e. visited_at <= this ms boundary (the
+    // two forms can differ by an hour only inside a DST transition).
+    // A ranged delete also clears duplicate raw rows a per-entry
+    // remove would leave behind.
+    const qint64 expireCutoffMs =
+        QDateTime(now.date().addDays(-m_daysToExpire), now.time())
+            .toMSecsSinceEpoch() + 999;
+    bool storeExpired = false;
+#endif
 
     while (!m_history.isEmpty()) {
         QDateTime checkForExpired = m_history.last().dateTime;
@@ -403,12 +537,19 @@ void HistoryManager::checkForExpired()
         // remove from saved file also
         m_lastSavedUrl.clear();
 #ifdef ARKTOS_RUSTCORE
-        rc_hist_remove(item.url.toUtf8().constData(),
-                       item.title.toUtf8().constData(),
-                       item.dateTime.toMSecsSinceEpoch());
+        storeExpired = true;
 #endif
         emit entryRemoved(item);
     }
+#ifdef ARKTOS_RUSTCORE
+    if (storeExpired)
+        histExpire(store, expireCutoffMs, nullptr);
+    // RC16: the icon cache ages on the same retention boundary — a
+    // host whose last visit expired loses its cached PNG (the cache
+    // is disposable; a live page re-records it on the next
+    // iconChanged).
+    iconSweep(rustIconStore(), expireCutoffMs, nullptr);
+#endif
 
     if (nextTimeout > 0)
         m_expiredTimer.start(nextTimeout * 1000);
@@ -422,10 +563,9 @@ void HistoryManager::prependHistoryEntry(const HistoryEntry &item)
     // global flag is gone).
     m_history.prepend(item);
 #ifdef ARKTOS_RUSTCORE
-    ensureRustStore();
-    rc_hist_add(item.url.toUtf8().constData(),
-                item.title.toUtf8().constData(),
-                item.dateTime.toMSecsSinceEpoch());
+    histAdd(rustStore(), item.url.toUtf8().constData(),
+            item.title.toUtf8().constData(),
+            item.dateTime.toMSecsSinceEpoch());
 #endif
     emit entryAdded(item);
     if (m_history.count() == 1)
@@ -438,9 +578,9 @@ void HistoryManager::updateHistoryEntry(const QUrl &url, const QString &title)
         if (url == m_history.at(i).url) {
             m_history[i].title = atomicString(title);
 #ifdef ARKTOS_RUSTCORE
-            ensureRustStore();
-            rc_hist_update_title(url.toString().toUtf8().constData(),
-                                 m_history[i].title.toUtf8().constData());
+            histUpdateTitle(rustStore(),
+                            url.toString().toUtf8().constData(),
+                            m_history[i].title.toUtf8().constData());
 #endif
             m_saveTimer->changeOccurred();
             if (m_lastSavedUrl.isEmpty())
@@ -456,10 +596,9 @@ void HistoryManager::removeHistoryEntry(const HistoryEntry &item)
     m_lastSavedUrl.clear();
     m_history.removeOne(item);
 #ifdef ARKTOS_RUSTCORE
-    ensureRustStore();
-    rc_hist_remove(item.url.toUtf8().constData(),
-                   item.title.toUtf8().constData(),
-                   item.dateTime.toMSecsSinceEpoch());
+    histRemove(rustStore(), item.url.toUtf8().constData(),
+               item.title.toUtf8().constData(),
+               item.dateTime.toMSecsSinceEpoch());
 #endif
     emit entryRemoved(item);
 }
@@ -506,8 +645,7 @@ void HistoryManager::clear()
     m_atomicStringHash.clear();
     m_lastSavedUrl.clear();
 #ifdef ARKTOS_RUSTCORE
-    ensureRustStore();
-    rc_hist_clear();
+    histClear(rustStore());
 #endif
     m_saveTimer->changeOccurred();
     m_saveTimer->saveIfNeccessary();
@@ -528,8 +666,7 @@ void HistoryManager::clearSince(qint64 sinceMs)
         }
     }
 #ifdef ARKTOS_RUSTCORE
-    ensureRustStore();
-    rc_hist_clear_since(sinceMs);
+    histClearSince(rustStore(), sinceMs);
 #endif
     m_saveTimer->changeOccurred();
     m_saveTimer->saveIfNeccessary();
@@ -554,8 +691,17 @@ void HistoryManager::load()
     // legacy QDataStream file is imported once, on first run.
     const QByteArray dbPath = BrowserPaths::profileDataFilePath(
         m_profileId, QLatin1String("history.db")).toUtf8();
-    const bool fresh = rc_hist_exists(dbPath.constData()) == 0;
-    if (rc_hist_open(dbPath.constData()) != RC_OK) {
+    // The existence probe is a plain path stat — the facade spelling
+    // needs the core but never opens the database.
+    bool fresh;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        const QByteArray id = m_profileId.toUtf8();
+        fresh = ac_history_exists(bridge->core(), id.constData()) == 0;
+    } else {
+        fresh = rc_hist_exists(dbPath.constData()) == 0;
+    }
+    AcHistory *store = rustStore();
+    if (!store && rc_hist_open(dbPath.constData()) != RC_OK) {
         char *err = rc_last_error_message();
         qWarning() << "HistoryManager: cannot open history.db:"
                    << QString::fromUtf8(err ? err : "");
@@ -566,10 +712,11 @@ void HistoryManager::load()
         importLegacyHistory();
 
     QList<HistoryEntry> list;
-    const int64_t count = rc_hist_count();
+    const int64_t count = store ? ac_hist_count(store) : rc_hist_count();
     list.reserve(count > 0 ? int(count) : 0);
     for (int64_t i = 0; i < count; ++i) {
-        char *json = rc_hist_entry_at(i);
+        char *json = store ? ac_hist_entry_at(store, i)
+                           : rc_hist_entry_at(i);
         if (!json)
             continue;
         const QJsonObject o =
@@ -624,9 +771,9 @@ void HistoryManager::importLegacyHistory()
     // Oldest first: the store orders equal timestamps by insert seq.
     for (int i = parsed.entries.count() - 1; i >= 0; --i) {
         const HistoryEntry &e = parsed.entries.at(i);
-        rc_hist_add(e.url.toUtf8().constData(),
-                    e.title.toUtf8().constData(),
-                    e.dateTime.toMSecsSinceEpoch());
+        histAdd(rustStore(), e.url.toUtf8().constData(),
+                e.title.toUtf8().constData(),
+                e.dateTime.toMSecsSinceEpoch());
     }
 }
 
@@ -634,13 +781,13 @@ void HistoryManager::importLegacyHistory()
 // the test/import seam that wholesale-replaces the list.
 void HistoryManager::rustReplaceAll()
 {
-    ensureRustStore();
-    rc_hist_clear();
+    AcHistory *store = rustStore();
+    histClear(store);
     for (int i = m_history.count() - 1; i >= 0; --i) {
         const HistoryEntry &e = m_history.at(i);
-        rc_hist_add(e.url.toUtf8().constData(),
-                    e.title.toUtf8().constData(),
-                    e.dateTime.toMSecsSinceEpoch());
+        histAdd(store, e.url.toUtf8().constData(),
+                e.title.toUtf8().constData(),
+                e.dateTime.toMSecsSinceEpoch());
     }
 }
 #endif // ARKTOS_RUSTCORE

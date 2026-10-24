@@ -493,8 +493,11 @@
         if (name === '__arktos.portConnect') {
             // A host-side context connected INTO the page
             // (chrome.tabs.connect) — register a local end and fire
-            // runtime.onConnect.
-            if (!payload || !payload.chan)
+            // runtime.onConnect.  'ext' scopes the push like
+            // __arktos.deliver's: the repost reaches every agent on
+            // the document, and only the addressed extension's
+            // listeners may fire.
+            if (!payload || !payload.chan || payload.ext !== cfg.id)
                 return;
             var localId = 'p' + (++seq) + '#' + Date.now();
             var port = newPort(payload.name || '', payload.chan,

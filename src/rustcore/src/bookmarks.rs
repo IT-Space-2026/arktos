@@ -22,7 +22,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
@@ -95,6 +95,21 @@ pub struct Bookmarks {
     /// attach() or destroy() so undo can resurrect them intact.
     detached: HashSet<u64>,
     root: u64,
+    /// The file the tree was last loaded from — None for a fresh or
+    /// memory-loaded tree.  The facade's bound handle (RC07) reads it
+    /// with `epoch` to re-assert its file binding without reparsing
+    /// on every call.
+    loaded_path: Option<PathBuf>,
+    /// Monotonic counter bumped by every successful (re)load — it
+    /// distinguishes "same file, newer tree" so a bound handle can
+    /// adopt another writer's reload of its own file instead of
+    /// reloading again.
+    epoch: u64,
+    /// Set by every tree mutation, cleared by load/save — lets
+    /// ensure_path flush a displaced tree's pending edits to the
+    /// file it was bound to (the store-level twin of the Qt layer's
+    /// saveIfNeccessary before re-binding) instead of dropping them.
+    dirty: bool,
 }
 
 static BM: Mutex<Option<Bookmarks>> = Mutex::new(None);
@@ -115,6 +130,9 @@ impl Bookmarks {
             next: 2,
             detached: HashSet::new(),
             root: 1,
+            loaded_path: None,
+            epoch: 0,
+            dirty: false,
         }
     }
 
@@ -315,6 +333,7 @@ impl Bookmarks {
         p.children.insert(at, h);
         self.detached.remove(&h);
         self.node_mut(h)?.parent = Some(parent);
+        self.dirty = true;
         Ok(())
     }
 
@@ -331,6 +350,7 @@ impl Bookmarks {
         }
         self.node_mut(h)?.parent = None;
         self.detached.insert(h);
+        self.dirty = true;
         Ok(())
     }
 
@@ -351,6 +371,7 @@ impl Bookmarks {
             stack.extend(children);
             self.detached.remove(&x);
         }
+        self.dirty = true;
         Ok(())
     }
 
@@ -369,16 +390,19 @@ impl Bookmarks {
             "desc" => n.desc = value.into(),
             _ => return Self::invalid("unknown string field"),
         }
+        self.dirty = true;
         Ok(())
     }
 
     pub fn set_expanded(&mut self, h: u64, expanded: bool) -> RcResult<()> {
         self.node_mut(h)?.expanded = expanded;
+        self.dirty = true;
         Ok(())
     }
 
     pub fn set_tags(&mut self, h: u64, tags: Vec<String>) -> RcResult<()> {
         self.node_mut(h)?.tags = tags;
+        self.dirty = true;
         Ok(())
     }
 
@@ -425,7 +449,9 @@ impl Bookmarks {
         if !rooted {
             return corrupt("the file is not an XBEL version 1.0 file");
         }
+        let epoch = self.epoch;
         *self = fresh;
+        self.epoch = epoch + 1;
         Ok(())
     }
 
@@ -433,9 +459,16 @@ impl Bookmarks {
     /// error (first run), matching XbelReader::read(fileName).
     pub fn load_path(&mut self, path: &Path) -> RcResult<()> {
         match fs::read(path) {
-            Ok(data) => self.load_bytes(&data),
+            Ok(data) => {
+                self.load_bytes(&data)?;
+                self.loaded_path = Some(path.to_path_buf());
+                Ok(())
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let epoch = self.epoch;
                 *self = Bookmarks::new();
+                self.epoch = epoch + 1;
+                self.loaded_path = Some(path.to_path_buf());
                 Ok(())
             }
             Err(e) => Err(Fail {
@@ -445,6 +478,42 @@ impl Bookmarks {
         }
     }
 
+    /// The file this tree was loaded from — None for a fresh or
+    /// memory-loaded tree (the facade's bound-handle stamp, RC07).
+    pub fn loaded_path(&self) -> Option<&Path> {
+        self.loaded_path.as_deref()
+    }
+
+    /// The reload counter — bumped by every successful
+    /// load_path/load_bytes/fresh-reset.
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// Facade bind (RC07): no-op when this tree already belongs to
+    /// `path`; otherwise loads it.  Reports whether a load ran so the
+    /// caller can mirror rc_bm_load's "bookmarks" emit.  A displaced
+    /// tree with pending edits is flushed to the file it was bound
+    /// to first — the in-memory tree may move between profiles, its
+    /// edits must not.
+    pub fn ensure_path(&mut self, path: &Path) -> RcResult<bool> {
+        if self.loaded_path.as_deref() == Some(path) {
+            return Ok(false);
+        }
+        if self.dirty {
+            if let Some(old) = self.loaded_path.clone() {
+                // Flush only while the edits still have a home — a
+                // deleted profile directory leaves nowhere to save
+                // to, and blocking the re-anchor strands every
+                // other profile's bookmarks.
+                if old.parent().map(|p| p.exists()).unwrap_or(false) {
+                    self.save_path(&old)?;
+                }
+            }
+        }
+        self.load_path(path).map(|_| true)
+    }
+
     /// Serializes the root's children and atomically installs the
     /// result: temp file + fsync + rename, so a crash mid-save never
     /// truncates the user's bookmarks, and a concurrent save from a
@@ -452,11 +521,24 @@ impl Bookmarks {
     /// the old fixed `xbel.rc-tmp` name let two writers interleave a
     /// torn temp file).  Cross-writer resolution stays documented
     /// last-writer-wins.
-    pub fn save_path(&self, path: &Path) -> RcResult<()> {
+    pub fn save_path(&mut self, path: &Path) -> RcResult<()> {
         let xml = self.to_xbel();
         // Best-effort retire of the pre-CONC01 fixed-name staging file.
         let _ = fs::remove_file(path.with_extension("xbel.rc-tmp"));
-        crate::store::atomic_write(path, xml.as_bytes())
+        crate::store::atomic_write(path, xml.as_bytes())?;
+        // Binding bookkeeping: writing the bound file clears the
+        // pending-edits flag; an anonymous (load_mem'd) tree adopts
+        // the file it was written to; a third path is export-as and
+        // leaves both alone.
+        match self.loaded_path.as_deref() {
+            Some(p) if p == path => self.dirty = false,
+            None => {
+                self.loaded_path = Some(path.to_path_buf());
+                self.dirty = false;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     fn to_xbel(&self) -> String {
@@ -488,6 +570,11 @@ impl Bookmarks {
                 out.push_str(&open);
                 out.push_str(">\n");
                 write_text_element(out, &pad, "title", &n.title);
+                // XbelWriter's order: title, desc, then children —
+                // <desc> is a child element, and folders carry it too.
+                if !n.desc.is_empty() {
+                    write_text_element(out, &pad, "desc", &n.desc);
+                }
                 for c in &n.children {
                     self.write_item(out, *c, depth + 1);
                 }
@@ -500,16 +587,18 @@ impl Bookmarks {
                 if !n.url.is_empty() {
                     let _ = write!(out, " href=\"{}\"", escape_attr(&n.url));
                 }
-                if !n.desc.is_empty() {
-                    // XbelWriter emits desc as an attribute (nonstandard
-                    // but the on-disk convention this file format has).
-                    let _ = write!(out, " desc=\"{}\"", escape_attr(&n.desc));
-                }
                 if !n.tags.is_empty() {
                     let _ = write!(out, " tags=\"{}\"", escape_attr(&n.tags.join(",")));
                 }
                 out.push_str(">\n");
                 write_text_element(out, &pad, "title", &n.title);
+                // <desc> is an ELEMENT in XBEL and the only form the
+                // C++ XbelReader binds — the attribute shape an earlier
+                // revision of this writer emitted stays readable (the
+                // parser tolerates it) but is never produced.
+                if !n.desc.is_empty() {
+                    write_text_element(out, &pad, "desc", &n.desc);
+                }
                 out.push_str(&pad);
                 out.push_str("</bookmark>\n");
             }
@@ -804,6 +893,59 @@ mod tests {
     }
 
     #[test]
+    fn xbel_writer_emits_desc_elements_like_xbelwriter() {
+        // LEG01 shape: XbelWriter emits <desc> as a child element on
+        // folders AND bookmarks — the C++ reader binds no other form,
+        // so the Rust writer must not emit the desc= attribute it once
+        // did, and must not drop folder descriptions.
+        let mut s = store();
+        let f = s
+            .create(
+                s.root(),
+                -1,
+                &json!({"type":1,"title":"F","desc":"folder & <desc>"}),
+            )
+            .unwrap();
+        s.create(
+            f,
+            -1,
+            &json!({"type":2,"title":"B","url":"http://b/","desc":"bm desc"}),
+        )
+        .unwrap();
+        let xml = s.to_xbel();
+        assert!(xml.contains("<desc>folder &amp; &lt;desc&gt;</desc>"), "{xml}");
+        assert!(xml.contains("<desc>bm desc</desc>"), "{xml}");
+        assert!(!xml.contains("desc=\""), "{xml}");
+
+        let mut s2 = store();
+        s2.load_bytes(xml.as_bytes()).unwrap();
+        let f2 = s2.child_at(s2.root(), 0).unwrap();
+        assert_eq!(s2.nodes[&f2].desc, "folder & <desc>");
+        let b2 = s2.child_at(f2, 0).unwrap();
+        assert_eq!(s2.nodes[&b2].desc, "bm desc");
+    }
+
+    #[test]
+    fn xbel_reader_tolerates_legacy_desc_attributes() {
+        // Files written while this crate emitted desc= attributes must
+        // still read — the attribute is a pre-expansion, and a later
+        // <desc> element wins when both exist.
+        let s = parse(
+            "<xbel version='1.0'>\
+               <folder desc='attr'><title>F</title><desc>elem</desc></folder>\
+               <bookmark href='http://b/' desc='battr'><title>B</title></bookmark>\
+               <bookmark href='http://c/' desc='conly'><title>C</title></bookmark>\
+             </xbel>",
+        );
+        let f = s.child_at(s.root(), 0).unwrap();
+        assert_eq!(s.nodes[&f].desc, "elem");
+        let b = s.child_at(s.root(), 1).unwrap();
+        assert_eq!(s.nodes[&b].desc, "battr");
+        let c = s.child_at(s.root(), 2).unwrap();
+        assert_eq!(s.nodes[&c].desc, "conly");
+    }
+
+    #[test]
     fn file_round_trip() {
         let dir = std::env::temp_dir().join(format!(
             "arktos-bm-{}-{}",
@@ -865,13 +1007,13 @@ mod tests {
         };
         let pa = path.clone();
         let ta = std::thread::spawn(move || {
-            let s = build("a");
+            let mut s = build("a");
             for _ in 0..60 {
                 s.save_path(&pa).unwrap();
             }
         });
         {
-            let s = build("b");
+            let mut s = build("b");
             for _ in 0..60 {
                 s.save_path(&path).unwrap();
             }

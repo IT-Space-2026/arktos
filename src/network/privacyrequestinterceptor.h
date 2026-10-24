@@ -21,12 +21,14 @@
 #define PRIVACYREQUESTINTERCEPTOR_H
 
 #include <qhash.h>
+#include <qmutex.h>
 #include <qwebengineurlrequestinterceptor.h>
 #include <qwebengineurlrequestinfo.h>
 
 class AdBlockNetwork;
 class AdBlockRequestInterceptor;
 class QByteArray;
+class QJsonObject;
 class QString;
 class QUrl;
 class QWebEngineProfile;
@@ -395,6 +397,28 @@ public:
     static bool gpcSignalEnabled();
     static bool storedGpcSignal();
 
+    // MD05: the rustcore privacy store is the per-persona owner of
+    // the privacy/* toggles — privacyStoreCall is the granular
+    // endpoint ({"op":"flags"|"flag"|"gpc"|"verdict"|"defaults"} on
+    // the bound persona's settings scope; an empty object means no
+    // facade answered and the caller keeps its local QSettings
+    // consult), and gpcSignalEnabledForProfile resolves the Sec-GPC
+    // bit for one persona — the DOM-twin installer and the
+    // request-time consult both answer through it, so a second
+    // engine adapter can ask identically.
+    static QJsonObject privacyStoreCall(const QString &profileId,
+                                        const QJsonObject &request);
+    static bool gpcSignalEnabledForProfile(const QString &profileId);
+
+    // MD06: the rustcore urlclean module is the per-persona owner of
+    // the URL-sanitize policy — the editable ruleset override
+    // (profiles/<id>/urlclean.json), the copy-path toggle and the
+    // merged clean_policy composite the snapshot loader embeds.
+    // Same consult contract as privacyStoreCall: an empty object
+    // means no facade answered, the caller keeps its local behavior.
+    static QJsonObject urlcleanStoreCall(const QString &profileId,
+                                         const QJsonObject &request);
+
     // The pure decisions — safe on the IO thread.  isDomainBlocked is
     // the FFI half (list membership only); shouldBlockDomain is the
     // full policy (toggle + scheme + session-proceed + membership).
@@ -417,8 +441,23 @@ public:
     static void resetRequestsSeen();
 
 private:
+    // MD05: the request-time Sec-GPC consult — the verdict's sendGpc
+    // bit came off the process-global snapshot; this re-resolves it
+    // against the interceptor's OWN persona's privacy store.  The
+    // answer is cached against the verdict-state generation (a
+    // settings save pushes a fresh snapshot, which bumps it), so the
+    // per-request cost is one counter read; a generation change (or
+    // first request) re-reads the bound profile's row once.  The
+    // parameter is the verdict's bit — kept verbatim when no facade
+    // answers, never a phantom flip.
+    bool sendGpcForProfile(bool verdictBit);
+
     AdBlockRequestInterceptor *m_adBlock;
     QString m_scope;   // SAFE07: downgradeScope() of the owning profile
+    QString m_profileId;  // MD05: profileIdFor() of the owning profile
+    QMutex m_gpcLock;
+    quint64 m_gpcGen = ~quint64(0);  // verdict-state gen m_gpcSend is valid for
+    bool m_gpcSend = false;
     // ER11: observe-only chrome.webRequest feed — reports each request
     // (and each policy block) to ExtensionRequestWatcher so hosted
     // extensions can listen.  Off-the-record profiles host no

@@ -142,6 +142,9 @@ private:
     // page agent's response resolves onto it), so it lives at this
     // level like getCurrent rather than in the shared backend.
     QJsonObject invokeTabMessage(const QJsonObject &args);
+    // MD12: tabs.connect — same scoping reason: this bridge is the
+    // port's local end, so the connect lives here too.
+    QJsonObject invokeTabConnect(const QJsonObject &args);
     // ER07/ER08: chrome.scripting.executeScript/insertCSS/removeCSS —
     // async for the same reason: the per-frame results resolve onto
     // THIS bridge's hostEvent as '__arktos.execResult', so dispatch
@@ -161,6 +164,13 @@ private:
     // option shapes.
     QJsonObject invokeContentScripts(const QString &method,
                                      const QJsonObject &args);
+    // MD32: chrome.userScripts.register/unregister/getScripts/update
+    // + configureWorld/getWorldConfigurations/resetWorldConfiguration
+    // — the MV3 user-script surface over the same registry (api key
+    // 'userScripts', ExtensionFileSource js entries), gated on the
+    // declared 'userScripts' permission.
+    QJsonObject invokeUserScripts(const QString &method,
+                                  const QJsonObject &args);
     // ER10: chrome.offscreen.createDocument/closeDocument/hasDocument.
     // createDocument is async like scripting.executeScript — the
     // answer lands on this bridge's hostEvent as
@@ -414,6 +424,11 @@ public:
                                  const QString &kind,
                                  const QString &url = QString());
     void unregisterRelayContext(ChromeBridge *bridge);
+    // MD17: whether any live shim context of `extensionId` is
+    // registered — the management mutation fan-out uses it to pick
+    // the bare-backend pushEvent fallback without double-delivering
+    // to a context broadcastEvent already reached.
+    bool hasRelayContext(const QString &extensionId) const;
     int relaySend(ChromeBridge *from, const QString &mid,
                   const QJsonObject &envelope);
     bool relayRespond(ChromeBridge *responder, const QString &mid,
@@ -496,13 +511,26 @@ public:
             const QString &extensionId, const QString &extensionPath,
             const QJsonArray &scripts, const QString &api);
     QJsonObject unregisterContentScripts(
-            const QString &extensionId, const QStringList &ids);
+            const QString &extensionId, const QStringList &ids,
+            const QString &api);
     QJsonArray registeredContentScripts(
             const QString &extensionId, const QString &api,
             const QStringList &onlyIds = QStringList()) const;
     QJsonObject updateContentScripts(
             const QString &extensionId, const QString &extensionPath,
-            const QJsonArray &scripts);
+            const QJsonArray &scripts, const QString &api);
+    // MD32 — chrome.userScripts world configuration.  Chrome keeps a
+    // per-extension map of USER_SCRIPT world properties (worldId ->
+    // {messaging}); every world collapses onto the shared agent realm
+    // here, so the config is a recorded declaration getWorld-
+    // Configurations echoes back honestly — persisted in
+    // ProfileSettings 'extensions/userworlds/<id>' like the specs.
+    QJsonObject configureUserScriptWorld(const QString &extensionId,
+                                         const QJsonObject &properties);
+    QJsonArray userScriptWorldConfigurations(
+            const QString &extensionId) const;
+    QJsonObject resetUserScriptWorld(const QString &extensionId,
+                                     const QJsonValue &worldId);
     // syncNow: a fresh host re-arms every persisted + session
     // registration of its extension onto its profile.
     void restoreRegisteredScripts(const QString &extensionId);
@@ -581,6 +609,16 @@ public:
     QJsonObject pagePortDisconnect(ExtensionPageBridge *page,
                                    const QString &chan,
                                    const QString &portId);
+    // MD12: the reverse offer — tabs.connect registers the CALLING
+    // shim context's end and pushes '__arktos.portConnect' onto the
+    // tab's page agent (its runtime.onConnect fires -> portAccept
+    // registers the page end).  Answers the tab end's MessageSender
+    // so the shim can fill the connecting port's sender.tab.
+    QJsonObject tabPortConnect(ChromeBridge *from,
+                               ExtensionPageBridge *page,
+                               const QString &chan,
+                               const QString &portId,
+                               const QString &name);
     // The page (or its bridge) died — drop its pending sends and port
     // ends; surviving ends get the honest portDisconnect push.
     void unregisterPageContext(ExtensionPageBridge *page);

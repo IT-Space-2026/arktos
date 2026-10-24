@@ -49,11 +49,23 @@ QString dirFor(const QString &id);
 //                        profile store only.
 //   - global key      -> the plain QSettings file, unchanged.
 //
+// RC08: under ARKTOS_RUSTCORE every read/write additionally routes
+// through the shared AcCore's settings scopes — the profile scope's
+// settings.json is the canonical forward store (it auto-imports
+// settings.ini once), while the two inis stay live as the compat
+// mirror: every write lands in both so the no-rust lane and any
+// legacy reader see the same bytes, and the global ini remains
+// authoritative for the raw-QSettings call sites RC08 leaves alone.
+//
 // Each instance owns its two QSettings objects — never share one
 // object across call sites: beginGroup() mutates its group stack, and
 // a site that forgets endGroup() would poison a shared object's paths.
 // Objects on the same file share Qt's in-process conf cache, so
-// construction is cheap and writes are immediately visible.
+// construction is cheap and writes are immediately visible.  The
+// Rust-side scopes share one facade-bound handle per scope for the
+// same reason — RcSettings owns a decoded document per handle, so
+// per-object handles would go stale like unshared conf files.
+class RustCoreSettings;
 class ProfileSettings
 {
 public:
@@ -107,15 +119,30 @@ public:
 
 private:
     QString keyPath(const QString &key) const;
-    QSettings &storeFor(const QString &key);
-    const QSettings &storeFor(const QString &key) const;
-    QSettings &storeForPath(const QString &path);
 
     QString m_id;
     QSettings m_profile;
     QSettings m_global;
-    // Which store the open array sequence came from.
+    // Which ini store the open array sequence came from.
     QSettings *m_arrayStore;
+#ifdef ARKTOS_RUSTCORE
+    // Shared per-scope facade handles — the canonical RC08 tiers.
+    RustCoreSettings *m_profileStore;
+    RustCoreSettings *m_globalStore;
+    // The open array's rust tier — non-null while a read/write
+    // sequence mirrors elements flat (path/i+1/key, the ini wire's
+    // 1-based indexing).
+    RustCoreSettings *m_flatStore;
+    QString m_arrayPath;
+    int m_arrayIndex = -1;
+    int m_arraySize = -1;
+    int m_arrayMax = -1;
+    bool m_arrayWriting = false;
+    QString flatArrayKey(const QString &key) const;
+    // Direct-child names under the current group across both rust
+    // scopes (groups = child group names, else child key names).
+    QStringList rustChildren(bool groups) const;
+#endif
 };
 
 #endif // PROFILESETTINGS_H

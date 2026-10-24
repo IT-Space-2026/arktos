@@ -21,8 +21,14 @@
 
 #include "browserapplication.h"
 #include "networkaccessmanager.h"
+#include "profilesettings.h"
+
+#ifdef ARKTOS_RUSTCORE
+#include "rustcore.h"
+#endif
 
 #include <qcoreapplication.h>
+#include <qdatetime.h>
 #include <qdebug.h>
 #include <qfile.h>
 #include <qjsonarray.h>
@@ -107,6 +113,13 @@ void UpdateChecker::check()
 
     if (!m_manager)
         m_manager = NetworkAccessManager::instance();
+
+    // RC20: stamp the last-check time into the app-level
+    // "updates/" group — a global-scope key in both lanes (Profile-
+    // Settings owns the shared store handle; a separate handle would
+    // carry a stale decoded document and could clobber keys).
+    ProfileSettings().setValue(QLatin1String("updates/lastCheckMs"),
+        QDateTime::currentMSecsSinceEpoch());
 
     QNetworkRequest request(m_apiUrl);
     // GitHub's API 403s requests without a User-Agent.
@@ -213,6 +226,24 @@ void UpdateChecker::replyFinished()
         finish(Status::Error);
         return;
     }
+    // RC20: the channel gate — the app ships the stable lane, which
+    // never offers a draft or prerelease manifest.  /releases/latest
+    // never serves one anyway, so this is a no-op on the real
+    // endpoint and a hardening on loopback/self-hosted feeds.
+#ifdef ARKTOS_RUSTCORE
+    const int channelVerdict = rc_updates_channel_accepts(
+        "stable", m_result.draft ? 1 : 0,
+        m_result.prerelease ? 1 : 0);
+    if (channelVerdict == 0) {
+        finish(Status::UpToDate);
+        return;
+    }
+#else
+    if (m_result.draft || m_result.prerelease) {
+        finish(Status::UpToDate);
+        return;
+    }
+#endif
     if (compareVersions(remoteVersion, localVersion) > 0)
         finish(Status::UpdateAvailable);
     else
@@ -229,6 +260,17 @@ void UpdateChecker::finish(Status status)
 bool UpdateChecker::isTrustedDownloadUrl(const QUrl &url,
                                          const QUrl &apiUrl)
 {
+#ifdef ARKTOS_RUSTCORE
+    // RC20: the gate lives in rustcore — the same verdict the
+    // manifest parse applies asset-side.  The encoded form keeps
+    // userinfo/authority intact for the core's split.
+    const QByteArray u = url.toEncoded();
+    const QByteArray a = apiUrl.toEncoded();
+    const int verdict = rc_updates_is_trusted_url(u.constData(),
+                                                  a.constData());
+    if (verdict >= 0)
+        return verdict == 1;
+#endif
     if (!url.isValid() || url.isRelative() || !url.userInfo().isEmpty())
         return false;
     const QString scheme = url.scheme().toLower();
@@ -254,6 +296,57 @@ UpdateChecker::Result UpdateChecker::parseReleaseJson(
         bool *ok, QString *error)
 {
     Result result;
+#ifdef ARKTOS_RUSTCORE
+    // RC20: rustcore owns the manifest parse — the same field
+    // binding and the same trust gate the Qt path below applies;
+    // the core returns the surviving shape as JSON.
+    const QByteArray api = apiUrl.toEncoded();
+    char *json = rc_updates_parse_manifest(
+        reinterpret_cast<const uint8_t *>(payload.constData()),
+        size_t(payload.size()), api.constData());
+    if (json) {
+        const QJsonDocument doc =
+            QJsonDocument::fromJson(QByteArray(json));
+        rc_string_free(json);
+        const QJsonObject release = doc.object();
+        result.latestVersion =
+            release.value(QLatin1String("version")).toString();
+        result.releaseTitle =
+            release.value(QLatin1String("title")).toString();
+        result.releasePageUrl = QUrl(
+            release.value(QLatin1String("page_url")).toString());
+        result.draft =
+            release.value(QLatin1String("draft")).toBool();
+        result.prerelease =
+            release.value(QLatin1String("prerelease")).toBool();
+        const QJsonArray assets =
+            release.value(QLatin1String("assets")).toArray();
+        for (const QJsonValue &value : assets) {
+            const QJsonObject asset = value.toObject();
+            ReleaseAsset entry;
+            entry.name =
+                asset.value(QLatin1String("name")).toString();
+            entry.downloadUrl = QUrl(
+                asset.value(QLatin1String("url")).toString());
+            entry.size = asset.value(QLatin1String("size"))
+                .toVariant().toLongLong();
+            result.assets.append(entry);
+        }
+        *ok = true;
+        return result;
+    }
+    // The core refused — surface its stashed reason when there is
+    // one, else fall through to the Qt parse (which re-verifies).
+    if (char *msg = rc_last_error_message()) {
+        const QString reason = QString::fromUtf8(msg);
+        rc_string_free(msg);
+        if (!reason.isEmpty()) {
+            *ok = false;
+            *error = reason;
+            return result;
+        }
+    }
+#endif
     QJsonParseError parseError;
     const QJsonDocument document =
         QJsonDocument::fromJson(payload, &parseError);
@@ -270,6 +363,9 @@ UpdateChecker::Result UpdateChecker::parseReleaseJson(
         .toString();
     result.releaseTitle = release.value(QLatin1String("name"))
         .toString();
+    result.draft = release.value(QLatin1String("draft")).toBool();
+    result.prerelease =
+        release.value(QLatin1String("prerelease")).toBool();
     // html_url is informational only today (the dialog opens the
     // constant releases page) — still bound it so a stored Result
     // never carries a javascript: or worse for a future caller.
@@ -307,6 +403,14 @@ UpdateChecker::Result UpdateChecker::parseReleaseJson(
 
 QString UpdateChecker::normalizedVersion(const QString &version)
 {
+#ifdef ARKTOS_RUSTCORE
+    const QByteArray utf8 = version.toUtf8();
+    if (char *out = rc_updates_normalize_version(utf8.constData())) {
+        const QString normalized = QString::fromUtf8(out);
+        rc_string_free(out);
+        return normalized;
+    }
+#endif
     QString normalized = version.trimmed();
     if (normalized.startsWith(QLatin1Char('v'))
             || normalized.startsWith(QLatin1Char('V')))
@@ -326,6 +430,12 @@ QString UpdateChecker::normalizedVersion(const QString &version)
 
 int UpdateChecker::compareVersions(const QString &a, const QString &b)
 {
+#ifdef ARKTOS_RUSTCORE
+    const int verdict = rc_updates_compare_versions(
+        a.toUtf8().constData(), b.toUtf8().constData());
+    if (verdict != -2)
+        return verdict;
+#endif
     const QString normalizedA = normalizedVersion(a);
     const QString normalizedB = normalizedVersion(b);
 
@@ -410,6 +520,48 @@ UpdateChecker::PlatformPick UpdateChecker::platformAssetsFor(
         const QList<ReleaseAsset> &assets)
 {
     PlatformPick pick;
+#ifdef ARKTOS_RUSTCORE
+    // RC20: the pick runs in rustcore; the Qt ranking below stays as
+    // the no-rust lane and the FFI-failure fallback.
+    {
+        QJsonArray list;
+        for (const ReleaseAsset &asset : assets) {
+            QJsonObject row;
+            row.insert(QLatin1String("name"), asset.name);
+            row.insert(QLatin1String("url"), QString::fromUtf8(
+                asset.downloadUrl.toEncoded()));
+            row.insert(QLatin1String("size"), asset.size);
+            list.append(row);
+        }
+        const QByteArray json =
+            QJsonDocument(list).toJson(QJsonDocument::Compact);
+        if (char *out = rc_updates_platform_pick(
+                os.toUtf8().constData(),
+                osReleaseIdLike.toUtf8().constData(),
+                reinterpret_cast<const uint8_t *>(json.constData()),
+                size_t(json.size()))) {
+            const QJsonObject obj =
+                QJsonDocument::fromJson(QByteArray(out)).object();
+            rc_string_free(out);
+            pick.ambiguous =
+                obj.value(QLatin1String("ambiguous")).toBool();
+            const QJsonArray candidates =
+                obj.value(QLatin1String("candidates")).toArray();
+            for (const QJsonValue &value : candidates) {
+                const QJsonObject c = value.toObject();
+                ReleaseAsset entry;
+                entry.name =
+                    c.value(QLatin1String("name")).toString();
+                entry.downloadUrl = QUrl(
+                    c.value(QLatin1String("url")).toString());
+                entry.size = c.value(QLatin1String("size"))
+                    .toVariant().toLongLong();
+                pick.candidates.append(entry);
+            }
+            return pick;
+        }
+    }
+#endif
     auto matching = [&assets](const QString &suffix,
                               bool preferInstaller) {
         QList<ReleaseAsset> matches, installerNamed;

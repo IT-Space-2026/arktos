@@ -37,10 +37,15 @@
 #include <qlistwidget.h>
 #include <qpushbutton.h>
 
+#include "bookmarksmanager.h"
+#include "bookmarknode.h"
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
+#include "cookiejar.h"
+#include "declarativenetrequest.h"
+#include "downloadmanager.h"
 #include "extensionactionbar.h"
 #include "extensionbackgroundhost.h"
 #include "extensioncommands.h"
@@ -52,16 +57,20 @@
 #include "extensionrequestwatcher.h"
 #include "extensionreviewdialog.h"
 #include "extensionshimbackend.h"
+#include "historymanager.h"
 #include "engineinterface.h"
+#include "opensearchmanager.h"
 #include "profilesettings.h"
 #include "qtest_arktos.h"
 #include "tabwidget.h"
+#include "toolbarsearch.h"
 #include "webpage.h"
 #include "webview.h"
 
 #include <qframe.h>
 #include <qmenu.h>
 #include <qsignalspy.h>
+#include <qwebenginecookiestore.h>
 #include <qwebengineview.h>
 
 class tst_ExtensionManager : public QObject
@@ -91,6 +100,10 @@ private slots:
     void chromePageChurn();
     void relayPortChurn();
     void extensionShimBackend();
+    void extensionStorageExtras();
+    void extensionAlarmEdges();
+    void extensionTabsOps();
+    void extensionTabsZoomCapture();
     void extensionMessageRelay();
     void extensionChromeNavLock();
     void extensionEventSurfaces();
@@ -99,9 +112,33 @@ private slots:
     void extensionPopupContext();
     void extensionPageAgent();
     void extensionTabMessaging();
+    void extensionTabConnect();
+    void extensionWindowsFidelity();
+    void extensionActionIcon();
+    void extensionAllowedAccess();
+    void extensionManagementRead();
+    void extensionManagementMutations();
+    void extensionBookmarks();
+    void extensionHistory();
+    void extensionCookies();
+    void extensionDownloads();
+    void extensionSessions();
+    void extensionTabGroups();
+    void extensionTopSites();
+    void extensionBrowsingData();
+    void extensionDns();
+    void extensionSystem();
+    void extensionPrivacy();
+    void extensionRuntimeOps();
     void extensionScripting();
     void extensionScriptCss();
     void extensionContentScriptRegistration();
+    void extensionUserScripts();
+    void extensionFontSettings();
+    void extensionDeclarativeNetRequest();
+    void extensionIdentity();
+    void extensionNavTargetCreated();
+    void extensionActionUserSettings();
     void extensionNotifications();
     void extensionIdle();
     void extensionCommands();
@@ -470,12 +507,12 @@ void tst_ExtensionManager::inspectManifest_data()
     QTest::newRow("permission classes")
         << QByteArray("{\"manifest_version\":3,\"name\":\"perms\","
                       "\"version\":\"1.0\","
-                      "\"permissions\":[\"bookmarks\",\"webRequest\","
+                      "\"permissions\":[\"gcm\",\"webRequest\","
                       "\"cookies\",\"nativeMessaging\"],"
                       "\"host_permissions\":[\"<all_urls>\","
                       "\"*://*.example.com/*\"]}")
         << true << 3 << QStringLiteral("perms") << false
-        << (QStringList() << QStringLiteral("bookmarks"))
+        << (QStringList() << QStringLiteral("gcm"))
         << (QStringList() << QStringLiteral("webRequest"))
         // ER19: webRequest is runtime-served — it leaves the fatal
         // set (and stays in 'unverified' for honest wording).
@@ -496,10 +533,10 @@ void tst_ExtensionManager::inspectManifest_data()
         << (QStringList() << QStringLiteral("scripting"))
         << QStringList()
         << QStringList() << QStringList();
-    // A required fatal-table permission the runtime does NOT serve
-    // still condemns the extension — the regrade subtracts only the
-    // served set.
-    QTest::newRow("unserved fatal api required")
+    // MD34: declarativeNetRequest joined the served set — requiring
+    // it no longer lands in fatalMissing, though the request-side
+    // surface keeps it honest at 'unverified'.
+    QTest::newRow("served fatal api required")
         << QByteArray("{\"manifest_version\":3,\"name\":\"dnr\","
                       "\"version\":\"1.0\","
                       "\"permissions\":[\"declarativeNetRequest\","
@@ -507,20 +544,24 @@ void tst_ExtensionManager::inspectManifest_data()
         << true << 3 << QStringLiteral("dnr") << false
         << QStringList()
         << (QStringList() << QStringLiteral("declarativeNetRequest"))
-        << (QStringList() << QStringLiteral("declarativeNetRequest"))
+        << QStringList()
         << QStringList() << QStringList();
     // ER19: runtime-served 'unsupported' members migrate to
     // 'unverified' — the honest tier is "partially supported", not
-    // "will not work".  'bookmarks' is genuinely dead and stays.
+    // "will not work".  MD23 serves 'cookies' (it migrates too);
+    // 'gcm' is genuinely dead and stays.
     QTest::newRow("runtime-served apis migrate")
         << QByteArray("{\"manifest_version\":3,\"name\":\"served\","
                       "\"version\":\"1.0\","
                       "\"permissions\":[\"notifications\",\"tabs\","
-                      "\"bookmarks\"]}")
+                      "\"bookmarks\",\"cookies\",\"topSites\",\"gcm\"]}")
         << true << 3 << QStringLiteral("served") << false
-        << (QStringList() << QStringLiteral("bookmarks"))
+        << (QStringList() << QStringLiteral("gcm"))
         << (QStringList() << QStringLiteral("notifications")
-                          << QStringLiteral("tabs"))
+                          << QStringLiteral("tabs")
+                          << QStringLiteral("bookmarks")
+                          << QStringLiteral("cookies")
+                          << QStringLiteral("topSites"))
         << QStringList()
         << QStringList() << QStringList();
     QTest::newRow("fatal core api optional")
@@ -1260,11 +1301,10 @@ void tst_ExtensionManager::healthClassification()
 
 // ER19 — the health regrade the EXT21 fatal table was waiting for.
 // With the hosted runtime armed, a required permission the runtime
-// serves (scripting, webRequest, the event-stream namespaces) leaves
-// the fatal set and migrates out of 'unsupported' into 'unverified'
-// — "partially supported" is the honest tier, never "will not work".
-// What the runtime does NOT serve keeps the raw engine verdict: a
-// required declarativeNetRequest still condemns the extension, and
+// serves (scripting, webRequest, the event-stream namespaces and —
+// MD34 — the declarativeNetRequest grants) leaves the fatal set and
+// migrates out of 'unsupported' into 'unverified' — "partially
+// supported" is the honest tier, never "will not work".
 // ARKTOS_EXTHOST_OFF reverses the whole regrade — a fixture
 // requiring scripting without the runtime path still grades
 // NotSupported.
@@ -1280,7 +1320,8 @@ void tst_ExtensionManager::runtimeHealthRegrade()
         root, QStringLiteral("tst-regrade"), QStringLiteral("1.0.0"),
         QString(), {QStringLiteral("scripting"),
                     QStringLiteral("notifications"),
-                    QStringLiteral("bookmarks")});
+                    QStringLiteral("cookies"),
+                    QStringLiteral("gcm")});
     QVERIFY(!dir.isEmpty());
 
     // Runtime armed (the suite's normal env — pin it so a stray
@@ -1293,13 +1334,16 @@ void tst_ExtensionManager::runtimeHealthRegrade()
         ExtensionManager::inspectManifest(dir);
     QVERIFY(served.valid);
     // scripting leaves fatalMissing and was always 'unverified';
-    // notifications migrates unsupported -> unverified; bookmarks is
-    // genuinely dead and stays the missingApis marker.
+    // notifications migrates unsupported -> unverified, and MD23's
+    // cookies service moves it the same way; gcm is genuinely dead
+    // and stays the missingApis marker.
     QVERIFY(served.fatalMissing.isEmpty());
     QVERIFY(served.unverified.contains(QLatin1String("scripting")));
     QVERIFY(served.unverified.contains(QLatin1String("notifications")));
+    QVERIFY(served.unverified.contains(QLatin1String("cookies")));
     QVERIFY(!served.unsupported.contains(QLatin1String("notifications")));
-    QVERIFY(served.unsupported.contains(QLatin1String("bookmarks")));
+    QVERIFY(!served.unsupported.contains(QLatin1String("cookies")));
+    QVERIFY(served.unsupported.contains(QLatin1String("gcm")));
     // Regraded: the same extension that EXT21 condemned is
     // Limited-or-better — its remaining gaps are honest, not fatal.
     QCOMPARE(ExtensionManager::classifyHealth(
@@ -1311,21 +1355,24 @@ void tst_ExtensionManager::runtimeHealthRegrade()
                  PV::Dead),
              EH::NotSupported);
 
-    // A required fatal-table member the runtime does NOT serve still
-    // condemns the extension even with the runtime armed.
+    // MD34: declarativeNetRequest joined the served set — a required
+    // grant no longer condemns the extension either.  (The runtime's
+    // surface is request-side: response-header ops stay typed
+    // verdicts, so the permission grades 'unverified', not fully
+    // verified — but it stops being fatal.)
     const QString dnrDir = writeExtension(
         root, QStringLiteral("tst-regrade-dnr"), QStringLiteral("1.0.0"),
         QString(), {QStringLiteral("declarativeNetRequest"),
                     QStringLiteral("scripting")});
     const ExtensionManager::Manifest dnr =
         ExtensionManager::inspectManifest(dnrDir);
-    QVERIFY(!dnr.fatalMissing.contains(QLatin1String("scripting")));
-    QVERIFY(dnr.fatalMissing.contains(
+    QVERIFY(dnr.fatalMissing.isEmpty());
+    QVERIFY(dnr.unverified.contains(
                 QLatin1String("declarativeNetRequest")));
     QCOMPARE(ExtensionManager::classifyHealth(
                  true, dnr.unsupported, dnr.fatalMissing,
                  PV::Responsive),
-             EH::NotSupported);
+             EH::Healthy);
 
     // Without the runtime path the raw engine verdict stands —
     // scripting is fatal again and served surfaces stay "won't
@@ -1351,7 +1398,9 @@ void tst_ExtensionManager::runtimeHealthRegrade()
     const QStringList serves = ExtensionManager::runtimeServes();
     QVERIFY(serves.contains(QLatin1String("scripting")));
     QVERIFY(serves.contains(QLatin1String("webRequest")));
-    QVERIFY(!serves.contains(QLatin1String("declarativeNetRequest")));
+    // MD34 — the declarativeNetRequest grants are served now; the
+    // blocking webRequest grant still is not.
+    QVERIFY(serves.contains(QLatin1String("declarativeNetRequest")));
     QVERIFY(!serves.contains(QLatin1String("webRequestBlocking")));
 
     QDir(root).removeRecursively();
@@ -1375,13 +1424,13 @@ void tst_ExtensionManager::backgroundHealthProbe()
         root, QStringLiteral("tst-health-live"),
         QStringLiteral("1.0.0"));
     // Dead: same manifest shape but the worker throws at eval —
-    // Bitwarden's failure mode (Chromium status 15).  'bookmarks' is
-    // the unsupported-permission marker: the hosted runtime does not
+    // Bitwarden's failure mode (Chromium status 15).  'gcm' is the
+    // unsupported-permission marker: the hosted runtime does not
     // serve it (ER19), so it stays in missingApis either way.
     const QString deadDir = writeExtension(
         root, QStringLiteral("tst-health-dead"),
         QStringLiteral("1.0.0"), QString(),
-        {QStringLiteral("bookmarks")});
+        {QStringLiteral("gcm")});
     QVERIFY(!liveDir.isEmpty() && !deadDir.isEmpty());
     {
         QFile dead(deadDir + QLatin1String("/sw.js"));
@@ -1424,9 +1473,9 @@ void tst_ExtensionManager::backgroundHealthProbe()
     const ExtensionManager::ExtensionInfo dead = infoFor(deadId);
     QVERIFY(!dead.healthReason.isEmpty());
     QVERIFY(dead.healthReason.contains(QLatin1String("background")));
-    // "bookmarks" is unsupported even with the hosted runtime armed
+    // "gcm" is unsupported even with the hosted runtime armed
     // — the reason names the missing surface, not just the crash.
-    QVERIFY(dead.missingApis.contains(QLatin1String("bookmarks")));
+    QVERIFY(dead.missingApis.contains(QLatin1String("gcm")));
 
     manager->removeExtension(liveId);
     manager->removeExtension(deadId);
@@ -1574,6 +1623,16 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
         " await chrome.alarms.clearAll();"
         " await chrome.action.setTitle({title:'Shim Title'});"
         " await chrome.action.setBadgeText({text:'7'});"
+        // MD14: setIcon rides the real bridge — imageData crosses as
+        // base64'd raw RGBA, a size->path map lands verbatim on the
+        // backend (and replaces the image override, Chrome parity).
+        " await chrome.action.setIcon({imageData:{width:2,height:2,"
+        "   data:new Uint8ClampedArray([255,0,0,255,0,255,0,255,"
+        "   0,0,255,255,255,255,255,255])}});"
+        " out.iconImage=true;"
+        " await chrome.browserAction.setIcon("
+        "   {path:{'16':'icons/a.png'}});"
+        " out.iconPath=true;"
         " out.title=await chrome.action.getTitle({});"
         " out.badge=await chrome.action.getBadgeText({});"
         " out.url=chrome.runtime.getURL('x.html')"
@@ -1636,6 +1695,13 @@ void tst_ExtensionManager::hostedBackgroundRuntime()
         ExtensionShimBackend::actionState(id);
     QCOMPARE(action.title, QStringLiteral("Shim Title"));
     QCOMPARE(action.badgeText, QStringLiteral("7"));
+    // Both setIcon spellings resolved; the path call is the recorded
+    // override now (it replaced the imageData one).
+    QVERIFY(out.value(QLatin1String("iconImage")).toBool());
+    QVERIFY(out.value(QLatin1String("iconPath")).toBool());
+    QCOMPARE(action.iconPaths.value(16),
+             QStringLiteral("icons/a.png"));
+    QVERIFY(action.iconImages.isEmpty());
     QTRY_VERIFY_WITH_TIMEOUT(
         runtime->host(id)->shimGaps().contains(
             QStringLiteral("chrome.notifications.create: no-permission")),
@@ -2827,6 +2893,860 @@ void tst_ExtensionManager::extensionShimBackend()
     QDir(BrowserPaths::dataFilePath(
         QStringLiteral("extstorage")) + QLatin1Char('/') + id)
         .removeRecursively();
+    QDir(dir).removeRecursively();
+}
+
+// MD19 — chrome.storage extras.  getKeys/setAccessLevel ride the
+// same dispatch as get/set; 'sync' persists under extstorage/ like
+// 'local' (no cloud sync — a recorded note says so); and Chrome's
+// quota bounds (sync QUOTA_BYTES_PER_ITEM 8192 / QUOTA_BYTES 102400
+// / MAX_ITEMS 512, local+session 10 MB) refuse oversized writes
+// atomically with a typed quota-exceeded.
+void tst_ExtensionManager::extensionStorageExtras()
+{
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extstore-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile manifestFile(dir + QLatin1String("/manifest.json"));
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly));
+        manifestFile.write(
+            "{\"manifest_version\":3,\"name\":\"tst-store\","
+            "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        manifestFile.close();
+    }
+    const QString id = QStringLiteral("tstmockextensionid0099");
+
+    ExtensionShimBackend backend(id, QStringLiteral("tst-store"), dir);
+
+    // --- sync round trip, no longer the session map ---------------
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.set"),
+        QJsonObject{{QStringLiteral("items"),
+                     QJsonObject{{QStringLiteral("k"), 1},
+                                 {QStringLiteral("name"),
+                                  QStringLiteral("v")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toObject()
+            .value(QLatin1String("changes")).toObject()
+            .value(QLatin1String("k")).toObject()
+            .contains(QLatin1String("newValue")));
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.get"),
+        QJsonObject{{QStringLiteral("keys"), QStringLiteral("k")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("k")).toInt(), 1);
+    QVERIFY(backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("session.set"),
+        QJsonObject{{QStringLiteral("items"),
+                     QJsonObject{{QStringLiteral("k"), 9}}}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.get"),
+        QJsonObject{{QStringLiteral("keys"), QStringLiteral("k")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("k")).toInt(), 1);
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("session.get"),
+        QJsonObject{{QStringLiteral("keys"),
+                     QStringLiteral("name")}});
+    QVERIFY(!reply.value(QLatin1String("result")).toObject()
+            .contains(QLatin1String("name")));
+
+    // --- getKeys ---------------------------------------------------
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.getKeys"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QStringList keys;
+    for (const QJsonValue &v
+         : reply.value(QLatin1String("result")).toArray())
+        keys.append(v.toString());
+    keys.sort();
+    QCOMPARE(keys, (QStringList{QLatin1String("k"),
+                                QLatin1String("name")}));
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("managed.getKeys"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 0);
+    // The dedicated managed store never aliases a sibling area.
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("managed.get"),
+        QJsonObject{{QStringLiteral("keys"), QJsonValue::Null}});
+    QVERIFY(reply.value(QLatin1String("result")).toObject().isEmpty());
+
+    // --- setAccessLevel recorded ------------------------------------
+    reply = backend.invoke(
+        QStringLiteral("storage"),
+        QStringLiteral("session.setAccessLevel"),
+        QJsonObject{{QStringLiteral("accessLevel"),
+                     QStringLiteral("TRUSTED_AND_UNTRUSTED_CONTEXTS")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    // Chrome's {accessLevel: level} object spelling lands the same.
+    reply = backend.invoke(
+        QStringLiteral("storage"),
+        QStringLiteral("session.setAccessLevel"),
+        QJsonObject{{QStringLiteral("accessLevel"),
+                     QJsonObject{{QStringLiteral("accessLevel"),
+                                  QStringLiteral("TRUSTED_CONTEXTS")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("storage"),
+        QStringLiteral("local.setAccessLevel"),
+        QJsonObject{{QStringLiteral("accessLevel"),
+                     QStringLiteral("BOGUS")}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    bool sawAccessLevel = false, sawNoSync = false;
+    for (const QString &n : backend.notes()) {
+        if (n.contains(QLatin1String("TRUSTED_AND_UNTRUSTED_CONTEXTS")))
+            sawAccessLevel = true;
+        if (n.contains(QLatin1String("no cloud sync")))
+            sawNoSync = true;
+    }
+    QVERIFY(sawAccessLevel);
+    QVERIFY(sawNoSync);
+
+    // --- quota bounds ------------------------------------------------
+    // sync per-item cap: key length + JSON value over 8192 bytes.
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.set"),
+        QJsonObject{{QStringLiteral("items"),
+                     QJsonObject{{QStringLiteral("big"),
+                                  QString(9000, QLatin1Char('x'))}}}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("quota-exceeded"));
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.get"),
+        QJsonObject{{QStringLiteral("keys"), QStringLiteral("big")}});
+    QVERIFY(!reply.value(QLatin1String("result")).toObject()
+            .contains(QLatin1String("big")));
+    // sync total cap: under-item-size items whose sum crosses 100KB.
+    QJsonObject many;
+    for (int i = 0; i < 20; ++i)
+        many.insert(QStringLiteral("f%1").arg(i),
+                    QString(7000, QLatin1Char('y')));
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.set"),
+        QJsonObject{{QStringLiteral("items"), many}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("quota-exceeded"));
+    // MAX_ITEMS: one call carrying more than 512 distinct keys.
+    QJsonObject flood;
+    for (int i = 0; i < 513; ++i)
+        flood.insert(QStringLiteral("i%1").arg(i), i);
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("sync.set"),
+        QJsonObject{{QStringLiteral("items"), flood}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("quota-exceeded"));
+    // local's 10 MB ceiling is enforced the same way.
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("local.set"),
+        QJsonObject{{QStringLiteral("items"),
+                     QJsonObject{{QStringLiteral("huge"),
+                                  QString(11 * 1024 * 1024,
+                                          QLatin1Char('z'))}}}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("quota-exceeded"));
+
+    // --- sync survives a backend respawn ----------------------------
+    QVERIFY(QFile::exists(
+        BrowserPaths::dataFilePath(QStringLiteral("extstorage"))
+        + QLatin1Char('/') + id + QLatin1String("/sync.json")));
+    {
+        ExtensionShimBackend again(id, QStringLiteral("tst-store"),
+                                   dir);
+        reply = again.invoke(
+            QStringLiteral("storage"), QStringLiteral("sync.get"),
+            QJsonObject{{QStringLiteral("keys"),
+                         QStringLiteral("name")}});
+        QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("name")).toString(),
+                 QStringLiteral("v"));
+        reply = again.invoke(
+            QStringLiteral("storage"), QStringLiteral("sync.getKeys"),
+            QJsonObject());
+        QCOMPARE(reply.value(QLatin1String("result")).toArray()
+                 .size(), 2);
+        // session stays volatile — the respawn sees none of it.
+        reply = again.invoke(
+            QStringLiteral("storage"), QStringLiteral("session.get"),
+            QJsonObject{{QStringLiteral("keys"),
+                         QStringLiteral("k")}});
+        QVERIFY(!reply.value(QLatin1String("result")).toObject()
+                .contains(QLatin1String("k")));
+    }
+
+    QDir(BrowserPaths::dataFilePath(
+        QStringLiteral("extstorage")) + QLatin1Char('/') + id)
+        .removeRecursively();
+    QDir(dir).removeRecursively();
+}
+
+// MD20 — chrome.alarms edge parity on a bare backend: Chrome's
+// create() argument checks (when+delayInMinutes together or no
+// schedule at all refuse; the name may ride alarmInfo itself but
+// never both forms at once), unnamed alarms live under Chrome's ""
+// default name (get/clear/onAlarm all serve it, a second unnamed
+// create replaces), the MV3 30s periodInMinutes floor clamps with
+// a recorded note, and getAll answers in creation order with a
+// replaced alarm re-appending at the end.
+void tst_ExtensionManager::extensionAlarmEdges()
+{
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extalarm-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-alarm\","
+                "\"version\":\"1.0\",\"permissions\":[\"alarms\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0004"),
+        QStringLiteral("tst-alarm"), dir);
+
+    auto create = [&backend](const QString &name,
+                             const QJsonObject &info) {
+        return backend.invoke(
+            QStringLiteral("alarms"), QStringLiteral("create"),
+            QJsonObject{{QStringLiteral("name"), name},
+                        {QStringLiteral("info"), info}});
+    };
+    auto getAllNames = [&backend]() {
+        QStringList names;
+        const QJsonArray all = backend.invoke(
+            QStringLiteral("alarms"), QStringLiteral("getAll"),
+            QJsonObject()).value(QLatin1String("result")).toArray();
+        for (const QJsonValue &v : all)
+            names.append(v.toObject().value(
+                QStringLiteral("name")).toString());
+        return names;
+    };
+
+    // --- Chrome's create() argument validation --------------------
+    QCOMPARE(create(QStringLiteral("both"),
+                    QJsonObject{{QStringLiteral("when"), 1.0},
+                                {QStringLiteral("delayInMinutes"),
+                                 1.0}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(create(QStringLiteral("none"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(create(QStringLiteral("arg"),
+                    QJsonObject{{QStringLiteral("name"),
+                                 QStringLiteral("obj")},
+                                {QStringLiteral("delayInMinutes"),
+                                 60.0}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QVERIFY(getAllNames().isEmpty());
+
+    // --- unnamed alarms under Chrome's "" default -----------------
+    QVERIFY(create(QString(), QJsonObject{
+            {QStringLiteral("delayInMinutes"), 30.0}})
+        .value(QLatin1String("ok")).toBool());
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("name"), QString()}});
+    QVERIFY(reply.value(QLatin1String("result")).isObject());
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("name")).toString(), QString());
+    // A second unnamed create replaces the first like Chrome —
+    // getAll still shows exactly one "" alarm.
+    QVERIFY(create(QString(), QJsonObject{
+            {QStringLiteral("delayInMinutes"), 45.0}})
+        .value(QLatin1String("ok")).toBool());
+    QCOMPARE(getAllNames(), (QStringList{QString()}));
+    // The unnamed alarm fires onAlarm with its "" name.
+    QSignalSpy fireSpy(&backend, &ExtensionShimBackend::pushEvent);
+    QVERIFY(create(QString(), QJsonObject{
+            {QStringLiteral("delayInMinutes"), 0.002}})
+        .value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(fireSpy.size() >= 1, 10000);
+    QCOMPARE(fireSpy.first().at(0).toString(),
+             QStringLiteral("alarms.onAlarm"));
+    QCOMPARE(fireSpy.first().at(1).toJsonObject()
+             .value(QLatin1String("name")).toString(), QString());
+    // The fired one-shot already self-removed like Chrome; clear('')
+    // on a live unnamed alarm answers true.
+    QVERIFY(create(QString(), QJsonObject{
+            {QStringLiteral("delayInMinutes"), 60.0}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("clear"),
+        QJsonObject{{QStringLiteral("name"), QString()}});
+    QCOMPARE(reply.value(QLatin1String("result")).toBool(), true);
+
+    // --- object-form alarmInfo.name rides the create --------------
+    QVERIFY(create(QString(), QJsonObject{
+            {QStringLiteral("name"), QStringLiteral("objname")},
+            {QStringLiteral("delayInMinutes"), 30.0}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("name"),
+                     QStringLiteral("objname")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("name")).toString(),
+             QStringLiteral("objname"));
+
+    // --- MV3 30s period floor + recorded note ----------------------
+    QVERIFY(create(QStringLiteral("spin"),
+                   QJsonObject{{QStringLiteral("delayInMinutes"),
+                                30.0},
+                               {QStringLiteral("periodInMinutes"),
+                                0.1}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("name"),
+                     QStringLiteral("spin")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("periodInMinutes")).toDouble(),
+             0.5);
+    const int noteCount = backend.notes().size();
+    bool sawFloorNote = false;
+    for (const QString &n : backend.notes())
+        if (n.contains(QLatin1String("30-second"))
+                && n.contains(QLatin1String("spin")))
+            sawFloorNote = true;
+    QVERIFY(sawFloorNote);
+    // A period at the floor records no note.
+    QVERIFY(create(QStringLiteral("calm"),
+                   QJsonObject{{QStringLiteral("delayInMinutes"),
+                                30.0},
+                               {QStringLiteral("periodInMinutes"),
+                                1.0}})
+        .value(QLatin1String("ok")).toBool());
+    QCOMPARE(backend.notes().size(), noteCount);
+
+    // --- periodInMinutes doubles as delay when no first-fire ------
+    QVERIFY(create(QStringLiteral("peronly"),
+                   QJsonObject{{QStringLiteral("periodInMinutes"),
+                                2.0}})
+        .value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("alarms"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("name"),
+                     QStringLiteral("peronly")}});
+    QVERIFY(reply.value(QLatin1String("result")).toObject()
+            .value(QLatin1String("scheduledTime")).toDouble()
+            > QDateTime::currentMSecsSinceEpoch() + 100000.0);
+
+    // --- getAll answers in Chrome's creation order ----------------
+    backend.invoke(QStringLiteral("alarms"),
+                   QStringLiteral("clearAll"), QJsonObject());
+    QVERIFY(create(QStringLiteral("first"),
+                   QJsonObject{{QStringLiteral("delayInMinutes"),
+                                30.0}}).value(QLatin1String("ok"))
+            .toBool());
+    QVERIFY(create(QStringLiteral("second"),
+                   QJsonObject{{QStringLiteral("delayInMinutes"),
+                                40.0}}).value(QLatin1String("ok"))
+            .toBool());
+    QVERIFY(create(QStringLiteral("third"),
+                   QJsonObject{{QStringLiteral("delayInMinutes"),
+                                50.0}}).value(QLatin1String("ok"))
+            .toBool());
+    QCOMPARE(getAllNames(), (QStringList{
+        QStringLiteral("first"), QStringLiteral("second"),
+        QStringLiteral("third")}));
+    // A replaced alarm re-appends at the end like Chrome's list.
+    QVERIFY(create(QStringLiteral("first"),
+                   QJsonObject{{QStringLiteral("delayInMinutes"),
+                                35.0}}).value(QLatin1String("ok"))
+            .toBool());
+    QCOMPARE(getAllNames(), (QStringList{
+        QStringLiteral("second"), QStringLiteral("third"),
+        QStringLiteral("first")}));
+
+    QDir(dir).removeRecursively();
+}
+
+// MD10 — chrome.tabs core ops + state honesty.  A bare
+// ExtensionShimBackend drives every op against a real
+// BrowserMainWindow's strip: remove/reload/duplicate/highlight/
+// move/goBack/goForward/dispatch + the update() state setters, and
+// the tabObject fields Chrome reads (pinned/discarded/groupId/
+// mutedInfo/audible/autoDiscardable) answer real strip and page
+// state instead of constants.  Query filters select on the same
+// fields.  Everything is asserted through the bridge reply shape
+// ({ok,result} / {ok:false,error}) the shim consumes.
+void tst_ExtensionManager::extensionTabsOps()
+{
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exttabs-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-tabs\","
+                "\"version\":\"1.0\",\"permissions\":[\"tabs\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0003"),
+        QStringLiteral("tst-tabs"), dir);
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view0 = tw->webView(0);
+    QVERIFY(view0 && view0->page());
+    WebView *view1 = tw->makeNewTab(false);
+    WebView *view2 = tw->makeNewTab(false);
+    QVERIFY(view1 && view2);
+    QCOMPARE(tw->count(), 3);
+    // A committed url apiece — discard refuses the empty-page case
+    // and the ops deserve a real document underneath.  Wait on
+    // loadFinished spies: WebView::isLoading() is false before the
+    // load even starts, so a "not loading" poll is a no-op here.
+    QSignalSpy load0(view0->page(), &QWebEnginePage::loadFinished);
+    QSignalSpy load1(view1->page(), &QWebEnginePage::loadFinished);
+    QSignalSpy load2(view2->page(), &QWebEnginePage::loadFinished);
+    view0->load(QUrl(QStringLiteral("data:text/html,<title>t0</title>")));
+    view1->load(QUrl(QStringLiteral("data:text/html,<title>t1</title>")));
+    view2->load(QUrl(QStringLiteral("data:text/html,<title>t2</title>")));
+    QTRY_VERIFY_WITH_TIMEOUT(!load0.isEmpty() && !load1.isEmpty()
+                             && !load2.isEmpty(), 30000);
+
+    const int id0 = ExtensionShimBackend::tabIdFor(view0);
+    const int id1 = ExtensionShimBackend::tabIdFor(view1);
+    const int id2 = ExtensionShimBackend::tabIdFor(view2);
+    const int wid = ExtensionShimBackend::windowIdFor(window);
+    QVERIFY(id0 > 0 && id1 > 0 && id2 > 0 && wid > 0);
+
+    // --- state honesty ------------------------------------------------
+    // Fields Chrome reads answer real state: pinned/groupId start
+    // false/-1, then flip through real strip ops.
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), id0}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("pinned")).toBool(), false);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("groupId")).toInt(), -1);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("discarded")).toBool(), false);
+
+    // update({pinned:true}) rides setTabPinned — the strip shows it
+    // and the next get reports it.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), id0},
+                    {QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("pinned"), true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(tw->isTabPinned(0));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("pinned")).toBool(), true);
+
+    // A real group: the minted int answers a stable, non-(-1) id and
+    // query({groupId}) selects exactly the member.
+    const QString gid = tw->createTabGroup(2);
+    QVERIFY(!gid.isEmpty());
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), id2}});
+    const int chromeGid = reply.value(QLatin1String("result"))
+        .toObject().value(QLatin1String("groupId")).toInt(-1);
+    QVERIFY(chromeGid >= 0);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"),
+        QJsonObject{{QStringLiteral("query"),
+                     QJsonObject{{QStringLiteral("windowId"), wid},
+                                 {QStringLiteral("groupId"),
+                                  chromeGid}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+
+    // update({muted:true}) reaches the engine page — mutedInfo
+    // reports it and query({muted}) selects on it.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), id1},
+                    {QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("muted"), true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(view1->page()->isAudioMuted());
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"),
+        QJsonObject{{QStringLiteral("query"),
+                     QJsonObject{{QStringLiteral("windowId"), wid},
+                                 {QStringLiteral("muted"), true}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+
+    // --- discard + autoDiscardable ------------------------------------
+    // Sleeping IS Chrome's discarded state; discard on a background
+    // tab lands the sleep, the active tab answers Chrome's
+    // undefined (null result), and autoDiscardable:false wakes it.
+    tw->setCurrentIndex(0);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("discard"),
+        QJsonObject{{QStringLiteral("id"), id1}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(tw->isTabSleeping(1), 10000);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), id1}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("discarded")).toBool(), true);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"),
+        QJsonObject{{QStringLiteral("query"),
+                     QJsonObject{{QStringLiteral("windowId"), wid},
+                                 {QStringLiteral("discarded"), true}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+    // The active tab cannot be discarded — Chrome's answer is no tab.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("discard"),
+        QJsonObject{{QStringLiteral("id"), id0}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).isNull());
+    // autoDiscardable:false records the flag AND un-discards.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), id1},
+                    {QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("autoDiscardable"),
+                                  false}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(!tw->isTabSleeping(1), 10000);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("autoDiscardable")).toBool(),
+             false);
+
+    // --- duplicate / move / highlight ---------------------------------
+    // The duplicate lands right after its source, the move reorders
+    // the strip, highlight activates and reports the window.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("duplicate"),
+        QJsonObject{{QStringLiteral("id"), id2}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonObject dup = reply.value(QLatin1String("result"))
+        .toObject();
+    QVERIFY(dup.value(QLatin1String("id")).toInt() != id2);
+    QCOMPARE(tw->count(), 4);
+    // Chrome lands the duplicate right after its source.
+    QCOMPARE(dup.value(QLatin1String("index")).toInt(),
+             tw->webViewIndex(view2) + 1);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("move"),
+        QJsonObject{{QStringLiteral("ids"), QJsonArray{id1}},
+                    {QStringLiteral("index"), 0},
+                    {QStringLiteral("windowId"), wid}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("index")).toInt(), 0);
+    QCOMPARE(tw->webViewIndex(view1), 0);
+    // Multi-id move answers the array shape.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("move"),
+        QJsonObject{{QStringLiteral("ids"), QJsonArray{id1, id2}},
+                    {QStringLiteral("index"), 1},
+                    {QStringLiteral("windowId"), wid}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 2);
+    // Cross-window refusal classes stay typed.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("tabs"), QStringLiteral("move"),
+                 QJsonObject{{QStringLiteral("ids"), QJsonArray{id1}},
+                             {QStringLiteral("index"), 0},
+                             {QStringLiteral("windowId"), 424242}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-window"));
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("highlight"),
+        QJsonObject{{QStringLiteral("windowId"), wid},
+                    {QStringLiteral("indexes"), QJsonArray{2}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(tw->currentIndex(), 2);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("id")).toInt(), wid);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("tabs")).toArray().size(), 1);
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("tabs"), QStringLiteral("highlight"),
+                 QJsonObject{{QStringLiteral("windowId"), 424242},
+                             {QStringLiteral("indexes"),
+                              QJsonArray{0}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-window"));
+
+    // --- reload / goBack / goForward ----------------------------------
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("reload"),
+        QJsonObject{{QStringLiteral("id"), id0}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    // Two committed navigations make a real back entry — the ops
+    // then move the page through its history.
+    WebView *navTab = tw->webView(1);
+    QVERIFY(navTab);
+    const int navId = ExtensionShimBackend::tabIdFor(navTab);
+    QSignalSpy navSpy(navTab->page(), &QWebEnginePage::loadFinished);
+    navTab->load(QUrl(QStringLiteral("data:text/html,<title>n1</title>")));
+    QTRY_VERIFY_WITH_TIMEOUT(navSpy.count() >= 1, 30000);
+    navTab->load(QUrl(QStringLiteral("data:text/html,<title>n2</title>")));
+    QTRY_VERIFY_WITH_TIMEOUT(navSpy.count() >= 2, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        navTab->enginePage()->canGoBack(), 10000);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("goBack"),
+        QJsonObject{{QStringLiteral("id"), navId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        navTab->enginePage()->canGoForward(), 10000);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("goForward"),
+        QJsonObject{{QStringLiteral("id"), navId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    // A tab with no forward entry answers the typed refusal.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("goForward"),
+        QJsonObject{{QStringLiteral("id"), navId}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("no-history"));
+
+    // --- remove --------------------------------------------------------
+    const int before = tw->count();
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("remove"),
+        QJsonObject{{QStringLiteral("ids"), QJsonArray{id0}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(tw->count(), before - 1);
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("tabs"), QStringLiteral("remove"),
+                 QJsonObject{{QStringLiteral("ids"),
+                              QJsonArray{424242}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // windowType: only "normal" matches — every Arktos browser
+    // window reports it.
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"),
+        QJsonObject{{QStringLiteral("query"),
+                     QJsonObject{{QStringLiteral("windowId"), wid},
+                                 {QStringLiteral("windowType"),
+                                  QStringLiteral("popup")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 0);
+    reply = backend.invoke(
+        QStringLiteral("tabs"), QStringLiteral("query"),
+        QJsonObject{{QStringLiteral("query"),
+                     QJsonObject{{QStringLiteral("windowId"), wid},
+                                 {QStringLiteral("windowType"),
+                                  QStringLiteral("normal")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(),
+             tw->count());
+
+    // deleteLater, not close(): multiple open tabs trip the
+    // confirmClosingMultipleTabs QMessageBox — modal, unanswerable.
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QDir(dir).removeRecursively();
+}
+
+// MD11 — chrome.tabs zoom + captureVisibleTab.  A hosted fixture
+// holding 'tabs' sees the tab's pixels (the seesUrls shortcut); a
+// backend whose id the runtime never granted 'tabs'/host coverage
+// is refused no-permission.  setZoom rides the view's own zoom
+// machinery, and setZoomSettings records mode/scope with
+// 'disabled' refusing the extension's own setZoom.
+void tst_ExtensionManager::extensionTabsZoomCapture()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extzoom-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-zoomcap\","
+                "\"version\":\"1.0\",\"permissions\":[\"tabs\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write("// zoomcap fixture\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    connect(manager, &ExtensionManager::extensionLoaded, this,
+            [loaded](const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-zoomcap")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString extId = *loaded;
+    QVERIFY2(!extId.isEmpty(), "fixture loaded + hosted");
+    manager->setExtensionEnabled(extId, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(extId)
+            && runtime->host(extId)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionShimBackend *backend =
+        runtime->host(extId)->bridge()->backend();
+    QVERIFY(backend);
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view = tw->webView(0);
+    QVERIFY(view && view->page());
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    view->load(QUrl(QStringLiteral("data:text/html,<title>z</title>")));
+    QTRY_VERIFY_WITH_TIMEOUT(!loadSpy.isEmpty(), 30000);
+    // The capture needs a sized, realized view — under the
+    // offscreen platform show() still drives the compositor.
+    window->show();
+    QTest::qWaitForWindowExposed(window);
+    const int tabId = ExtensionShimBackend::tabIdFor(view);
+    const int wid = ExtensionShimBackend::windowIdFor(window);
+    QVERIFY(tabId > 0 && wid > 0);
+
+    // --- zoom roundtrip ---------------------------------------------
+    QJsonObject reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("getZoom"),
+        QJsonObject{{QStringLiteral("id"), tabId}});
+    QCOMPARE(reply.value(QLatin1String("result")).toDouble(), 1.0);
+
+    QSignalSpy zoomEvents(backend,
+                          &ExtensionShimBackend::pushEvent);
+    reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("setZoom"),
+        QJsonObject{{QStringLiteral("id"), tabId},
+                    {QStringLiteral("zoom"), 1.5}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(view->currentZoom(), 150);
+    reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("getZoom"),
+        QJsonObject{{QStringLiteral("id"), tabId}});
+    QCOMPARE(reply.value(QLatin1String("result")).toDouble(), 1.5);
+    // Chrome's onZoomChange push carries old/new factors + settings.
+    QCOMPARE(zoomEvents.size(), 1);
+    QCOMPARE(zoomEvents.first().at(0).toString(),
+             QStringLiteral("tabs.onZoomChange"));
+    const QJsonObject zoomInfo =
+        zoomEvents.first().at(1).toJsonObject();
+    QCOMPARE(zoomInfo.value(QLatin1String("tabId")).toInt(), tabId);
+    QCOMPARE(zoomInfo.value(QLatin1String("newZoomFactor"))
+                 .toDouble(), 1.5);
+    // Typed refusals: a non-positive factor, a dead tab id.
+    QCOMPARE(backend->invoke(
+                 QStringLiteral("tabs"), QStringLiteral("setZoom"),
+                 QJsonObject{{QStringLiteral("id"), tabId},
+                             {QStringLiteral("zoom"), 0.0}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend->invoke(
+                 QStringLiteral("tabs"), QStringLiteral("getZoom"),
+                 QJsonObject{{QStringLiteral("id"), 424242}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // --- zoomSettings: the recorded model -----------------------------
+    reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("getZoomSettings"),
+        QJsonObject{{QStringLiteral("id"), tabId}});
+    const QJsonObject defaults =
+        reply.value(QLatin1String("result")).toObject();
+    QCOMPARE(defaults.value(QLatin1String("mode")).toString(),
+             QStringLiteral("manual"));
+    QCOMPARE(defaults.value(QLatin1String("scope")).toString(),
+             QStringLiteral("per-tab"));
+    QCOMPARE(defaults.value(QLatin1String("defaultZoomFactor"))
+                 .toDouble(), 1.0);
+    reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("setZoomSettings"),
+        QJsonObject{{QStringLiteral("id"), tabId},
+                    {QStringLiteral("settings"),
+                     QJsonObject{{QStringLiteral("mode"),
+                                  QStringLiteral("disabled")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("getZoomSettings"),
+        QJsonObject{{QStringLiteral("id"), tabId}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("mode")).toString(),
+             QStringLiteral("disabled"));
+    // 'disabled' refuses the extension's own setZoom (Chrome parity).
+    QCOMPARE(backend->invoke(
+                 QStringLiteral("tabs"), QStringLiteral("setZoom"),
+                 QJsonObject{{QStringLiteral("id"), tabId},
+                             {QStringLiteral("zoom"), 2.0}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("zoom-disabled"));
+    // A bogus enum is a typed refusal — the record keeps mode only.
+    QCOMPARE(backend->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("setZoomSettings"),
+                 QJsonObject{{QStringLiteral("id"), tabId},
+                             {QStringLiteral("settings"),
+                              QJsonObject{{QStringLiteral("scope"),
+                                           QStringLiteral("bogus")}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // --- captureVisibleTab --------------------------------------------
+    // Covered: the fixture's 'tabs' grant sees every tab url, so the
+    // grab leaves as a png data url.
+    reply = backend->invoke(
+        QStringLiteral("tabs"), QStringLiteral("captureVisibleTab"),
+        QJsonObject{{QStringLiteral("windowId"), wid}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QString dataUrl =
+        reply.value(QLatin1String("result")).toString();
+    QVERIFY(dataUrl.startsWith(
+        QStringLiteral("data:image/png;base64,")));
+    QVERIFY(dataUrl.size() > 64);
+    // An explicit windowId resolving nowhere is a typed refusal.
+    QCOMPARE(backend->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("captureVisibleTab"),
+                 QJsonObject{{QStringLiteral("windowId"), 424242}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-window"));
+    // Uncovered: an id the runtime never granted 'tabs'/host
+    // coverage — the seesUrls gate refuses before pixels leave.
+    ExtensionShimBackend uncovered(
+        QStringLiteral("unregisteredzoomid00"),
+        QStringLiteral("tst-zoom-uncovered"), dir);
+    QCOMPARE(uncovered.invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("captureVisibleTab"),
+                 QJsonObject{{QStringLiteral("windowId"), wid}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    // deleteLater, not close(): multiple open tabs trip the
+    // confirmClosingMultipleTabs QMessageBox — modal, unanswerable.
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(extId, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(extId), 20000);
+    manager->removeExtension(extId);
     QDir(dir).removeRecursively();
 }
 
@@ -6062,6 +6982,4559 @@ void tst_ExtensionManager::extensionTabMessaging()
     QDir(dir).removeRecursively();
 }
 
+// MD12 — chrome.tabs.connect: a long-lived Port from the hosted
+// context into a tab's page agent over the same relay machinery
+// ER02's sendMessage uses.  The leg drives the real API from the
+// host page: the agent's runtime.onConnect fires with a Chrome-
+// shaped sender, postMessage flows both ways, the connecting port's
+// sender.tab is the remote tab, and disconnect propagates in both
+// directions.  The C++ gates are direct-driven like the sendMessage
+// legs.
+void tst_ExtensionManager::extensionTabConnect()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exttabconn-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-tabconn\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\","
+                "\"tabs\"],\"host_permissions\":[\"<all_urls>\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"},"
+                "\"content_scripts\":[{\"matches\":[\"<all_urls>\"],"
+                "\"js\":[\"cs.js\"],\"run_at\":\"document_idle\"}]}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+        QFile c(dir + QLatin1String("/cs.js"));
+        QVERIFY(c.open(QIODevice::WriteOnly));
+        c.write(
+            "window.__csConns=[];window.__csPorts=[];"
+            "window.__csDisc=0;\n"
+            "chrome.runtime.onConnect.addListener(function(p){"
+            " window.__csConns.push({name:p.name,"
+            "  id:(p.sender&&p.sender.id)||null,"
+            "  origin:(p.sender&&p.sender.origin)||null,"
+            "  hasTab:!!(p.sender&&p.sender.tab)});"
+            " window.__csPorts.push(p);"
+            " p.onMessage.addListener(function(m,port){"
+            "  port.postMessage({echo:m});});"
+            " p.onDisconnect.addListener(function(){"
+            "  window.__csDisc++;});"
+            "});\n");
+        c.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-tabconn")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *host = runtime->host(id);
+    QVERIFY(host && host->bridge());
+
+    auto eval = [](QWebEnginePage *page, const QString &source,
+                   quint32 worldId = 0) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(
+            source, worldId,
+            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const quint32 agentWorld =
+        ExtensionBackgroundRuntime::AgentWorldId;
+    const QString probe = QStringLiteral(
+        "((window.__arktosExtAgents&&__arktosExtAgents['%1'])"
+        "||{active:false,bridgeUp:false})").arg(id);
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    QObject::connect(&server, &QTcpServer::newConnection,
+                     this, [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead,
+                         socket, [socket]() {
+            socket->readAll();
+            const QByteArray body =
+                "<html><body>tabconn</body></html>";
+            socket->write(
+                "HTTP/1.1 200\r\nContent-Type: text/html\r\n"
+                "Content-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view = tw->webView(0);
+    QVERIFY(view && view->page());
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    view->load(QUrl(base + QStringLiteral("/connect")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), probe + QStringLiteral(".bridgeUp"),
+             agentWorld).toBool(),
+        30000);
+    const int tabId = ExtensionShimBackend::tabIdFor(view);
+    QVERIFY(tabId > 0);
+
+    // --- open the port from the hosted context ---------------------
+    eval(host->page(), QStringLiteral(
+        "self.__tc={msgs:[],disc:0};"
+        "var p=chrome.tabs.connect(%1,{name:'md12-conn'});"
+        "self.__tc.port=p;"
+        "p.onMessage.addListener(function(m){"
+        " self.__tc.msgs.push(m);});"
+        "p.onDisconnect.addListener(function(){self.__tc.disc++;});"
+        "0").arg(tabId));
+
+    // The agent's runtime.onConnect fired with a Chrome-shaped
+    // extension-context sender (id + extension origin, no .tab).
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral(
+            "(window.__csConns||[]).length>=1"),
+            agentWorld).toBool(),
+        20000);
+    const QJsonObject conn = QJsonDocument::fromJson(
+        eval(view->page(), QStringLiteral(
+            "JSON.stringify(window.__csConns[0])"),
+            agentWorld).toString().toUtf8()).object();
+    QCOMPARE(conn.value(QLatin1String("name")).toString(),
+             QStringLiteral("md12-conn"));
+    QCOMPARE(conn.value(QLatin1String("id")).toString(), id);
+    QCOMPARE(conn.value(QLatin1String("origin")).toString(),
+             QStringLiteral("chrome-extension://") + id);
+    QCOMPARE(conn.value(QLatin1String("hasTab")).toBool(), false);
+
+    // The connecting port's sender is the tab end — Chrome exposes
+    // it as sender.tab once the offer resolves.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "!!(self.__tc.port.sender&&self.__tc.port.sender.tab)"))
+            .toBool(),
+        20000);
+    QCOMPARE(eval(host->page(), QStringLiteral(
+                  "self.__tc.port.sender.tab.id")).toInt(), tabId);
+
+    // --- messages both ways ----------------------------------------
+    eval(host->page(), QStringLiteral(
+        "self.__tc.port.postMessage({hello:1});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "self.__tc.msgs.length>=1")).toBool(),
+        20000);
+    QCOMPARE(eval(host->page(), QStringLiteral(
+                  "self.__tc.msgs[0].echo.hello")).toInt(), 1);
+    // Page-initiated postMessage lands on the extension's onMessage.
+    eval(view->page(), QStringLiteral(
+        "window.__csPorts[0].postMessage({page:2});0"),
+        agentWorld);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral(
+            "self.__tc.msgs.length>=2")).toBool(),
+        20000);
+    QCOMPARE(eval(host->page(), QStringLiteral(
+                  "self.__tc.msgs[1].page")).toInt(), 2);
+
+    // --- disconnect propagates page->extension ---------------------
+    eval(view->page(), QStringLiteral(
+        "window.__csPorts[0].disconnect();0"), agentWorld);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral("self.__tc.disc>=1"))
+            .toBool(),
+        20000);
+
+    // --- and extension->page on a second port -----------------------
+    eval(host->page(), QStringLiteral(
+        "self.__tc2={disc:0};"
+        "var p=chrome.tabs.connect(%1,{name:'md12-conn2'});"
+        "self.__tc2.port=p;"
+        "p.onDisconnect.addListener(function(){self.__tc2.disc++;});"
+        "0").arg(tabId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral(
+            "(window.__csConns||[]).length>=2"),
+            agentWorld).toBool(),
+        20000);
+    eval(host->page(), QStringLiteral("self.__tc2.port.disconnect();0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral("window.__csDisc>=1"),
+             agentWorld).toBool(),
+        20000);
+
+    // --- the C++ gates, direct-driven ------------------------------
+    ChromeBridge *bridge = host->bridge();
+    // Wrong tab id — the registry has no such view.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("connect"),
+                 QJsonObject{{QStringLiteral("id"), 424242},
+                             {QStringLiteral("chan"),
+                              id + QStringLiteral("#c#1")},
+                             {QStringLiteral("portId"),
+                              QStringLiteral("p1")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    // A chan outside the extension's namespace never routes.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("connect"),
+                 QJsonObject{{QStringLiteral("id"), tabId},
+                             {QStringLiteral("chan"),
+                              QStringLiteral("other#c#1")},
+                             {QStringLiteral("portId"),
+                              QStringLiteral("p1")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // Subframe addressing is the same documented gap sendMessage
+    // answers — typed, not silently delivered to frame 0.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("connect"),
+                 QJsonObject{{QStringLiteral("id"), tabId},
+                             {QStringLiteral("chan"),
+                              id + QStringLiteral("#c#2")},
+                             {QStringLiteral("portId"),
+                              QStringLiteral("p2")},
+                             {QStringLiteral("opts"),
+                              QJsonObject{{QStringLiteral("frameId"),
+                                           1}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+
+    // --- an uncovered page: the offer never happens -----------------
+    WebView *view3 = tw->makeNewTab(false);
+    QVERIFY(view3 && view3->page());
+    QSignalSpy loadSpy3(view3->page(), &QWebEnginePage::loadFinished);
+    view3->load(QUrl(QStringLiteral("qrc:/pip-player.html")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy3.count() >= 1, 30000);
+    const int tabId3 = ExtensionShimBackend::tabIdFor(view3);
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("tabs"),
+                 QStringLiteral("connect"),
+                 QJsonObject{{QStringLiteral("id"), tabId3},
+                             {QStringLiteral("chan"),
+                              id + QStringLiteral("#c#3")},
+                             {QStringLiteral("portId"),
+                              QStringLiteral("p3")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+
+    // deleteLater, not close(): open tabs trip the modal
+    // confirmClosingMultipleTabs prompt, unanswerable headless.
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->removeExtension(id);
+    QDir(dir).removeRecursively();
+}
+
+// MD13 — chrome.windows fidelity.  get/getCurrent/getLastFocused/
+// getAll honour getInfo.populate with the seesUrls-scrubbed tabs
+// array (and getInfo.windowTypes filters honestly — every Arktos
+// window is "normal"); window.state reports the real Qt state;
+// update moves/resizes the real widget and create honours the same
+// bounds props; drawAttention routes through QApplication::alert.
+void tst_ExtensionManager::extensionWindowsFidelity()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extwin-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-windows\","
+                "\"version\":\"1.0\",\"permissions\":[\"tabs\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0005"),
+        QStringLiteral("tst-windows"), dir);
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *extra = tw->makeNewTab(false);
+    QVERIFY(extra);
+    QCOMPARE(tw->count(), 2);
+    const int wid = ExtensionShimBackend::windowIdFor(window);
+    QVERIFY(wid > 0);
+
+    const auto result = [](const QJsonObject &reply) {
+        return reply.value(QLatin1String("result")).toObject();
+    };
+
+    // --- populate ----------------------------------------------------
+    // get(getInfo.populate) returns the window's tabs array; the
+    // unhosted backend holds no url coverage, so the QUAL03 scrub
+    // strips url/title off every populated entry.
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), wid},
+                    {QStringLiteral("getInfo"),
+                     QJsonObject{{QStringLiteral("populate"),
+                                  true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QJsonObject win = result(reply);
+    QCOMPARE(win.value(QLatin1String("id")).toInt(), wid);
+    QCOMPARE(win.value(QLatin1String("state")).toString(),
+             QStringLiteral("normal"));
+    QCOMPARE(win.value(QLatin1String("type")).toString(),
+             QStringLiteral("normal"));
+    QCOMPARE(win.value(QLatin1String("tabs")).toArray().size(),
+             tw->count());
+    const QJsonObject firstTab =
+        win.value(QLatin1String("tabs")).toArray().first().toObject();
+    QCOMPARE(firstTab.value(QLatin1String("windowId")).toInt(), wid);
+    QVERIFY(!firstTab.contains(QLatin1String("url")));
+    QVERIFY(firstTab.value(QLatin1String("id")).toInt() > 0);
+
+    // populate defaults off — no tabs member at all.
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), wid}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(!result(reply).contains(QLatin1String("tabs")));
+
+    // getCurrent / getLastFocused honour the same getInfo.
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("getCurrent"),
+        QJsonObject{{QStringLiteral("getInfo"),
+                     QJsonObject{{QStringLiteral("populate"),
+                                  true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(result(reply).value(QLatin1String("tabs"))
+                .toArray().size() >= 1);
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("getLastFocused"),
+        QJsonObject{{QStringLiteral("getInfo"),
+                     QJsonObject{{QStringLiteral("populate"),
+                                  true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(result(reply).value(QLatin1String("tabs"))
+                .toArray().size() >= 1);
+    // get(WINDOW_ID_CURRENT) resolves the asking window like
+    // Chrome's special id does.
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), -2}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(result(reply).value(QLatin1String("id")).toInt() > 0);
+
+    // getAll populates every window it reports.
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("getAll"),
+        QJsonObject{{QStringLiteral("getInfo"),
+                     QJsonObject{{QStringLiteral("populate"),
+                                  true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonArray all =
+        reply.value(QLatin1String("result")).toArray();
+    QVERIFY(!all.isEmpty());
+    for (const QJsonValue &w : all)
+        QVERIFY(w.toObject().value(QLatin1String("tabs"))
+                    .toArray().size() >= 1);
+
+    // windowTypes honesty — "normal" is the only type Arktos has,
+    // so a popup-only filter matches nothing.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("windows"), QStringLiteral("get"),
+                 QJsonObject{{QStringLiteral("id"), wid},
+                             {QStringLiteral("getInfo"),
+                              QJsonObject{{QStringLiteral("windowTypes"),
+                                           QJsonArray{QStringLiteral(
+                                               "popup")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("getAll"),
+        QJsonObject{{QStringLiteral("getInfo"),
+                     QJsonObject{{QStringLiteral("windowTypes"),
+                                  QJsonArray{QStringLiteral(
+                                      "popup")}}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(),
+             0);
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("getAll"),
+        QJsonObject{{QStringLiteral("getInfo"),
+                     QJsonObject{{QStringLiteral("windowTypes"),
+                                  QJsonArray{QStringLiteral("normal"),
+                                             QStringLiteral(
+                                                 "popup")}}}}});
+    QVERIFY(reply.value(QLatin1String("result")).toArray().size()
+            >= 1);
+
+    // --- real state ---------------------------------------------------
+    // The window-state vocabulary reports what Qt reports.
+    window->showMaximized();
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), wid}});
+    QCOMPARE(result(reply).value(QLatin1String("state")).toString(),
+             QStringLiteral("maximized"));
+    window->showNormal();
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), wid}});
+    QCOMPARE(result(reply).value(QLatin1String("state")).toString(),
+             QStringLiteral("normal"));
+
+    // --- update: bounds + state + drawAttention ----------------------
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), wid},
+                    {QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("left"), 61},
+                                 {QStringLiteral("top"), 37},
+                                 {QStringLiteral("width"), 733},
+                                 {QStringLiteral("height"), 442},
+                                 {QStringLiteral("drawAttention"),
+                                  true}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    // The reply reports the widget's frame-inclusive bounds — and
+    // the widget itself moved.
+    const QRect bounds = window->frameGeometry();
+    QCOMPARE(window->x(), 61);
+    QCOMPARE(window->y(), 37);
+    QCOMPARE(window->width(), 733);
+    QCOMPARE(window->height(), 442);
+    win = result(reply);
+    QCOMPARE(win.value(QLatin1String("left")).toInt(), bounds.x());
+    QCOMPARE(win.value(QLatin1String("top")).toInt(), bounds.y());
+    QCOMPARE(win.value(QLatin1String("width")).toInt(),
+             bounds.width());
+    QCOMPARE(win.value(QLatin1String("height")).toInt(),
+             bounds.height());
+
+    // update state lands on the real widget, and the roundtrip
+    // back to normal clears it.
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), wid},
+                    {QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("state"),
+                                  QStringLiteral("maximized")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(window->isMaximized());
+    QCOMPARE(result(reply).value(QLatin1String("state")).toString(),
+             QStringLiteral("maximized"));
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("update"),
+        QJsonObject{{QStringLiteral("id"), wid},
+                    {QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("state"),
+                                  QStringLiteral("normal")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(!window->isMaximized() && !window->isMinimized());
+
+    // --- create honours the same props -------------------------------
+    reply = backend.invoke(
+        QStringLiteral("windows"), QStringLiteral("create"),
+        QJsonObject{{QStringLiteral("props"),
+                     QJsonObject{{QStringLiteral("left"), 20},
+                                 {QStringLiteral("top"), 25},
+                                 {QStringLiteral("width"), 640},
+                                 {QStringLiteral("height"), 480},
+                                 {QStringLiteral("focused"),
+                                  false}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonObject created = result(reply);
+    const int createdId =
+        created.value(QLatin1String("id")).toInt();
+    QVERIFY(createdId > 0);
+    // Chrome populates the new window's tabs array.
+    QVERIFY(created.value(QLatin1String("tabs")).toArray().size()
+            >= 1);
+    // The minted widget itself carries the requested bounds.
+    BrowserMainWindow *spawned = nullptr;
+    for (QWidget *top : QApplication::topLevelWidgets()) {
+        BrowserMainWindow *cand =
+            qobject_cast<BrowserMainWindow *>(top);
+        if (cand
+                && ExtensionShimBackend::windowIdFor(cand)
+                       == createdId) {
+            spawned = cand;
+            break;
+        }
+    }
+    QVERIFY(spawned);
+    QCOMPARE(spawned->x(), 20);
+    QCOMPARE(spawned->y(), 25);
+    QCOMPARE(spawned->width(), 640);
+    QCOMPARE(spawned->height(), 480);
+    QCOMPARE(created.value(QLatin1String("left")).toInt(),
+             spawned->frameGeometry().x());
+    QCOMPARE(created.value(QLatin1String("width")).toInt(),
+             spawned->frameGeometry().width());
+
+    // deleteLater, not close(): open tabs trip the modal
+    // confirmClosingMultipleTabs prompt, unanswerable headless.
+    spawned->deleteLater();
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QDir(dir).removeRecursively();
+}
+
+// MD14 — chrome.action/browserAction.setIcon: path details resolve
+// to bundle-relative files under the extension dir with
+// openOptionsPage's hygiene, imageData details carry raw RGBA (the
+// shim base64s them across the bridge); both record into ActionState
+// and surface through ExtensionInfo for the EXT08 strip.  The 'get'
+// icon member is the read-back readers/tests use — Chrome exposes
+// no getIcon.
+void tst_ExtensionManager::extensionActionIcon()
+{
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exticon-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-icon\","
+                "\"version\":\"1.0\"}");
+        f.close();
+    }
+    const QString id = QStringLiteral("tstmockextensionid0007");
+    ExtensionShimBackend backend(id, QStringLiteral("tst-icon"), dir);
+
+    const auto result = [](const QJsonObject &reply) {
+        return reply.value(QLatin1String("result")).toObject();
+    };
+
+    // --- imageData: raw RGBA decoded into the recorded state --------
+    // 2x2 image — red, green, blue, opaque-white pixels.
+    const QByteArray rgba = QByteArray::fromHex(
+        "ff0000ff00ff00ff0000ffffffffffff");
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("setIcon"),
+        QJsonObject{{QStringLiteral("imageData"),
+            QJsonObject{{QStringLiteral("width"), 2},
+                        {QStringLiteral("height"), 2},
+                        {QStringLiteral("rgba"),
+                         QString::fromLatin1(rgba.toBase64())}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    ExtensionShimBackend::ActionState state =
+        ExtensionShimBackend::actionState(id);
+    QCOMPARE(state.iconImages.size(), 1);
+    const QImage img = state.iconImages.value(0);
+    QCOMPARE(img.size(), QSize(2, 2));
+    QCOMPARE(img.pixelColor(0, 0), QColor(255, 0, 0));
+    QCOMPARE(img.pixelColor(1, 0), QColor(0, 255, 0));
+    QCOMPARE(img.pixelColor(0, 1), QColor(0, 0, 255));
+    QCOMPARE(img.pixelColor(1, 1), QColor(255, 255, 255));
+    QVERIFY(state.iconPaths.isEmpty());
+    // The 'get' reader sees it.
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("key"),
+                     QStringLiteral("icon")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(result(reply).value(QLatin1String("imageDataSizes"))
+                 .toArray(),
+             QJsonArray{0});
+
+    // --- path map through the browserAction spelling ----------------
+    // A later setIcon replaces the whole override — the recorded
+    // imageData drops when only path is given (Chrome parity).
+    reply = backend.invoke(
+        QStringLiteral("browserAction"), QStringLiteral("setIcon"),
+        QJsonObject{{QStringLiteral("path"),
+            QJsonObject{{QStringLiteral("16"),
+                         QStringLiteral("icons/a.png")},
+                        {QStringLiteral("32"),
+                         QStringLiteral("icons/b.png")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    state = ExtensionShimBackend::actionState(id);
+    QCOMPARE(state.iconPaths.size(), 2);
+    QCOMPARE(state.iconPaths.value(16),
+             QStringLiteral("icons/a.png"));
+    QCOMPARE(state.iconPaths.value(32),
+             QStringLiteral("icons/b.png"));
+    QVERIFY(state.iconImages.isEmpty());
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("key"),
+                     QStringLiteral("icon")}});
+    QCOMPARE(result(reply).value(QLatin1String("paths")).toObject()
+                 .value(QLatin1String("16")).toString(),
+             QStringLiteral("icons/a.png"));
+
+    // A bare-string path records under the unsized key.
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("setIcon"),
+        QJsonObject{{QStringLiteral("path"),
+                     QStringLiteral("icon.png")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(ExtensionShimBackend::actionState(id)
+                 .iconPaths.value(0),
+             QStringLiteral("icon.png"));
+
+    // --- hygiene: escapes and absolutes are typed refusals ----------
+    for (const QString &bad : {QStringLiteral("../escape.png"),
+                               QStringLiteral("/abs.png"),
+                               QStringLiteral("a:b.png"),
+                               QStringLiteral("icons/../x.png"),
+                               QStringLiteral("https://e/x.png")}) {
+        reply = backend.invoke(
+            QStringLiteral("action"), QStringLiteral("setIcon"),
+            QJsonObject{{QStringLiteral("path"), bad}});
+        QCOMPARE(reply.value(QLatin1String("error")).toString(),
+                 QStringLiteral("invalid-path"));
+    }
+    // Same through a size map — and a failed call must not
+    // half-commit (the recorded override is untouched).
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("setIcon"),
+        QJsonObject{{QStringLiteral("path"),
+            QJsonObject{{QStringLiteral("16"),
+                         QStringLiteral("icons/a.png")},
+                        {QStringLiteral("32"),
+                         QStringLiteral("../x.png")}}}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-path"));
+    QCOMPARE(ExtensionShimBackend::actionState(id)
+                 .iconPaths.value(0),
+             QStringLiteral("icon.png"));
+
+    // Malformed imageData is its own typed refusal.
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("setIcon"),
+        QJsonObject{{QStringLiteral("imageData"),
+            QJsonObject{{QStringLiteral("width"), 4},
+                        {QStringLiteral("height"), 4},
+                        {QStringLiteral("rgba"),
+                         QString::fromLatin1(rgba.toBase64())}}}});
+    QCOMPARE(reply.value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-image-data"));
+
+    // --- setIcon({}) resets to the manifest default -----------------
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("setIcon"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    state = ExtensionShimBackend::actionState(id);
+    QVERIFY(state.iconPaths.isEmpty() && state.iconImages.isEmpty());
+    reply = backend.invoke(
+        QStringLiteral("action"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("key"),
+                     QStringLiteral("icon")}});
+    QVERIFY(result(reply).value(QLatin1String("paths")).toObject()
+                .isEmpty());
+    QVERIFY(result(reply).value(QLatin1String("imageDataSizes"))
+                .toArray().isEmpty());
+
+    // --- ExtensionInfo carries the override for the strip -----------
+    // Needs a real manager row, so this half installs the fixture.
+    if (ExtensionManager::isSupported()) {
+        const QString realId = installFixture(dir);
+        QVERIFY2(!realId.isEmpty()
+                     && !realId.startsWith(QLatin1String("ERROR:")),
+                 qPrintable(realId));
+        ExtensionShimBackend live(realId, QStringLiteral("tst-icon"),
+                                  dir);
+        reply = live.invoke(
+            QStringLiteral("action"), QStringLiteral("setIcon"),
+            QJsonObject{{QStringLiteral("imageData"),
+                QJsonObject{{QStringLiteral("width"), 2},
+                            {QStringLiteral("height"), 2},
+                            {QStringLiteral("rgba"),
+                             QString::fromLatin1(
+                                 rgba.toBase64())}}}});
+        QVERIFY(reply.value(QLatin1String("ok")).toBool());
+        bool saw = false;
+        for (const ExtensionManager::ExtensionInfo &info
+             : ExtensionManager::instance()->extensions()) {
+            if (info.id == realId) {
+                saw = info.actionIconImages.value(0).size()
+                        == QSize(2, 2)
+                    && info.actionIconImages.value(0).pixelColor(1, 0)
+                        == QColor(0, 255, 0);
+            }
+        }
+        QVERIFY(saw);
+        ExtensionManager::instance()->removeExtension(realId);
+    }
+
+    QDir(dir).removeRecursively();
+}
+
+// MD15 — chrome.extension.isAllowedIncognitoAccess /
+// isAllowedFileSchemeAccess.  The verdicts route through
+// invokeExtension: Arktos hosts every extension context on the
+// regular profile (no incognito split) and the loader never grants
+// file: scheme access, so both answer {ok:true,false} — the truth,
+// not a typed stub.
+void tst_ExtensionManager::extensionAllowedAccess()
+{
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extaccess-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-access\","
+                "\"version\":\"1.0\"}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0008"),
+        QStringLiteral("tst-access"), dir);
+
+    for (const char *m : {"isAllowedIncognitoAccess",
+                          "isAllowedFileSchemeAccess"}) {
+        const QJsonObject reply = backend.invoke(
+            QStringLiteral("extension"), QLatin1String(m),
+            QJsonObject());
+        QVERIFY2(reply.value(QLatin1String("ok")).toBool(), m);
+        QVERIFY2(reply.value(QLatin1String("result")).isBool(), m);
+        QVERIFY2(!reply.value(QLatin1String("result")).toBool(), m);
+    }
+    // Unserved extension members still degrade typed.
+    QCOMPARE(backend.invoke(QStringLiteral("extension"),
+                            QStringLiteral("bogus"),
+                            QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    QDir(dir).removeRecursively();
+}
+
+// MD16 — chrome.management read ops.  getAll/get enumerate the
+// manager's live ExtensionInfo rows through the same shape getSelf
+// answers; the permissionWarnings pair derive their strings from the
+// manifest's grant list — the same wording the install review shows.
+// Everything rides the 'management' grant except getSelf.
+void tst_ExtensionManager::extensionManagementRead()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extmgmt-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-mgmt\","
+                "\"version\":\"3.1\",\"permissions\":[\"management\","
+                "\"tabs\",\"history\"],\"host_permissions\":"
+                "[\"https://*.example.com/*\"]}");
+        f.close();
+    }
+    ExtensionManager *manager = ExtensionManager::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-mgmt")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+
+    ExtensionShimBackend backend(id, QStringLiteral("tst-mgmt"), dir);
+
+    // getAll enumerates the manager's records — the fixture is there
+    // with the same shape getSelf builds.
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("getAll"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonArray all =
+        reply.value(QLatin1String("result")).toArray();
+    QVERIFY(!all.isEmpty());
+    bool found = false;
+    for (const QJsonValue &v : all) {
+        const QJsonObject info = v.toObject();
+        if (info.value(QLatin1String("id")).toString() != id)
+            continue;
+        found = true;
+        QCOMPARE(info.value(QLatin1String("name")).toString(),
+                 QStringLiteral("tst-mgmt"));
+        QCOMPARE(info.value(QLatin1String("version")).toString(),
+                 QStringLiteral("3.1"));
+        QCOMPARE(info.value(QLatin1String("type")).toString(),
+                 QStringLiteral("extension"));
+        // Freshly loaded, never enabled — the record is the truth.
+        QVERIFY(!info.value(QLatin1String("enabled")).toBool());
+        QVERIFY(info.value(QLatin1String("mayEnable")).toBool());
+        QCOMPARE(info.value(QLatin1String("installType")).toString(),
+                 QStringLiteral("development"));
+        QCOMPARE(info.value(QLatin1String("manifestVersion")).toInt(),
+                 3);
+        QVERIFY(info.value(QLatin1String("permissions")).toArray()
+                .contains(QJsonValue(QStringLiteral("tabs"))));
+        QVERIFY(info.value(QLatin1String("permissions")).toArray()
+                .contains(QJsonValue(QStringLiteral("management"))));
+        QVERIFY(info.value(QLatin1String("hostPermissions")).toArray()
+                .contains(QJsonValue(
+                    QStringLiteral("https://*.example.com/*"))));
+    }
+    QVERIFY2(found, "fixture extension missing from getAll");
+
+    // get answers the same shape for one id; unknown ids are the
+    // typed refusal Chrome's lastError carries.
+    reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("get"),
+        QJsonObject{{QStringLiteral("id"), id}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("id")).toString(), id);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("version")).toString(),
+             QStringLiteral("3.1"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"), QStringLiteral("get"),
+                 QJsonObject{{QStringLiteral("id"),
+                              QStringLiteral("nonexistentid000000000"
+                                             "00000000000")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"), QStringLiteral("get"),
+                 QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // getSelf keeps its ungated answer, consistent with the row
+    // getAll enumerated.
+    reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("getSelf"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("id")).toString(), id);
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("manifestVersion")).toInt(), 3);
+
+    // Permission warnings derive from the manifest's grant list —
+    // the same strings the install review shows, deduplicated.
+    reply = backend.invoke(
+        QStringLiteral("management"),
+        QStringLiteral("getPermissionWarningsById"),
+        QJsonObject{{QStringLiteral("id"), id}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QStringList warnings;
+    for (const QJsonValue &w :
+         reply.value(QLatin1String("result")).toArray())
+        warnings.append(w.toString());
+    QVERIFY(warnings.contains(
+        ExtensionReviewDialog::describePermission(
+            QStringLiteral("history"))));
+    QVERIFY(warnings.contains(
+        ExtensionReviewDialog::describePermission(
+            QStringLiteral("tabs"))));
+    QVERIFY(warnings.contains(
+        ExtensionReviewDialog::describeHostPermission(
+            QStringLiteral("https://*.example.com/*"))));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("getPermissionWarningsById"),
+                 QJsonObject{{QStringLiteral("id"),
+                              QStringLiteral("nonexistentid000000000"
+                                             "00000000000")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // ByManifest takes Chrome's manifest-string argument (a parsed
+    // object is accepted too); a malformed payload is typed.
+    reply = backend.invoke(
+        QStringLiteral("management"),
+        QStringLiteral("getPermissionWarningsByManifest"),
+        QJsonObject{{QStringLiteral("manifest"),
+                     QStringLiteral(
+                         "{\"permissions\":[\"bookmarks\"],"
+                         "\"host_permissions\":[\"<all_urls>\"]}")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    warnings.clear();
+    for (const QJsonValue &w :
+         reply.value(QLatin1String("result")).toArray())
+        warnings.append(w.toString());
+    QVERIFY(warnings.contains(
+        ExtensionReviewDialog::describePermission(
+            QStringLiteral("bookmarks"))));
+    QVERIFY(warnings.contains(
+        ExtensionReviewDialog::describeHostPermission(
+            QStringLiteral("<all_urls>"))));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("getPermissionWarningsByManifest"),
+                 QJsonObject{{QStringLiteral("manifest"),
+                              QStringLiteral("{bogus")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // The 'management' grant gates every read op — an extension that
+    // never declared it keeps Chrome's no-permission answer while
+    // getSelf stays free.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extmgmt-b-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-mgmt-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0009"),
+        QStringLiteral("tst-mgmt-b"), dirB);
+    QCOMPARE(backendB.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("getAll"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(
+                 QStringLiteral("management"), QStringLiteral("get"),
+                 QJsonObject{{QStringLiteral("id"), id}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("getPermissionWarningsById"),
+                 QJsonObject{{QStringLiteral("id"), id}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QVERIFY(backendB.invoke(
+                QStringLiteral("management"),
+                QStringLiteral("getSelf"), QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    // Declared-but-unserved members keep the typed answer — MD17
+    // took the mutations, so the launch ops carry it now.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("launchApp"),
+                 QJsonObject{{QStringLiteral("id"), id}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+
+    manager->removeExtension(id);
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
+}
+
+// MD17 — chrome.management mutations.  setEnabled/uninstall ride
+// ExtensionManager's engine calls behind the 'management' grant;
+// each committed transition fans its Chrome event (onEnabled/
+// onDisabled carrying the post-change ExtensionInfo, onUninstalled
+// carrying the bare id) out through the runtime broadcast — a bare
+// backend hears it on its own pushEvent sink.
+void tst_ExtensionManager::extensionManagementMutations()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extmgmtmut-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-mgmtmut\","
+                "\"version\":\"1.0\",\"permissions\":[\"management\"]}");
+        f.close();
+    }
+    ExtensionManager *manager = ExtensionManager::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-mgmtmut")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+
+    ExtensionShimBackend backend(id, QStringLiteral("tst-mgmtmut"), dir);
+    QSignalSpy pushSpy(&backend, &ExtensionShimBackend::pushEvent);
+
+    // Freshly dev-loaded records enumerate disabled — the first
+    // toggle on is a real transition: management.onEnabled carries
+    // the post-change ExtensionInfo shape get() answers.
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("setEnabled"),
+        QJsonObject{{QStringLiteral("id"), id},
+                    {QStringLiteral("enabled"), true}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(pushSpy, QStringLiteral("management.onEnabled")),
+             1);
+    for (const QList<QVariant> &args : pushSpy) {
+        if (args.at(0).toString()
+                != QLatin1String("management.onEnabled"))
+            continue;
+        const QJsonObject info = args.at(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray()
+            .at(0).toObject();
+        QCOMPARE(info.value(QLatin1String("id")).toString(), id);
+        QVERIFY(info.value(QLatin1String("enabled")).toBool());
+        QVERIFY(!info.value(QLatin1String("mayEnable")).toBool());
+        QVERIFY(info.value(QLatin1String("mayDisable")).toBool());
+    }
+    // The engine applies asynchronously — poll the live record.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        backend.invoke(QStringLiteral("management"),
+                       QStringLiteral("get"),
+                       QJsonObject{{QStringLiteral("id"), id}})
+            .value(QLatin1String("result")).toObject()
+            .value(QLatin1String("enabled")).toBool(), 10000);
+
+    // Off again — management.onDisabled carries enabled:false.
+    reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("setEnabled"),
+        QJsonObject{{QStringLiteral("id"), id},
+                    {QStringLiteral("enabled"), false}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(pushSpy, QStringLiteral("management.onDisabled")),
+             1);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !backend.invoke(QStringLiteral("management"),
+                        QStringLiteral("get"),
+                        QJsonObject{{QStringLiteral("id"), id}})
+             .value(QLatin1String("result")).toObject()
+             .value(QLatin1String("enabled")).toBool(), 10000);
+
+    // A same-state setEnabled is Chrome's no-op success — the
+    // transition events describe real changes only.
+    reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("setEnabled"),
+        QJsonObject{{QStringLiteral("id"), id},
+                    {QStringLiteral("enabled"), false}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(pushSpy, QStringLiteral("management.onDisabled")),
+             1);
+
+    // Typed refusals: missing id, unknown id.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("setEnabled"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("setEnabled"),
+                 QJsonObject{{QStringLiteral("id"),
+                              QStringLiteral("nonexistentid000000000"
+                                             "00000000000")},
+                             {QStringLiteral("enabled"), true}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("uninstall"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("management"),
+                 QStringLiteral("uninstall"),
+                 QJsonObject{{QStringLiteral("id"),
+                              QStringLiteral("nonexistentid000000000"
+                                             "00000000000")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // The 'management' grant gates all three mutations — an
+    // extension that never declared it keeps no-permission.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extmgmtmut-b-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-mgmtmut-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0010"),
+        QStringLiteral("tst-mgmtmut-b"), dirB);
+    for (const char *m : {"setEnabled", "uninstall", "uninstallSelf"}) {
+        QCOMPARE(backendB.invoke(
+                     QStringLiteral("management"), QLatin1String(m),
+                     QJsonObject{{QStringLiteral("id"), id},
+                                 {QStringLiteral("enabled"), true}})
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+    }
+
+    // uninstall removes the fixture for real — onUninstalled fires
+    // with the bare id like Chrome, and get stops finding it.
+    reply = backend.invoke(
+        QStringLiteral("management"), QStringLiteral("uninstall"),
+        QJsonObject{{QStringLiteral("id"), id}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(pushSpy,
+                       QStringLiteral("management.onUninstalled")), 1);
+    for (const QList<QVariant> &args : pushSpy) {
+        if (args.at(0).toString()
+                != QLatin1String("management.onUninstalled"))
+            continue;
+        QCOMPARE(args.at(1).toJsonObject()
+                     .value(QLatin1String("__args")).toArray()
+                     .at(0).toString(), id);
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(
+        backend.invoke(QStringLiteral("management"),
+                       QStringLiteral("get"),
+                       QJsonObject{{QStringLiteral("id"), id}})
+            .value(QLatin1String("error")).toString(),
+        QStringLiteral("not-found"), 10000);
+
+    // uninstallSelf drops the calling extension itself — same
+    // 'management' gate, same onUninstalled id payload.
+    const QString dirC = QDir::temp().filePath(
+        QStringLiteral("tst-extmgmtmut-c-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirC));
+    {
+        QFile f(dirC + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-mgmtmut-c\","
+                "\"version\":\"1.0\",\"permissions\":[\"management\"]}");
+        f.close();
+    }
+    auto loadedC = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loadedC](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-mgmtmut-c")
+                && info.error.isEmpty())
+            *loadedC = info.id;
+    });
+    manager->grantConsent(dirC);
+    manager->loadExtension(dirC);
+    QTRY_VERIFY_WITH_TIMEOUT(!loadedC->isEmpty(), 30000);
+    const QString idC = *loadedC;
+    ExtensionShimBackend backendC(idC, QStringLiteral("tst-mgmtmut-c"),
+                                  dirC);
+    QSignalSpy pushSpyC(&backendC, &ExtensionShimBackend::pushEvent);
+    reply = backendC.invoke(
+        QStringLiteral("management"), QStringLiteral("uninstallSelf"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(pushSpyC,
+                       QStringLiteral("management.onUninstalled")), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        backendC.invoke(QStringLiteral("management"),
+                        QStringLiteral("get"),
+                        QJsonObject{{QStringLiteral("id"), idC}})
+            .value(QLatin1String("error")).toString(),
+        QStringLiteral("not-found"), 10000);
+
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
+    QDir(dirC).removeRecursively();
+}
+
+// MD21 — chrome.bookmarks served over the RC05 store.  A dedicated
+// temp persona is bound as the ambient manager — the backend's
+// BookmarksManager::instance() then resolves exactly this tree —
+// and the leg drives the full member surface: the fixed "0"/"1"/"2"
+// ids, create/move/update/remove/removeTree through the manager's
+// undoable ops (the C++ tree stays in lockstep), Chrome's error
+// vocabulary for refused ops, the 'bookmarks' permission gate, and
+// the on* fan-out a bare backend hears on pushEvent.
+void tst_ExtensionManager::extensionBookmarks()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // A dedicated temp persona becomes the ambient profile — the
+    // backend's BookmarksManager::instance() resolves exactly this
+    // tree.  Binding it flushes the previous ambient manager's file
+    // and marks that view stale (the store's designed single-binding
+    // hand-off); the ambient id restores on exit and the persona
+    // dir goes with it.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstextbm%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    BookmarksManager *manager = BookmarksManager::instance();
+    QVERIFY(manager);
+    QCOMPARE(manager->profileId(), profileId);
+    auto unbind = qScopeGuard([prevId, profileId]() {
+        BookmarksManager::releaseFor(profileId);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+
+    // A fresh persona loads the bundled defaults into the menu —
+    // strip both fixed folders so the assertions name only what this
+    // leg created.
+    for (BookmarkNode *top :
+         {manager->toolbar(), manager->menu()}) {
+        while (!top->children().isEmpty())
+            manager->removeBookmark(top->children().first());
+    }
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extbm-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-bm\","
+                "\"version\":\"1.0\",\"permissions\":[\"bookmarks\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0021"),
+        QStringLiteral("tst-bm"), dir);
+    QSignalSpy events(&backend, &ExtensionShimBackend::pushEvent);
+    auto invoke = [&](const QString &m, const QJsonObject &args) {
+        return backend.invoke(QStringLiteral("bookmarks"), m, args);
+    };
+
+    // getTree — root "0" carries the fixed "1"/"2" folders; folders
+    // carry no url and no dates are fabricated for a store that does
+    // not keep them.
+    QJsonObject reply = invoke(QStringLiteral("getTree"),
+                               QJsonObject());
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonArray tree = reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(tree.size(), 1);
+    const QJsonObject root = tree.at(0).toObject();
+    QCOMPARE(root.value(QLatin1String("id")).toString(),
+             QStringLiteral("0"));
+    QCOMPARE(root.value(QLatin1String("type")).toString(),
+             QStringLiteral("folder"));
+    QVERIFY(!root.contains(QLatin1String("url")));
+    QVERIFY(!root.contains(QLatin1String("dateAdded")));
+    const QJsonArray tops = root.value(QLatin1String("children")).toArray();
+    QCOMPARE(tops.size(), 2);
+    QCOMPARE(tops.at(0).toObject().value(QLatin1String("id")).toString(),
+             QStringLiteral("1"));
+    QCOMPARE(tops.at(1).toObject().value(QLatin1String("id")).toString(),
+             QStringLiteral("2"));
+
+    // create — a folder under "2", then a bookmark and a second
+    // folder inside it; every op lands through the undoable manager
+    // commands so the C++ tree reflects each one.
+    reply = invoke(QStringLiteral("create"), QJsonObject{
+        {QStringLiteral("props"), QJsonObject{
+            {QStringLiteral("parentId"), QStringLiteral("2")},
+            {QStringLiteral("title"), QStringLiteral("Faves")}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject folder =
+            reply.value(QLatin1String("result")).toObject();
+    const QString folderId = folder.value(QLatin1String("id")).toString();
+    QVERIFY(folderId != QLatin1String("0")
+            && folderId != QLatin1String("1")
+            && folderId != QLatin1String("2"));
+    QCOMPARE(folder.value(QLatin1String("type")).toString(),
+             QStringLiteral("folder"));
+    QCOMPARE(folder.value(QLatin1String("parentId")).toString(),
+             QStringLiteral("2"));
+    QCOMPARE(folder.value(QLatin1String("index")).toInt(), 0);
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onCreated")),
+             1);
+    QCOMPARE(manager->menu()->children().size(), 1);
+    QCOMPARE(manager->menu()->children().first()->title,
+             QStringLiteral("Faves"));
+
+    reply = invoke(QStringLiteral("create"), QJsonObject{
+        {QStringLiteral("props"), QJsonObject{
+            {QStringLiteral("parentId"), folderId},
+            {QStringLiteral("title"), QStringLiteral("Arktos")},
+            {QStringLiteral("url"),
+             QStringLiteral("https://arktos-browser.com")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QString bmId = reply.value(QLatin1String("result"))
+            .toObject().value(QLatin1String("id")).toString();
+    QVERIFY(!bmId.isEmpty());
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onCreated")),
+             2);
+
+    reply = invoke(QStringLiteral("create"), QJsonObject{
+        {QStringLiteral("props"), QJsonObject{
+            {QStringLiteral("parentId"), folderId},
+            {QStringLiteral("index"), 0},
+            {QStringLiteral("title"), QStringLiteral("Sub")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QString subId = reply.value(QLatin1String("result"))
+            .toObject().value(QLatin1String("id")).toString();
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onCreated")),
+             3);
+
+    // get — single and array forms share one reply shape; unknown
+    // ids answer not-found, malformed arg shapes invalid-argument.
+    reply = invoke(QStringLiteral("get"),
+                   QJsonObject{{QStringLiteral("id"), bmId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonArray got = reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(got.size(), 1);
+    QCOMPARE(got.at(0).toObject().value(QLatin1String("title")).toString(),
+             QStringLiteral("Arktos"));
+    QCOMPARE(got.at(0).toObject().value(QLatin1String("parentId"))
+                 .toString(), folderId);
+    QCOMPARE(got.at(0).toObject().value(QLatin1String("index")).toInt(),
+             1);
+    reply = invoke(QStringLiteral("get"), QJsonObject{
+        {QStringLiteral("ids"), QJsonArray{
+            QStringLiteral("1"), folderId}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 2);
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("999999")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // getChildren — insertion order is the sibling order; leaf nodes
+    // answer an empty list rather than not-found.
+    reply = invoke(QStringLiteral("getChildren"),
+                   QJsonObject{{QStringLiteral("id"), folderId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonArray kids =
+            reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(kids.size(), 2);
+    QCOMPARE(kids.at(0).toObject().value(QLatin1String("title")).toString(),
+             QStringLiteral("Sub"));
+    QCOMPARE(kids.at(1).toObject().value(QLatin1String("title")).toString(),
+             QStringLiteral("Arktos"));
+    reply = invoke(QStringLiteral("getChildren"),
+                   QJsonObject{{QStringLiteral("id"), bmId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("getChildren"), QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("bogus")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // getSubTree — children serialize recursively.
+    reply = invoke(QStringLiteral("getSubTree"),
+                   QJsonObject{{QStringLiteral("id"), folderId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonObject subTree = reply.value(QLatin1String("result"))
+            .toArray().at(0).toObject();
+    QCOMPARE(subTree.value(QLatin1String("id")).toString(), folderId);
+    QCOMPARE(subTree.value(QLatin1String("children"))
+                 .toArray().size(), 2);
+
+    // update — title/url writes land in the store and report through
+    // onChanged's changeInfo; roots refuse, folder urls refuse, and
+    // the scheme gate still runs through the store's insert policy.
+    reply = invoke(QStringLiteral("update"), QJsonObject{
+        {QStringLiteral("id"), bmId},
+        {QStringLiteral("changes"), QJsonObject{
+            {QStringLiteral("title"),
+             QStringLiteral("Arktos browser")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onChanged")),
+             1);
+    reply = invoke(QStringLiteral("get"),
+                   QJsonObject{{QStringLiteral("id"), bmId}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray()
+             .at(0).toObject().value(QLatin1String("title")).toString(),
+             QStringLiteral("Arktos browser"));
+    QCOMPARE(invoke(QStringLiteral("update"), QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("1")},
+                 {QStringLiteral("changes"), QJsonObject{
+                     {QStringLiteral("title"), QStringLiteral("x")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("cannot-modify"));
+    QCOMPARE(invoke(QStringLiteral("update"), QJsonObject{
+                 {QStringLiteral("id"), folderId},
+                 {QStringLiteral("changes"), QJsonObject{
+                     {QStringLiteral("url"), QStringLiteral("http://x")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("update"), QJsonObject{
+                 {QStringLiteral("id"), bmId},
+                 {QStringLiteral("changes"), QJsonObject{
+                     {QStringLiteral("url"),
+                      QStringLiteral("javascript:alert(1)")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("scheme-refused"));
+
+    // search — string terms AND across title+url, quoted terms keep
+    // their spaces, the object form narrows by verbatim title /
+    // trailing-slash-tolerant url / containing-folder title.
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QStringLiteral("arktos")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+    QCOMPARE(reply.value(QLatin1String("result")).toArray()
+             .at(0).toObject().value(QLatin1String("id")).toString(),
+             bmId);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("url"),
+             QStringLiteral("https://arktos-browser.com/")}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("query"), QStringLiteral("arktos")},
+            {QStringLiteral("folder"), QStringLiteral("Faves")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QStringLiteral("nomatchxyz")}});
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+
+    // getRecent — the newest store serials first, bookmarks only.
+    reply = invoke(QStringLiteral("getRecent"),
+                   QJsonObject{{QStringLiteral("count"), 5}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonArray recent =
+            reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(recent.size(), 1);
+    QCOMPARE(recent.at(0).toObject().value(QLatin1String("id")).toString(),
+             bmId);
+
+    // move — the refused shapes first, then a real reparent that
+    // keeps the node's id (the store handle never changes) and
+    // reports old/new placement through onMoved.
+    QCOMPARE(invoke(QStringLiteral("move"), QJsonObject{
+                 {QStringLiteral("id"), folderId},
+                 {QStringLiteral("destination"), QJsonObject{
+                     {QStringLiteral("parentId"), subId}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("move"), QJsonObject{
+                 {QStringLiteral("id"), bmId},
+                 {QStringLiteral("destination"), QJsonObject{
+                     {QStringLiteral("parentId"), bmId}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-parent"));
+    QCOMPARE(invoke(QStringLiteral("move"), QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("0")},
+                 {QStringLiteral("destination"), QJsonObject{
+                     {QStringLiteral("index"), 0}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("cannot-modify"));
+    reply = invoke(QStringLiteral("move"), QJsonObject{
+        {QStringLiteral("id"), folderId},
+        {QStringLiteral("destination"), QJsonObject{
+            {QStringLiteral("parentId"), QStringLiteral("1")},
+            {QStringLiteral("index"), 0}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+             .value(QLatin1String("parentId")).toString(),
+             QStringLiteral("1"));
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onMoved")), 1);
+    QCOMPARE(manager->toolbar()->children().size(), 1);
+    QCOMPARE(manager->toolbar()->children().first()->title,
+             QStringLiteral("Faves"));
+    QJsonObject moveInfo;
+    for (const QVariantList &entry : events) {
+        if (entry.at(0).toString()
+                == QLatin1String("bookmarks.onMoved"))
+            moveInfo = entry.at(1).toJsonObject()
+                    .value(QLatin1String("__args")).toArray()
+                    .at(1).toObject();
+    }
+    QCOMPARE(moveInfo.value(QLatin1String("oldParentId")).toString(),
+             QStringLiteral("2"));
+    QCOMPARE(moveInfo.value(QLatin1String("parentId")).toString(),
+             QStringLiteral("1"));
+
+    // remove — leaf only, the non-empty folder refuses until
+    // removeTree takes the whole subtree.
+    QCOMPARE(invoke(QStringLiteral("remove"), QJsonObject{
+                 {QStringLiteral("id"), folderId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("folder-not-empty"));
+    reply = invoke(QStringLiteral("remove"),
+                   QJsonObject{{QStringLiteral("id"), bmId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onRemoved")),
+             1);
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("id"), bmId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(invoke(QStringLiteral("remove"), QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("1")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("cannot-modify"));
+
+    reply = invoke(QStringLiteral("removeTree"),
+                   QJsonObject{{QStringLiteral("id"), folderId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(pushCount(events, QStringLiteral("bookmarks.onRemoved")),
+             2);
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("id"), folderId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QVERIFY(manager->toolbar()->children().isEmpty());
+
+    // The manifest gate is per-context: a sibling backend without
+    // 'bookmarks' hears no-permission on reads and writes alike.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extbmb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-bm-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0022"),
+        QStringLiteral("tst-bm-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("bookmarks"),
+                 QStringLiteral("get"),
+                 QJsonObject{{QStringLiteral("id"), QStringLiteral("0")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(QStringLiteral("bookmarks"),
+                 QStringLiteral("create"),
+                 QJsonObject{{QStringLiteral("props"), QJsonObject{
+                     {QStringLiteral("title"), QStringLiteral("x")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
+}
+
+// MD22 — chrome.history served over the RC04 store.  A dedicated
+// temp persona is bound as the ambient profile — the backend's
+// HistoryManager::instance() then resolves exactly this store — and
+// the leg drives the member surface: addUrl's 'link' visit and the
+// aggregate onVisited, search's term/range/maxResults shape,
+// getVisits' VisitItem rows, the three delete ops' onVisitRemoved
+// payloads, the scheme gate, and the 'history' permission gate.
+void tst_ExtensionManager::extensionHistory()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // Same ambient-persona binding the MD21 leg uses: the backend's
+    // HistoryManager::instance() resolves exactly this store, the
+    // ambient id restores on exit, the persona dir goes with it.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstexthist%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    HistoryManager *manager = HistoryManager::instance();
+    QVERIFY(manager);
+    QCOMPARE(manager->profileId(), profileId);
+    auto unbind = qScopeGuard([prevId, profileId]() {
+        HistoryManager::releaseFor(profileId);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+    manager->clear();
+    QVERIFY(manager->history().isEmpty());
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exthist-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-hist\","
+                "\"version\":\"1.0\",\"permissions\":[\"history\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0023"),
+        QStringLiteral("tst-hist"), dir);
+    QSignalSpy events(&backend, &ExtensionShimBackend::pushEvent);
+    auto invoke = [&](const QString &m, const QJsonObject &args) {
+        return backend.invoke(QStringLiteral("history"), m, args);
+    };
+
+    // addUrl — a 'link' visit at now; onVisited carries the url's
+    // aggregated HistoryItem once.
+    const QString url =
+        QStringLiteral("https://arktos-history.example/path");
+    QJsonObject reply = invoke(QStringLiteral("addUrl"), QJsonObject{
+        {QStringLiteral("url"), url}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QCOMPARE(manager->history().size(), 1);
+    QCOMPARE(pushCount(events, QStringLiteral("history.onVisited")), 1);
+
+    // Refused shapes — missing/malformed urls, script schemes.
+    QCOMPARE(invoke(QStringLiteral("addUrl"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("addUrl"), QJsonObject{
+                 {QStringLiteral("url"),
+                  QStringLiteral("javascript:alert(1)")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("scheme-refused"));
+    QCOMPARE(manager->history().size(), 1);
+
+    // A second visit of the same url aggregates into one item.
+    reply = invoke(QStringLiteral("addUrl"), QJsonObject{
+        {QStringLiteral("url"), url}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(manager->history().size(), 2);
+    QCOMPARE(pushCount(events, QStringLiteral("history.onVisited")), 2);
+
+    // search — term AND-match on url/title, Chrome's per-url
+    // aggregate shape, the 24h default window, maxResults bounds.
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("text"),
+             QStringLiteral("arktos-history path")}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonArray hits =
+        reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(hits.size(), 1);
+    const QJsonObject item = hits.at(0).toObject();
+    QCOMPARE(item.value(QLatin1String("url")).toString(), url);
+    QVERIFY(item.value(QLatin1String("lastVisitTime")).toDouble() > 0);
+    QCOMPARE(item.value(QLatin1String("visitCount")).toInt(), 2);
+    QCOMPARE(item.value(QLatin1String("typedCount")).toInt(), 0);
+    QVERIFY(!item.value(QLatin1String("id")).toString().isEmpty());
+    // AND-match: one missing term drops the item; a missing query
+    // object and a sub-1 maxResults answer typed refusals.
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("text"),
+             QStringLiteral("arktos-history nomatch")}}}});
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("search"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("search"), QJsonObject{
+                 {QStringLiteral("query"), QJsonObject{
+                     {QStringLiteral("maxResults"), 0}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // A 3-day-old visit seeded through the import seam falls outside
+    // Chrome's default 24h window but inside an explicit startTime.
+    const QString oldUrl = QStringLiteral("https://old.example/x");
+    const qint64 oldMs = QDateTime::currentMSecsSinceEpoch()
+        - 3 * 86400000;
+    QList<HistoryEntry> seed = manager->history();
+    seed.append(HistoryEntry(oldUrl,
+        QDateTime::fromMSecsSinceEpoch(oldMs),
+        QStringLiteral("Old page")));
+    manager->setHistory(seed);
+    QCOMPARE(manager->history().size(), 3);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("text"), QStringLiteral("")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("text"), QStringLiteral("")},
+            {QStringLiteral("startTime"),
+             double(oldMs - 3600000)}}}});
+    const QJsonArray wide =
+        reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(wide.size(), 2);
+    // Newest lastVisitTime first — the fresh url leads the old one.
+    QCOMPARE(wide.at(0).toObject().value(QLatin1String("url"))
+                 .toString(), url);
+    QCOMPARE(wide.at(1).toObject().value(QLatin1String("url"))
+                 .toString(), oldUrl);
+    QCOMPARE(wide.at(1).toObject().value(QLatin1String("title"))
+                 .toString(), QStringLiteral("Old page"));
+
+    // getVisits — reverse-chronological VisitItems for one url;
+    // transition honestly 'link' (untracked), unknown urls empty.
+    reply = invoke(QStringLiteral("getVisits"),
+                   QJsonObject{{QStringLiteral("url"), url}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    const QJsonArray visits =
+        reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(visits.size(), 2);
+    const QJsonObject visit = visits.at(0).toObject();
+    QVERIFY(visit.value(QLatin1String("visitTime")).toDouble()
+            >= visits.at(1).toObject()
+                   .value(QLatin1String("visitTime")).toDouble());
+    QCOMPARE(visit.value(QLatin1String("transition")).toString(),
+             QStringLiteral("link"));
+    QCOMPARE(visit.value(QLatin1String("referringVisitId")).toString(),
+             QStringLiteral("0"));
+    QVERIFY(visit.value(QLatin1String("visitId")).toDouble() > 0);
+    QCOMPARE(visit.value(QLatin1String("id")).toString(),
+             item.value(QLatin1String("id")).toString());
+    QVERIFY(invoke(QStringLiteral("getVisits"), QJsonObject{
+                 {QStringLiteral("url"),
+                  QStringLiteral("https://never.example")}})
+            .value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("getVisits"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // deleteRange — bounds are required and inclusive; the removed
+    // urls travel in one aggregate onVisitRemoved.
+    QCOMPARE(invoke(QStringLiteral("deleteRange"), QJsonObject{
+                 {QStringLiteral("startTime"), 0.0}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    reply = invoke(QStringLiteral("deleteRange"), QJsonObject{
+        {QStringLiteral("startTime"), double(oldMs - 1000)},
+        {QStringLiteral("endTime"), double(oldMs + 1000)}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(manager->history().size(), 2);
+    QCOMPARE(pushCount(events,
+                       QStringLiteral("history.onVisitRemoved")), 1);
+    {
+        const QVariantList last = events.last();
+        const QJsonObject removed = last.at(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray()
+            .at(0).toObject();
+        QCOMPARE(removed.value(QLatin1String("allHistory")).toBool(),
+                 false);
+        const QJsonArray urls =
+            removed.value(QLatin1String("urls")).toArray();
+        QCOMPARE(urls.size(), 1);
+        QCOMPARE(urls.at(0).toString(), oldUrl);
+    }
+
+    // deleteUrl — every visit of the url goes in one call.
+    reply = invoke(QStringLiteral("deleteUrl"),
+                   QJsonObject{{QStringLiteral("url"), url}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(manager->history().isEmpty());
+    QCOMPARE(pushCount(events,
+                       QStringLiteral("history.onVisitRemoved")), 2);
+    QCOMPARE(invoke(QStringLiteral("deleteUrl"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // deleteAll — the store's clear path, allHistory:true.
+    invoke(QStringLiteral("addUrl"),
+           QJsonObject{{QStringLiteral("url"), url}});
+    reply = invoke(QStringLiteral("deleteAll"), QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(manager->history().isEmpty());
+    QCOMPARE(pushCount(events,
+                       QStringLiteral("history.onVisitRemoved")), 3);
+    {
+        const QVariantList last = events.last();
+        const QJsonObject removed = last.at(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray()
+            .at(0).toObject();
+        QCOMPARE(removed.value(QLatin1String("allHistory")).toBool(),
+                 true);
+        QVERIFY(removed.value(QLatin1String("urls")).toArray()
+                .isEmpty());
+    }
+
+    // The manifest gate is per-context: a sibling backend without
+    // 'history' hears no-permission on reads and writes alike.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-exthistb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-hist-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0024"),
+        QStringLiteral("tst-hist-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("history"),
+                 QStringLiteral("search"), QJsonObject{
+                     {QStringLiteral("query"), QJsonObject{
+                         {QStringLiteral("text"),
+                          QStringLiteral("")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(QStringLiteral("history"),
+                 QStringLiteral("deleteAll"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
+}
+
+// MD23 — chrome.cookies over the RC15 persistent mirror plus the
+// live QWebEngineCookieStore.  A dedicated temp persona is bound as
+// the ambient profile — invokeCookies resolves exactly this jar —
+// and a REAL hosted extension (cookies grant + host_permissions on
+// *.example.test) drives bridge->invoke so the coverage gate runs
+// against the runtime's registered grants.  Covers set/get on a
+// covered host (the task's verify hint), the mirror read-back,
+// the engine store's landed write, onChanged fan-out (emit +
+// per-domain withhold), remove, stores listing, arg refusals and
+// the 'cookies' manifest gate.
+void tst_ExtensionManager::extensionCookies()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // Fixture: cookies grant + host coverage of *.example.test.
+    // Loaded BEFORE the ambient persona switch — ExtensionManager's
+    // engine handle binds the profile(s) prepared for the ambient
+    // persona, and the runtime's permission/coverage maps fill on
+    // load regardless of which profile hosts the worker.
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extck-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-cookies\","
+                "\"version\":\"1.0\",\"permissions\":[\"cookies\"],"
+                "\"host_permissions\":[\"https://*.example.test/*\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write("self.__ck=[];\n"
+                "try{chrome.cookies.onChanged.addListener("
+                "function(ci){self.__ck.push({ev:ci});});}"
+                "catch(e){}\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    // Leftovers are persistent across standalone runs — drop any
+    // stale 'tst-cookies' registration or loadExtension no-ops.
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.name == QLatin1String("tst-cookies"))
+            manager->removeExtension(info.id);
+    }
+    auto loaded = std::make_shared<QString>();
+    auto loadErr = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded, loadErr](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name != QLatin1String("tst-cookies"))
+            return;
+        if (info.error.isEmpty())
+            *loaded = info.id;
+        else
+            *loadErr = info.error;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && loadErr->isEmpty()
+           && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString extId = *loaded;
+    QVERIFY2(!extId.isEmpty(), qPrintable(QStringLiteral(
+        "fixture loaded (err=%1)").arg(*loadErr)));
+    manager->setExtensionEnabled(extId, true);
+    auto unload = qScopeGuard([manager, extId, dir]() {
+        manager->setExtensionEnabled(extId, false);
+        manager->removeExtension(extId);
+        QDir(dir).removeRecursively();
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(extId)
+            && runtime->host(extId)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    // Same ambient-persona binding the MD22 leg uses — the runtime's
+    // permission/coverage maps are already filled from the manifest,
+    // so the switch only re-points which jar invokeCookies serves.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstextck%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    CookieJar *jar = CookieJar::instanceFor(profileId);
+    QVERIFY(jar);
+    QCOMPARE(jar->profileId(), profileId);
+    QVERIFY(jar->profile() && jar->profile()->cookieStore());
+    // The cookie store is backed by the network service, which only
+    // exists once a page does (same bring-up cookieStoreIsolation
+    // documents) — a trivial load spins the engine up so the live
+    // setCookie leg below actually lands.
+    {
+        QWebEnginePage spinUp(jar->profile());
+        QSignalSpy loadSpy(&spinUp, &QWebEnginePage::loadFinished);
+        spinUp.load(QUrl(QStringLiteral("about:blank")));
+        QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 15000);
+    }
+    auto unbind = qScopeGuard([prevId, profileId]() {
+        CookieJar::releaseFor(profileId);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+
+    ChromeBridge *bridge = runtime->host(extId)->bridge();
+    QVERIFY(bridge);
+    QSignalSpy hostEvents(bridge, &ChromeBridge::hostEvent);
+    auto invoke = [&](const QString &m, const QJsonObject &args) {
+        return bridge->invoke(QStringLiteral("cookies"), m, args);
+    };
+
+    // NOTE: the runtime's hostCovers wildcard is a single path
+    // segment ('*' does not cross '/'), so the covered url is the
+    // host root.
+    const QString url =
+        QStringLiteral("https://www.example.test/");
+    auto hostEventsFor = [&](const QString &name) {
+        QList<QVariantList> out;
+        for (const QVariantList &args : hostEvents)
+            if (!args.isEmpty() && args.at(0).toString() == name)
+                out.append(args);
+        return out;
+    };
+
+    // set on a covered host — Chrome's Cookie shape answers with the
+    // store id; the record lands in the mirror synchronously.
+    QJsonObject reply = invoke(QStringLiteral("set"), QJsonObject{
+        {QStringLiteral("url"), url},
+        {QStringLiteral("name"), QStringLiteral("sid")},
+        {QStringLiteral("value"), QStringLiteral("v1")},
+        {QStringLiteral("path"), QStringLiteral("/")},
+        {QStringLiteral("secure"), true},
+        {QStringLiteral("httpOnly"), true},
+        {QStringLiteral("sameSite"), QStringLiteral("lax")}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    {
+        const QJsonObject c =
+            reply.value(QLatin1String("result")).toObject();
+        QCOMPARE(c.value(QLatin1String("name")).toString(),
+                 QStringLiteral("sid"));
+        QCOMPARE(c.value(QLatin1String("domain")).toString(),
+                 QStringLiteral("www.example.test"));
+        QCOMPARE(c.value(QLatin1String("hostOnly")).toBool(), true);
+        QCOMPARE(c.value(QLatin1String("path")).toString(),
+                 QStringLiteral("/"));
+        QCOMPARE(c.value(QLatin1String("secure")).toBool(), true);
+        QCOMPARE(c.value(QLatin1String("httpOnly")).toBool(), true);
+        QCOMPARE(c.value(QLatin1String("sameSite")).toString(),
+                 QStringLiteral("lax"));
+        QCOMPARE(c.value(QLatin1String("session")).toBool(), true);
+        QCOMPARE(c.value(QLatin1String("storeId")).toString(),
+                 QStringLiteral("0"));
+    }
+
+    // The engine store took the live write (lands asynchronously).
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QList<QNetworkCookie> cs = jar->cookies();
+        for (const QNetworkCookie &c : cs)
+            if (c.name() == "sid" && c.value() == "v1")
+                return true;
+        return false;
+    }(), 15000);
+
+    // get — mirror read answers the same row; a miss answers null.
+    reply = invoke(QStringLiteral("get"), QJsonObject{
+        {QStringLiteral("url"), url},
+        {QStringLiteral("name"), QStringLiteral("sid")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result"))
+                 .toObject().value(QLatin1String("value")).toString(),
+             QStringLiteral("v1"));
+    reply = invoke(QStringLiteral("get"), QJsonObject{
+        {QStringLiteral("url"), url},
+        {QStringLiteral("name"), QStringLiteral("absent")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).isNull()
+            || reply.value(QLatin1String("result")).isUndefined());
+
+    // getAll — the row answers under the store filter and the url
+    // send-match alike; unknown store id is Chrome's empty answer.
+    reply = invoke(QStringLiteral("getAll"), QJsonObject{
+        {QStringLiteral("domain"),
+         QStringLiteral("example.test")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().size() >= 1);
+    reply = invoke(QStringLiteral("getAll"), QJsonObject{
+        {QStringLiteral("url"), url},
+        {QStringLiteral("name"), QStringLiteral("sid")}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+    reply = invoke(QStringLiteral("getAll"), QJsonObject{
+        {QStringLiteral("storeId"), QStringLiteral("zzz")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+
+    // getAllCookieStores — one served store, Chrome's {id,tabIds}.
+    reply = invoke(QStringLiteral("getAllCookieStores"), QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    {
+        const QJsonArray stores =
+            reply.value(QLatin1String("result")).toArray();
+        QCOMPARE(stores.size(), 1);
+        QCOMPARE(stores.at(0).toObject()
+                     .value(QLatin1String("id")).toString(),
+                 QStringLiteral("0"));
+        QVERIFY(stores.at(0).toObject()
+                .value(QLatin1String("tabIds")).isArray());
+    }
+
+    // onChanged — the engine's cookieAdded rode the tap into the
+    // hosted context: removed:false, cause 'explicit', the Cookie.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("cookies.onChanged")).isEmpty(),
+        15000);
+    {
+        const QVariantList last =
+            hostEventsFor(QStringLiteral("cookies.onChanged")).last();
+        const QJsonObject ci = last.at(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray().at(0).toObject();
+        QCOMPARE(ci.value(QLatin1String("removed")).toBool(), false);
+        QCOMPARE(ci.value(QLatin1String("cookie")).toObject()
+                     .value(QLatin1String("name")).toString(),
+                 QStringLiteral("sid"));
+    }
+
+    // Host coverage — an uncovered domain fails url-bearing ops with
+    // the typed verdict; a covered op still answers.
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("url"),
+                  QStringLiteral("https://uncovered.test/x")},
+                 {QStringLiteral("name"), QStringLiteral("a")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+    QCOMPARE(invoke(QStringLiteral("set"), QJsonObject{
+                 {QStringLiteral("url"),
+                  QStringLiteral("https://uncovered.test/")},
+                 {QStringLiteral("name"), QStringLiteral("a")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+
+    // The onChanged withhold: an engine-side change on an uncovered
+    // domain reaches neither the mirror-served context's event list.
+    {
+        hostEvents.clear();
+        QNetworkCookie foreign(QStringLiteral("x").toUtf8(),
+                               QStringLiteral("1").toUtf8());
+        foreign.setDomain(QStringLiteral("uncovered.test"));
+        foreign.setPath(QStringLiteral("/"));
+        jar->profile()->cookieStore()->setCookie(
+            foreign, QUrl(QStringLiteral("https://uncovered.test/")));
+        QTest::qWait(1200);
+        QVERIFY(hostEventsFor(QStringLiteral("cookies.onChanged"))
+                    .isEmpty());
+    }
+
+    // remove — the cookie get() would return goes away in the live
+    // jar AND the mirror; the reply is Chrome's details echo.
+    reply = invoke(QStringLiteral("remove"), QJsonObject{
+        {QStringLiteral("url"), url},
+        {QStringLiteral("name"), QStringLiteral("sid")}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("name")).toString(),
+             QStringLiteral("sid"));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("storeId")).toString(),
+             QStringLiteral("0"));
+    reply = invoke(QStringLiteral("get"), QJsonObject{
+        {QStringLiteral("url"), url},
+        {QStringLiteral("name"), QStringLiteral("sid")}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).isNull()
+            || reply.value(QLatin1String("result")).isUndefined());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("cookies.onChanged")).isEmpty(),
+        15000);
+    {
+        const QVariantList last =
+            hostEventsFor(QStringLiteral("cookies.onChanged")).last();
+        const QJsonObject ci = last.at(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray().at(0).toObject();
+        QCOMPARE(ci.value(QLatin1String("removed")).toBool(), true);
+    }
+
+    // Refused shapes — missing url/name, non-http(s) set urls.
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("remove"), QJsonObject{
+                 {QStringLiteral("url"), url}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("set"), QJsonObject{
+                 {QStringLiteral("url"),
+                  QStringLiteral("file:///x")},
+                 {QStringLiteral("name"), QStringLiteral("a")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("scheme-refused"));
+    QCOMPARE(invoke(QStringLiteral("bogus"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // The manifest gate — a sibling backend without 'cookies' hears
+    // no-permission on every member.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extckb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-ck-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0031"),
+        QStringLiteral("tst-ck-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("cookies"),
+                 QStringLiteral("get"), QJsonObject{
+                     {QStringLiteral("url"), url},
+                     {QStringLiteral("name"), QStringLiteral("a")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(QStringLiteral("cookies"),
+                 QStringLiteral("getAll"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    QDir(dirB).removeRecursively();
+}
+
+// MD24 — chrome.downloads over DownloadManager's record list.  A
+// REAL hosted extension ('downloads' grant) drives bridge->invoke so
+// the eventGate + relay fan-out run for onCreated/onChanged/onErased;
+// the deferred '__arktos.downloadCreated' push carries the minted id.
+// A dedicated temp persona binds the ambient DownloadManager, the
+// builtin engine is pinned (rustdl would claim the http fixture), and
+// the verify leg rides a stalled loopback server: pause/resume/cancel
+// on an in-flight row, search, erase+onErased, the typed verdicts and
+// a bare-backend ticket push.
+void tst_ExtensionManager::extensionDownloads()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // Fixture: downloads grant + a background context so the runtime
+    // registers a relay for the event fan-out.
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extdl-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-dl\","
+                "\"version\":\"1.0\",\"permissions\":[\"downloads\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write("self.__dl=[];\n"
+                "try{chrome.downloads.onCreated.addListener("
+                "function(i){self.__dl.push(i);});}catch(e){}\n"
+                "try{chrome.downloads.onChanged.addListener("
+                "function(d){self.__dl.push(d);});}catch(e){}\n"
+                "try{chrome.downloads.onErased.addListener("
+                "function(i){self.__dl.push(i);});}catch(e){}\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.name == QLatin1String("tst-dl"))
+            manager->removeExtension(info.id);
+    }
+    auto loaded = std::make_shared<QString>();
+    auto loadErr = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded, loadErr](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name != QLatin1String("tst-dl"))
+            return;
+        if (info.error.isEmpty())
+            *loaded = info.id;
+        else
+            *loadErr = info.error;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && loadErr->isEmpty()
+           && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString extId = *loaded;
+    QVERIFY2(!extId.isEmpty(), qPrintable(QStringLiteral(
+        "fixture loaded (err=%1)").arg(*loadErr)));
+    manager->setExtensionEnabled(extId, true);
+    auto unload = qScopeGuard([manager, extId, dir]() {
+        manager->setExtensionEnabled(extId, false);
+        manager->removeExtension(extId);
+        QDir(dir).removeRecursively();
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(extId)
+            && runtime->host(extId)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    // Ambient-persona binding — invokeDownloads resolves exactly this
+    // manager's record list.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstextdl%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    // Same pin the downloadmanager autotests apply — the rust
+    // selector defaults to claiming http(s) urls on rustdl builds;
+    // this leg proves the Chromium request path.  The claim gate
+    // reads the ACTIVE persona's scope, so the key must land on the
+    // freshly-bound profile, not the ambient one.
+    ProfileSettings settings(profileId);
+    settings.setValue(QLatin1String("downloadmanager/engine"),
+                      QLatin1String("builtin"));
+    DownloadManager *dlm = DownloadManager::instanceFor(profileId);
+    QVERIFY(dlm);
+    QCOMPARE(dlm->profileId(), profileId);
+    QTemporaryDir downloadDir;
+    QVERIFY(downloadDir.isValid());
+    dlm->setDownloadDirectory(downloadDir.path() + QLatin1Char('/'));
+    auto unbind = qScopeGuard([prevId, profileId]() {
+        DownloadManager::releaseFor(profileId);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+
+    // A stalled loopback download — headers promise a huge body the
+    // trickle never finishes, so the row stays in-flight for the
+    // pause/resume/cancel leg (the trick the downloadmanager
+    // autotests use: Chromium only raises downloadRequested once
+    // body bytes arrive).
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    connect(&server, &QTcpServer::newConnection, &server, [&server]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        socket->setParent(&server);
+        socket->readAll();
+        socket->write("HTTP/1.1 200 OK\r\n"
+                      "Content-Type: application/octet-stream\r\n"
+                      "Content-Disposition: attachment; "
+                      "filename=\"stall.bin\"\r\n"
+                      "Content-Length: 104857600\r\n"
+                      "\r\n");
+        QTimer *trickle = new QTimer(socket);
+        QObject::connect(trickle, &QTimer::timeout, socket,
+                         [socket]() { socket->write("x"); });
+        trickle->start(200);
+    });
+    const QString stalledUrl = QString::fromLatin1(
+        "http://127.0.0.1:%1/stall.bin").arg(server.serverPort());
+    const QString dataUrl = QStringLiteral(
+        "data:text/plain;base64,")
+        + QString::fromLatin1(QByteArray("hello world").toBase64());
+
+    ChromeBridge *bridge = runtime->host(extId)->bridge();
+    QVERIFY(bridge);
+    QSignalSpy hostEvents(bridge, &ChromeBridge::hostEvent);
+    auto invoke = [&](const QString &m, const QJsonObject &args) {
+        return bridge->invoke(QStringLiteral("downloads"), m, args);
+    };
+    auto hostEventsFor = [&](const QString &name) {
+        QList<QVariantList> out;
+        for (const QVariantList &args : hostEvents)
+            if (!args.isEmpty() && args.at(0).toString() == name)
+                out.append(args);
+        return out;
+    };
+
+    // Empty list — search answers the empty array; the shelf surface
+    // and unknown members stay typed.
+    QJsonObject reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject()}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("setShelfEnabled"), QJsonObject{
+                 {QStringLiteral("enabled"), true}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("drag"), QJsonObject{
+                 {QStringLiteral("id"), 1.0}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("bogus"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // download() — the synchronous answer is a ticket; the Chrome
+    // download id arrives via the '__arktos.downloadCreated' push.
+    reply = invoke(QStringLiteral("download"), QJsonObject{
+        {QStringLiteral("url"), stalledUrl}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const int ticket =
+        reply.value(QLatin1String("result")).toObject()
+            .value(QLatin1String("ticket")).toInt();
+    QVERIFY(ticket > 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("__arktos.downloadCreated"))
+             .isEmpty(),
+        30000);
+    int dlId = -1;
+    {
+        const QVariantList pushed =
+            hostEventsFor(QStringLiteral("__arktos.downloadCreated"))
+                .last();
+        const QJsonObject body = pushed.at(1).toJsonObject();
+        QCOMPARE(body.value(QLatin1String("ticket")).toInt(), ticket);
+        QVERIFY(body.value(QLatin1String("error")).isUndefined());
+        dlId = body.value(QLatin1String("id")).toInt();
+    }
+    QVERIFY(dlId > 0);
+
+    // downloads.onCreated rode the itemAdded tap to the relay — the
+    // record answers Chrome's DownloadItem shape with byExtId set.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("downloads.onCreated"))
+             .isEmpty(),
+        15000);
+    {
+        const QVariantList created =
+            hostEventsFor(QStringLiteral("downloads.onCreated")).last();
+        const QJsonObject item = created.at(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray().at(0).toObject();
+        QCOMPARE(item.value(QLatin1String("id")).toInt(), dlId);
+        QCOMPARE(item.value(QLatin1String("url")).toString(),
+                 stalledUrl);
+        QCOMPARE(item.value(QLatin1String("byExtId")).toString(),
+                 extId);
+    }
+
+    // search — id and url filters both land the same in-flight row.
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("id"), dlId}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    {
+        const QJsonArray hits =
+            reply.value(QLatin1String("result")).toArray();
+        QCOMPARE(hits.size(), 1);
+        const QJsonObject item = hits.at(0).toObject();
+        QCOMPARE(item.value(QLatin1String("state")).toString(),
+                 QStringLiteral("in_progress"));
+        QCOMPARE(item.value(QLatin1String("paused")).toBool(), false);
+        QCOMPARE(item.value(QLatin1String("incognito")).toBool(),
+                 false);
+        QVERIFY(!item.value(QLatin1String("filename")).toString()
+                     .isEmpty());
+    }
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("url"), QStringLiteral("stall.bin")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(), 1);
+
+    // pause -> onChanged delta {paused}, resume -> {paused:false};
+    // open/removeFile refuse a row that never completed.  The card's
+    // strict pausable gate is a live request in InProgress — wait
+    // for the trickle's first byte so the engine has actually
+    // started (accept→InProgress lags the item's minting).
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QJsonObject r = invoke(
+            QStringLiteral("search"), QJsonObject{
+                {QStringLiteral("query"), QJsonObject{
+                    {QStringLiteral("id"), dlId}}}});
+        const QJsonArray hits =
+            r.value(QLatin1String("result")).toArray();
+        return !hits.isEmpty()
+            && hits.at(0).toObject()
+                       .value(QLatin1String("bytesReceived"))
+                       .toDouble() > 0;
+    }(), 15000);
+    reply = invoke(QStringLiteral("pause"), QJsonObject{
+        {QStringLiteral("id"), dlId}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    // QtWebEngine applies a pause asynchronously — the honest
+    // {paused:true} delta rides the request's isPausedChanged tap.
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QList<QVariantList> deltas =
+            hostEventsFor(QStringLiteral("downloads.onChanged"));
+        for (const QVariantList &d : deltas) {
+            const QJsonObject delta = d.at(1).toJsonObject()
+                .value(QLatin1String("__args")).toArray()
+                .at(0).toObject();
+            if (delta.value(QLatin1String("id")).toInt() == dlId
+                    && delta.value(QLatin1String("paused")).toObject()
+                           .value(QLatin1String("current")).toBool())
+                return true;
+        }
+        return false;
+    }(), 15000);
+    reply = invoke(QStringLiteral("resume"), QJsonObject{
+        {QStringLiteral("id"), dlId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(invoke(QStringLiteral("open"), QJsonObject{
+                 {QStringLiteral("id"), dlId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-complete"));
+    QCOMPARE(invoke(QStringLiteral("removeFile"), QJsonObject{
+                 {QStringLiteral("id"), dlId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-complete"));
+
+    // cancel — the card stops, onChanged carries the terminal delta,
+    // the row answers 'interrupted' with Chrome's USER_CANCELED.
+    reply = invoke(QStringLiteral("cancel"), QJsonObject{
+        {QStringLiteral("id"), dlId}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QList<QVariantList> deltas =
+            hostEventsFor(QStringLiteral("downloads.onChanged"));
+        for (const QVariantList &d : deltas) {
+            const QJsonObject delta = d.at(1).toJsonObject()
+                .value(QLatin1String("__args")).toArray()
+                .at(0).toObject();
+            if (delta.value(QLatin1String("id")).toInt() == dlId
+                    && delta.value(QLatin1String("state")).toObject()
+                               .value(QLatin1String("current"))
+                               .toString()
+                           == QLatin1String("interrupted"))
+                return true;
+        }
+        return false;
+    }(), 15000);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("id"), dlId}}}});
+    {
+        const QJsonObject item = reply.value(QLatin1String("result"))
+            .toArray().at(0).toObject();
+        QCOMPARE(item.value(QLatin1String("state")).toString(),
+                 QStringLiteral("interrupted"));
+        QCOMPARE(item.value(QLatin1String("error")).toString(),
+                 QStringLiteral("USER_CANCELED"));
+    }
+    // Cancelling a finished row is the typed refusal.
+    QCOMPARE(invoke(QStringLiteral("cancel"), QJsonObject{
+                 {QStringLiteral("id"), dlId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-in-progress"));
+
+    // erase — the row leaves the record list; the model tap fires
+    // onErased with the Chrome download id.
+    reply = invoke(QStringLiteral("erase"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("id"), dlId}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("downloads.onErased")).isEmpty(),
+        15000);
+    QCOMPARE(hostEventsFor(QStringLiteral("downloads.onErased")).last()
+                 .at(1).toJsonObject()
+                 .value(QLatin1String("__args")).toArray().at(0).toInt(),
+             dlId);
+    reply = invoke(QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("id"), dlId}}}});
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+
+    // Refused shapes — missing url/query/id, bad scheme, the POST
+    // and 'overwrite' options Arktos cannot honour.
+    QCOMPARE(invoke(QStringLiteral("download"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("download"), QJsonObject{
+                 {QStringLiteral("url"),
+                  QStringLiteral("javascript:alert(1)")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("scheme-refused"));
+    QCOMPARE(invoke(QStringLiteral("download"), QJsonObject{
+                 {QStringLiteral("url"), stalledUrl},
+                 {QStringLiteral("method"), QStringLiteral("POST")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("download"), QJsonObject{
+                 {QStringLiteral("url"), stalledUrl},
+                 {QStringLiteral("conflictAction"),
+                  QStringLiteral("overwrite")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("search"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("pause"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("pause"), QJsonObject{
+                 {QStringLiteral("id"), 999999.0}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // A bare backend (no relay context) — the ticket answer falls
+    // back to pushEvent; a data: download completes so getFileIcon
+    // and removeFile can answer their real verdicts.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extdlb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-dl-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"downloads\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0041"),
+        QStringLiteral("tst-dl-b"), dirB);
+    QSignalSpy pushSpy(&backendB, &ExtensionShimBackend::pushEvent);
+    reply = backendB.invoke(QStringLiteral("downloads"),
+                            QStringLiteral("download"), QJsonObject{
+        {QStringLiteral("url"), dataUrl},
+        {QStringLiteral("filename"),
+         QStringLiteral("md24-fixture.txt")}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const int ticketB =
+        reply.value(QLatin1String("result")).toObject()
+            .value(QLatin1String("ticket")).toInt();
+    QVERIFY(ticketB > 0);
+    int dlIdB = -1;
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        for (const QVariantList &push : pushSpy) {
+            if (push.isEmpty()
+                    || push.at(0).toString()
+                           != QLatin1String("__arktos.downloadCreated"))
+                continue;
+            const QJsonObject body = push.at(1).toJsonObject();
+            if (body.value(QLatin1String("ticket")).toInt() != ticketB)
+                continue;
+            dlIdB = body.value(QLatin1String("id")).toInt();
+            return true;
+        }
+        return false;
+    }(), 30000);
+    QVERIFY(dlIdB > 0);
+
+    // The suggested filename landed under the download directory.
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QJsonObject r = backendB.invoke(
+            QStringLiteral("downloads"), QStringLiteral("search"),
+            QJsonObject{{QStringLiteral("query"), QJsonObject{
+                {QStringLiteral("id"), dlIdB}}}});
+        const QJsonArray hits =
+            r.value(QLatin1String("result")).toArray();
+        if (hits.isEmpty())
+            return false;
+        const QJsonObject item = hits.at(0).toObject();
+        return item.value(QLatin1String("filename")).toString()
+                   .endsWith(QLatin1String("md24-fixture.txt"));
+    }(), 15000);
+
+    // Wait for the tiny transfer to finish, then the completed-row
+    // members answer: getFileIcon's data url, removeFile's real
+    // unlink (exists flips false), open's typed file-missing.
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QJsonObject r = backendB.invoke(
+            QStringLiteral("downloads"), QStringLiteral("search"),
+            QJsonObject{{QStringLiteral("query"), QJsonObject{
+                {QStringLiteral("id"), dlIdB}}}});
+        const QJsonArray hits =
+            r.value(QLatin1String("result")).toArray();
+        return !hits.isEmpty()
+            && hits.at(0).toObject()
+                       .value(QLatin1String("state")).toString()
+                   == QLatin1String("complete");
+    }(), 15000);
+    reply = backendB.invoke(QStringLiteral("downloads"),
+                            QStringLiteral("getFileIcon"), QJsonObject{
+        {QStringLiteral("id"), dlIdB},
+        {QStringLiteral("options"), QJsonObject{
+            {QStringLiteral("size"), 16}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QVERIFY(reply.value(QLatin1String("result")).toString()
+                .startsWith(QLatin1String("data:image/png;base64,")));
+    reply = backendB.invoke(QStringLiteral("downloads"),
+                            QStringLiteral("removeFile"), QJsonObject{
+        {QStringLiteral("id"), dlIdB}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    reply = backendB.invoke(QStringLiteral("downloads"),
+                            QStringLiteral("search"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("id"), dlIdB}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().at(0)
+                 .toObject().value(QLatin1String("exists")).toBool(),
+             false);
+    QCOMPARE(backendB.invoke(QStringLiteral("downloads"),
+                 QStringLiteral("open"), QJsonObject{
+                     {QStringLiteral("id"), dlIdB}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("file-missing"));
+
+    // showDefaultFolder — offscreen has no file-manager channel; the
+    // typed refusal is the honest answer here (ok on a real desktop).
+    reply = backendB.invoke(QStringLiteral("downloads"),
+                            QStringLiteral("showDefaultFolder"),
+                            QJsonObject());
+    if (!reply.value(QLatin1String("ok")).toBool())
+        QCOMPARE(reply.value(QLatin1String("error")).toString(),
+                 QStringLiteral("reveal-failed"));
+
+    // The manifest gate — a sibling without 'downloads' hears
+    // no-permission on every member.
+    const QString dirC = QDir::temp().filePath(
+        QStringLiteral("tst-extdlc-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirC));
+    {
+        QFile f(dirC + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-dl-c\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendC(
+        QStringLiteral("tstmockextensionid0042"),
+        QStringLiteral("tst-dl-c"), dirC);
+    QCOMPARE(backendC.invoke(QStringLiteral("downloads"),
+                 QStringLiteral("search"), QJsonObject{
+                     {QStringLiteral("query"), QJsonObject()}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendC.invoke(QStringLiteral("downloads"),
+                 QStringLiteral("download"), QJsonObject{
+                     {QStringLiteral("url"), dataUrl}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    QDir(dirB).removeRecursively();
+    QDir(dirC).removeRecursively();
+}
+
+// MD25 — chrome.sessions over TabWidget's TABS05 closed-tab undo
+// stack.  A hosted fixture ('sessions' grant + a background context
+// that registers onChanged and snapshots MAX_SESSION_RESULTS)
+// drives bridge->invoke: getDevices answers the honest empty list,
+// getRecentlyClosed enumerates a real window's undo record after
+// closeTab, restore() rebuilds it through the shared undo path, and
+// sessions.onChanged rides the hub's recentlyClosedTabsChanged tap.
+// The manifest gate lands on a bare sibling backend.
+void tst_ExtensionManager::extensionSessions()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extsess-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-sess\","
+                "\"version\":\"1.0\",\"permissions\":[\"sessions\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write("self.__sess=[];\n"
+                "self.__sessMax=(chrome.sessions"
+                " ? chrome.sessions.MAX_SESSION_RESULTS : null);\n"
+                "try{chrome.sessions.onChanged.addListener("
+                "function(){self.__sess.push('changed');});}"
+                "catch(e){}\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.name == QLatin1String("tst-sess"))
+            manager->removeExtension(info.id);
+    }
+    auto loaded = std::make_shared<QString>();
+    auto loadErr = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded, loadErr](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name != QLatin1String("tst-sess"))
+            return;
+        if (info.error.isEmpty())
+            *loaded = info.id;
+        else
+            *loadErr = info.error;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && loadErr->isEmpty()
+           && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString extId = *loaded;
+    QVERIFY2(!extId.isEmpty(), qPrintable(QStringLiteral(
+        "fixture loaded (err=%1)").arg(*loadErr)));
+    manager->setExtensionEnabled(extId, true);
+    auto unload = qScopeGuard([manager, extId, dir]() {
+        manager->setExtensionEnabled(extId, false);
+        manager->removeExtension(extId);
+        QDir(dir).removeRecursively();
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(extId)
+            && runtime->host(extId)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    ChromeBridge *bridge = runtime->host(extId)->bridge();
+    QVERIFY(bridge);
+    QSignalSpy hostEvents(bridge, &ChromeBridge::hostEvent);
+    auto invoke = [&](const QString &m, const QJsonObject &args) {
+        return bridge->invoke(QStringLiteral("sessions"), m, args);
+    };
+    auto hostEventsFor = [&](const QString &name) {
+        QList<QVariantList> out;
+        for (const QVariantList &args : hostEvents)
+            if (!args.isEmpty() && args.at(0).toString() == name)
+                out.append(args);
+        return out;
+    };
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+
+    // The namespace constant landed page-side.
+    QCOMPARE(eval(runtime->host(extId)->page(),
+                  QStringLiteral("self.__sessMax")).toInt(), 25);
+
+    // Empty-stack answers + the arg refusals that don't need a record.
+    QJsonObject reply = invoke(QStringLiteral("getDevices"),
+                               QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    reply = invoke(QStringLiteral("getRecentlyClosed"),
+                   QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("restore"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(invoke(QStringLiteral("getRecentlyClosed"), QJsonObject{
+                 {QStringLiteral("filter"), QJsonObject{
+                     {QStringLiteral("maxResults"), 26.0}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    reply = invoke(QStringLiteral("getRecentlyClosed"), QJsonObject{
+        {QStringLiteral("filter"), QJsonObject{
+            {QStringLiteral("maxResults"), 0.0}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("bogus"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // A real window + a closable tab — the undo record must carry a
+    // url, so the tab loads a fixture document first.
+    ExtensionEventHub *hub = ExtensionEventHub::instance();
+    hub->setTracking(true);
+    hub->syncNow();
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    hub->syncNow();   // wires recentlyClosedTabsChanged on this strip
+    tw->newTab();
+    QCOMPARE(tw->count(), 2);
+    WebView *view = tw->webView(1);
+    QVERIFY(view);
+    const QUrl closedUrl(
+        QStringLiteral("data:text/html,<title>sess-closed</title>x"));
+    view->load(closedUrl);
+    QTRY_VERIFY_WITH_TIMEOUT(view->url() == closedUrl, 10000);
+    tw->closeTab(1);
+    QVERIFY(tw->hasRecentlyClosedTabs());
+
+    // sessions.onChanged rode the hub tap into the hosted context.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("sessions.onChanged")).isEmpty(),
+        15000);
+
+    // getRecentlyClosed — the closed tab's Session shape.
+    reply = invoke(QStringLiteral("getRecentlyClosed"),
+                   QJsonObject());
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QString sessionId;
+    {
+        const QJsonArray sessions =
+            reply.value(QLatin1String("result")).toArray();
+        QCOMPARE(sessions.size(), 1);
+        const QJsonObject session = sessions.at(0).toObject();
+        QVERIFY(session.value(QLatin1String("lastModified")).toDouble()
+                > 0);
+        const QJsonObject tab =
+            session.value(QLatin1String("tab")).toObject();
+        QCOMPARE(tab.value(QLatin1String("url")).toString(),
+                 closedUrl.toString());
+        QCOMPARE(tab.value(QLatin1String("windowId")).toInt(),
+                 ExtensionShimBackend::windowIdFor(window));
+        QCOMPARE(tab.value(QLatin1String("index")).toInt(), 1);
+        QCOMPARE(tab.value(QLatin1String("active")).toBool(), false);
+        QCOMPARE(tab.value(QLatin1String("incognito")).toBool(), false);
+        sessionId =
+            tab.value(QLatin1String("sessionId")).toString();
+        QVERIFY(!sessionId.isEmpty());
+    }
+
+    // A non-numeric id is an argument error; an unknown one is the
+    // typed miss.
+    QCOMPARE(invoke(QStringLiteral("restore"), QJsonObject{
+                 {QStringLiteral("sessionId"),
+                  QStringLiteral("bogus")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("restore"), QJsonObject{
+                 {QStringLiteral("sessionId"),
+                  QStringLiteral("999999")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // restore(sessionId) — the shared undo path rebuilds the tab;
+    // the record is consumed.
+    const int beforeRestore = tw->count();
+    reply = invoke(QStringLiteral("restore"), QJsonObject{
+        {QStringLiteral("sessionId"), sessionId}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    {
+        const QJsonObject session =
+            reply.value(QLatin1String("result")).toObject();
+        const QJsonObject tab =
+            session.value(QLatin1String("tab")).toObject();
+        QCOMPARE(tab.value(QLatin1String("url")).toString(),
+                 closedUrl.toString());
+        QVERIFY(tab.value(QLatin1String("id")).toInt() > 0);
+    }
+    QCOMPARE(tw->count(), beforeRestore + 1);
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        for (int i = 0; i < tw->count(); ++i)
+            if (tw->webView(i)
+                    && tw->webView(i)->url() == closedUrl)
+                return true;
+        return false;
+    }(), 15000);
+    // The consumed id answers the typed miss now.
+    QCOMPARE(invoke(QStringLiteral("restore"), QJsonObject{
+                 {QStringLiteral("sessionId"), sessionId}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    reply = invoke(QStringLiteral("getRecentlyClosed"),
+                   QJsonObject());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+
+    // Chrome's no-arg form — close the rebuilt tab and restore()
+    // takes the newest session.
+    int rebuilt = -1;
+    for (int i = 0; i < tw->count(); ++i)
+        if (tw->webView(i) && tw->webView(i)->url() == closedUrl)
+            rebuilt = i;
+    QVERIFY(rebuilt >= 0);
+    tw->closeTab(rebuilt);
+    reply = invoke(QStringLiteral("restore"), QJsonObject());
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("tab")).toObject()
+                 .value(QLatin1String("url")).toString(),
+             closedUrl.toString());
+
+    // The manifest gate — a sibling without 'sessions' hears
+    // no-permission on every member.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extsessb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-sess-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0043"),
+        QStringLiteral("tst-sess-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("sessions"),
+                 QStringLiteral("getDevices"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(QStringLiteral("sessions"),
+                 QStringLiteral("getRecentlyClosed"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendB.invoke(QStringLiteral("sessions"),
+                 QStringLiteral("restore"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    hub->setTracking(false);
+    QDir(dirB).removeRecursively();
+}
+
+// MD26 — chrome.tabGroups over the TABGRP machinery: creation rides
+// chrome.tabs.group like the real API (the namespace has no create),
+// get/query/update/move/ungroup resolve the minted chrome int ids
+// onto the strip's per-window groups, and the four on* events fan
+// out from the hub's tabGroupsChanged diff tap.
+void tst_ExtensionManager::extensionTabGroups()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exttg-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-tg\","
+                "\"version\":\"1.0\",\"permissions\":[\"tabGroups\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write("self.__tg=[];\n"
+                "self.__tgNone=(chrome.tabGroups\n"
+                " ? chrome.tabGroups.TAB_GROUP_ID_NONE : null);\n"
+                "try{['onCreated','onUpdated','onMoved','onRemoved']\n"
+                " .forEach(function(n){chrome.tabGroups[n].addListener(\n"
+                "  function(g){self.__tg.push(n+':'+g.id);});});}catch(e){}\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.name == QLatin1String("tst-tg"))
+            manager->removeExtension(info.id);
+    }
+    auto loaded = std::make_shared<QString>();
+    auto loadErr = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded, loadErr](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name != QLatin1String("tst-tg"))
+            return;
+        if (info.error.isEmpty())
+            *loaded = info.id;
+        else
+            *loadErr = info.error;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && loadErr->isEmpty()
+           && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString extId = *loaded;
+    QVERIFY2(!extId.isEmpty(), qPrintable(QStringLiteral(
+        "fixture loaded (err=%1)").arg(*loadErr)));
+    manager->setExtensionEnabled(extId, true);
+    auto unload = qScopeGuard([manager, extId, dir]() {
+        manager->setExtensionEnabled(extId, false);
+        manager->removeExtension(extId);
+        QDir(dir).removeRecursively();
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(extId)
+            && runtime->host(extId)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    ChromeBridge *bridge = runtime->host(extId)->bridge();
+    QVERIFY(bridge);
+    QSignalSpy hostEvents(bridge, &ChromeBridge::hostEvent);
+    auto invoke = [&](const QString &m, const QJsonObject &args) {
+        return bridge->invoke(QStringLiteral("tabGroups"), m, args);
+    };
+    auto invokeTabs = [&](const QString &m, const QJsonObject &args) {
+        return bridge->invoke(QStringLiteral("tabs"), m, args);
+    };
+    auto hostEventsFor = [&](const QString &name) {
+        QList<QVariantList> out;
+        for (const QVariantList &args : hostEvents)
+            if (!args.isEmpty() && args.at(0).toString() == name)
+                out.append(args);
+        return out;
+    };
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+
+    // The namespace constant landed page-side.
+    QCOMPARE(eval(runtime->host(extId)->page(),
+                  QStringLiteral("self.__tgNone")).toInt(), -1);
+
+    // Empty-strip answers + the arg refusals needing no group.
+    QJsonObject reply = invoke(QStringLiteral("query"), QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("groupId"),
+                  QStringLiteral("bogus")}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("groupId"), 424242.0}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(invoke(QStringLiteral("bogus"), QJsonObject())
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // A real window + three tabs — grouping needs members.
+    ExtensionEventHub *hub = ExtensionEventHub::instance();
+    hub->setTracking(true);
+    hub->syncNow();
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    hub->syncNow();   // wires tabGroupsChanged + seeds the baseline
+    tw->newTab();
+    tw->newTab();
+    QVERIFY(tw->count() >= 3);
+    WebView *view0 = tw->webView(0);
+    WebView *view1 = tw->webView(1);
+    WebView *view2 = tw->webView(2);
+    QVERIFY(view0 && view1 && view2);
+    const int tid1 = ExtensionShimBackend::tabIdFor(view1);
+    const int tid2 = ExtensionShimBackend::tabIdFor(view2);
+
+    // UI-originated create first — the tap diff announces it exactly
+    // like an API mutation (the hub seeds at wire time, so this is
+    // the first observable transition).
+    const QString uiGid = tw->createTabGroup(0);
+    QVERIFY(!uiGid.isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("tabGroups.onCreated"))
+             .isEmpty(),
+        15000);
+    {
+        const QVariantList evt =
+            hostEventsFor(QStringLiteral("tabGroups.onCreated"))
+                .last();
+        const QJsonObject payload = evt.at(1).toJsonObject();
+        const QJsonObject group = payload
+            .value(QLatin1String("__args")).toArray().at(0).toObject();
+        QVERIFY(group.value(QLatin1String("id")).toInt() > 0);
+        QCOMPARE(group.value(QLatin1String("windowId")).toInt(),
+                 ExtensionShimBackend::windowIdFor(window));
+        QCOMPARE(group.value(QLatin1String("collapsed")).toBool(),
+                 false);
+        tw->ungroupTabs(uiGid);
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("tabGroups.onRemoved"))
+             .isEmpty(),
+        15000);
+
+    // tabs.group is the create path — tabs 1+2 form a new group and
+    // the minted chrome id comes back in the reply.
+    reply = invokeTabs(QStringLiteral("group"), QJsonObject{
+        {QStringLiteral("options"), QJsonObject{
+            {QStringLiteral("tabIds"), QJsonArray{tid1, tid2}}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const int groupId = reply.value(QLatin1String("result"))
+        .toObject().value(QLatin1String("groupId")).toInt();
+    QVERIFY(groupId > 0);
+    QCOMPARE(tw->tabGroupSize(
+                 tw->tabGroupOf(view1)), 2);
+
+    // tabObject.groupId reports the same minted int.
+    reply = invokeTabs(QStringLiteral("get"), QJsonObject{
+        {QStringLiteral("id"), tid1}});
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("groupId")).toInt(),
+             groupId);
+    // tabs.onUpdated carried the membership flip as changeInfo.
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        for (const QVariantList &args : hostEvents) {
+            if (args.isEmpty()
+                    || args.at(0).toString()
+                           != QLatin1String("tabs.onUpdated"))
+                continue;
+            const QJsonArray evtArgs = args.at(1).toJsonObject()
+                .value(QLatin1String("__args")).toArray();
+            if (evtArgs.size() >= 2
+                    && evtArgs.at(1).toObject().contains(
+                        QLatin1String("groupId")))
+                return true;
+        }
+        return false;
+    }(), 15000);
+
+    // get + query — the live Chrome TabGroup shape.
+    reply = invoke(QStringLiteral("get"), QJsonObject{
+        {QStringLiteral("groupId"), double(groupId)}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("windowId")).toInt(),
+             ExtensionShimBackend::windowIdFor(window));
+    reply = invoke(QStringLiteral("query"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("windowId"),
+             double(ExtensionShimBackend::windowIdFor(window))}}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(),
+             1);
+
+    // update() — title + color + collapsed all land on the strip
+    // record; each mutation answers the live shape.
+    reply = invoke(QStringLiteral("update"), QJsonObject{
+        {QStringLiteral("groupId"), double(groupId)},
+        {QStringLiteral("props"), QJsonObject{
+            {QStringLiteral("title"), QStringLiteral("Work")},
+            {QStringLiteral("color"), QStringLiteral("blue")}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("title")).toString(),
+             QStringLiteral("Work"));
+    QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("color")).toString(),
+             QStringLiteral("blue"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("tabGroups.onUpdated"))
+             .isEmpty(),
+        15000);
+    QCOMPARE(invoke(QStringLiteral("update"), QJsonObject{
+                 {QStringLiteral("groupId"), double(groupId)},
+                 {QStringLiteral("props"), QJsonObject{
+                     {QStringLiteral("color"),
+                      QStringLiteral("mauve")}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // Filtered query — title substring and color both match.
+    reply = invoke(QStringLiteral("query"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("title"), QStringLiteral("wor")}}}});
+    QCOMPARE(reply.value(QLatin1String("result")).toArray().size(),
+             1);
+    reply = invoke(QStringLiteral("query"), QJsonObject{
+        {QStringLiteral("query"), QJsonObject{
+            {QStringLiteral("color"), QStringLiteral("red")}}}});
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+
+    // move() — the run relocates so its first member lands at the
+    // index; onMoved reports the group's new shape.
+    reply = invoke(QStringLiteral("move"), QJsonObject{
+        {QStringLiteral("groupId"), double(groupId)},
+        {QStringLiteral("props"), QJsonObject{
+            {QStringLiteral("index"), 0.0}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QString gid = tw->tabGroupOf(view1);
+    QVERIFY(!gid.isEmpty());
+    const QList<int> members = tw->tabGroupMembers(gid);
+    QVERIFY(!members.isEmpty());
+    QCOMPARE(members.first(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hostEventsFor(QStringLiteral("tabGroups.onMoved")).isEmpty(),
+        15000);
+    QCOMPARE(invoke(QStringLiteral("move"), QJsonObject{
+                 {QStringLiteral("groupId"), double(groupId)},
+                 {QStringLiteral("props"), QJsonObject{
+                     {QStringLiteral("index"), -5.0}}}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // ungroup() dissolves the group; the tabs stay.  get() on the
+    // stale id answers the typed miss.
+    reply = invoke(QStringLiteral("ungroup"), QJsonObject{
+        {QStringLiteral("groupIds"), QJsonArray{double(groupId)}}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QVERIFY(tw->tabGroupOf(view1).isEmpty());
+    QVERIFY(tw->tabGroupOf(view2).isEmpty());
+    QCOMPARE(invoke(QStringLiteral("get"), QJsonObject{
+                 {QStringLiteral("groupId"), double(groupId)}})
+             .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    reply = invoke(QStringLiteral("query"), QJsonObject());
+    QVERIFY(reply.value(QLatin1String("result")).toArray().isEmpty());
+
+    // The events reached the page-side listeners too — the hosted
+    // context's own chrome.tabGroups.* objects fired.
+    QTRY_VERIFY_WITH_TIMEOUT([&]() {
+        const QString seen = eval(
+            runtime->host(extId)->page(),
+            QStringLiteral("self.__tg.join('|')")).toString();
+        return seen.contains(QLatin1String("onCreated:"))
+            && seen.contains(QLatin1String("onUpdated:"))
+            && seen.contains(QLatin1String("onMoved:"))
+            && seen.contains(QLatin1String("onRemoved:"));
+    }(), 15000);
+
+    // The manifest gate — a sibling without 'tabGroups' hears
+    // no-permission on every member.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-exttgb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-tg-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0044"),
+        QStringLiteral("tst-tg-b"), dirB);
+    for (const QString m : {QStringLiteral("get"),
+                            QStringLiteral("query"),
+                            QStringLiteral("update"),
+                            QStringLiteral("move"),
+                            QStringLiteral("ungroup")}) {
+        QCOMPARE(backendB.invoke(QStringLiteral("tabGroups"), m,
+                                 QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+    }
+
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    hub->setTracking(false);
+    QDir(dirB).removeRecursively();
+}
+
+// MD27 — chrome.topSites: get() answers the visit-count-ranked
+// MostVisitedURL list off the RC04 hosts rollup (the C++ aggregate
+// mirrors it when rustcore is off); 'topSites' gates the namespace
+// like Chrome, and get() is the only published member.
+void tst_ExtensionManager::extensionTopSites()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // Same ambient-persona binding the MD22 leg uses — the backend's
+    // HistoryManager::instance() resolves exactly this store, the
+    // ambient id restores on exit, the persona dir goes with it.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstexttop%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    HistoryManager *manager = HistoryManager::instance();
+    QVERIFY(manager);
+    QCOMPARE(manager->profileId(), profileId);
+    auto unbind = qScopeGuard([prevId, profileId]() {
+        HistoryManager::releaseFor(profileId);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+    manager->clear();
+
+    // Two hosts where the heavier one is NOT the newest — the rank
+    // must follow visit count, not recency, and the representative
+    // entry is the host's newest visit.
+    const QDateTime now = QDateTime::currentDateTime();
+    QList<HistoryEntry> seed;
+    seed.append(HistoryEntry(
+        QStringLiteral("https://top.example/first"),
+        now.addSecs(-30), QStringLiteral("Top first")));
+    seed.append(HistoryEntry(
+        QStringLiteral("https://top.example/latest"),
+        now.addSecs(-10), QStringLiteral("Top latest")));
+    seed.append(HistoryEntry(
+        QStringLiteral("https://other.example/"),
+        now, QStringLiteral("Other")));
+    manager->setHistory(seed);
+    QCOMPARE(manager->history().size(), 3);
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-exttop-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-top\","
+                "\"version\":\"1.0\",\"permissions\":[\"topSites\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0045"),
+        QStringLiteral("tst-top"), dir);
+
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("topSites"), QStringLiteral("get"),
+        QJsonObject());
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonArray sites =
+        reply.value(QLatin1String("result")).toArray();
+    QCOMPARE(sites.size(), 2);
+    // The visited host leads — two visits outrank the single newer
+    // one, and the newest visit supplies the MostVisitedURL.
+    QCOMPARE(sites.at(0).toObject().value(QLatin1String("url"))
+                 .toString(),
+             QStringLiteral("https://top.example/latest"));
+    QCOMPARE(sites.at(0).toObject().value(QLatin1String("title"))
+                 .toString(),
+             QStringLiteral("Top latest"));
+    QCOMPARE(sites.at(1).toObject().value(QLatin1String("url"))
+                 .toString(),
+             QStringLiteral("https://other.example/"));
+
+    // get() is the only published member — a mistyped bridge call is
+    // the typed unreachable-member verdict.
+    QCOMPARE(backend.invoke(QStringLiteral("topSites"),
+                            QStringLiteral("peek"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // The manifest gate is per-context: a sibling backend without
+    // 'topSites' hears no-permission.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-exttopb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-top-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0046"),
+        QStringLiteral("tst-top-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("topSites"),
+                             QStringLiteral("get"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    QDir(dirB).removeRecursively();
+}
+
+// MD28 — chrome.browsingData over the CLR01 clear plan: remove() and
+// the five served remove* members (history/cookies/downloads/cache/
+// formData) map Chrome's DataTypeSet onto ClearPrivateData category
+// bits, 'browsingData' gates the namespace, and the nine unserved
+// dataTypes + unservable RemovalOptions scoping keep typed verdicts
+// — reported inside the removal result, never silently skipped.
+void tst_ExtensionManager::extensionBrowsingData()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    // Same ambient-persona binding the MD27 leg uses — the backend's
+    // HistoryManager/AutoFillManager resolve exactly these stores.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstextbd%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    HistoryManager *manager = HistoryManager::instance();
+    QVERIFY(manager);
+    QCOMPARE(manager->profileId(), profileId);
+    auto unbind = qScopeGuard([prevId, profileId]() {
+        HistoryManager::releaseFor(profileId);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+    manager->clear();
+
+    // A two-hour-old row and a fresh one — the windowed remove must
+    // take only the in-window row.
+    const QDateTime now = QDateTime::currentDateTime();
+    QList<HistoryEntry> seed;
+    seed.append(HistoryEntry(
+        QStringLiteral("https://old.example/"),
+        now.addSecs(-7200), QStringLiteral("Old")));
+    seed.append(HistoryEntry(
+        QStringLiteral("https://new.example/"),
+        now, QStringLiteral("New")));
+    manager->setHistory(seed);
+    QCOMPARE(manager->history().size(), 2);
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extbd-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-bd\","
+                "\"version\":\"1.0\",\"permissions\":[\"browsingData\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0047"),
+        QStringLiteral("tst-bd"), dir);
+
+    // settings() answers Chrome's {options, dataToRemove,
+    // dataRemovalPermitted} — served types permitted, the other nine
+    // honestly not.
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("browsingData"), QStringLiteral("settings"),
+        QJsonObject());
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject settings =
+        reply.value(QLatin1String("result")).toObject();
+    const QJsonObject permitted = settings
+        .value(QLatin1String("dataRemovalPermitted")).toObject();
+    QCOMPARE(permitted.value(QLatin1String("history")).toBool(), true);
+    QCOMPARE(permitted.value(QLatin1String("cookies")).toBool(), true);
+    QCOMPARE(permitted.value(QLatin1String("downloads")).toBool(), true);
+    QCOMPARE(permitted.value(QLatin1String("cache")).toBool(), true);
+    QCOMPARE(permitted.value(QLatin1String("formData")).toBool(), true);
+    QCOMPARE(permitted.value(QLatin1String("passwords")).toBool(), false);
+    QCOMPARE(permitted.value(QLatin1String("localStorage")).toBool(), false);
+    QCOMPARE(settings.value(QLatin1String("options")).toObject()
+                 .value(QLatin1String("originTypes")).toObject()
+                 .value(QLatin1String("unprotectedWeb")).toBool(),
+             true);
+
+    // removeHistory with a 'since' stamp 60s back: the plan carries
+    // it as an exact secs:<n> window — the fresh row goes, the
+    // two-hour-old one survives, and the widening past the window on
+    // the unranged companion store is reported under 'degraded'.
+    const double sinceMs =
+        double(now.toMSecsSinceEpoch() - 60 * 1000);
+    reply = backend.invoke(
+        QStringLiteral("browsingData"), QStringLiteral("removeHistory"),
+        QJsonObject{{QStringLiteral("options"),
+                     QJsonObject{{QStringLiteral("since"), sinceMs}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject result =
+        reply.value(QLatin1String("result")).toObject();
+    QVERIFY(result.value(QLatin1String("removed")).toArray()
+                .contains(QStringLiteral("history")));
+    QVERIFY(result.value(QLatin1String("degraded")).toArray()
+                .contains(QStringLiteral("history")));
+    QVERIFY(manager->historyContains(
+                QStringLiteral("https://old.example/")));
+    QVERIFY(!manager->historyContains(
+                QStringLiteral("https://new.example/")));
+
+    // remove() with a mixed DataTypeSet: the served member executes,
+    // the unserved one reports inside the removal set — not skipped.
+    manager->setHistory(seed);
+    reply = backend.invoke(
+        QStringLiteral("browsingData"), QStringLiteral("remove"),
+        QJsonObject{{QStringLiteral("options"), QJsonObject()},
+                    {QStringLiteral("dataToRemove"),
+                     QJsonObject{{QStringLiteral("history"), true},
+                                 {QStringLiteral("passwords"), true}}}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject mixed =
+        reply.value(QLatin1String("result")).toObject();
+    QVERIFY(mixed.value(QLatin1String("removed")).toArray()
+                .contains(QStringLiteral("history")));
+    QVERIFY(mixed.value(QLatin1String("unsupported")).toArray()
+                .contains(QStringLiteral("passwords")));
+    QVERIFY(manager->history().isEmpty());
+
+    // A call whose WHOLE requested set is unservable answers the
+    // typed verdict — nothing was cleared.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("remove"),
+                 QJsonObject{{QStringLiteral("dataToRemove"),
+                              QJsonObject{
+                                  {QStringLiteral("passwords"), true},
+                                  {QStringLiteral("localStorage"), true}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // A dedicated removeX member on an unserved store answers the
+    // same typed verdict.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("removePasswords"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // Per-origin scoping has no whole-store equivalent — refused,
+    // not widened.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("removeHistory"),
+                 QJsonObject{{QStringLiteral("options"),
+                              QJsonObject{
+                                  {QStringLiteral("origins"),
+                                   QJsonArray{
+                                       QStringLiteral("https://a.example")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // Scoping the regular web out leaves nothing we serve.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("removeHistory"),
+                 QJsonObject{{QStringLiteral("options"),
+                              QJsonObject{
+                                  {QStringLiteral("originTypes"),
+                                   QJsonObject{
+                                       {QStringLiteral("unprotectedWeb"),
+                                        false}}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // Missing/mistyped args are the argument verdicts.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("remove"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("removeHistory"),
+                 QJsonObject{{QStringLiteral("options"),
+                              QJsonObject{
+                                  {QStringLiteral("since"),
+                                   QStringLiteral("abc")}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // A mistyped bridge call is the typed unreachable-member verdict.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("browsingData"),
+                 QStringLiteral("purge"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // The manifest gate is per-context: a sibling backend without
+    // 'browsingData' hears no-permission on every member.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extbdb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-bd-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0048"),
+        QStringLiteral("tst-bd-b"), dirB);
+    for (const QString m : {QStringLiteral("settings"),
+                            QStringLiteral("remove"),
+                            QStringLiteral("removeHistory"),
+                            QStringLiteral("removeCookies")}) {
+        QCOMPARE(backendB.invoke(QStringLiteral("browsingData"), m,
+                                 QJsonObject())
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+    }
+
+    QDir(dirB).removeRecursively();
+}
+
+// MD29 — chrome.dns over QHostInfo: resolve() is the only member,
+// 'dns' gates the namespace like Chrome's declared grant, and the
+// lookup is deferred — the invoke answers a ticket and the verdict
+// lands on the '__arktos.dnsResolved' push as {addresses:[...]} or
+// a typed resolve-failed.
+void tst_ExtensionManager::extensionDns()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extdns-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-dns\","
+                "\"version\":\"1.0\",\"permissions\":[\"dns\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0049"),
+        QStringLiteral("tst-dns"), dir);
+    QSignalSpy pushSpy(&backend, &ExtensionShimBackend::pushEvent);
+    auto dnsPushes = [&pushSpy]() {
+        QList<QJsonObject> out;
+        for (const QVariantList &args : pushSpy) {
+            if (args.size() >= 2
+                    && args.at(0).toString()
+                           == QLatin1String("__arktos.dnsResolved"))
+                out.append(args.at(1).toJsonObject());
+        }
+        return out;
+    };
+
+    // Argument verdicts before any ticket is minted.
+    QCOMPARE(backend.invoke(QStringLiteral("dns"),
+                            QStringLiteral("resolve"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("dns"), QStringLiteral("resolve"),
+                 QJsonObject{{QStringLiteral("hostname"), 42.0}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("dns"), QStringLiteral("resolve"),
+                 QJsonObject{{QStringLiteral("hostname"),
+                              QStringLiteral("")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("dns"), QStringLiteral("resolve"),
+                 QJsonObject{{QStringLiteral("hostname"),
+                              QString(254, QLatin1Char('a'))}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // resolve is the only published member — anything else is the
+    // typed unreachable-member verdict.
+    QCOMPARE(backend.invoke(QStringLiteral("dns"),
+                            QStringLiteral("flush"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // The happy path: 'localhost' resolves off /etc/hosts — no
+    // network needed — and the ticket lands a non-empty addresses
+    // list carrying a loopback address.
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("dns"), QStringLiteral("resolve"),
+        QJsonObject{{QStringLiteral("hostname"),
+                     QStringLiteral("localhost")}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const int ticket = reply.value(QLatin1String("result")).toObject()
+        .value(QLatin1String("ticket")).toInt();
+    QVERIFY(ticket > 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!dnsPushes().isEmpty(), 30000);
+    {
+        const QJsonObject body = dnsPushes().constLast();
+        QCOMPARE(body.value(QLatin1String("ticket")).toInt(), ticket);
+        QVERIFY(!body.contains(QLatin1String("error")));
+        const QJsonArray addresses =
+            body.value(QLatin1String("addresses")).toArray();
+        QVERIFY(!addresses.isEmpty());
+        bool loopback = false;
+        for (const QJsonValue &v : addresses) {
+            const QHostAddress address(v.toString());
+            loopback = loopback || address.isLoopback();
+        }
+        QVERIFY(loopback);
+    }
+
+    // The failure path: a name getaddrinfo cannot accept produces a
+    // typed resolve-failed on the same push channel — never a hang.
+    reply = backend.invoke(
+        QStringLiteral("dns"), QStringLiteral("resolve"),
+        QJsonObject{{QStringLiteral("hostname"),
+                     QStringLiteral("not a host")}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const int badTicket = reply.value(QLatin1String("result"))
+        .toObject().value(QLatin1String("ticket")).toInt();
+    QVERIFY(badTicket > 0);
+    QVERIFY(badTicket != ticket);
+    QTRY_VERIFY_WITH_TIMEOUT(dnsPushes().size() >= 2, 30000);
+    {
+        const QJsonObject body = dnsPushes().constLast();
+        QCOMPARE(body.value(QLatin1String("ticket")).toInt(),
+                 badTicket);
+        QCOMPARE(body.value(QLatin1String("error")).toString(),
+                 QStringLiteral("resolve-failed"));
+    }
+
+    // The manifest gate is per-context: a sibling backend without
+    // 'dns' hears no-permission.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extdnsb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-dns-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0050"),
+        QStringLiteral("tst-dns-b"), dirB);
+    QCOMPARE(backendB.invoke(
+                 QStringLiteral("dns"), QStringLiteral("resolve"),
+                 QJsonObject{{QStringLiteral("hostname"),
+                              QStringLiteral("localhost")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    QDir(dirB).removeRecursively();
+    QDir(dir).removeRecursively();
+}
+
+// MD30 — chrome.system over measured machine facts: each
+// sub-namespace gates on its own 'system.<sub>' declared grant
+// (checked BEFORE the surface so a declared-but-unserved sub hears
+// 'unsupported', not 'no-permission'); memory/cpu/display/storage
+// getInfo answer real values plus storage.getAvailableCapacity.
+void tst_ExtensionManager::extensionSystem()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extsys-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-sys\","
+                "\"version\":\"1.0\",\"permissions\":[\"system.memory\","
+                "\"system.cpu\",\"system.display\",\"system.storage\","
+                "\"system.network\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0051"),
+        QStringLiteral("tst-sys"), dir);
+    const auto invoke = [&backend](const QString &method,
+                                   const QJsonObject &args
+                                       = QJsonObject()) {
+        return backend.invoke(QStringLiteral("system"), method, args);
+    };
+
+    // --- memory.getInfo: a measured capacity ----------------------
+    QJsonObject reply = invoke(QStringLiteral("memory.getInfo"));
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject memory =
+        reply.value(QLatin1String("result")).toObject();
+    QVERIFY(memory.value(QLatin1String("capacity")).toDouble() > 0);
+    // MemAvailable exists on every Linux — where it was measured it
+    // can never exceed the total.
+    if (memory.contains(QLatin1String("availableCapacity"))) {
+        QVERIFY(memory.value(QLatin1String("availableCapacity"))
+                    .toDouble() >= 0);
+        QVERIFY(memory.value(QLatin1String("availableCapacity"))
+                    .toDouble()
+                <= memory.value(QLatin1String("capacity")).toDouble());
+    }
+
+    // --- cpu.getInfo: mapped arch + real per-core rows ------------
+    reply = invoke(QStringLiteral("cpu.getInfo"));
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject cpu =
+        reply.value(QLatin1String("result")).toObject();
+    QVERIFY(!cpu.value(QLatin1String("archName")).toString()
+                 .isEmpty());
+    QVERIFY(cpu.value(QLatin1String("numOfProcessors")).toInt() >= 1);
+#if defined(Q_OS_LINUX)
+    // /proc/stat is the per-core source — cumulative seconds per
+    // usage field, one row per core.
+    const QJsonArray processors =
+        cpu.value(QLatin1String("processors")).toArray();
+    QVERIFY(processors.size() >= 1);
+    for (const QJsonValue &v : processors) {
+        const QJsonObject usage =
+            v.toObject().value(QLatin1String("usage")).toObject();
+        QVERIFY(usage.value(QLatin1String("user")).toDouble() >= 0);
+        QVERIFY(usage.value(QLatin1String("kernel")).toDouble() >= 0);
+        QVERIFY(usage.value(QLatin1String("idle")).toDouble() >= 0);
+        QVERIFY(usage.value(QLatin1String("total")).toDouble() >= 0);
+    }
+#endif
+
+    // --- display.getInfo: the live screen list --------------------
+    reply = invoke(QStringLiteral("display.getInfo"));
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonArray displays =
+        reply.value(QLatin1String("result")).toArray();
+    // The offscreen platform still reports its one screen.
+    QVERIFY(!displays.isEmpty());
+    bool sawPrimary = false;
+    for (const QJsonValue &v : displays) {
+        const QJsonObject display = v.toObject();
+        QVERIFY(!display.value(QLatin1String("id")).toString()
+                     .isEmpty());
+        QVERIFY(display.value(QLatin1String("isEnabled")).toBool());
+        const QJsonObject bounds =
+            display.value(QLatin1String("bounds")).toObject();
+        QVERIFY(bounds.value(QLatin1String("width")).toInt() > 0);
+        QVERIFY(bounds.value(QLatin1String("height")).toInt() > 0);
+        QVERIFY(display.contains(QLatin1String("workArea")));
+        const int rotation =
+            display.value(QLatin1String("rotation")).toInt();
+        QVERIFY(rotation == 0 || rotation == 90 || rotation == 180
+                || rotation == 270);
+        sawPrimary = sawPrimary
+            || display.value(QLatin1String("isPrimary")).toBool();
+    }
+    QVERIFY(sawPrimary);
+    // A flags object rides through; a mistyped one is the argument
+    // verdict.
+    QVERIFY(invoke(QStringLiteral("display.getInfo"),
+                   QJsonObject{{QStringLiteral("flags"), QJsonObject()}})
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(invoke(QStringLiteral("display.getInfo"),
+                    QJsonObject{{QStringLiteral("flags"), 7}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // --- storage.getInfo + getAvailableCapacity -------------------
+    reply = invoke(QStringLiteral("storage.getInfo"));
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonArray units =
+        reply.value(QLatin1String("result")).toArray();
+    QVERIFY(!units.isEmpty());
+    const QJsonObject unit = units.at(0).toObject();
+    const QString unitId =
+        unit.value(QLatin1String("id")).toString();
+    QVERIFY(!unitId.isEmpty());
+    QCOMPARE(unit.value(QLatin1String("type")).toString(),
+             QStringLiteral("fixed"));
+    QVERIFY(unit.value(QLatin1String("capacity")).toDouble() > 0);
+
+    reply = invoke(QStringLiteral("storage.getAvailableCapacity"),
+                   QJsonObject{{QStringLiteral("id"), unitId}});
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    const QJsonObject available =
+        reply.value(QLatin1String("result")).toObject();
+    QCOMPARE(available.value(QLatin1String("id")).toString(), unitId);
+    QVERIFY(available.value(QLatin1String("availableCapacity"))
+                .toDouble() >= 0);
+    QVERIFY(available.value(QLatin1String("availableCapacity"))
+                .toDouble()
+            <= unit.value(QLatin1String("capacity")).toDouble());
+    // An unknown unit id is not-found; a missing one is the
+    // argument verdict.
+    QCOMPARE(invoke(QStringLiteral("storage.getAvailableCapacity"),
+                    QJsonObject{{QStringLiteral("id"),
+                                 QStringLiteral("/dev/nope0")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(invoke(QStringLiteral("storage.getAvailableCapacity"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // --- typed verdicts --------------------------------------------
+    // ChromeOS mutators + ejectDevice inside a served sub.
+    QCOMPARE(invoke(QStringLiteral("display.setMirrorMode"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("storage.ejectDevice"),
+                    QJsonObject{{QStringLiteral("id"), unitId}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("cpu.freeze"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // Declared 'system.network' — the grant was honored, the
+    // surface is missing: 'unsupported', not 'no-permission'.
+    QCOMPARE(invoke(QStringLiteral("network.getNetworkInterfaces"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // An undeclared sub stays no-permission.
+    QCOMPARE(invoke(QStringLiteral("powerSource.getInfo"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    // A flat member name is the unreachable-member verdict.
+    QCOMPARE(invoke(QStringLiteral("getInfo"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // The manifest gate is per-context: a sibling backend without
+    // any 'system.*' grant hears no-permission on every sub.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extsysb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-sys-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0052"),
+        QStringLiteral("tst-sys-b"), dirB);
+    for (const QString m : {QStringLiteral("memory.getInfo"),
+                            QStringLiteral("cpu.getInfo"),
+                            QStringLiteral("display.getInfo"),
+                            QStringLiteral("storage.getInfo"),
+                            QStringLiteral("network.getNetworkInterfaces")}) {
+        QCOMPARE(backendB.invoke(QStringLiteral("system"), m,
+                                 QJsonObject())
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("no-permission"));
+    }
+
+    QDir(dirB).removeRecursively();
+    QDir(dir).removeRecursively();
+}
+
+// MD31 — chrome.privacy over the browser's real settings.  The eight
+// mapped ChromeSetting members roundtrip the persona's persisted
+// toggles with live re-application; control layering, clear-restore,
+// scope refusals and the unserved-vocabulary verdicts are asserted
+// the same way.
+void tst_ExtensionManager::extensionPrivacy()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extpriv-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-priv\","
+                "\"version\":\"1.0\",\"permissions\":[\"privacy\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0053"),
+        QStringLiteral("tst-priv"), dir);
+    const auto invoke = [&backend](const QString &method,
+                                   const QJsonObject &args
+                                       = QJsonObject()) {
+        return backend.invoke(QStringLiteral("privacy"), method, args);
+    };
+    QSignalSpy pushSpy(&backend, &ExtensionShimBackend::pushEvent);
+
+    const QString profileId = BrowserPaths::activeProfileId();
+
+    // The leg writes real persona state — snapshot every key it can
+    // touch so the restore below leaves the profile as found.
+    ProfileSettings store(profileId);
+    const bool origBlock3p = store.value(
+        QLatin1String("cookies/blockThirdPartyCookies"), true).toBool();
+    const bool origBlockPings = store.value(
+        QLatin1String("privacy/blockPings"), true).toBool();
+    const QVariant origReferer =
+        store.value(QLatin1String("privacy/refererPolicy"));
+    const bool origTrimReferer = store.value(
+        QLatin1String("privacy/trimReferer"), true).toBool();
+    const bool origGpc = store.value(
+        QLatin1String("privacy/gpcSignal"), true).toBool();
+    const bool origBlockPrefetch = store.value(
+        QLatin1String("privacy/blockPrefetch"), true).toBool();
+    const bool origDnsPrefetch = store.value(
+        QLatin1String("privacy/dnsPrefetch"), false).toBool();
+    const bool origWebrtc = store.value(
+        QLatin1String("privacy/webrtcIpProtection"), true).toBool();
+    const bool origPasswordForms = store.value(
+        QLatin1String("autofill/passwordForms"), true).toBool();
+    const bool origSuggest = ToolbarSearch::openSearchManager()
+        ->suggestionsInAddressField();
+
+    const auto get = [&invoke](const QString &path) {
+        const QJsonObject reply = invoke(path + QLatin1String(".get"));
+        return reply.value(QLatin1String("result")).toObject();
+    };
+    const auto setBool = [&invoke](const QString &path, bool value) {
+        return invoke(path + QLatin1String(".set"),
+                      QJsonObject{{QStringLiteral("details"),
+                                   QJsonObject{{QStringLiteral("value"),
+                                                value}}}});
+    };
+
+    // --- websites.thirdPartyCookiesAllowed — get/set/clear over the
+    // real cookie policy -------------------------------------------
+    const bool orig3pAllowed = !origBlock3p;
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("value")).toBool(),
+             orig3pAllowed);
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controllable_by_this_extension"));
+
+    QVERIFY2(setBool(QStringLiteral(
+                         "websites.thirdPartyCookiesAllowed"), true)
+                 .value(QLatin1String("ok")).toBool(),
+             qPrintable(setBool(
+                 QStringLiteral("websites.thirdPartyCookiesAllowed"),
+                 true).value(QLatin1String("error")).toString()));
+    // The write landed the persisted key AND the live jar policy —
+    // Chrome's set() semantics are real, not recorded-only.
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("cookies/blockThirdPartyCookies"),
+                 true).toBool(), false);
+    QCOMPARE(CookieJar::instanceFor(profileId)
+                 ->blockThirdPartyCookies(), false);
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("value")).toBool(), true);
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_this_extension"));
+    // The API-driven mutation fanned the ChromeSetting's onChange
+    // out — the bare backend hears it on pushEvent with the actor's
+    // own control level.
+    bool saw3pChange = false;
+    for (const QList<QVariant> &call : pushSpy) {
+        if (call.value(0).toString() != QLatin1String(
+                "privacy.websites.thirdPartyCookiesAllowed.onChange"))
+            continue;
+        const QJsonObject details = call.value(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray().first()
+                .toObject();
+        QCOMPARE(details.value(QLatin1String("value")).toBool(), true);
+        QCOMPARE(details.value(QLatin1String("levelOfControl"))
+                     .toString(),
+                 QStringLiteral("controlled_by_this_extension"));
+        saw3pChange = true;
+    }
+    QVERIFY(saw3pChange);
+
+    // --- websites.hyperlinkAuditingEnabled <- blockPings ----------
+    QCOMPARE(get(QStringLiteral("websites.hyperlinkAuditingEnabled"))
+                 .value(QLatin1String("value")).toBool(),
+             !origBlockPings);
+    QVERIFY(setBool(QStringLiteral(
+                        "websites.hyperlinkAuditingEnabled"), true)
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/blockPings"), true).toBool(),
+             false);
+    QCOMPARE(get(QStringLiteral("websites.hyperlinkAuditingEnabled"))
+                 .value(QLatin1String("value")).toBool(), true);
+
+    // --- websites.referrersEnabled <- privacy/refererPolicy -------
+    QVERIFY(setBool(QStringLiteral("websites.referrersEnabled"), false)
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/refererPolicy")).toInt(), 3);
+    QCOMPARE(get(QStringLiteral("websites.referrersEnabled"))
+                 .value(QLatin1String("value")).toBool(), false);
+    // The controller's clear() restores the pre-extension value —
+    // Chrome's restore-default.
+    QVERIFY(invoke(QStringLiteral("websites.referrersEnabled.clear"))
+                .value(QLatin1String("ok")).toBool());
+    const int restoredReferer = origReferer.isValid()
+        ? origReferer.toInt() : (origTrimReferer ? 1 : 0);
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/refererPolicy")).toInt(),
+             restoredReferer);
+    QCOMPARE(get(QStringLiteral("websites.referrersEnabled"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controllable_by_this_extension"));
+
+    // --- websites.doNotTrackEnabled <- privacy/gpcSignal ----------
+    QCOMPARE(get(QStringLiteral("websites.doNotTrackEnabled"))
+                 .value(QLatin1String("value")).toBool(), origGpc);
+    QVERIFY(setBool(QStringLiteral("websites.doNotTrackEnabled"),
+                    false).value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/gpcSignal"), true).toBool(),
+             false);
+
+    // --- network.networkPredictionEnabled <- blockPrefetch --------
+    QCOMPARE(get(QStringLiteral("network.networkPredictionEnabled"))
+                 .value(QLatin1String("value")).toBool(),
+             !origBlockPrefetch);
+    QVERIFY(setBool(QStringLiteral("network.networkPredictionEnabled"),
+                    true).value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/blockPrefetch"), true).toBool(),
+             false);
+    // Prediction-off also drops the opt-in DNS prefetch — Chrome's
+    // semantic folds every speculative channel.
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/dnsPrefetch"), true);
+    QVERIFY(setBool(QStringLiteral("network.networkPredictionEnabled"),
+                    false).value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/blockPrefetch"), true).toBool(),
+             true);
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/dnsPrefetch"), true).toBool(),
+             false);
+
+    // --- network.webRTCIPHandlingPolicy <- webrtcIpProtection -----
+    QCOMPARE(get(QStringLiteral("network.webRTCIPHandlingPolicy"))
+                 .value(QLatin1String("value")).toString(),
+             origWebrtc ? QStringLiteral("disable_non_proxied_udp")
+                        : QStringLiteral("default"));
+    QVERIFY(invoke(QStringLiteral("network.webRTCIPHandlingPolicy.set"),
+                   QJsonObject{{QStringLiteral("details"),
+                                QJsonObject{{QStringLiteral("value"),
+                                             QStringLiteral("default")}}}})
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("privacy/webrtcIpProtection"),
+                 true).toBool(), false);
+    QCOMPARE(get(QStringLiteral("network.webRTCIPHandlingPolicy"))
+                 .value(QLatin1String("value")).toString(),
+             QStringLiteral("default"));
+    // Chrome's intermediate policies can't be expressed by the
+    // bool+process-flag pair — typed unservable, never clamped.
+    QCOMPARE(invoke(QStringLiteral("network.webRTCIPHandlingPolicy.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("value"),
+                                 QStringLiteral(
+                                     "default_public_interface_only")}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("network.webRTCIPHandlingPolicy.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("value"),
+                                              7}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // --- services.passwordSavingEnabled <- autofill/passwordForms -
+    QCOMPARE(get(QStringLiteral("services.passwordSavingEnabled"))
+                 .value(QLatin1String("value")).toBool(),
+             origPasswordForms);
+    QVERIFY(setBool(QStringLiteral("services.passwordSavingEnabled"),
+                    false).value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("autofill/passwordForms"),
+                 true).toBool(), false);
+
+    // --- services.searchSuggestEnabled <- openSearch suggest flag -
+    QCOMPARE(get(QStringLiteral("services.searchSuggestEnabled"))
+                 .value(QLatin1String("value")).toBool(), origSuggest);
+    QVERIFY(setBool(QStringLiteral("services.searchSuggestEnabled"),
+                    false).value(QLatin1String("ok")).toBool());
+    // The manager write flips the toolbar's live state, not just
+    // the persisted row.
+    QCOMPARE(ToolbarSearch::openSearchManager()
+                 ->suggestionsInAddressField(), false);
+
+    // --- control layering ------------------------------------------
+    // A second 'privacy'-declaring extension sees the member the
+    // first controls as controlled_by_other_extensions; its clear()
+    // is Chrome's silent no-op; its own set() takes the claim (last
+    // writer wins).
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extprivb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-priv-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"privacy\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0054"),
+        QStringLiteral("tst-priv-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("privacy"),
+                 QStringLiteral(
+                     "websites.thirdPartyCookiesAllowed.get"),
+                 QJsonObject())
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_other_extensions"));
+    QVERIFY(backendB.invoke(QStringLiteral("privacy"),
+                QStringLiteral("websites.thirdPartyCookiesAllowed.clear"),
+                QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    // The no-op clear changed nothing — backend still controls.
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_this_extension"));
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("value")).toBool(), true);
+    QVERIFY(backendB.invoke(QStringLiteral("privacy"),
+                QStringLiteral("websites.thirdPartyCookiesAllowed.set"),
+                QJsonObject{{QStringLiteral("details"),
+                             QJsonObject{{QStringLiteral("value"),
+                                          false}}}})
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(ProfileSettings(profileId).value(
+                 QLatin1String("cookies/blockThirdPartyCookies"),
+                 true).toBool(), true);
+    QCOMPARE(backendB.invoke(QStringLiteral("privacy"),
+                 QStringLiteral(
+                     "websites.thirdPartyCookiesAllowed.get"),
+                 QJsonObject())
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_this_extension"));
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_other_extensions"));
+    // The new controller's clear restores the pre-extension value —
+    // the state before EITHER extension's first set.
+    QVERIFY(backendB.invoke(QStringLiteral("privacy"),
+                QStringLiteral("websites.thirdPartyCookiesAllowed.clear"),
+                QJsonObject())
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(get(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("value")).toBool(), orig3pAllowed);
+
+    // --- typed verdicts ---------------------------------------------
+    // Published-but-unserved members.
+    QCOMPARE(invoke(QStringLiteral("services.translationEnabled.get"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("websites.topicsEnabled.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("value"),
+                                              true}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("network.webRTCUDPPortRange.get"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // Unknown member / unknown op / malformed names.
+    QCOMPARE(invoke(QStringLiteral("websites.bogusMember.get"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+    QCOMPARE(invoke(QStringLiteral(
+                        "websites.thirdPartyCookiesAllowed.frobnicate"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+    QCOMPARE(invoke(QStringLiteral("websites.thirdPartyCookiesAllowed"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+    QCOMPARE(invoke(QStringLiteral("get"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+    // Argument verdicts: mistyped value, missing value, mistyped
+    // details/incognito, and the incognito-scope refusals.
+    QCOMPARE(invoke(QStringLiteral("websites.thirdPartyCookiesAllowed.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("value"),
+                                              QStringLiteral("yes")}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("websites.thirdPartyCookiesAllowed.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject()}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("websites.thirdPartyCookiesAllowed.get"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("incognito"),
+                                              1}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("websites.thirdPartyCookiesAllowed.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("value"), true},
+                                             {QStringLiteral("scope"),
+                                 QStringLiteral(
+                                     "incognito_session_only")}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("websites.thirdPartyCookiesAllowed.set"),
+                    QJsonObject{{QStringLiteral("details"),
+                                 QJsonObject{{QStringLiteral("value"), true},
+                                             {QStringLiteral("scope"),
+                                              QStringLiteral("bogus")}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+
+    // The manifest gate is per-context: a sibling backend without
+    // the 'privacy' grant hears no-permission on every op.
+    const QString dirC = QDir::temp().filePath(
+        QStringLiteral("tst-extprivc-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirC));
+    {
+        QFile f(dirC + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-priv-c\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendC(
+        QStringLiteral("tstmockextensionid0055"),
+        QStringLiteral("tst-priv-c"), dirC);
+    QCOMPARE(backendC.invoke(QStringLiteral("privacy"),
+                 QStringLiteral("websites.thirdPartyCookiesAllowed.get"),
+                 QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendC.invoke(QStringLiteral("privacy"),
+                 QStringLiteral("services.passwordSavingEnabled.set"),
+                 QJsonObject{{QStringLiteral("details"),
+                              QJsonObject{{QStringLiteral("value"),
+                                           true}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    // --- restore the persona -----------------------------------------
+    ProfileSettings(profileId).setValue(
+        QLatin1String("cookies/blockThirdPartyCookies"), origBlock3p);
+    CookieJar::instanceFor(profileId)->loadSettings();
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/blockPings"), origBlockPings);
+    if (origReferer.isValid())
+        ProfileSettings(profileId).setValue(
+            QLatin1String("privacy/refererPolicy"), origReferer);
+    else
+        ProfileSettings(profileId).remove(
+            QLatin1String("privacy/refererPolicy"));
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/trimReferer"), origTrimReferer);
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/gpcSignal"), origGpc);
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/blockPrefetch"), origBlockPrefetch);
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/dnsPrefetch"), origDnsPrefetch);
+    ProfileSettings(profileId).setValue(
+        QLatin1String("privacy/webrtcIpProtection"), origWebrtc);
+    ProfileSettings(profileId).setValue(
+        QLatin1String("autofill/passwordForms"), origPasswordForms);
+    ToolbarSearch::openSearchManager()
+        ->setSuggestionsInAddressField(origSuggest);
+
+    QDir(dirC).removeRecursively();
+    QDir(dirB).removeRecursively();
+    QDir(dir).removeRecursively();
+}
+
+// MD18 — chrome.runtime lifecycle ops.  reload rides the manager's
+// unload+load of the calling extension; requestUpdateCheck rides
+// checkForUpdates/updateResultFor with the verdict pushed back as
+// '__arktos.updateCheck' in Chrome's {status,version} vocabulary;
+// setUninstallURL persists the page removeExtension() opens once the
+// removal actually lands.
+void tst_ExtensionManager::extensionRuntimeOps()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extrtops-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-rtops\","
+                "\"version\":\"1.0\"}");
+        f.close();
+    }
+    ExtensionManager *manager = ExtensionManager::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-rtops")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+
+    ExtensionShimBackend backend(id, QStringLiteral("tst-rtops"), dir);
+    QSignalSpy pushSpy(&backend, &ExtensionShimBackend::pushEvent);
+
+    // --- setUninstallURL: validation + the persisted roundtrip ----
+    const QUrl uninstallPage(
+        QStringLiteral("https://example.com/gone?id=1"));
+    QJsonObject reply = backend.invoke(
+        QStringLiteral("runtime"), QStringLiteral("setUninstallURL"),
+        QJsonObject{{QStringLiteral("url"), uninstallPage.toString()}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(manager->uninstallUrlFor(id), uninstallPage);
+    // Chrome's contract is http/https only — a script scheme is a
+    // typed refusal and the recorded url survives it.
+    QCOMPARE(backend.invoke(
+                 QStringLiteral("runtime"),
+                 QStringLiteral("setUninstallURL"),
+                 QJsonObject{{QStringLiteral("url"),
+                              QStringLiteral("javascript:alert(1)")}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(manager->uninstallUrlFor(id), uninstallPage);
+    // An empty url clears the record like Chrome.
+    QVERIFY(backend.invoke(
+                QStringLiteral("runtime"),
+                QStringLiteral("setUninstallURL"),
+                QJsonObject{{QStringLiteral("url"), QString()}})
+                .value(QLatin1String("ok")).toBool());
+    QVERIFY(manager->uninstallUrlFor(id).isEmpty());
+    // Re-arm for the removal leg below.
+    QVERIFY(backend.invoke(
+                QStringLiteral("runtime"),
+                QStringLiteral("setUninstallURL"),
+                QJsonObject{{QStringLiteral("url"),
+                             uninstallPage.toString()}})
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(manager->uninstallUrlFor(id), uninstallPage);
+
+    // --- requestUpdateCheck: Chrome's status vocabulary -----------
+    reply = backend.invoke(
+        QStringLiteral("runtime"), QStringLiteral("requestUpdateCheck"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    // The verdict arrives as a push — the check runs real fetches
+    // the invoke reply cannot wait out.  The fixture declares no
+    // update_url, so the honest answer is Chrome's "no_update".
+    QString updateStatus;
+    QElapsedTimer updateTimer;
+    updateTimer.start();
+    while (updateStatus.isEmpty() && updateTimer.elapsed() < 30000) {
+        QTest::qWait(50);
+        for (const QList<QVariant> &args : pushSpy) {
+            if (args.at(0).toString()
+                    != QLatin1String("__arktos.updateCheck"))
+                continue;
+            updateStatus = args.at(1).toJsonObject()
+                .value(QLatin1String("status")).toString();
+        }
+    }
+    QVERIFY((QStringList{QStringLiteral("throttled"),
+                         QStringLiteral("no_update"),
+                         QStringLiteral("update_available")}
+                 .contains(updateStatus)));
+    QCOMPARE(updateStatus, QStringLiteral("no_update"));
+
+    // --- reload: unload+load brings the same extension back -------
+    auto unloadedCount = std::make_shared<int>(0);
+    auto reloadedCount = std::make_shared<int>(0);
+    QObject::connect(manager, &ExtensionManager::extensionUnloaded,
+                     this, [id, unloadedCount](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.id == id)
+            ++*unloadedCount;
+    });
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [id, reloadedCount](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.id == id)
+            ++*reloadedCount;
+    });
+    reply = backend.invoke(
+        QStringLiteral("runtime"), QStringLiteral("reload"),
+        QJsonObject());
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(*unloadedCount >= 1, 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(*reloadedCount >= 1, 30000);
+    // The reload's transient unload must NOT open the recorded
+    // uninstall page — only a real removal does.
+    for (BrowserMainWindow *w
+         : BrowserApplication::instance()->mainWindows()) {
+        TabWidget *tw = w->tabWidget();
+        for (int i = 0; i < tw->count(); ++i)
+            QVERIFY2(tw->webView(i)->url() != uninstallPage,
+                     "reload-unload opened the uninstall page");
+    }
+    // A bare backend the manager never tracked gets not-found.
+    ExtensionShimBackend bare(
+        QStringLiteral("tstmockextensionid0020"),
+        QStringLiteral("tst-rtops-bare"), dir);
+    QCOMPARE(bare.invoke(QStringLiteral("runtime"),
+                         QStringLiteral("reload"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+
+    // --- removal opens the recorded uninstall page -----------------
+    // The page lands in a new tab on whatever window the app fronts —
+    // enumerate rather than assuming which registered window got it.
+    const auto pageOpened = [uninstallPage]() {
+        for (BrowserMainWindow *w
+             : BrowserApplication::instance()->mainWindows()) {
+            TabWidget *tw = w->tabWidget();
+            for (int i = 0; i < tw->count(); ++i) {
+                if (tw->webView(i)->url() == uninstallPage)
+                    return true;
+            }
+        }
+        return false;
+    };
+    QVERIFY(!pageOpened());
+    manager->removeExtension(id);
+    QTRY_VERIFY_WITH_TIMEOUT(pageOpened(), 20000);
+    // Consumed — the record dies with the extension.
+    QVERIFY(manager->uninstallUrlFor(id).isEmpty());
+
+    QDir(dir).removeRecursively();
+}
+
 // ER07 — chrome.scripting.executeScript.  A fixture extension
 // declaring 'scripting' + <all_urls> drives the real call from its
 // hosted background: func/args/files forms land in the shared agent
@@ -8119,6 +13592,978 @@ void tst_ExtensionManager::extensionContentScriptRegistration()
     manager->removeExtension(idB);
     QDir(dir).removeRecursively();
     QDir(dirB).removeRecursively();
+}
+
+// MD32 — chrome.userScripts over the ER09 registry: register /
+// unregister / getScripts / update plus the world-config members.
+// A fixture declaring 'userScripts' + loopback host coverage drives
+// the real calls from its hosted background: a registered spec
+// fires on the next matching navigation inside the shared agent
+// world (never the page's own world), update swaps its source,
+// unregister stops it, a disable/enable cycle re-arms the (always
+// persisted) spec, and configureWorld's record echoes back through
+// getWorldConfigurations.  The gate legs prove the 'userScripts'
+// permission gate, per-match host-coverage implication, and the
+// typed refusals (invalid-argument for missing ids/bare-string js,
+// bad-path/no-such-file, no-host-access, not-found, unsupported for
+// glob matchers) all BEFORE a byte is armed.
+void tst_ExtensionManager::extensionUserScripts()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extus-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-us\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\","
+                "\"userScripts\",\"scripting\"],\"host_permissions\":"
+                "[\"http://127.0.0.1/*\"],\"background\":"
+                "{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+        QFile a(dir + QLatin1String("/us_a.js"));
+        QVERIFY(a.open(QIODevice::WriteOnly));
+        a.write("window.__usA=(window.__usA||0)+1;\n");
+        a.close();
+        QFile b(dir + QLatin1String("/us_b.js"));
+        QVERIFY(b.open(QIODevice::WriteOnly));
+        b.write("window.__usB=(window.__usB||0)+1;\n");
+        b.close();
+    }
+    // The consent fixture: identical coverage, no 'userScripts'
+    // permission — every member must refuse.
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extus-b-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-us-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+                "\"host_permissions\":[\"http://127.0.0.1/*\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dirB + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+        QFile a(dirB + QLatin1String("/us_a.js"));
+        QVERIFY(a.open(QIODevice::WriteOnly));
+        a.write("window.__usA=(window.__usA||0)+1;\n");
+        a.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-us")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *host = runtime->host(id);
+    QVERIFY(host && host->bridge());
+    ChromeBridge *bridge = host->bridge();
+
+    auto loadedB = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loadedB](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-us-b")
+                && info.error.isEmpty())
+            *loadedB = info.id;
+    });
+    manager->grantConsent(dirB);
+    manager->loadExtension(dirB);
+    QTRY_VERIFY_WITH_TIMEOUT(!loadedB->isEmpty(), 30000);
+    const QString idB = *loadedB;
+    manager->setExtensionEnabled(idB, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(idB)
+            && runtime->host(idB)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    ExtensionBackgroundHost *hostB = runtime->host(idB);
+    QVERIFY(hostB && hostB->bridge());
+    ChromeBridge *bridgeB = hostB->bridge();
+
+    auto eval = [](QWebEnginePage *page, const QString &source,
+                   quint32 worldId = 0) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(
+            source, worldId,
+            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer t;
+        t.start();
+        while (!result->isValid() && t.elapsed() < 15000)
+            QTest::qWait(50);
+        return *result;
+    };
+    const quint32 agentWorld =
+        ExtensionBackgroundRuntime::AgentWorldId;
+
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    QObject::connect(&server, &QTcpServer::newConnection,
+                     this, [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead,
+                         socket, [socket]() {
+            socket->readAll();
+            const QByteArray body =
+                "<html><head><title>us-target</title></head>"
+                "<body>us</body></html>";
+            socket->write(
+                "HTTP/1.1 200\r\nContent-Type: text/html\r\n"
+                "Content-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    WebView *view = tw->webView(0);
+    QVERIFY(view && view->page());
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    auto navigate = [&](const QString &path) {
+        loadSpy.clear();
+        view->load(QUrl(base + path));
+        QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 30000);
+    };
+
+    // --- register + getScripts (the MV3 shapes) -------------------
+    eval(host->page(), QStringLiteral(
+        "self.__u1=undefined;"
+        "chrome.userScripts.register([{id:'us1',"
+        "matches:['http://127.0.0.1/*'],js:[{file:'us_a.js'}],"
+        "runAt:'document_start'}])"
+        ".then(function(){self.__u1='ok';},"
+        "function(e){self.__u1='err:'+String(e&&e.message||e);});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral("self.__u1")).toString()
+            == QLatin1String("ok"),
+        20000);
+    eval(host->page(), QStringLiteral(
+        "self.__u2=undefined;"
+        "chrome.userScripts.getScripts()"
+        ".then(function(l){self.__u2=JSON.stringify(l);},"
+        "function(e){self.__u2='err';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !eval(host->page(), QStringLiteral("self.__u2")).isNull(),
+        20000);
+    const QJsonArray listed = QJsonDocument::fromJson(
+        eval(host->page(), QStringLiteral("self.__u2"))
+            .toString().toUtf8()).array();
+    QCOMPARE(listed.size(), 1);
+    QCOMPARE(listed.at(0).toObject()
+                 .value(QLatin1String("id")).toString(),
+             QStringLiteral("us1"));
+    // The echo keeps the ExtensionFileSource object shape and the
+    // USER_SCRIPT world vocabulary.
+    QCOMPARE(listed.at(0).toObject()
+                 .value(QLatin1String("js")).toArray().at(0)
+                 .toObject().value(QLatin1String("file")).toString(),
+             QStringLiteral("us_a.js"));
+    QCOMPARE(listed.at(0).toObject()
+                 .value(QLatin1String("world")).toString(),
+             QStringLiteral("USER_SCRIPT"));
+
+    // The fronts do not see each other's registrations — a
+    // scripting-front spec never surfaces in userScripts.getScripts.
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("scripting"),
+                 QStringLiteral("registerContentScripts"),
+                 QJsonObject{{QStringLiteral("scripts"), QJsonArray{
+                     QJsonObject{{QStringLiteral("id"),
+                                  QStringLiteral("sreg")},
+                                 {QStringLiteral("matches"),
+                                  QJsonArray{QStringLiteral(
+                                      "http://127.0.0.1/*")}},
+                                 {QStringLiteral("js"),
+                                  QJsonArray{QStringLiteral(
+                                      "us_b.js")}}}}}})
+                 .value(QLatin1String("ok")).toBool(),
+             true);
+    eval(host->page(), QStringLiteral(
+        "self.__u3=undefined;"
+        "chrome.userScripts.getScripts()"
+        ".then(function(l){self.__u3=JSON.stringify("
+        "l.map(function(s){return s.id;}));},"
+        "function(e){self.__u3='err';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !eval(host->page(), QStringLiteral("self.__u3")).isNull(),
+        20000);
+    QCOMPARE(eval(host->page(), QStringLiteral("self.__u3"))
+                 .toString(),
+             QStringLiteral("[\"us1\"]"));
+    bridge->invoke(
+        QStringLiteral("scripting"),
+        QStringLiteral("unregisterContentScripts"),
+        QJsonObject{{QStringLiteral("filter"),
+                     QJsonObject{{QStringLiteral("ids"),
+                                  QJsonArray{QStringLiteral(
+                                      "sreg")}}}}});
+
+    // --- the registered spec fires in the agent realm -------------
+    navigate(QStringLiteral("/us?r1"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral("window.__usA"),
+             agentWorld).toInt() == 1,
+        15000);
+    QCOMPARE(eval(view->page(), QStringLiteral("window.__usA"))
+                 .toInt(), 0);
+
+    // --- update swaps the spec's source ---------------------------
+    eval(host->page(), QStringLiteral(
+        "self.__u4=undefined;"
+        "chrome.userScripts.update([{id:'us1',"
+        "js:[{code:'window.__usB=(window.__usB||0)+1;'}]}])"
+        ".then(function(){self.__u4='ok';},"
+        "function(e){self.__u4='err:'+String(e&&e.message||e);});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral("self.__u4")).toString()
+            == QLatin1String("ok"),
+        20000);
+    navigate(QStringLiteral("/us?u1"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral("window.__usB"),
+             agentWorld).toInt() == 1,
+        15000);
+
+    // --- world config: recorded, echoable, resettable -------------
+    eval(host->page(), QStringLiteral(
+        "self.__w1=undefined;"
+        "chrome.userScripts.configureWorld("
+        "{messaging:true,worldId:'w1'})"
+        ".then(function(){self.__w1='ok';},"
+        "function(e){self.__w1='err';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral("self.__w1")).toString()
+            == QLatin1String("ok"),
+        20000);
+    eval(host->page(), QStringLiteral(
+        "self.__w2=undefined;"
+        "chrome.userScripts.getWorldConfigurations()"
+        ".then(function(l){self.__w2=JSON.stringify(l);},"
+        "function(e){self.__w2='err';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !eval(host->page(), QStringLiteral("self.__w2")).isNull(),
+        20000);
+    const QJsonArray worlds = QJsonDocument::fromJson(
+        eval(host->page(), QStringLiteral("self.__w2"))
+            .toString().toUtf8()).array();
+    QCOMPARE(worlds.size(), 1);
+    QCOMPARE(worlds.at(0).toObject()
+                 .value(QLatin1String("worldId")).toString(),
+             QStringLiteral("w1"));
+    QCOMPARE(worlds.at(0).toObject()
+                 .value(QLatin1String("messaging")).toBool(),
+             true);
+    eval(host->page(), QStringLiteral(
+        "self.__w3=undefined;"
+        "chrome.userScripts.resetWorldConfiguration('w1')"
+        ".then(function(){return "
+        "chrome.userScripts.getWorldConfigurations();})"
+        ".then(function(l){self.__w3=JSON.stringify(l);},"
+        "function(e){self.__w3='err';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !eval(host->page(), QStringLiteral("self.__w3")).isNull(),
+        20000);
+    QCOMPARE(eval(host->page(), QStringLiteral("self.__w3"))
+                 .toString(),
+             QStringLiteral("[]"));
+
+    // --- persistence: registered user scripts always re-arm -------
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+    host = runtime->host(id);
+    bridge = host->bridge();
+    QVERIFY(runtime->registeredScriptSpecs(id)
+                .contains(QStringLiteral("us1")));
+    navigate(QStringLiteral("/us?p1"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(view->page(), QStringLiteral("window.__usB"),
+             agentWorld).toInt() == 1,
+        15000);
+
+    // --- unregister stops the next navigation ---------------------
+    eval(host->page(), QStringLiteral(
+        "self.__u5=undefined;"
+        "chrome.userScripts.unregister({ids:['us1']})"
+        ".then(function(){self.__u5='ok';},"
+        "function(e){self.__u5='err';});0"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(host->page(), QStringLiteral("self.__u5")).toString()
+            == QLatin1String("ok"),
+        20000);
+    navigate(QStringLiteral("/us?r2"));
+    QTest::qWait(1500);
+    QCOMPARE(eval(view->page(), QStringLiteral("window.__usB"),
+                  agentWorld).toInt(), 0);
+
+    // --- the typed gates, direct-driven ---------------------------
+    const auto usReg = [bridge](const QJsonObject &spec) {
+        return bridge->invoke(
+            QStringLiteral("userScripts"),
+            QStringLiteral("register"),
+            QJsonObject{{QStringLiteral("scripts"),
+                         QJsonArray{spec}}});
+    };
+    // A caller id is required on the MV3 surface.
+    QCOMPARE(usReg(QJsonObject{
+                 {QStringLiteral("matches"),
+                  QJsonArray{QStringLiteral("http://127.0.0.1/*")}},
+                 {QStringLiteral("js"),
+                  QJsonArray{QJsonObject{
+                      {QStringLiteral("file"),
+                       QStringLiteral("us_a.js")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // js[] is ExtensionFileSource[] — bare path strings refuse.
+    QCOMPARE(usReg(QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("bad1")},
+                 {QStringLiteral("matches"),
+                  QJsonArray{QStringLiteral("http://127.0.0.1/*")}},
+                 {QStringLiteral("js"),
+                  QJsonArray{QStringLiteral("us_a.js")}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // Uncovered match pattern — refused before anything is armed.
+    QCOMPARE(usReg(QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("bad2")},
+                 {QStringLiteral("matches"),
+                  QJsonArray{QStringLiteral(
+                      "https://elsewhere.example/*")}},
+                 {QStringLiteral("js"),
+                  QJsonArray{QJsonObject{
+                      {QStringLiteral("file"),
+                       QStringLiteral("us_a.js")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-host-access"));
+    QCOMPARE(usReg(QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("bad3")},
+                 {QStringLiteral("matches"),
+                  QJsonArray{QStringLiteral("http://127.0.0.1/*")}},
+                 {QStringLiteral("js"),
+                  QJsonArray{QJsonObject{
+                      {QStringLiteral("file"),
+                       QStringLiteral("../manifest.json")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("bad-path"));
+    QCOMPARE(usReg(QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("bad4")},
+                 {QStringLiteral("matches"),
+                  QJsonArray{QStringLiteral("http://127.0.0.1/*")}},
+                 {QStringLiteral("js"),
+                  QJsonArray{QJsonObject{
+                      {QStringLiteral("file"),
+                       QStringLiteral("missing.js")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-such-file"));
+    // includeGlobs is declared on the real shape but is a different
+    // matcher — typed unsupported, never half-matched.
+    QCOMPARE(usReg(QJsonObject{
+                 {QStringLiteral("id"), QStringLiteral("bad5")},
+                 {QStringLiteral("matches"),
+                  QJsonArray{QStringLiteral("http://127.0.0.1/*")}},
+                 {QStringLiteral("includeGlobs"),
+                  QJsonArray{QStringLiteral("*x*")}},
+                 {QStringLiteral("js"),
+                  QJsonArray{QJsonObject{
+                      {QStringLiteral("file"),
+                       QStringLiteral("us_a.js")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QVERIFY(!runtime->registeredScriptSpecs(id)
+                 .contains(QStringLiteral("bad5")));
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("userScripts"),
+                 QStringLiteral("unregister"),
+                 QJsonObject{{QStringLiteral("filter"),
+                              QJsonObject{{QStringLiteral("ids"),
+                                           QJsonArray{QStringLiteral(
+                                               "nope")}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("userScripts"),
+                 QStringLiteral("update"),
+                 QJsonObject{{QStringLiteral("scripts"), QJsonArray{
+                     QJsonObject{{QStringLiteral("id"),
+                                  QStringLiteral("nope")},
+                                 {QStringLiteral("js"),
+                                  QJsonArray{QJsonObject{
+                                      {QStringLiteral("file"),
+                                       QStringLiteral(
+                                           "us_a.js")}}}}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("not-found"));
+    QCOMPARE(bridge->invoke(
+                 QStringLiteral("userScripts"),
+                 QStringLiteral("bogus"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // Consent gates: every member needs the 'userScripts' grant.
+    QCOMPARE(bridgeB->invoke(
+                 QStringLiteral("userScripts"),
+                 QStringLiteral("register"),
+                 QJsonObject{{QStringLiteral("scripts"), QJsonArray{
+                     QJsonObject{{QStringLiteral("id"),
+                                  QStringLiteral("bx")},
+                                 {QStringLiteral("matches"),
+                                  QJsonArray{QStringLiteral(
+                                      "http://127.0.0.1/*")}},
+                                 {QStringLiteral("js"),
+                                  QJsonArray{QJsonObject{
+                                      {QStringLiteral("file"),
+                                       QStringLiteral(
+                                           "us_a.js")}}}}}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(bridgeB->invoke(
+                 QStringLiteral("userScripts"),
+                 QStringLiteral("configureWorld"),
+                 QJsonObject{{QStringLiteral("properties"),
+                              QJsonObject{{QStringLiteral("messaging"),
+                                           true}}}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    window->deleteLater();
+    QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(id, false);
+    manager->setExtensionEnabled(idB, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(idB), 20000);
+    manager->removeExtension(id);
+    manager->removeExtension(idB);
+    QDir(dir).removeRecursively();
+    QDir(dirB).removeRecursively();
+}
+
+// MD33 — chrome.fontSettings over the real engine font defaults:
+// getFontList answers the installed system families, the six
+// servable generic families and the three sizes read/write the
+// persisted websettings rows (re-applying live onto the engine),
+// the flattened last-writer control claims and clear() restores
+// the pre-extension value; 'math' and per-script fonts keep the
+// typed refusals and an undeclared context hears no-permission.
+void tst_ExtensionManager::extensionFontSettings()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extfont-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-font\","
+                "\"version\":\"1.0\",\"permissions\":[\"fontSettings\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0056"),
+        QStringLiteral("tst-font"), dir);
+    const auto invoke = [&backend](const QString &method,
+                                   const QJsonObject &args
+                                       = QJsonObject()) {
+        return backend.invoke(QStringLiteral("fontSettings"), method,
+                              args);
+    };
+    QSignalSpy pushSpy(&backend, &ExtensionShimBackend::pushEvent);
+
+    const QString profileId = BrowserPaths::activeProfileId();
+
+    // The leg writes real persona font state — snapshot every
+    // websettings row it can touch so the restore below leaves the
+    // profile as found.
+    ProfileSettings snapshot(profileId);
+    snapshot.beginGroup(QLatin1String("websettings"));
+    const QVariant origStandard =
+        snapshot.value(QLatin1String("standardFont"));
+    const QVariant origFixed =
+        snapshot.value(QLatin1String("fixedFont"));
+    const QVariant origMinimum =
+        snapshot.value(QLatin1String("minimumFontSize"));
+    const QVariant origSerif =
+        snapshot.value(QLatin1String("serifFont"));
+    const QVariant origSans =
+        snapshot.value(QLatin1String("sansSerifFont"));
+    const QVariant origCursive =
+        snapshot.value(QLatin1String("cursiveFont"));
+    const QVariant origFantasy =
+        snapshot.value(QLatin1String("fantasyFont"));
+    snapshot.endGroup();
+
+    const auto details = [](const QJsonObject &d) {
+        return QJsonObject{{QStringLiteral("details"), d}};
+    };
+    const auto getFont = [&invoke, &details](const QString &family) {
+        return invoke(QStringLiteral("getFont"),
+                      details(QJsonObject{
+                          {QStringLiteral("genericFamily"), family}}))
+            .value(QLatin1String("result")).toObject();
+    };
+
+    // --- getFontList — the installed system families ---------------
+    const QJsonArray fonts = invoke(QStringLiteral("getFontList"))
+        .value(QLatin1String("result")).toArray();
+    QVERIFY(fonts.size() > 0);
+    for (const QJsonValue &entry : fonts) {
+        const QJsonObject font = entry.toObject();
+        QVERIFY(!font.value(QLatin1String("fontId")).toString()
+                    .isEmpty());
+        QVERIFY(!font.value(QLatin1String("displayName")).toString()
+                    .isEmpty());
+    }
+
+    // --- getFont / the size getters — real engine defaults ---------
+    const QJsonObject standard = getFont(QStringLiteral("standard"));
+    QVERIFY(!standard.value(QLatin1String("fontId")).toString()
+                .isEmpty());
+    QCOMPARE(standard.value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controllable_by_this_extension"));
+    // A missing genericFamily defaults to 'standard' like Chrome.
+    QCOMPARE(invoke(QStringLiteral("getFont"))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("fontId")).toString(),
+             standard.value(QLatin1String("fontId")).toString());
+    // The fixed family reads the live engine row.
+    QCOMPARE(getFont(QStringLiteral("fixed"))
+                 .value(QLatin1String("fontId")).toString(),
+             BrowserProfile::normalProfile()->settings()->fontFamily(
+                 QWebEngineSettings::FixedFont));
+    const int origDefaultSize =
+        invoke(QStringLiteral("getDefaultFontSize"))
+            .value(QLatin1String("result")).toObject()
+            .value(QLatin1String("pixelSize")).toInt();
+    QVERIFY(origDefaultSize > 0);
+    QCOMPARE(invoke(QStringLiteral("getDefaultFontSize"))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controllable_by_this_extension"));
+    QCOMPARE(invoke(QStringLiteral("getDefaultFixedFontSize"))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("pixelSize")).toInt(),
+             BrowserProfile::normalProfile()->settings()->fontSize(
+                 QWebEngineSettings::DefaultFixedFontSize));
+    QVERIFY(invoke(QStringLiteral("getMinimumFontSize"))
+                .value(QLatin1String("result")).toObject()
+                .value(QLatin1String("pixelSize")).toInt() >= 0);
+
+    // --- setFont — lands the persisted row AND the live engine -----
+    const QString origStandardId =
+        standard.value(QLatin1String("fontId")).toString();
+    QString altFont;
+    for (const QJsonValue &entry : fonts) {
+        const QString id = entry.toObject()
+            .value(QLatin1String("fontId")).toString();
+        if (id != origStandardId) {
+            altFont = id;
+            break;
+        }
+    }
+    if (altFont.isEmpty())
+        altFont = origStandardId;   // degenerate one-font systems
+    QVERIFY(invoke(QStringLiteral("setFont"),
+                   details(QJsonObject{
+                       {QStringLiteral("genericFamily"),
+                        QStringLiteral("standard")},
+                       {QStringLiteral("fontId"), altFont}}))
+                .value(QLatin1String("ok")).toBool());
+    {
+        ProfileSettings store(profileId);
+        store.beginGroup(QLatin1String("websettings"));
+        QCOMPARE(store.value(QLatin1String("standardFont"))
+                     .value<QFont>().family(), altFont);
+        store.endGroup();
+    }
+    QCOMPARE(BrowserProfile::normalProfile()->settings()->fontFamily(
+                 QWebEngineSettings::StandardFont), altFont);
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("fontId")).toString(), altFont);
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_this_extension"));
+    // The API-driven mutation fanned onFontChanged out — the bare
+    // backend hears its own control level on pushEvent.
+    bool sawFontChange = false;
+    for (const QList<QVariant> &call : pushSpy) {
+        if (call.value(0).toString() != QLatin1String(
+                "fontSettings.onFontChanged"))
+            continue;
+        const QJsonObject d = call.value(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray().first()
+                .toObject();
+        QCOMPARE(d.value(QLatin1String("fontId")).toString(), altFont);
+        QCOMPARE(d.value(QLatin1String("genericFamily")).toString(),
+                 QStringLiteral("standard"));
+        QCOMPARE(d.value(QLatin1String("script")).toString(),
+                 QStringLiteral("Zyyy"));
+        QCOMPARE(d.value(QLatin1String("levelOfControl")).toString(),
+                 QStringLiteral("controlled_by_this_extension"));
+        sawFontChange = true;
+    }
+    QVERIFY(sawFontChange);
+
+    // --- a dialog-less family — the serifFont row ------------------
+    QString serifFont;
+    for (const QJsonValue &entry : fonts) {
+        const QString id = entry.toObject()
+            .value(QLatin1String("fontId")).toString();
+        if (id != altFont) {
+            serifFont = id;
+            break;
+        }
+    }
+    if (serifFont.isEmpty())
+        serifFont = altFont;
+    QVERIFY(invoke(QStringLiteral("setFont"),
+                   details(QJsonObject{
+                       {QStringLiteral("genericFamily"),
+                        QStringLiteral("serif")},
+                       {QStringLiteral("fontId"), serifFont}}))
+                .value(QLatin1String("ok")).toBool());
+    {
+        ProfileSettings store(profileId);
+        store.beginGroup(QLatin1String("websettings"));
+        QCOMPARE(store.value(QLatin1String("serifFont")).toString(),
+                 serifFont);
+        store.endGroup();
+    }
+    QCOMPARE(BrowserProfile::normalProfile()->settings()->fontFamily(
+                 QWebEngineSettings::SerifFont), serifFont);
+    QCOMPARE(getFont(QStringLiteral("serif"))
+                 .value(QLatin1String("fontId")).toString(), serifFont);
+
+    // --- the size triples — writes land the composite rows ---------
+    QVERIFY(invoke(QStringLiteral("setDefaultFontSize"),
+                   details(QJsonObject{{QStringLiteral("pixelSize"),
+                                        22}}))
+                .value(QLatin1String("ok")).toBool());
+    {
+        ProfileSettings store(profileId);
+        store.beginGroup(QLatin1String("websettings"));
+        QCOMPARE(store.value(QLatin1String("standardFont"))
+                     .value<QFont>().pointSize(), 22);
+        store.endGroup();
+    }
+    QCOMPARE(BrowserProfile::normalProfile()->settings()->fontSize(
+                 QWebEngineSettings::DefaultFontSize), 22);
+    QCOMPARE(invoke(QStringLiteral("getDefaultFontSize"))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("pixelSize")).toInt(), 22);
+    // The family half a setDefaultFontSize seeded survives a later
+    // setFont — the composite row keeps both.
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("fontId")).toString(), altFont);
+
+    QVERIFY(invoke(QStringLiteral("setDefaultFixedFontSize"),
+                   details(QJsonObject{{QStringLiteral("pixelSize"),
+                                        15}}))
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(BrowserProfile::normalProfile()->settings()->fontSize(
+                 QWebEngineSettings::DefaultFixedFontSize), 15);
+    QVERIFY(invoke(QStringLiteral("setMinimumFontSize"),
+                   details(QJsonObject{{QStringLiteral("pixelSize"),
+                                        10}}))
+                .value(QLatin1String("ok")).toBool());
+    {
+        ProfileSettings store(profileId);
+        store.beginGroup(QLatin1String("websettings"));
+        QCOMPARE(store.value(QLatin1String("minimumFontSize")).toInt(),
+                 10);
+        store.endGroup();
+    }
+    QCOMPARE(BrowserProfile::normalProfile()->settings()->fontSize(
+                 QWebEngineSettings::MinimumFontSize), 10);
+    bool sawSizeChange = false;
+    for (const QList<QVariant> &call : pushSpy) {
+        if (call.value(0).toString() != QLatin1String(
+                "fontSettings.onMinimumFontSizeChanged"))
+            continue;
+        const QJsonObject d = call.value(1).toJsonObject()
+            .value(QLatin1String("__args")).toArray().first()
+                .toObject();
+        QCOMPARE(d.value(QLatin1String("pixelSize")).toInt(), 10);
+        QCOMPARE(d.value(QLatin1String("levelOfControl")).toString(),
+                 QStringLiteral("controlled_by_this_extension"));
+        sawSizeChange = true;
+    }
+    QVERIFY(sawSizeChange);
+
+    // --- control layering -------------------------------------------
+    // A second 'fontSettings'-declaring extension sees the member
+    // the first controls as controlled_by_other_extensions; its
+    // clear is Chrome's silent no-op; its own set takes the claim
+    // (last writer wins).
+    const QString dirB = QDir::temp().filePath(
+        QStringLiteral("tst-extfontb-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirB));
+    {
+        QFile f(dirB + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-font-b\","
+                "\"version\":\"1.0\",\"permissions\":[\"fontSettings\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendB(
+        QStringLiteral("tstmockextensionid0057"),
+        QStringLiteral("tst-font-b"), dirB);
+    QCOMPARE(backendB.invoke(QStringLiteral("fontSettings"),
+                 QStringLiteral("getFont"),
+                 details(QJsonObject{
+                     {QStringLiteral("genericFamily"),
+                      QStringLiteral("standard")}}))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_other_extensions"));
+    QVERIFY(backendB.invoke(QStringLiteral("fontSettings"),
+                QStringLiteral("clearFont"),
+                details(QJsonObject{
+                    {QStringLiteral("genericFamily"),
+                     QStringLiteral("standard")}}))
+                .value(QLatin1String("ok")).toBool());
+    // The no-op clear changed nothing — backend still controls.
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_this_extension"));
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("fontId")).toString(), altFont);
+    QString secondFont;
+    for (const QJsonValue &entry : fonts) {
+        const QString id = entry.toObject()
+            .value(QLatin1String("fontId")).toString();
+        if (id != altFont && id != origStandardId) {
+            secondFont = id;
+            break;
+        }
+    }
+    if (secondFont.isEmpty())
+        secondFont = origStandardId;
+    QVERIFY(backendB.invoke(QStringLiteral("fontSettings"),
+                QStringLiteral("setFont"),
+                details(QJsonObject{
+                    {QStringLiteral("genericFamily"),
+                     QStringLiteral("standard")},
+                    {QStringLiteral("fontId"), secondFont}}))
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("fontId")).toString(), secondFont);
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controlled_by_other_extensions"));
+    // The new controller's clear restores the pre-extension value —
+    // the family held before EITHER extension's first set.
+    QVERIFY(backendB.invoke(QStringLiteral("fontSettings"),
+                QStringLiteral("clearFont"),
+                details(QJsonObject{
+                    {QStringLiteral("genericFamily"),
+                     QStringLiteral("standard")}}))
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("fontId")).toString(),
+             origStandardId);
+    QCOMPARE(getFont(QStringLiteral("standard"))
+                 .value(QLatin1String("levelOfControl")).toString(),
+             QStringLiteral("controllable_by_this_extension"));
+    // The size member's controller clear restores the pre-extension
+    // size the same way.
+    QVERIFY(invoke(QStringLiteral("clearDefaultFontSize"))
+                .value(QLatin1String("ok")).toBool());
+    QCOMPARE(invoke(QStringLiteral("getDefaultFontSize"))
+                 .value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("pixelSize")).toInt(),
+             origDefaultSize);
+
+    // --- typed verdicts ---------------------------------------------
+    // 'math' is published but has no Qt family; per-script fonts
+    // have no engine granularity — both are the typed refusal.
+    QCOMPARE(invoke(QStringLiteral("getFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("genericFamily"),
+                         QStringLiteral("math")}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("setFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("genericFamily"),
+                         QStringLiteral("math")},
+                        {QStringLiteral("fontId"), altFont}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("getFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("genericFamily"),
+                         QStringLiteral("standard")},
+                        {QStringLiteral("script"),
+                         QStringLiteral("Latn")}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unsupported"));
+    // Argument verdicts: an unpublished family, mistyped
+    // genericFamily/script/fontId/pixelSize, an unknown fontId, an
+    // out-of-range size, a non-object details envelope.
+    QCOMPARE(invoke(QStringLiteral("getFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("genericFamily"),
+                         QStringLiteral("bogus")}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("getFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("genericFamily"), 7}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("getFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("script"), 7}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("genericFamily"),
+                         QStringLiteral("standard")}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("fontId"), 7}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setFont"),
+                    details(QJsonObject{
+                        {QStringLiteral("fontId"),
+                         QStringLiteral("Not A Real Font 999")}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setDefaultFontSize"),
+                    details(QJsonObject{
+                        {QStringLiteral("pixelSize"),
+                         QStringLiteral("big")}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setDefaultFontSize"),
+                    details(QJsonObject{
+                        {QStringLiteral("pixelSize"), 0}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setMinimumFontSize"),
+                    details(QJsonObject{
+                        {QStringLiteral("pixelSize"), -1}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("setDefaultFontSize"),
+                    details(QJsonObject{
+                        {QStringLiteral("pixelSize"), 999}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    QCOMPARE(invoke(QStringLiteral("getFont"),
+                    QJsonObject{{QStringLiteral("details"), 7}})
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("invalid-argument"));
+    // Unknown member is the unreachable-member verdict.
+    QCOMPARE(invoke(QStringLiteral("getBogus"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    // The manifest gate is per-context: a sibling backend without
+    // the 'fontSettings' grant hears no-permission on every op.
+    const QString dirC = QDir::temp().filePath(
+        QStringLiteral("tst-extfontc-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dirC));
+    {
+        QFile f(dirC + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-font-c\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"]}");
+        f.close();
+    }
+    ExtensionShimBackend backendC(
+        QStringLiteral("tstmockextensionid0058"),
+        QStringLiteral("tst-font-c"), dirC);
+    QCOMPARE(backendC.invoke(QStringLiteral("fontSettings"),
+                 QStringLiteral("getFontList"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendC.invoke(QStringLiteral("fontSettings"),
+                 QStringLiteral("getFont"), QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+    QCOMPARE(backendC.invoke(QStringLiteral("fontSettings"),
+                 QStringLiteral("setMinimumFontSize"),
+                 details(QJsonObject{
+                     {QStringLiteral("pixelSize"), 10}}))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("no-permission"));
+
+    // --- restore the persona ----------------------------------------
+    {
+        ProfileSettings restore(profileId);
+        restore.beginGroup(QLatin1String("websettings"));
+        const auto restoreKey = [&restore](const QString &key,
+                                           const QVariant &value) {
+            if (value.isValid())
+                restore.setValue(key, value);
+            else
+                restore.remove(key);
+        };
+        restoreKey(QStringLiteral("standardFont"), origStandard);
+        restoreKey(QStringLiteral("fixedFont"), origFixed);
+        restoreKey(QStringLiteral("minimumFontSize"), origMinimum);
+        restoreKey(QStringLiteral("serifFont"), origSerif);
+        restoreKey(QStringLiteral("sansSerifFont"), origSans);
+        restoreKey(QStringLiteral("cursiveFont"), origCursive);
+        restoreKey(QStringLiteral("fantasyFont"), origFantasy);
+        restore.endGroup();
+    }
+    // Re-apply so the engine's live values roll back too — the
+    // writes above pushed them through applySettings.
+    BrowserProfile::applySettings(BrowserProfile::normalProfile());
+
+    QDir(dirC).removeRecursively();
+    QDir(dirB).removeRecursively();
+    QDir(dir).removeRecursively();
 }
 
 // Diagnostic leg for a REAL installed extension — pointed at an
@@ -10662,12 +17107,14 @@ void tst_ExtensionManager::extensionOffscreen()
 
 // ER15 — introspection sugar.  chrome.management.getSelf answers
 // the real ExtensionInfo shape from the manifest + manager records
-// (ungated like Chrome); the other members ride Chrome's failure
-// vocabulary (no-permission undeclared, unsupported declared-but-
-// unserved).  chrome.extension.getViews composes from the runtime's
-// pushed context registry — the caller's own Window plus honest
-// capability handles for sibling contexts (true documentUrl, a real
-// location.reload(), focus honestly unmeasured); getBackgroundPage
+// (ungated like Chrome); MD16 serves the declared grant's read ops
+// (getAll/get + permissionWarnings) while the unserved members ride
+// Chrome's failure vocabulary (no-permission undeclared, unsupported
+// declared-but-unserved).  chrome.extension.getViews composes from
+// the runtime's pushed context registry — the caller's own Window
+// plus honest capability handles for sibling contexts (true
+// documentUrl, a real location.reload(), focus honestly
+// unmeasured); getBackgroundPage
 // returns window in the background and the documented MV3 null
 // elsewhere.  chrome.sidebarAction installs only for a manifest-
 // declared sidebar_action and records panel/title while open()
@@ -10834,8 +17281,11 @@ void tst_ExtensionManager::extensionIntrospection()
         20000);
 
     // --- management failure vocabulary ----------------------------
-    // A never declared 'management' -> no-permission; B declared it
-    // and we still cannot enumerate -> unsupported.  Both ledger.
+    // A never declared 'management' -> no-permission.  B declared it
+    // and MD16 serves the read ops — getAll resolves with the real
+    // enumeration (B's own row included), while MD17's served
+    // mutations answer their typed refusals (an unknown id is
+    // not-found, never a stub).  Both ledger.
     hostA->page()->runJavaScript(QStringLiteral(
         "self.__mErr=undefined;chrome.management.getAll()"
         ".then(function(){self.__mErr='resolved';},function(e){"
@@ -10847,7 +17297,36 @@ void tst_ExtensionManager::extensionIntrospection()
                  .toString(),
              QStringLiteral("no-permission"));
     hostB->page()->runJavaScript(QStringLiteral(
-        "self.__mErr=undefined;chrome.management.getAll()"
+        "self.__mList=undefined;self.__mErr=undefined;"
+        "chrome.management.getAll()"
+        ".then(function(v){self.__mList=v;},function(e){"
+        "self.__mErr=e.code||e.message;});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostB->page(), QStringLiteral(
+            "self.__mList!==undefined||self.__mErr!==undefined"))
+            .toBool(),
+        20000);
+    const QJsonArray mList = QJsonDocument::fromJson(
+        eval(hostB->page(), QStringLiteral(
+            "JSON.stringify(self.__mList||[])")).toString().toUtf8())
+        .array();
+    bool mSelf = false;
+    for (const QJsonValue &v : mList) {
+        const QJsonObject info = v.toObject();
+        if (info.value(QLatin1String("id")).toString() != idB)
+            continue;
+        mSelf = true;
+        QCOMPARE(info.value(QLatin1String("name")).toString(),
+                 QStringLiteral("tst-intro-b"));
+        QCOMPARE(info.value(QLatin1String("version")).toString(),
+                 QStringLiteral("9.9"));
+        QCOMPARE(info.value(QLatin1String("enabled")).toBool(), true);
+        QVERIFY(info.value(QLatin1String("permissions")).toArray()
+                .contains(QJsonValue(QStringLiteral("management"))));
+    }
+    QVERIFY2(mSelf, "getAll omitted the caller's own record");
+    hostB->page()->runJavaScript(QStringLiteral(
+        "self.__mErr=undefined;chrome.management.uninstall('x')"
         ".then(function(){self.__mErr='resolved';},function(e){"
         "self.__mErr=e.code||e.message;});'ok'"));
     QTRY_VERIFY_WITH_TIMEOUT(
@@ -10855,7 +17334,7 @@ void tst_ExtensionManager::extensionIntrospection()
             "self.__mErr!==undefined")).toBool(), 20000);
     QCOMPARE(eval(hostB->page(), QStringLiteral("self.__mErr"))
                  .toString(),
-             QStringLiteral("unsupported"));
+             QStringLiteral("not-found"));
 
     // --- extension.getBackgroundPage / getViews -------------------
     QCOMPARE(eval(hostA->page(), QStringLiteral(
@@ -10873,6 +17352,48 @@ void tst_ExtensionManager::extensionIntrospection()
         "chrome.extension.getViews({type:'background'}).length"
         "===1&&chrome.extension.getViews({type:'background'})[0]"
         "===window")).toBool(), true);
+
+    // --- extension.isAllowed*Access -------------------------------
+    // MD15: the verdicts ride the bridge to invokeExtension — both
+    // honestly false today (regular-profile hosting, no file:
+    // grant), and crucially NOT typed stubs: a regression to the old
+    // fillNs member would reject 'unsupported' and fail here.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral(
+            "!!(chrome.extension"
+            "&&typeof chrome.extension.isAllowedIncognitoAccess"
+            "==='function'"
+            "&&String(chrome.extension.isAllowedIncognitoAccess)"
+            ".indexOf('[native code]')<0"
+            "&&typeof chrome.extension.isAllowedFileSchemeAccess"
+            "==='function'"
+            "&&String(chrome.extension.isAllowedFileSchemeAccess)"
+            ".indexOf('[native code]')<0)")).toBool(),
+        20000);
+    hostA->page()->runJavaScript(QStringLiteral(
+        "self.__aa=undefined;Promise.all(["
+        "chrome.extension.isAllowedIncognitoAccess(),"
+        "chrome.extension.isAllowedFileSchemeAccess()])"
+        ".then(function(v){self.__aa='ok:'+v[0]+','+v[1];},"
+        "function(e){self.__aa='err:'+(e.code||e.message);});'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral("!!self.__aa")).toBool(),
+        20000);
+    QCOMPARE(eval(hostA->page(), QStringLiteral("self.__aa"))
+                 .toString(),
+             QStringLiteral("ok:false,false"));
+    // The callback convention answers the same honest false.
+    hostA->page()->runJavaScript(QStringLiteral(
+        "self.__aacb=undefined;chrome.extension"
+        ".isAllowedFileSchemeAccess(function(v){self.__aacb=v;});"
+        "'ok'"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(hostA->page(), QStringLiteral(
+            "self.__aacb!==undefined")).toBool(),
+        20000);
+    QCOMPARE(eval(hostA->page(), QStringLiteral("self.__aacb"))
+                 .toBool(),
+             false);
 
     // --- sibling popup context ------------------------------------
     auto *popupView = new QWebEngineView;
@@ -11034,7 +17555,7 @@ void tst_ExtensionManager::extensionIntrospection()
                                "unsupported")),
         20000);
     QVERIFY(hostB->bridge()->backend()->gaps().contains(
-        QStringLiteral("chrome.management.getAll: unsupported")));
+        QStringLiteral("chrome.management.uninstall: not-found")));
 
     // --- teardown ----------------------------------------------------
     optView->deleteLater();
@@ -11046,6 +17567,1035 @@ void tst_ExtensionManager::extensionIntrospection()
     manager->removeExtension(idA);
     manager->removeExtension(idB);
     QDir(root).removeRecursively();
+}
+
+// MD34: chrome.declarativeNetRequest — parity leg over the bare
+// backend + the real interception stage.  Session/dynamic/static
+// rules validate and persist through invoke(), the IO-thread
+// evaluator blocks/redirects/upgrades/modifies request headers with
+// the task's priority-then-source precedence, the grant gates answer
+// Chrome's typed vocabulary, and a loopback navigation proves the
+// interceptor actually drops and redirects live traffic.
+void tst_ExtensionManager::extensionDeclarativeNetRequest()
+{
+    const QString extId = QStringLiteral("tstdnrfixture000001");
+    const QString extNoPerm = QStringLiteral("tstdnrnoperm0000001");
+    const QString extNoFb = QStringLiteral("tstdnrnofeedback0001");
+    const QString extHost = QStringLiteral("tstdnrhostaccess0001");
+    DeclarativeNetRequest *dnr = DeclarativeNetRequest::instance();
+
+    // A dedicated temp persona — the backend's storageDir() (and the
+    // dnr.json persistence it feeds) resolves under it.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstextdnr%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    auto unbind = qScopeGuard(
+        [prevId, profileId, extId, extNoPerm, extNoFb, extHost, dnr]() {
+        dnr->dropExtension(extId);
+        dnr->dropExtension(extNoPerm);
+        dnr->dropExtension(extNoFb);
+        dnr->dropExtension(extHost);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+
+    const auto writeExt = [](const QString &root,
+                             const QByteArray &manifest) {
+        const QString dir = root + QLatin1String("/ext");
+        if (!QDir().mkpath(dir))
+            return QString();
+        QFile f(dir + QLatin1String("/manifest.json"));
+        if (!f.open(QIODevice::WriteOnly))
+            return QString();
+        f.write(manifest);
+        f.close();
+        return dir;
+    };
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extdnr-%1")
+            .arg(QCoreApplication::applicationPid()));
+    auto rootCleanup =
+        qScopeGuard([root]() { QDir(root).removeRecursively(); });
+
+    // Fixture extension: DNR + feedback grants, two static rulesets.
+    const QString dir = writeExt(root + QLatin1String("/main"),
+        "{\"manifest_version\":3,\"name\":\"tst-dnr\","
+        "\"version\":\"1.0\",\"permissions\":["
+        "\"declarativeNetRequest\","
+        "\"declarativeNetRequestFeedback\"],"
+        "\"declarative_net_request\":{\"rule_resources\":["
+        "{\"id\":\"static_a\",\"enabled\":true,"
+        "\"path\":\"rules_a.json\"},"
+        "{\"id\":\"static_b\",\"enabled\":false,"
+        "\"path\":\"rules_b.json\"}]}}");
+    QVERIFY(!dir.isEmpty());
+    {
+        QFile ra(dir + QLatin1String("/rules_a.json"));
+        QVERIFY(ra.open(QIODevice::WriteOnly));
+        ra.write("[{\"id\":1,\"priority\":1,"
+                 "\"action\":{\"type\":\"block\"},"
+                 "\"condition\":{\"urlFilter\":"
+                 "\"||blocked-static.example/*\","
+                 "\"resourceTypes\":[\"main_frame\"]}}]");
+        ra.close();
+        QFile rb(dir + QLatin1String("/rules_b.json"));
+        QVERIFY(rb.open(QIODevice::WriteOnly));
+        rb.write("[{\"id\":7,\"priority\":1,"
+                 "\"action\":{\"type\":\"block\"},"
+                 "\"condition\":{\"urlFilter\":"
+                 "\"||enabled-later.example/*\"}}]");
+        rb.close();
+    }
+    // Gate fixtures: no grants at all; DNR without feedback; and a
+    // WithHostAccess grant whose host_permissions scope coverage.
+    const QString dirNp = writeExt(root + QLatin1String("/noperm"),
+        "{\"manifest_version\":3,\"name\":\"np\",\"version\":\"1.0\","
+        "\"permissions\":[\"storage\"]}");
+    const QString dirNf = writeExt(root + QLatin1String("/nofb"),
+        "{\"manifest_version\":3,\"name\":\"nf\",\"version\":\"1.0\","
+        "\"permissions\":[\"declarativeNetRequest\"]}");
+    const QString dirHa = writeExt(root + QLatin1String("/host"),
+        "{\"manifest_version\":3,\"name\":\"ha\",\"version\":\"1.0\","
+        "\"permissions\":["
+        "\"declarativeNetRequestWithHostAccess\"],"
+        "\"host_permissions\":[\"https://*.cov.example/*\"]}");
+    QVERIFY(!dirNp.isEmpty() && !dirNf.isEmpty() && !dirHa.isEmpty());
+
+    ExtensionShimBackend backend(extId, QStringLiteral("tst-dnr"), dir);
+    ExtensionShimBackend noPerm(extNoPerm, QStringLiteral("np"), dirNp);
+    ExtensionShimBackend noFb(extNoFb, QStringLiteral("nf"), dirNf);
+    ExtensionShimBackend hostExt(extHost, QStringLiteral("ha"), dirHa);
+
+    const QString ns = QStringLiteral("declarativeNetRequest");
+    const auto okOf = [](const QJsonObject &r) {
+        return r.value(QStringLiteral("ok")).toBool();
+    };
+    const auto errOf = [](const QJsonObject &r) {
+        return r.value(QStringLiteral("error")).toString();
+    };
+    const auto resultOf = [](const QJsonObject &r) {
+        return r.value(QStringLiteral("result"));
+    };
+    const auto eval = [](const QString &url, int type = 0,
+                         const QString &initiator = QString()) {
+        DeclarativeNetRequest::EvalInput in;
+        in.url = QUrl(url);
+        in.firstPartyUrl = QUrl(initiator);
+        in.resourceType = type;
+        in.method = "GET";
+        return DeclarativeNetRequest::evaluate(in);
+    };
+    const auto rule = [](int id, int priority, const QJsonObject &action,
+                         const QJsonObject &condition) {
+        return QJsonObject{{QStringLiteral("id"), id},
+                           {QStringLiteral("priority"), priority},
+                           {QStringLiteral("action"), action},
+                           {QStringLiteral("condition"), condition}};
+    };
+    const auto blockAction = []() {
+        return QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("block")}};
+    };
+    Q_UNUSED(blockAction);
+
+    // --- grant gates -------------------------------------------------
+    QCOMPARE(errOf(noPerm.invoke(ns, QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"), QJsonObject{}}})),
+        QStringLiteral("no-permission"));
+    QCOMPARE(errOf(noPerm.invoke(ns, QStringLiteral("getSessionRules"),
+        QJsonObject{})), QStringLiteral("no-permission"));
+    QCOMPARE(errOf(noPerm.invoke(ns, QStringLiteral("isRegexSupported"),
+        QJsonObject{{QStringLiteral("query"),
+                     QJsonObject{{QStringLiteral("regex"),
+                                  QStringLiteral("a")}}}})),
+        QStringLiteral("no-permission"));
+    // Feedback members gate on the feedback grant alone.
+    QCOMPARE(errOf(noFb.invoke(ns, QStringLiteral("getMatchedRules"),
+        QJsonObject{})), QStringLiteral("no-permission"));
+    // Unknown member stays unreachable, never a crash.
+    QCOMPARE(errOf(backend.invoke(ns, QStringLiteral("frobnicate"),
+        QJsonObject{})), QStringLiteral("unimplemented"));
+
+    // --- static rulesets ---------------------------------------------
+    QJsonObject reply = backend.invoke(
+        ns, QStringLiteral("getEnabledRulesets"), QJsonObject{});
+    QVERIFY(okOf(reply));
+    QCOMPARE(resultOf(reply).toArray().size(), 1);
+    QCOMPARE(resultOf(reply).toArray().first().toString(),
+             QStringLiteral("static_a"));
+    // The manifest-enabled ruleset participates in evaluation.
+    auto v = eval(QStringLiteral("https://blocked-static.example/page"));
+    QVERIFY(v.blocked);
+    // Undeclared ruleset id -> typed verdict.
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateEnabledRulesets"),
+        QJsonObject{{QStringLiteral("options"),
+                     QJsonObject{{QStringLiteral("enableRulesetIds"),
+                                  QJsonArray{QStringLiteral("ghost")}}}}})),
+        QStringLiteral("ruleset-not-found"));
+    // Swap enabled sets — static_b's rule joins, static_a's leaves.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateEnabledRulesets"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("enableRulesetIds"),
+                         QJsonArray{QStringLiteral("static_b")}},
+                        {QStringLiteral("disableRulesetIds"),
+                         QJsonArray{QStringLiteral("static_a")}}}}})));
+    reply = backend.invoke(ns, QStringLiteral("getEnabledRulesets"),
+                           QJsonObject{});
+    QCOMPARE(resultOf(reply).toArray().size(), 1);
+    QCOMPARE(resultOf(reply).toArray().first().toString(),
+             QStringLiteral("static_b"));
+    v = eval(QStringLiteral("https://blocked-static.example/page"));
+    QVERIFY(!v.blocked);
+    v = eval(QStringLiteral("https://enabled-later.example/page"));
+    QVERIFY(v.blocked);
+    // getAvailableStaticRuleCount reports the guaranteed remainder.
+    reply = backend.invoke(ns,
+        QStringLiteral("getAvailableStaticRuleCount"), QJsonObject{});
+    QVERIFY(okOf(reply));
+    QCOMPARE(resultOf(reply).toInt(), 30000 - 1);
+    // Re-enable static_a for the rest of the leg.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateEnabledRulesets"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("enableRulesetIds"),
+                         QJsonArray{QStringLiteral("static_a")}}}}})));
+
+    // --- session rules: add/get/remove + typed failures --------------
+    const QJsonObject sessBlock = rule(10, 1,
+        QJsonObject{{QStringLiteral("type"), QStringLiteral("block")}},
+        QJsonObject{{QStringLiteral("urlFilter"),
+                     QStringLiteral("||sess-block.example/*")}});
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                         QJsonArray{sessBlock}}}}})));
+    reply = backend.invoke(ns, QStringLiteral("getSessionRules"),
+                           QJsonObject{});
+    QVERIFY(okOf(reply));
+    QCOMPARE(resultOf(reply).toArray().size(), 1);
+    QCOMPARE(resultOf(reply).toArray().first().toObject()
+             .value(QStringLiteral("id")).toInt(), 10);
+    v = eval(QStringLiteral("https://sess-block.example/x"));
+    QVERIFY(v.blocked);
+    v = eval(QStringLiteral("https://unrelated.example/x"));
+    QVERIFY(!v.blocked && v.redirectUrl.isEmpty());
+    // duplicate-rule-id within the same ruleset.
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                         QJsonArray{sessBlock}}}}})),
+        QStringLiteral("duplicate-rule-id"));
+    // rule-not-found for a removal that names nothing live.
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("removeRuleIds"),
+                         QJsonArray{999}}}}})),
+        QStringLiteral("rule-not-found"));
+    // invalid-argument shapes: missing action, both filters, empty
+    // condition.
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{QJsonObject{
+                    {QStringLiteral("id"), 55},
+                    {QStringLiteral("condition"),
+                     QJsonObject{{QStringLiteral("urlFilter"),
+                                  QStringLiteral("*x*")}}}}}}}}})),
+        QStringLiteral("invalid-argument"));
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(56, 1,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("block")}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*a*")},
+                                {QStringLiteral("regexFilter"),
+                                 QStringLiteral("b")}})}}}}})),
+        QStringLiteral("invalid-argument"));
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(57, 1,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("block")}},
+                    QJsonObject{})}}}}})),
+        QStringLiteral("invalid-argument"));
+    // typed 'unsupported' — tabIds conditions and response-side
+    // header ops have no hook at this layer.
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(58, 1,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("block")}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*a*")},
+                                {QStringLiteral("tabIds"),
+                                 QJsonArray{1}}})}}}}})),
+        QStringLiteral("unsupported"));
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(59, 1,
+                    QJsonObject{{QStringLiteral("type"),
+                        QStringLiteral("modifyHeaders")},
+                        {QStringLiteral("responseHeaders"),
+                         QJsonArray{QJsonObject{
+                            {QStringLiteral("header"),
+                             QStringLiteral("x-a")},
+                            {QStringLiteral("operation"),
+                             QStringLiteral("remove")}}}}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*a*")}})}}}}})),
+        QStringLiteral("unsupported"));
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("setExtensionActionOptions"),
+        QJsonObject{})), QStringLiteral("unsupported"));
+    // Removal works and the evaluator stops matching.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("removeRuleIds"),
+                         QJsonArray{10}}}}})));
+    reply = backend.invoke(ns, QStringLiteral("getSessionRules"),
+                           QJsonObject{});
+    QCOMPARE(resultOf(reply).toArray().size(), 0);
+    v = eval(QStringLiteral("https://sess-block.example/x"));
+    QVERIFY(!v.blocked);
+
+    // --- dynamic rules: redirect, echo, persistence ------------------
+    const QJsonObject dynRedirect = rule(5, 2,
+        QJsonObject{{QStringLiteral("type"), QStringLiteral("redirect")},
+                    {QStringLiteral("redirect"),
+                     QJsonObject{{QStringLiteral("url"),
+                        QStringLiteral("https://landed.example/ok")}}}},
+        QJsonObject{{QStringLiteral("urlFilter"),
+                     QStringLiteral("||redirect-me.example/*")}});
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateDynamicRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                         QJsonArray{dynRedirect}}}}})));
+    reply = backend.invoke(ns, QStringLiteral("getDynamicRules"),
+                           QJsonObject{});
+    QCOMPARE(resultOf(reply).toArray().size(), 1);
+    v = eval(QStringLiteral("https://redirect-me.example/x"));
+    QVERIFY(!v.blocked);
+    QCOMPARE(v.redirectUrl,
+             QUrl(QStringLiteral("https://landed.example/ok")));
+    // Chrome parity — dynamic rules persist under extstorage; the
+    // file must exist in THIS persona's tree.
+    QVERIFY(QFile::exists(
+        BrowserPaths::dataFilePath(QStringLiteral("extstorage"))
+        + QLatin1Char('/') + extId + QLatin1String("/dnr.json")));
+
+    // --- precedence: priority first, then session > dynamic > static -
+    // allow outranks a lower-priority block within the extension.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{
+                    rule(20, 5,
+                        QJsonObject{{QStringLiteral("type"),
+                                     QStringLiteral("allow")}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                                     QStringLiteral("*prio-a*")}}),
+                    rule(21, 1,
+                        QJsonObject{{QStringLiteral("type"),
+                                     QStringLiteral("block")}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                                     QStringLiteral("*prio-a*")}})}}}}})));
+    v = eval(QStringLiteral("https://prio-a.example/x"));
+    QVERIFY(!v.blocked && v.redirectUrl.isEmpty());
+    // Same priority across sources: the session lane wins over a
+    // dynamic block — the redirect verdict proves the session rule
+    // answered, not the block.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateDynamicRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(22, 3,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("block")}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*prio-b*")}})}}}}})));
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(23, 3,
+                    QJsonObject{{QStringLiteral("type"),
+                        QStringLiteral("redirect")},
+                        {QStringLiteral("redirect"),
+                         QJsonObject{{QStringLiteral("url"),
+                            QStringLiteral("https://session-win.example/")}}}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*prio-b*")}})}}}}})));
+    v = eval(QStringLiteral("https://prio-b.example/x"));
+    QVERIFY(!v.blocked);
+    QCOMPARE(v.redirectUrl,
+             QUrl(QStringLiteral("https://session-win.example/")));
+    // Priority beats the source lanes: a dynamic block@9 outranks a
+    // session redirect@3.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateDynamicRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(24, 9,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("block")}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*prio-c*")}})}}}}})));
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(25, 3,
+                    QJsonObject{{QStringLiteral("type"),
+                        QStringLiteral("redirect")},
+                        {QStringLiteral("redirect"),
+                         QJsonObject{{QStringLiteral("url"),
+                            QStringLiteral("https://prio-c.example/d")}}}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*prio-c*")}})}}}}})));
+    v = eval(QStringLiteral("https://prio-c.example/x"));
+    QVERIFY(v.blocked);
+
+    // --- upgradeScheme + modifyHeaders -------------------------------
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{
+                    rule(26, 1,
+                        QJsonObject{{QStringLiteral("type"),
+                            QStringLiteral("upgradeScheme")}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                                     QStringLiteral("*upgrade-me*")}}),
+                    rule(27, 1,
+                        QJsonObject{{QStringLiteral("type"),
+                            QStringLiteral("modifyHeaders")},
+                            {QStringLiteral("requestHeaders"),
+                             QJsonArray{QJsonObject{
+                                {QStringLiteral("header"),
+                                 QStringLiteral("X-Dnr")},
+                                {QStringLiteral("operation"),
+                                 QStringLiteral("set")},
+                                {QStringLiteral("value"),
+                                 QStringLiteral("yes")}}}}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                                     QStringLiteral("*hdr-me*")}})}}}}})));
+    v = eval(QStringLiteral("http://upgrade-me.example/x"));
+    QVERIFY(!v.blocked);
+    QCOMPARE(v.redirectUrl,
+             QUrl(QStringLiteral("https://upgrade-me.example/x")));
+    v = eval(QStringLiteral("https://hdr-me.example/x"));
+    QVERIFY(!v.blocked && v.redirectUrl.isEmpty());
+    QVERIFY(v.headerOps.size() == 1);
+    QCOMPARE(v.headerOps.first().name, QByteArray("X-Dnr"));
+    QCOMPARE(int(v.headerOps.first().op),
+             int(DeclarativeNetRequest::HeaderSet));
+    QCOMPARE(v.headerOps.first().value, QByteArray("yes"));
+
+    // --- allowAllRequests frame exemption ----------------------------
+    // Without resourceTypes -> invalid; with non-frame types -> invalid.
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(30, 9,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("allowAllRequests")}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*a11y*")}})}}}}})),
+        QStringLiteral("invalid-argument"));
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{
+                    rule(30, 9,
+                        QJsonObject{{QStringLiteral("type"),
+                            QStringLiteral("allowAllRequests")}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                            QStringLiteral("*a11y.example*")},
+                            {QStringLiteral("resourceTypes"),
+                             QJsonArray{QStringLiteral("main_frame"),
+                                        QStringLiteral("sub_frame")}}}),
+                    rule(31, 5,
+                        QJsonObject{{QStringLiteral("type"),
+                                     QStringLiteral("block")}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                            QStringLiteral("*a11y-tracker*")}})}}}}})));
+    // The frame navigation itself records the exemption...
+    eval(QStringLiteral("https://a11y.example/"), /*type=*/0);
+    // ...so a later request issued under that frame's document url
+    // skips this ext's equal/lower-priority rules.
+    v = eval(QStringLiteral("https://a11y-tracker.example/x"), 13,
+             QStringLiteral("https://a11y.example/"));
+    QVERIFY(!v.blocked);
+
+    // --- isRegexSupported / testMatchOutcome -------------------------
+    reply = backend.invoke(ns, QStringLiteral("isRegexSupported"),
+        QJsonObject{{QStringLiteral("query"),
+            QJsonObject{{QStringLiteral("regex"),
+                QStringLiteral("^https://a\\.example\\.com/([0-9]+)")}}}});
+    QVERIFY(okOf(reply));
+    QVERIFY(resultOf(reply).toObject()
+            .value(QStringLiteral("isSupported")).toBool());
+    reply = backend.invoke(ns, QStringLiteral("isRegexSupported"),
+        QJsonObject{{QStringLiteral("query"),
+            QJsonObject{{QStringLiteral("regex"),
+                         QStringLiteral("x(?=y)")}}}});
+    QVERIFY(okOf(reply));
+    QVERIFY(!resultOf(reply).toObject()
+            .value(QStringLiteral("isSupported")).toBool());
+    QVERIFY(!resultOf(reply).toObject()
+            .value(QStringLiteral("reason")).toString().isEmpty());
+    reply = backend.invoke(ns, QStringLiteral("isRegexSupported"),
+        QJsonObject{{QStringLiteral("query"),
+            QJsonObject{{QStringLiteral("regex"),
+                         QStringLiteral("(a)\\1")}}}});
+    QVERIFY(!resultOf(reply).toObject()
+            .value(QStringLiteral("isSupported")).toBool());
+
+    reply = backend.invoke(ns, QStringLiteral("testMatchOutcome"),
+        QJsonObject{{QStringLiteral("request"),
+            QJsonObject{{QStringLiteral("url"),
+                QStringLiteral("https://blocked-static.example/x")},
+                        {QStringLiteral("type"),
+                         QStringLiteral("main_frame")}}}});
+    QVERIFY(okOf(reply));
+    {
+        const QJsonArray matched = resultOf(reply).toObject()
+            .value(QStringLiteral("matchedRules")).toArray();
+        bool saw = false;
+        for (const QJsonValue &mv : matched) {
+            const QJsonObject m = mv.toObject();
+            if (m.value(QStringLiteral("ruleId")).toInt() == 1
+                    && m.value(QStringLiteral("rulesetId")).toString()
+                        == QLatin1String("static_a")
+                    && m.value(QStringLiteral("extensionId")).toString()
+                        == extId)
+                saw = true;
+        }
+        QVERIFY(saw);
+    }
+    // Mistyped request answers typed, never silently empty.
+    QCOMPARE(errOf(backend.invoke(ns, QStringLiteral("testMatchOutcome"),
+        QJsonObject{{QStringLiteral("request"),
+            QJsonObject{{QStringLiteral("url"),
+                         QStringLiteral("https://x.example/")},
+                        {QStringLiteral("type"),
+                         QStringLiteral("bogus")}}}})),
+        QStringLiteral("invalid-argument"));
+
+    // --- getMatchedRules (feedback grant) ----------------------------
+    eval(QStringLiteral("https://blocked-static.example/m"));
+    reply = backend.invoke(ns, QStringLiteral("getMatchedRules"),
+                           QJsonObject{});
+    QVERIFY(okOf(reply));
+    {
+        const QJsonArray infos = resultOf(reply).toObject()
+            .value(QStringLiteral("rulesMatchedInfo")).toArray();
+        QVERIFY(!infos.isEmpty());
+        bool saw = false;
+        for (const QJsonValue &iv : infos) {
+            const QJsonObject r = iv.toObject()
+                .value(QStringLiteral("rule")).toObject();
+            if (r.value(QStringLiteral("ruleId")).toInt() == 1
+                    && r.value(QStringLiteral("rulesetId")).toString()
+                        == QLatin1String("static_a"))
+                saw = true;
+        }
+        QVERIFY(saw);
+    }
+    reply = backend.invoke(ns, QStringLiteral("getMatchedRules"),
+        QJsonObject{{QStringLiteral("filter"),
+            QJsonObject{{QStringLiteral("minTimeStamp"),
+                         9999999999999.0}}}});
+    QCOMPARE(resultOf(reply).toObject()
+             .value(QStringLiteral("rulesMatchedInfo"))
+             .toArray().size(), 0);
+
+    // --- WithHostAccess scoping ---------------------------------------
+    // The grant alone does not create host access: a rule fires only
+    // where the extension's host_permissions cover request or
+    // initiator.
+    QVERIFY(okOf(hostExt.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(1, 1,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("block")}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*hblock*")}})}}}}})));
+    // Covered host -> the rule applies.
+    v = DeclarativeNetRequest::evaluate([&] {
+        DeclarativeNetRequest::EvalInput in;
+        in.url = QUrl(QStringLiteral("https://x.cov.example/hblock"));
+        in.resourceType = 0;
+        in.method = "GET";
+        return in;
+    }());
+    QVERIFY(v.blocked);
+    // Uncovered request host AND initiator -> the rule stays silent.
+    v = DeclarativeNetRequest::evaluate([&] {
+        DeclarativeNetRequest::EvalInput in;
+        in.url = QUrl(QStringLiteral("https://elsewhere.example/hblock"));
+        in.firstPartyUrl =
+            QUrl(QStringLiteral("https://elsewhere.example/"));
+        in.resourceType = 0;
+        in.method = "GET";
+        return in;
+    }());
+    QVERIFY(!v.blocked);
+
+    // --- real interception: the engine actually blocks + redirects ---
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    QStringList hits;
+    QObject::connect(&server, &QTcpServer::newConnection,
+                     &server, [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                         [socket, &hits]() {
+            const QByteArray req = socket->readAll();
+            const int sp = req.indexOf(' ');
+            if (sp > 0)
+                hits.append(QString::fromLatin1(
+                    req.mid(sp + 1, req.indexOf(' ', sp + 1) - sp - 1)));
+            const QByteArray body = QByteArray("<html>ok</html>");
+            socket->write("HTTP/1.1 200\r\nContent-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{
+                    rule(40, 1,
+                        QJsonObject{{QStringLiteral("type"),
+                                     QStringLiteral("block")}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                                     QStringLiteral("*/dnr-block*")}}),
+                    rule(41, 1,
+                        QJsonObject{{QStringLiteral("type"),
+                            QStringLiteral("redirect")},
+                            {QStringLiteral("redirect"),
+                             QJsonObject{{QStringLiteral("url"),
+                                          base + QStringLiteral(
+                                              "/dnr-landed")}}}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                                     QStringLiteral("*/dnr-redirect*")}})}}}}})));
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    WebView *view = window->tabWidget()->webView(0);
+    QVERIFY(view);
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    // The fresh tab's initial navigation can still be in flight —
+    // drain it so the spy only ever sees OUR loads.
+    QTRY_VERIFY_WITH_TIMEOUT(!view->isLoading(), 10000);
+    loadSpy.clear();
+
+    view->load(QUrl(base + QStringLiteral("/dnr-block")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 20000);
+    // Chromium commits an error document for a blocked main-frame
+    // navigation, so loadFinished(true/false) is engine-dependent —
+    // the honest block proof is that the request never reached the
+    // server.
+    QVERIFY(!hits.join(QLatin1Char(' ')).contains(
+        QStringLiteral("/dnr-block")));
+
+    loadSpy.clear();
+    view->load(QUrl(base + QStringLiteral("/dnr-redirect")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 20000);
+    QCOMPARE(loadSpy.takeLast().at(0).toBool(), true);
+    QVERIFY(hits.join(QLatin1Char(' ')).contains(
+        QStringLiteral("/dnr-landed")));
+
+    // Prove the verdicts were DNR's: remove the rules and the same
+    // navigation reaches the server.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("removeRuleIds"),
+                         QJsonArray{40, 41}}}}})));
+    loadSpy.clear();
+    view->load(QUrl(base + QStringLiteral("/dnr-block")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 20000);
+    QCOMPARE(loadSpy.takeLast().at(0).toBool(), true);
+    QVERIFY(hits.join(QLatin1Char(' ')).contains(
+        QStringLiteral("/dnr-block")));
+
+    delete window;
+}
+
+// MD35: chrome.identity — getRedirectURL alone is served: the
+// derived https://<id>.chromiumapp.org/<path> origin, ungated like
+// Chrome (Chromium's own renderer-side binding normalizes the path
+// to a leading '/' before joining it).  The Google-account family
+// stays typed 'unsupported'; an unpublished member is the
+// unreachable-member verdict.
+void tst_ExtensionManager::extensionIdentity()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extident-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        // No 'identity' grant on purpose — getRedirectURL is
+        // ungated like Chrome, so a manifest without it must still
+        // answer.
+        f.write("{\"manifest_version\":3,\"name\":\"tst-ident\","
+                "\"version\":\"1.0\"}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0057"),
+        QStringLiteral("tst-ident"), dir);
+    const auto invoke = [&backend](const QString &method,
+                                   const QJsonObject &args
+                                       = QJsonObject()) {
+        return backend.invoke(QStringLiteral("identity"), method,
+                              args);
+    };
+    const QString prefix = QStringLiteral(
+        "https://tstmockextensionid0057.chromiumapp.org");
+
+    // The derived origin — missing path, a bare path, and a
+    // leading-slash path all land under the same host.
+    QJsonObject reply = invoke(QStringLiteral("getRedirectURL"));
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QCOMPARE(reply.value(QLatin1String("result")).toString(),
+             prefix + QLatin1Char('/'));
+    QCOMPARE(invoke(QStringLiteral("getRedirectURL"),
+                    QJsonObject{{QStringLiteral("path"),
+                                 QStringLiteral("oauth2")}})
+                 .value(QLatin1String("result")).toString(),
+             prefix + QStringLiteral("/oauth2"));
+    QCOMPARE(invoke(QStringLiteral("getRedirectURL"),
+                    QJsonObject{{QStringLiteral("path"),
+                                 QStringLiteral("/cb")}})
+                 .value(QLatin1String("result")).toString(),
+             prefix + QStringLiteral("/cb"));
+    // String() coercion like the binding — a numeric path joins as
+    // its decimal spelling.
+    QCOMPARE(invoke(QStringLiteral("getRedirectURL"),
+                    QJsonObject{{QStringLiteral("path"), 42.0}})
+                 .value(QLatin1String("result")).toString(),
+             prefix + QStringLiteral("/42"));
+
+    // The Google-account family stays dead — typed 'unsupported';
+    // an unpublished member is the unreachable-member verdict.
+    for (const QString &m : {QStringLiteral("getAccounts"),
+             QStringLiteral("getAuthToken"),
+             QStringLiteral("clearAllCachedAuthTokens"),
+             QStringLiteral("getProfileUserInfo"),
+             QStringLiteral("launchWebAuthFlow"),
+             QStringLiteral("removeCachedAuthToken")})
+        QCOMPARE(invoke(m).value(QLatin1String("error")).toString(),
+                 QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("bogusMember"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    QDir(dir).removeRecursively();
+}
+
+// MD36: chrome.webNavigation.onCreatedNavigationTarget — a
+// createWindow-spawned tab reports its opener.  A hosted recorder
+// extension holding the webNavigation grant listens on the real
+// event surface; a BrowserMainWindow's source tab drives
+// testCreateWindow (the AUTOTESTS seam for the same
+// WebPage::createWindow path a target=_blank click takes), then the
+// spawned view loads a data: document so the event lands ahead of
+// that tab's first onBeforeNavigate, carrying Chrome's
+// {sourceTabId, sourceFrameId, tabId, url, timeStamp} shape.  A
+// plain newTab() load is the control — no opener, no event.
+void tst_ExtensionManager::extensionNavTargetCreated()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extnavt-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-navtarget\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\","
+                "\"tabs\",\"webNavigation\"],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "self.__extEvents=[];\n"
+            "self.__extRec=function(n){return function(){\n"
+            " self.__extEvents.push({n:n,a:Array.prototype.slice"
+            ".call(arguments).map(function(v){\n"
+            "  try{return JSON.parse(JSON.stringify(v));}catch(e){\n"
+            "   return String(v);}})});};};\n"
+            "['onCreatedNavigationTarget','onBeforeNavigate',\n"
+            " 'onCommitted'].forEach(function(e){\n"
+            " chrome.webNavigation[e].addListener(\n"
+            "  self.__extRec('webNavigation.'+e));});\n"
+            "chrome.tabs.onCreated.addListener(\n"
+            " self.__extRec('tabs.onCreated'));\n");
+        w.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    ExtensionEventHub *hub = ExtensionEventHub::instance();
+
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-navtarget")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+                   == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    auto eval = [](QWebEnginePage *page, const QString &source) {
+        auto result = std::make_shared<QVariant>();
+        page->runJavaScript(source,
+                            [result](const QVariant &v) { *result = v; });
+        QElapsedTimer timer;
+        timer.start();
+        while (!result->isValid() && timer.elapsed() < 10000)
+            QTest::qWait(50);
+        return *result;
+    };
+
+    // --- tracked source tab ----------------------------------------
+    hub->setTracking(true);
+    hub->syncNow();   // silent baseline
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tw = window->tabWidget();
+    QVERIFY(tw && tw->count() >= 1);
+    hub->syncNow();
+    WebView *source = tw->webView(0);
+    QVERIFY(source && source->webPage());
+    QVERIFY(hub->tracked(source));
+    const int sourceTabId = ExtensionShimBackend::tabIdFor(source);
+
+    // The spawn — createWindow runs on the SOURCE page, tags the
+    // fresh view with its opener, and the hub consumes the tag when
+    // tabsChanged registers the new tab.
+    QWebEnginePage *targetPage = source->webPage()->testCreateWindow(
+        QWebEnginePage::WebBrowserTab);
+    QVERIFY(targetPage && targetPage != source->page());
+    hub->syncNow();
+    WebView *target = nullptr;
+    for (int i = 0; i < tw->count(); ++i) {
+        WebView *v = tw->webView(i);
+        if (v && v->page() == targetPage)
+            target = v;
+    }
+    QVERIFY2(target, "createWindow spawn must land in the strip");
+    QVERIFY(hub->tracked(target));
+    const int targetTabId = ExtensionShimBackend::tabIdFor(target);
+    QVERIFY(targetTabId != sourceTabId);
+
+    // The target's first navigation — the event's url comes from the
+    // real commit, emitted ahead of that tab's onBeforeNavigate.
+    const QString targetUrl =
+        QStringLiteral("data:text/html,<title>nt</title>ok");
+    target->load(QUrl(targetUrl));
+
+    // Control: a plain newTab() has no opener tag — its load must
+    // produce no onCreatedNavigationTarget row.
+    WebView *plain = tw->makeNewTab(true);
+    QVERIFY(plain);
+    hub->syncNow();
+    const int plainTabId = ExtensionShimBackend::tabIdFor(plain);
+    plain->load(QUrl(QStringLiteral(
+        "data:text/html,<title>plain</title>ok")));
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        eval(runtime->host(id)->page(), QStringLiteral(
+            "(self.__extEvents||[]).some(function(e){"
+            "return e.n==='webNavigation.onCreatedNavigationTarget'"
+            "&&e.a[0]&&e.a[0].tabId===%1;})")
+            .arg(targetTabId)).toBool(),
+        30000);
+
+    // Details shape + ordering: sourceTabId names the opener, the
+    // event precedes the new tab's own onBeforeNavigate, and the
+    // control tab produced none.
+    const QJsonObject probe = QJsonDocument::fromJson(
+        eval(runtime->host(id)->page(), QStringLiteral(
+            "(function(){var evs=self.__extEvents||[];"
+            "var out={t:null,ti:-1,firstNav:-1,plain:false,"
+            "tabCreated:false};"
+            "for(var i=0;i<evs.length;++i){var e=evs[i],d=e.a[0];"
+            " if(e.n==='webNavigation.onCreatedNavigationTarget'&&d){"
+            "  if(d.tabId===%1){out.t=d;out.ti=i;}"
+            "  if(d.tabId===%2)out.plain=true;}"
+            " if(out.firstNav<0&&e.n==='webNavigation.onBeforeNavigate'"
+            "  &&d&&d.tabId===%1)out.firstNav=i;"
+            " if(e.n==='tabs.onCreated'&&d&&d.id===%1)"
+            "  out.tabCreated=true;}"
+            "return JSON.stringify(out);})()")
+            .arg(targetTabId).arg(plainTabId)).toString().toUtf8())
+        .object();
+    const QJsonObject t = probe.value(QLatin1String("t")).toObject();
+    QVERIFY2(!t.isEmpty(), "onCreatedNavigationTarget details");
+    QCOMPARE(t.value(QLatin1String("sourceTabId")).toInt(-1),
+             sourceTabId);
+    QCOMPARE(t.value(QLatin1String("sourceFrameId")).toInt(-1), 0);
+    QCOMPARE(t.value(QLatin1String("tabId")).toInt(-1), targetTabId);
+    QVERIFY(t.value(QLatin1String("url")).toString()
+                .startsWith(QLatin1String("data:text/html")));
+    QVERIFY(t.value(QLatin1String("timeStamp")).toDouble() > 0);
+    QVERIFY2(probe.value(QLatin1String("firstNav")).toInt(-1)
+                 > probe.value(QLatin1String("ti")).toInt(-1),
+             "onCreatedNavigationTarget precedes the new tab's "
+             "onBeforeNavigate");
+    QVERIFY2(probe.value(QLatin1String("tabCreated")).toBool(),
+             "tabs.onCreated still lands for the spawned tab");
+    QVERIFY2(!probe.value(QLatin1String("plain")).toBool(),
+             "a plain newTab() load reports no navigation target");
+
+    delete window;
+    hub->syncNow();
+    QDir(dir).removeRecursively();
+}
+
+// MD37 — chrome.action residual honesty.  getUserSettings answers
+// the real pin state: the EXT08 strip renders one button per
+// enabled, loaded extension declaring an action popup, so
+// isOnToolbar is that strip-membership truth, not a frozen true.
+// openPopup stays a typed 'unsupported' verdict (no programmatic
+// popup surface) instead of an unimplemented member; on
+// UserSettingsChanged installs as a never-firing event shim-side.
+void tst_ExtensionManager::extensionActionUserSettings()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extuset-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-uset\","
+                "\"version\":\"1.0\",\"action\":{\"default_popup\":"
+                "\"popup.html\"}}");
+        f.close();
+        QFile p(dir + QLatin1String("/popup.html"));
+        QVERIFY(p.open(QIODevice::WriteOnly));
+        p.write("<html><body>popup</body></html>");
+        p.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-uset")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+
+    ExtensionShimBackend backend(id, QStringLiteral("tst-uset"), dir);
+    const auto onToolbar = [&backend]() {
+        return backend.invoke(
+            QStringLiteral("action"),
+            QStringLiteral("getUserSettings"), QJsonObject())
+            .value(QLatin1String("result")).toObject()
+            .value(QLatin1String("isOnToolbar")).toBool();
+    };
+
+    // Enabled + loaded + a manifest popup => strip membership.
+    QTRY_VERIFY_WITH_TIMEOUT(onToolbar(), 10000);
+
+    // Disabled drops the strip button — the pin answer follows.
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!onToolbar(), 10000);
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(onToolbar(), 10000);
+
+    // An id the manager never loaded answers the honest not-on-the-
+    // strip false rather than guessing.
+    ExtensionShimBackend stray(
+        QStringLiteral("tstmockextensionid0058"),
+        QStringLiteral("tst-stray"), dir);
+    const QJsonObject strayReply = stray.invoke(
+        QStringLiteral("action"),
+        QStringLiteral("getUserSettings"), QJsonObject());
+    QVERIFY(strayReply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(strayReply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("isOnToolbar")).toBool(), false);
+
+    // openPopup stays typed under both spellings — no programmatic
+    // popup surface — while an unknown member stays the
+    // unreachable-member verdict.
+    for (const QString &ns : {QStringLiteral("action"),
+                              QStringLiteral("browserAction")})
+        QCOMPARE(backend.invoke(ns, QStringLiteral("openPopup"),
+                                QJsonObject())
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("unsupported"));
+    QCOMPARE(backend.invoke(QStringLiteral("action"),
+                            QStringLiteral("bogusMember"),
+                            QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    manager->setExtensionEnabled(id, false);
+    manager->removeExtension(id);
+    QDir(dir).removeRecursively();
 }
 
 // EXT20: the engine forgets isEnabled across restarts — installed

@@ -24,6 +24,12 @@
 #include <browserpaths.h>
 #include <securestore.h>
 
+#ifdef ARKTOS_RUSTCORE
+#include <autofilldialog.h>
+#include <rustcore.h>
+#include "rustcorebridge.h"
+#endif
+
 #include <qdatastream.h>
 #include <qfile.h>
 #include <qset.h>
@@ -63,6 +69,7 @@ private slots:
     void passphraseCustody();
     void lockedStoreKeepsSealedFile();
     void noPlaintextOnDisk();
+    void ffiStoreReachesDialog();
 
 private:
     QTemporaryDir m_settingsDir;
@@ -443,6 +450,65 @@ void tst_AutoFill::noPlaintextOnDisk()
     QVERIFY(!raw.contains("alice"));
 #ifdef ARKTOS_RUSTCORE
     QVERIFY(!QFile::exists(legacyPath()));
+#endif
+}
+
+// RC17: a record written straight through the C ABI surfaces in the
+// dialog's model — the FFI and the UI read the same store.  The
+// SecureStore custody bar holds on disk: sealed payload, owner-only
+// file AND owner-only dir.
+void tst_AutoFill::ffiStoreReachesDialog()
+{
+#ifdef ARKTOS_RUSTCORE
+    // Drop a singleton an earlier leg may have left so the dialog's
+    // manager loads the file the FFI write produces (its pending
+    // changes, if any, flush before our write lands).
+    AutoFillManager::releaseFor(BrowserPaths::activeProfileId());
+    rustCoreEnsureDataDirFor(BrowserPaths::activeProfileId());
+
+    const QByteArray forms = QByteArrayLiteral(
+        "[{\"url\":\"https://ffi.example/login\",\"name\":\"f\","
+        "\"has_password\":true,"
+        "\"elements\":[[\"user\",\"ffi-user\"],[\"pass\",\"x\"]]}]");
+    QCOMPARE(rc_autofill_set_forms(
+                 reinterpret_cast<const uint8_t *>(forms.constData()),
+                 size_t(forms.size())),
+             RC_OK);
+    const QByteArray addrs = QByteArrayLiteral(
+        "[{\"name\":\"Grace\",\"country\":\"US\","
+        "\"street\":\"9 Rust Way\",\"city\":\"Portland\","
+        "\"zip\":\"97201\",\"phone\":\"+1 555 7777\","
+        "\"email\":\"g@example.com\",\"last_used\":11}]");
+    QCOMPARE(rc_autofill_set_addresses(
+                 reinterpret_cast<const uint8_t *>(addrs.constData()),
+                 size_t(addrs.size())),
+             RC_OK);
+
+    const QFileInfo storeInfo(storePath());
+    QVERIFY(storeInfo.exists());
+    const QFile::Permissions groupOther =
+        QFile::ReadGroup | QFile::WriteGroup | QFile::ExeGroup
+        | QFile::ReadOther | QFile::WriteOther | QFile::ExeOther;
+    QVERIFY(!(storeInfo.permissions() & groupOther));
+    QVERIFY(!(QFileInfo(storeInfo.absolutePath()).permissions()
+             & groupOther));
+
+    AutoFillDialog dialog;
+    QAbstractItemModel *model = dialog.tableView->model();
+    QCOMPARE(model->rowCount(), 1);
+    QCOMPARE(model->data(model->index(0, 0)).toString(),
+             QLatin1String("ffi.example"));
+    QCOMPARE(model->data(model->index(0, 1)).toString(),
+             QLatin1String("ffi-user"));
+
+    // The address half of the payload reads back through the manager.
+    AutoFillManager manager;
+    QCOMPARE(manager.addresses().count(), 1);
+    QCOMPARE(manager.addresses().first().name, QLatin1String("Grace"));
+    QCOMPARE(manager.addresses().first().zip, QLatin1String("97201"));
+    QCOMPARE(manager.addresses().first().lastUsed, 11);
+#else
+    QSKIP("the autofill store FFI only exists in the rustcore build");
 #endif
 }
 

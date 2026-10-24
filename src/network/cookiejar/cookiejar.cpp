@@ -81,7 +81,12 @@
 #include <qwebengineprofile.h>
 
 #if defined(ARKTOS_RUSTCORE)
+#include "rustcorebridge.h"
 #include "sitedecisionstore.h"
+#include <arktos_core.h>
+#include <rustcore.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
 #endif
 
 #include <algorithm>
@@ -206,11 +211,164 @@ bool CookieJar::isPrivate() const
     return m_profile->isOffTheRecord();
 }
 
+#if defined(ARKTOS_RUSTCORE)
+namespace {
+
+// MD23: QNetworkCookie -> the RC15 record JSON for this jar's
+// container partition.  The jar keeps the Set-Cookie Domain
+// verbatim: a leading dot marks a domain cookie, its absence a
+// host-exact one — the same split the RC15 hostOnly flag records
+// (cookies.rs documents the measured Qt behavior).
+QJsonObject rustCookieJson(const QNetworkCookie &cookie,
+                         const QString &container)
+{
+    QString domain = cookie.domain();
+    const bool hostOnly = !domain.startsWith(QLatin1Char('.'));
+    if (!hostOnly)
+        domain = domain.mid(1);
+    QJsonObject o;
+    o.insert(QLatin1String("container"), container);
+    o.insert(QLatin1String("name"),
+             QString::fromUtf8(cookie.name()));
+    o.insert(QLatin1String("value"),
+             QString::fromUtf8(cookie.value()));
+    o.insert(QLatin1String("domain"), domain);
+    o.insert(QLatin1String("path"), cookie.path().isEmpty()
+             ? QStringLiteral("/") : cookie.path());
+    if (cookie.isSessionCookie())
+        o.insert(QLatin1String("expires"), QJsonValue());
+    else
+        o.insert(QLatin1String("expires"),
+                 double(cookie.expirationDate().toMSecsSinceEpoch()));
+    o.insert(QLatin1String("secure"), cookie.isSecure());
+    o.insert(QLatin1String("httpOnly"), cookie.isHttpOnly());
+    o.insert(QLatin1String("sameSite"), int(cookie.sameSitePolicy()));
+    o.insert(QLatin1String("hostOnly"), hostOnly);
+    o.insert(QLatin1String("created"),
+             double(QDateTime::currentMSecsSinceEpoch()));
+    return o;
+}
+
+} // namespace
+
+AcCookies *CookieJar::rustCookies() const
+{
+    // A private jar never mirrors — the persistent db must not see
+    // off-the-record cookies (the same disk silence save() keeps).
+    if (m_profile->isOffTheRecord())
+        return nullptr;
+    // Same drift rule HistoryManager::rustStore() documents: a
+    // minted handle pins the root it was bound against, so a
+    // test-mode data-root move drops it for a re-mint.
+    if (m_rustCookies && RustCoreBridge::rootDrifted()) {
+        ac_cookies_close(m_rustCookies);
+        m_rustCookies = nullptr;
+        m_rustRoleDeclared = false;
+    }
+    if (!m_rustCookies) {
+        if (RustCoreBridge *bridge = RustCoreBridge::serving())
+            m_rustCookies = bridge->cookies(m_profileId);
+    }
+    if (!m_rustCookies)
+        ensureRustCookies();
+    // The declared two-mode contract (cookies.rs): on the Chromium
+    // lane the engine owns the jar and this db is its durable shadow
+    // — the persisted meta flag is how the db honestly reports it.
+    if (!m_rustRoleDeclared) {
+        const AcStatus st = m_rustCookies
+            ? ac_cookies_set_role(m_rustCookies, AC_COOKIES_MIRROR)
+            : rc_cookies_set_role(AC_COOKIES_MIRROR);
+        m_rustRoleDeclared = (st == AC_OK);
+    }
+    return m_rustCookies;
+}
+
+void CookieJar::ensureRustCookies() const
+{
+    // Legacy-lane anchor: the process-global store re-binds to this
+    // profile's cookies.db (a no-op re-assert when already open).
+    rustCoreEnsureDataDirFor(m_profileId);
+    rc_cookies_open(nullptr);
+}
+
+void CookieJar::rustCookieSet(const QNetworkCookie &cookie) const
+{
+    if (m_profile->isOffTheRecord())
+        return;
+    QString container;
+    // ContainerManager::containerIdForProfile resolves the normal
+    // profile to "" — the store's default partition.
+    if (ContainerManager *manager =
+            ContainerManager::instanceIfCreated(m_profileId))
+        container = manager->containerIdForProfile(m_profile);
+    const QByteArray json = QJsonDocument(
+        rustCookieJson(cookie, container)).toJson(QJsonDocument::Compact);
+    if (AcCookies *h = rustCookies()) {
+        ac_cookies_set(h,
+                       reinterpret_cast<const uint8_t *>(json.constData()),
+                       size_t(json.size()));
+    } else {
+        rc_cookies_set(
+            reinterpret_cast<const uint8_t *>(json.constData()),
+            size_t(json.size()));
+    }
+}
+
+void CookieJar::rustCookieRemove(const QNetworkCookie &cookie) const
+{
+    if (m_profile->isOffTheRecord())
+        return;
+    QString container;
+    if (ContainerManager *manager =
+            ContainerManager::instanceIfCreated(m_profileId))
+        container = manager->containerIdForProfile(m_profile);
+    QString domain = cookie.domain();
+    if (domain.startsWith(QLatin1Char('.')))
+        domain = domain.mid(1);
+    const QByteArray d = domain.toUtf8();
+    const QByteArray n = cookie.name();
+    const QByteArray p = (cookie.path().isEmpty()
+                          ? QStringLiteral("/") : cookie.path()).toUtf8();
+    // Explicit "" container — the default partition.  NULL would
+    // also resolve to default on remove, but "" is unambiguous.
+    const QByteArray c = container.toUtf8();
+    if (AcCookies *h = rustCookies())
+        ac_cookies_remove(h, d.constData(), n.constData(), p.constData(),
+                          c.constData());
+    else
+        rc_cookies_remove(d.constData(), n.constData(), p.constData(),
+                          c.constData());
+}
+
+void CookieJar::rustCookiesClear() const
+{
+    if (m_profile->isOffTheRecord())
+        return;
+    QString container;
+    if (ContainerManager *manager =
+            ContainerManager::instanceIfCreated(m_profileId))
+        container = manager->containerIdForProfile(m_profile);
+    // Explicit "" — the default partition ONLY.  NULL means "wipe
+    // the whole db" and would erase container partitions owned by
+    // other jars.
+    const QByteArray c = container.toUtf8();
+    if (AcCookies *h = rustCookies())
+        ac_cookies_clear(h, c.constData());
+    else
+        rc_cookies_clear(c.constData());
+}
+#endif // ARKTOS_RUSTCORE
+
 void CookieJar::clear()
 {
     m_cookies.clear();
     if (m_store)
         m_store->deleteAllCookies();
+#if defined(ARKTOS_RUSTCORE)
+    // deleteAllCookies is a bulk op — the per-cookie removed signals
+    // are not guaranteed, so the mirror drops the partition itself.
+    rustCookiesClear();
+#endif
     emit cookiesChanged();
 }
 
@@ -420,6 +578,12 @@ void CookieJar::handleCookieAdded(const QNetworkCookie &cookie)
         m_cookies.append(rewritten);
         m_store->setCookie(rewritten);
     }
+#if defined(ARKTOS_RUSTCORE)
+    // MD23: the RC15 mirror tracks what the jar actually kept — the
+    // rewritten form when a rule rewrote it (its own cookieAdded
+    // re-entry lands the same upsert, idempotent).
+    rustCookieSet(rewrite ? rewritten : cookie);
+#endif
     emit cookiesChanged();
 }
 
@@ -432,6 +596,9 @@ void CookieJar::handleCookieRemoved(const QNetworkCookie &cookie)
             && old.path() == cookie.path())
             m_cookies.removeAt(i);
     }
+#if defined(ARKTOS_RUSTCORE)
+    rustCookieRemove(cookie);
+#endif
     emit cookiesChanged();
 }
 

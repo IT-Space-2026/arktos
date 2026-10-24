@@ -1227,9 +1227,10 @@ the full transitive list lives in `THIRD-PARTY-NOTICES` §7–9)
 | Majestic Million site list | CC BY 3.0 | https://majestic.com/reports/majestic-million |
 | ClearURLs-derived tracking-param rules (`urlstrip-rules.json`, vendored) | LGPL-3.0 | https://github.com/ClearURLs/Addon |
 
-**Experimental** (in-tree, not shipped): libservo (MPL-2.0 —
-https://servo.org) behind the spikes/servo embedding harness and the
-planned selectable engine.
+**Experimental**: libservo (MPL-2.0 — https://servo.org) — the optional
+Servo backend ships as a dlopen'd `libservo_embed` cdylib inside the
+deb/rpm/dmg/exe packages (built from `spikes/servo/servo-embed`); the
+flatpak does not include it.
 
 `make pkg-deb` (driver: `./.devin/pkg-deb.sh`) builds a **Debian
 package** at `dist/arktos_1.0_amd64.deb`. The same payload is laid out
@@ -1244,8 +1245,11 @@ libxcb-cursor0, ...). `debian/` carries hand-rolled metadata (no
 debhelper needed): `dpkg-buildpackage -b -us -uc -rfakeroot -d` works
 too and drops the artifacts in the parent dir as usual. The driver
 verifies the package after building: a real `dpkg -i` into a scratch
-instdir, `ldd` clean with the dev Qt masked, and a headless
-`--quit-after-load` launch from the installed layout.
+instdir, `ldd` clean with the dev Qt masked, a headless
+`--quit-after-load` launch from the installed layout, and — when the
+tree was configured for rust — an `ac_init` facade link-proof on the
+packaged binary (a missing cargo would otherwise ship a silent no-rust
+fallback).
 
 `make pkg-flatpak` (driver: `./.devin/pkg-flatpak.sh`, manifest:
 `com.arktos_browser.Arktos.yaml`) builds an **installable flatpak** at
@@ -1253,7 +1257,7 @@ instdir, `ldd` clean with the dev Qt masked, and a headless
 flatpak. The app compiles inside the org.kde 6.11 SDK (newest Qt 6
 runtime on flathub) with QtWebEngine provided by the
 `io.qt.qtwebengine.BaseApp` and cargo by the rust-stable SDK extension —
-both rust crates build in-sandbox from the vendored, sha256-pinned crate
+the rust crates build in-sandbox from the vendored, sha256-pinned crate
 set in `flatpak/cargo-sources.json` (regenerate it with
 `flatpak/gen-cargo-sources.py` after touching a Cargo.lock). The tor
 expert bundle ships under `/app/lib/tor` so tor windows bootstrap inside

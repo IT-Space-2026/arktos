@@ -1731,13 +1731,22 @@ QString ServoBackend::configDir()
 }
 
 Engine::Profile *ServoBackend::createProfile(
-        const Engine::ProfileOptions &, QObject *)
+        const Engine::ProfileOptions &options, QObject *)
 {
-    // One shared browsing context — servo's profile objects don't
-    // exist yet; a per-tab profile would fake isolation it can't give.
-    if (!m_defaultProfile)
-        m_defaultProfile = new ServoProfile(QStringLiteral("servo"), this);
-    return m_defaultProfile;
+    // One shared browsing context per persona NAME — servo's profile
+    // objects don't exist engine-side; a per-tab profile would fake
+    // isolation it can't give.  The name carries the owning persona
+    // (TabWidget passes the "arktos"/"arktos-<id>" contract names) so
+    // profileId() binds this profile's pages to the persona's
+    // facade-bound stores — a servo visit lands in the same history.db
+    // a Chromium tab on that persona writes.  An empty name keeps the
+    // legacy "servo" context, which resolves the ambient persona.
+    const QString name = options.storageName.isEmpty()
+        ? QStringLiteral("servo") : options.storageName;
+    QPointer<ServoProfile> &profile = m_profiles[name];
+    if (!profile)
+        profile = new ServoProfile(name, this);
+    return profile;
 }
 
 Engine::Page *ServoBackend::createPage(Engine::Profile *profile,

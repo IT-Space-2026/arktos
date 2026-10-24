@@ -30,6 +30,7 @@
 #include "browserprofile.h"
 #include "browsertheme.h"
 #include "containermanager.h"
+#include "extensioneventhub.h"
 #include "extensionpagebridge.h"
 #include "fileaccesshandler.h"
 #include "historymanager.h"
@@ -82,6 +83,18 @@
 #include <qwebenginescriptcollection.h>
 #include <qwebenginesettings.h>
 #include <qwebengineview.h>
+
+#if defined(ARKTOS_RUSTCORE)
+#include "rustcorebridge.h"
+
+#include <arktos_core.h>
+#include <rustcore.h>
+
+#include <qjsondocument.h>
+#include <qjsonobject.h>
+
+#include <string.h>
+#endif
 
 QString WebPage::s_userAgent;
 
@@ -604,6 +617,69 @@ void WebPage::setUserAgent(const QString &userAgent)
     }
 }
 
+#if defined(ARKTOS_RUSTCORE)
+// MD02: one consult into rustcore's navpolicy module — manifest in,
+// verdict out.  The page's persona anchors the store read (the
+// "nav-scheme"/"nav-block" rows and the "container" rules
+// ContainerManager mirrors there are per-persona); with no bridge
+// serving yet the legacy rc_* spelling runs under the same explicit
+// anchor.  A NULL answer maps to an empty QByteArray — the caller
+// then runs the identical local gates, so an FFI failure can never
+// silently allow or block a navigation.
+static QByteArray navPolicyRpc(const QString &profileId,
+                               const QJsonObject &request, bool decide)
+{
+    AcPolicy *h = nullptr;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->policy(profileId);
+    if (!h)
+        rustCoreEnsureDataDirFor(
+            profileId.isEmpty() ? QLatin1String("default") : profileId);
+    const QByteArray json =
+        QJsonDocument(request).toJson(QJsonDocument::Compact);
+    const uint8_t *data =
+        reinterpret_cast<const uint8_t *>(json.constData());
+    char *raw = decide
+        ? (h ? ac_nav_decide(h, data, size_t(json.size()))
+             : rc_nav_decide(data, size_t(json.size())))
+        : (h ? ac_nav_call(h, data, size_t(json.size()))
+             : rc_nav_call(data, size_t(json.size())));
+    ac_policy_close(h);
+    if (!raw)
+        return QByteArray();
+    QByteArray out = QByteArray::fromRawData(raw, int(strlen(raw)));
+    out.detach();
+    rc_string_free(raw);
+    return out;
+}
+
+// The phased navigation manifest -> verdict object endpoint.  An
+// FFI failure is the empty object — never a JSON document missing
+// its "action".
+static QJsonObject navPolicyDecide(const QString &profileId,
+                                   const QJsonObject &manifest)
+{
+    return QJsonDocument::fromJson(
+        navPolicyRpc(profileId, manifest, true)).object();
+}
+
+// The granular ops whose answers are bare scalars (browser_scheme,
+// rate_limit_interstitial, untrusted_input, page_link): the rust
+// reply is the literal "true"/"false" — QJsonDocument has no scalar
+// root, so the compact text is compared directly.  *answered stays
+// false on an FFI failure.
+static bool navPolicyBool(const QJsonObject &request, bool *answered)
+{
+    const QByteArray raw = navPolicyRpc(QString(), request, false);
+    if (raw == "true" || raw == "false") {
+        *answered = true;
+        return raw == "true";
+    }
+    *answered = false;
+    return false;
+}
+#endif
+
 // Schemes Chromium renders itself plus the ones this application
 // serves through registered QWebEngineUrlSchemeHandlers (main.cpp).
 // A navigation to anything else — mailto:, tel:, magnet:, ftp: and
@@ -614,6 +690,18 @@ void WebPage::setUserAgent(const QString &userAgent)
 // runs the identical allowlist instead of a drifting copy.
 bool WebPage::isBrowserHandledScheme(const QString &scheme)
 {
+#if defined(ARKTOS_RUSTCORE)
+    // MD02: the allowlist lives in navpolicy — both engines' decision
+    // paths read the same table through this consult; the local set
+    // is the FFI-failure fallback.
+    bool answered = false;
+    const bool handled = navPolicyBool({
+        {QLatin1String("op"), QLatin1String("browser_scheme")},
+        {QLatin1String("scheme"), scheme},
+    }, &answered);
+    if (answered)
+        return handled;
+#endif
     static const QSet<QString> schemes = {
         QStringLiteral("about"),
         QStringLiteral("abp"),
@@ -730,6 +818,85 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
 {
     const QString scheme = url.scheme();
 
+#if defined(ARKTOS_RUSTCORE)
+    // MD02: the "pre" consult — the interstitial carriers, the
+    // per-profile nav-block/nav-scheme overrides, the abp-subscribe
+    // rewrite and the external-scheme gate all answer from navpolicy
+    // now.  Qt keeps the execution: nonce resolution, the consent
+    // prompt, the desktop hand-off and the subscribe prompt are the
+    // same calls the local gates below still make.  An unanswered
+    // consult falls through to those gates verbatim.
+    const QString navProfileId =
+        BrowserProfile::profileIdFor(profile());
+    const QJsonObject preVerdict = navPolicyDecide(navProfileId, {
+        {QLatin1String("phase"), QLatin1String("pre")},
+        {QLatin1String("url"), QString::fromUtf8(url.toEncoded())},
+        {QLatin1String("type"), int(type)},
+        {QLatin1String("is_main_frame"), isMainFrame},
+    });
+    if (!preVerdict.isEmpty()) {
+        const QString action =
+            preVerdict.value(QLatin1String("action")).toString();
+        if (action == QLatin1String("internal")) {
+            // An interstitial-carrier navigation: the verdict names
+            // the scheme and whether this is the published
+            // interstitial page itself; nonce-bound resolution stays
+            // page-side.
+            const QString nonce = QUrlQuery(url)
+                .queryItemValue(QLatin1String("n"));
+            if (preVerdict.value(QLatin1String("interstitial")).toBool())
+                return SchemeAccessHandler::hasInterstitialPage(nonce);
+            const QString carrier = preVerdict
+                .value(QLatin1String("scheme")).toString();
+            if (carrier == QLatin1String("arktos-cert-error")) {
+                if (m_certErrorPending && nonce == m_certErrorNonce)
+                    resolveCertificateErrorLink(url);
+            } else if (carrier == QLatin1String("arktos-http-warning")) {
+                if (m_httpWarningPending && nonce == m_httpWarningNonce)
+                    resolveHttpWarningLink(url);
+            } else if (carrier == QLatin1String("arktos-site-block")) {
+                if (m_domainBlockPending && nonce == m_domainBlockNonce)
+                    resolveDomainBlockLink(url);
+            }
+            return false;
+        }
+        if (action == QLatin1String("block"))
+            return false;
+        if (action == QLatin1String("rewrite")) {
+            // abp-subscribe: the verdict carries the decoded
+            // location/title items; the prompt itself stays Qt-side.
+            QUrl sub;
+            sub.setScheme(QLatin1String("abp"));
+            sub.setPath(QLatin1String("subscribe"));
+            QUrlQuery subQuery;
+            subQuery.addQueryItem(QLatin1String("location"),
+                preVerdict.value(QLatin1String("location")).toString());
+            const QString title =
+                preVerdict.value(QLatin1String("title")).toString();
+            if (!title.isEmpty())
+                subQuery.addQueryItem(QLatin1String("title"), title);
+            sub.setQuery(subQuery);
+            AdBlockManager::instanceFor(navProfileId)
+                    ->promptSubscribe(sub);
+            return false;
+        }
+        if (action == QLatin1String("ask")) {
+            confirmAndOpenExternalUrl(url);
+            return false;
+        }
+        if (action == QLatin1String("external")) {
+            // A "nav-scheme" external rule is the user's standing
+            // pre-consent — the prompt's own tail, minus the prompt.
+            if (BrowserApplication *application =
+                    BrowserApplication::instance())
+                application->askDesktopToOpenUrl(url);
+            else
+                QDesktopServices::openUrl(url);
+            return false;
+        }
+        // "continue" — every gate the phase covers answered.
+    } else {
+#endif
     // SEC06: the certificate-error interstitial and its action links
     // live on this private scheme — a link click surfaces as an
     // ordinary navigation that resolves the pending decision.  Only
@@ -815,6 +982,9 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
             confirmAndOpenExternalUrl(url);
         return false;
     }
+#if defined(ARKTOS_RUSTCORE)
+    }
+#endif
 
     // TOR14: page-initiated remote navigations — the tor start page's
     // search assigns window.location.href, link clicks and JS/meta
@@ -838,6 +1008,69 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         }
     }
 
+#if defined(ARKTOS_RUSTCORE)
+    if (isMainFrame) {
+        // MD02: the "mid" consult — the staged-viewer clamp, the
+        // file: directory reroute and the container divert.  The
+        // caller-observed flags (managed-staging membership, the
+        // is-dir stat, the OTR state and the page's own container)
+        // are pushed in; every gate this phase covers is
+        // main-frame-only, so subframes skip the consult and the
+        // fallback alike.
+        const QUrl currentUrl = this->url();
+        const bool offTheRecord = profile()->isOffTheRecord();
+        QString ownContainer;
+        QString containerHost;
+        if (!offTheRecord
+            && (scheme == QLatin1String("http")
+                || scheme == QLatin1String("https"))) {
+            ownContainer = ContainerManager::instanceFor(navProfileId)
+                ->containerIdForProfile(profile());
+            // The canonical rule key (www-folded, root-dots trimmed)
+            // — the fold needs the public-suffix table that stays
+            // here; rust only walks the stored labels.
+            containerHost =
+                ContainerManager::normalizeSiteHost(url.host());
+        }
+        const QJsonObject midVerdict = navPolicyDecide(navProfileId, {
+            {QLatin1String("phase"), QLatin1String("mid")},
+            {QLatin1String("url"), QString::fromUtf8(url.toEncoded())},
+            {QLatin1String("type"), int(type)},
+            {QLatin1String("is_main_frame"), isMainFrame},
+            {QLatin1String("current_is_managed"),
+             currentUrl.isLocalFile()
+                 && PdfSupport::isManagedPath(currentUrl.toLocalFile())},
+            {QLatin1String("target_is_managed"),
+             url.isLocalFile()
+                 && PdfSupport::isManagedPath(url.toLocalFile())},
+            {QLatin1String("target_is_dir"),
+             scheme == QLatin1String("file")
+                 && QFileInfo(url.toLocalFile()).isDir()},
+            {QLatin1String("otr"), offTheRecord},
+            {QLatin1String("container"), ownContainer},
+            {QLatin1String("container_host"), containerHost},
+        });
+        if (!midVerdict.isEmpty()) {
+            const QString action =
+                midVerdict.value(QLatin1String("action")).toString();
+            if (action == QLatin1String("block"))
+                return false;
+            if (action == QLatin1String("redirect")) {
+                // file-dir — the listing url is rebuilt locally so
+                // its encoded shape stays urlForLocalPath's verbatim.
+                const QUrl dirUrl = FileAccessHandler::urlForLocalPath(
+                    url.toLocalFile());
+                QTimer::singleShot(
+                    0, this, [this, dirUrl]() { load(dirUrl); });
+                return false;
+            }
+            if (action == QLatin1String("divert")
+                && divertToContainer(url,
+                    midVerdict.value(QLatin1String("container"))
+                        .toString()))
+                return false;
+        } else {
+#endif
     // PDF01: the staged viewer document is file://-origin — an
     // embedded file:///etc/passwd-style link would read as a
     // local-to-local navigation Chromium has no reason to refuse.
@@ -878,6 +1111,10 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
         && divertToContainerRule(url)) {
         return false;
     }
+#if defined(ARKTOS_RUSTCORE)
+        }
+    }
+#endif
 
     // SEC18: anti-phishing/malware domain blocklist — a main-frame
     // navigation whose host is on the local list is refused and
@@ -987,11 +1224,44 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
     // (container divert, domain blocklist, HTTPS-Only, insecure
     // POST) keeps precedence — a refused navigation never reaches
     // the fetch.
+#if defined(ARKTOS_RUSTCORE)
+    // MD02: the "claim" consult — the pdf sanitize-on-view claim is
+    // the last decision before the engine's own accept.  The toggles
+    // and the managed-staging membership are pushed in; the bypass
+    // set and the fetch start stay Qt-side.  Like the mid gates the
+    // claim is main-frame-only, so subframes skip both paths.
+    bool claimAnswered = false;
+    if (isMainFrame) {
+        const QJsonObject claimVerdict = navPolicyDecide(navProfileId, {
+            {QLatin1String("phase"), QLatin1String("claim")},
+            {QLatin1String("url"), QString::fromUtf8(url.toEncoded())},
+            {QLatin1String("type"), int(type)},
+            {QLatin1String("is_main_frame"), isMainFrame},
+            {QLatin1String("pdf_viewer"), PdfSupport::viewerEnabled()},
+            {QLatin1String("pdf_sanitize"), PdfSupport::sanitizeEnabled()},
+            {QLatin1String("target_is_managed"),
+             url.isLocalFile()
+                 && PdfSupport::isManagedPath(url.toLocalFile())},
+        });
+        claimAnswered = !claimVerdict.isEmpty();
+        if (claimAnswered
+            && claimVerdict.value(QLatin1String("action")).toString()
+                    == QLatin1String("claim")
+            && !PdfSupport::consumeBypass(this, url)) {
+            PdfSanitizeFetch::start(this, url);
+            return false;
+        }
+    }
+    if (!claimAnswered) {
+#endif
     if (isMainFrame && PdfSupport::shouldIntercept(url, type)
         && !PdfSupport::consumeBypass(this, url)) {
         PdfSanitizeFetch::start(this, url);
         return false;
     }
+#if defined(ARKTOS_RUSTCORE)
+    }
+#endif
 
     bool accepted = QWebEnginePage::acceptNavigationRequest(url, type, isMainFrame);
 
@@ -1087,6 +1357,19 @@ bool WebPage::divertToContainerRule(const QUrl &url)
     const QString target = manager->containerIdForHost(url.host());
     if (target.isEmpty()
         || target == manager->containerIdForProfile(profile()))
+        return false;
+    return divertToContainer(url, target);
+}
+
+// The spawn half of a container divert, shared by the local rule
+// lookup above and the MD02 navpolicy verdict path — a stored rule
+// can outlive the container it names (the legacy lookup filtered
+// those at query time), so a dead id drops to a commit here.
+bool WebPage::divertToContainer(const QUrl &url, const QString &target)
+{
+    ContainerManager *manager = ContainerManager::instanceFor(
+        BrowserProfile::profileIdFor(profile()));
+    if (!manager->isContainerId(target))
         return false;
 
     // Bound the spawn: a cyclic cross-container redirect chain — a
@@ -1205,13 +1488,27 @@ QWebEnginePage *WebPage::createWindow(QWebEnginePage::WebWindowType type)
     WebView *sourceView = qobject_cast<WebView*>(WebEnginePageAdapter::forPage(this)->view());
     if (sourceView && sourceView->tabWidget()) {
         if (WebView *webView = sourceView->tabWidget()->getView(
-                    m_openTargetBlankLinksIn, sourceView))
+                    m_openTargetBlankLinksIn, sourceView)) {
+            // MD36 — chrome.webNavigation.onCreatedNavigationTarget:
+            // createWindow runs on the SOURCE page, so the opener is
+            // known at target birth.  The spawn may already have
+            // registered with the event hub — tabsChanged fires
+            // inside getView — so the note is order-agnostic.  A
+            // CurrentTab placement reuses the source view itself:
+            // no new target, no note.
+            if (webView != sourceView)
+                ExtensionEventHub::instance()->noteNavTarget(
+                    webView, sourceView);
             return webView->webPage();
+        }
     }
     // Detached page (no TabWidget above the view): open a standalone
     // window on the same profile so private browsing propagates.
     WebView *webView = new WebView(profile());
     webView->setAttribute(Qt::WA_DeleteOnClose);
+    if (sourceView)
+        ExtensionEventHub::instance()->noteNavTarget(webView,
+                                                     sourceView);
     webView->show();
     return webView->webPage();
 }
@@ -2268,6 +2565,17 @@ void WebPage::resolveDomainBlockLink(const QUrl &command)
 // fire on lookalikes like "google.com.evil.example".
 bool WebPage::isRateLimitInterstitialUrl(const QUrl &url)
 {
+#if defined(ARKTOS_RUSTCORE)
+    // MD02: the heuristic lives in navpolicy — one op consult, the
+    // local label walk stays as the FFI-failure fallback.
+    bool answered = false;
+    const bool verdict = navPolicyBool({
+        {QLatin1String("op"), QLatin1String("rate_limit_interstitial")},
+        {QLatin1String("url"), QString::fromUtf8(url.toEncoded())},
+    }, &answered);
+    if (answered)
+        return verdict;
+#endif
     if (!url.path().startsWith(QLatin1String("/sorry/")))
         return false;
     static const QSet<QString> secondLevel = {

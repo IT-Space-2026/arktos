@@ -136,6 +136,16 @@ cmd_verify() {
         || fail "desktop file Icon= not rewritten to com.arktos_browser.Arktos"
     note "icons + desktop Icon= present (renamed to $APPID)"
 
+    # -- rust link-proof (RC10): the facade must be inside the binary ------
+    # The manifest passes CONFIG+=rustcore explicitly, so a missing ac_init
+    # means the rust SDK ext was lost and the no-rust fallback shipped —
+    # the launch smoke below cannot tell the difference.  grep over the
+    # binary's symtab works inside the runtime (no nm/binutils needed).
+    fp_run --command=/bin/sh "$APPID" -c \
+        'grep -q ac_init /app/bin/arktos' \
+        || fail "facade symbol ac_init missing from the flatpak binary"
+    note "facade linked: ac_init present in /app/bin/arktos"
+
     # -- payload: bundled tor present + runs in the sandbox ----------------
     fp_run --command=/bin/sh "$APPID" -c \
         'test -x /app/lib/tor/tor && test -f /app/lib/data/geoip' \

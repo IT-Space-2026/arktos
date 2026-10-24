@@ -349,7 +349,9 @@ void tst_ClearPlan::parityCorpus_data()
             | ClearPrivateData::ClearFullWipe,
     };
     const char *periods[] = {"all", "everything", "hour", "day",
-                             "last-week", "", "fortnight"};
+                             "last-week", "", "fortnight",
+                             "secs:60", "secs:0", "secs:-3", "secs:",
+                             "secs:5s"};
     for (const char *period : periods) {
         for (quint32 c : cats) {
             for (bool otr : {false, true}) {

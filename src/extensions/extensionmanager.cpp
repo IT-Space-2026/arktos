@@ -21,11 +21,13 @@
 #include "profilesettings.h"
 
 #include "browserapplication.h"
+#include "browsermainwindow.h"
 #include "extensionbackgroundhost.h"
 #include "extensionshimbackend.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
 #include "networkaccessmanager.h"
+#include "tabwidget.h"
 
 #if defined(ARKTOS_RUSTCORE)
 #include "rustcore.h"
@@ -423,10 +425,21 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
         emit changed();
     });
     connect(extensions, &QWebEngineExtensionManager::unloadFinished,
-            this, relay(&ExtensionManager::extensionUnloaded));
+            this, [this, relay](const QWebEngineExtensionInfo &info) {
+        // MD18: a setUninstallURL page opens when the remove lands —
+        // but only for a removal removeExtension() dispatched; the
+        // reload path's transient unload carries no pending marker.
+        maybeOpenUninstallPage(infoFrom(info).id);
+        relay(&ExtensionManager::extensionUnloaded)(info);
+    });
     connect(extensions, &QWebEngineExtensionManager::uninstallFinished,
             this, [this, profile](const QWebEngineExtensionInfo &info) {
         const ExtensionInfo plain = infoFrom(info);
+        // MD18: the recorded uninstall page opens first — its
+        // settings key dies with the extension either way.
+        maybeOpenUninstallPage(plain.id);
+        ProfileSettings(BrowserProfile::profileIdFor(profile))
+            .remove(uninstallUrlSettingsKey(plain.id));
         // SEC25: the pin and any tamper flag die with the extension;
         // the EXT20 enable record goes with them.
         ProfileSettings(BrowserProfile::profileIdFor(profile))
@@ -445,6 +458,10 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
         // with the extension too — Chrome drops them on uninstall.
         ProfileSettings(BrowserProfile::profileIdFor(profile))
             .remove(QStringLiteral("extensions/regscripts/")
+                    + plain.id);
+        // MD32: recorded user-script world configs die the same way.
+        ProfileSettings(BrowserProfile::profileIdFor(profile))
+            .remove(QStringLiteral("extensions/userworlds/")
                     + plain.id);
         ExtensionBackgroundRuntime::instance()
             ->dropRegisteredScripts(plain.id);
@@ -611,6 +628,8 @@ QList<ExtensionManager::ExtensionInfo> ExtensionManager::extensions() const
         info.actionBadgeColor = action.badgeColor;
         info.actionPopup = action.popup;
         info.actionEnabled = action.enabled;
+        info.actionIconPaths = action.iconPaths;
+        info.actionIconImages = action.iconImages;
     }
 #endif
     return list;
@@ -680,6 +699,11 @@ void ExtensionManager::removeExtension(const QString &id)
     if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
         const QWebEngineExtensionInfo info = findById(extensions, id);
         if (!info.id().isEmpty()) {
+            // MD18: a recorded setUninstallURL page opens once the
+            // removal lands — the finish handlers consume the marker.
+            const QUrl uninstallPage = uninstallUrlFor(id);
+            if (!uninstallPage.isEmpty())
+                m_pendingUninstallPages.insert(id, uninstallPage);
             if (info.isInstalled())
                 extensions->uninstallExtension(info);
             else
@@ -691,6 +715,91 @@ void ExtensionManager::removeExtension(const QString &id)
     }
 #endif
     emit errorOccurred(tr("Extension support is not available in this build of Qt WebEngine."));
+}
+
+void ExtensionManager::reloadExtension(const QString &id)
+{
+#if QT_CONFIG(webengine_extensions)
+    if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
+        const QWebEngineExtensionInfo info = findById(extensions, id);
+        if (!info.id().isEmpty() && !info.path().isEmpty()) {
+            const QString path = info.path();
+            // unload+load IS Chrome's runtime.reload.  The engine
+            // applies unload asynchronously — re-load the same path
+            // once THIS extension's unloadFinished lands.  The same
+            // already-approved path re-rides its consent grant
+            // (programmatic, like the bundled install's: the reload
+            // is not a new path approval).
+            QMetaObject::Connection *conn = new QMetaObject::Connection;
+            *conn = connect(
+                extensions, &QWebEngineExtensionManager::unloadFinished,
+                this, [this, conn, id, path](
+                    const QWebEngineExtensionInfo &unloaded) {
+                if (unloaded.id() != id)
+                    return;
+                disconnect(*conn);
+                delete conn;
+                m_consentedPaths.insert(path);
+                loadExtension(path);
+            });
+            extensions->unloadExtension(info);
+            return;
+        }
+        emit errorOccurred(tr("Extension %1 is no longer loaded.").arg(id));
+        return;
+    }
+#endif
+    emit errorOccurred(tr("Extension support is not available in this build of Qt WebEngine."));
+}
+
+bool ExtensionManager::setUninstallUrl(const QString &id,
+                                       const QUrl &url)
+{
+    const QString key = uninstallUrlSettingsKey(id);
+    ProfileSettings settings(m_profileId);
+    if (url.isEmpty()) {
+        settings.remove(key);
+        return true;
+    }
+    // Chrome's contract: http/https only, 255 characters max — a
+    // recorded url is always one a tab may open.
+    const QString text = url.toString();
+    if (!url.isValid() || text.length() > 255
+            || (url.scheme() != QLatin1String("http")
+                && url.scheme() != QLatin1String("https")))
+        return false;
+    settings.setValue(key, text);
+    return true;
+}
+
+QUrl ExtensionManager::uninstallUrlFor(const QString &id) const
+{
+    return ProfileSettings(m_profileId)
+        .value(uninstallUrlSettingsKey(id)).toUrl();
+}
+
+QString ExtensionManager::uninstallUrlSettingsKey(const QString &id)
+{
+    return QLatin1String("extensions/uninstallurl/") + id;
+}
+
+void ExtensionManager::maybeOpenUninstallPage(const QString &id)
+{
+    const QUrl page = m_pendingUninstallPages.take(id);
+    if (page.isEmpty())
+        return;
+    // The record is consumed — a refused open must not replay it on
+    // the next unrelated unload.
+    ProfileSettings(m_profileId).remove(uninstallUrlSettingsKey(id));
+    // Chrome opens the uninstall page in a new tab — never clobber
+    // the user's current one.  instance() can be null for a plain
+    // QApplication, and mainWindow() stays null on a sealed persona
+    // (VSEC01 fails closed — the page drops like any sealed write).
+    BrowserApplication *app = BrowserApplication::instance();
+    if (!app)
+        return;
+    if (BrowserMainWindow *window = app->mainWindow())
+        window->tabWidget()->loadUrl(page, TabWidget::NewSelectedTab);
 }
 
 bool ExtensionManager::sessionSawEnabledExtension()
@@ -1153,6 +1262,7 @@ QStringList ExtensionManager::unsupportedPermissions()
         QStringLiteral("topSites"),
         QStringLiteral("tts"),
         QStringLiteral("ttsEngine"),
+        QStringLiteral("userScripts"),
         QStringLiteral("vpnProvider"),
         QStringLiteral("wallpaper"),
         QStringLiteral("webAuthenticationProxy"),
@@ -1194,18 +1304,81 @@ QStringList ExtensionManager::runtimeServes()
     // The fatal-table members it covers — scripting, webRequest —
     // stop condemning an extension; the rest move out of the flat
     // "will not work" tier into "partially supported".  Surfaces the
-    // runtime does NOT serve (declarativeNetRequest*, blocking
-    // webRequest, cookies, nativeMessaging, privacy, downloads, ...)
-    // stay absent on purpose — they keep the raw engine verdict.
+    // runtime does NOT serve (blocking webRequest, nativeMessaging,
+    // ...) stay absent on purpose — they keep the raw engine verdict.
     static const QStringList served = {
+        // MD21: chrome.bookmarks rides the RC05 store through
+        // BookmarksManager — the namespace is fully served.
+        QStringLiteral("bookmarks"),
+        // MD28: chrome.browsingData serves settings/remove plus the
+        // five remove* members over the CLR01 clear plan — the
+        // declared surface is partially served, unserved dataTypes
+        // answer typed verdicts.
+        QStringLiteral("browsingData"),
         QStringLiteral("contextMenus"),
+        // MD23: chrome.cookies reads the RC15 persistent mirror and
+        // writes the engine jar + mirror — the namespace is served.
+        QStringLiteral("cookies"),
+        // MD34: chrome.declarativeNetRequest serves the
+        // update*/get*Rules, ruleset enable, isRegexSupported,
+        // testMatchOutcome, getMatchedRules and the static
+        // rule_resources lane over the live interception stage —
+        // response-header ops, tabIds conditions and
+        // setExtensionActionOptions keep typed verdicts.  The
+        // feedback grant is served too (getMatchedRules +
+        // onRuleMatchedDebug over the same evaluator).
+        QStringLiteral("declarativeNetRequest"),
+        QStringLiteral("declarativeNetRequestWithHostAccess"),
+        QStringLiteral("declarativeNetRequestFeedback"),
+        // MD33: chrome.fontSettings serves getFontList, the six
+        // servable generic families (standard/serif/sansserif/fixed/
+        // cursive/fantasy) and the three font sizes over the real
+        // engine defaults — 'math' and per-script fonts keep their
+        // typed verdicts.
+        QStringLiteral("fontSettings"),
+        // MD22: chrome.history rides the RC04 store through
+        // HistoryManager — the namespace is fully served.
+        QStringLiteral("history"),
         QStringLiteral("idle"),
         QStringLiteral("menus"),
         QStringLiteral("notifications"),
         QStringLiteral("offscreen"),
+        // MD31: chrome.privacy serves the eight ChromeSetting
+        // members with a real mapping (thirdPartyCookiesAllowed,
+        // hyperlinkAuditingEnabled, referrersEnabled,
+        // doNotTrackEnabled, networkPredictionEnabled,
+        // webRTCIPHandlingPolicy, passwordSavingEnabled,
+        // searchSuggestEnabled) — writes land the real persona
+        // toggles live; the rest of Chrome's vocabulary keeps its
+        // typed verdicts.
+        QStringLiteral("privacy"),
         QStringLiteral("scripting"),
+        // MD25: chrome.sessions serves getDevices/getRecentlyClosed/
+        // restore over TabWidget's closed-tab undo stack — the whole
+        // declared surface is live.
+        QStringLiteral("sessions"),
         QStringLiteral("sidePanel"),
+        // MD30: chrome.system's memory/cpu/display/storage getInfo
+        // members answer measured machine facts — each 'system.<sub>'
+        // grant is honored by invokeSystem; unserved subs keep
+        // their typed verdicts.
+        QStringLiteral("system.cpu"),
+        QStringLiteral("system.display"),
+        QStringLiteral("system.memory"),
+        QStringLiteral("system.storage"),
+        // MD26: chrome.tabGroups serves get/query/update/move/
+        // ungroup over the TABGRP machinery; creation rides
+        // chrome.tabs.group like the real API — the declared
+        // surface is live.
+        QStringLiteral("tabGroups"),
         QStringLiteral("tabs"),
+        // MD27: chrome.topSites serves get() off the RC04 hosts
+        // rollup — the whole declared surface is live.
+        QStringLiteral("topSites"),
+        // MD32: chrome.userScripts serves register/unregister/
+        // getScripts/update + the world-config members over the
+        // ER09 registry — glob matchers keep their typed verdicts.
+        QStringLiteral("userScripts"),
         QStringLiteral("webNavigation"),
         QStringLiteral("webRequest"),
         QStringLiteral("windows"),

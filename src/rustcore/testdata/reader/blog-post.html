@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Why I Stopped Reaching for a Framework First — bits and hexes</title>
+<meta name="author" content="J. Okonkwo">
+</head>
+<body>
+<div class="layout">
+  <div class="sidebar">
+    <div class="widget">
+      <h3>SIDEBARCLUTTER Recent posts</h3>
+      <ul>
+        <li><a href="/posts/deploys">Boring deploys are good deploys</a></li>
+        <li><a href="/posts/sqlite">SQLite is enough</a></li>
+        <li><a href="/posts/email">Own your inbox</a></li>
+      </ul>
+    </div>
+    <div class="widget subscribe">
+      <p>SIDEBARCLUTTER Get posts by email</p>
+    </div>
+  </div>
+  <div class="post">
+    <h1 class="title">Why I Stopped Reaching for a Framework First</h1>
+    <p class="meta">Posted by J. Okonkwo on 12 March 2026</p>
+    <div class="entry-content">
+      <p>MARKER_BLOG_LEDE For most of the last decade my answer to "we need a
+      web page" started with npm install. Not because the problem demanded it,
+      but because the toolchain had become muscle memory: scaffold, pick a
+      router, configure a bundler, fight the type checker, ship a hundred
+      kilobytes of JavaScript to render what is, at the end of the day, a
+      document.</p>
+      <p>The turning point was a weekend project that needed a changelog page.
+      I caught myself pricing out a component library for what was literally a
+      list of dated paragraphs. So I wrote the HTML by hand, spent twenty
+      minutes on a stylesheet, and deployed a single file. It loaded instantly,
+      it survived being archived, and it cost me an afternoon instead of a
+      toolchain.</p>
+      <p>None of this is an argument that frameworks are useless. A
+      multi-user dashboard with live updates earns its dependencies. The
+      mistake is letting the biggest hammer in the box define what a nail
+      looks like. A marketing page, a blog, a changelog, a documentation set —
+      these are documents first, and the browser already knows how to render
+      documents.</p>
+      <blockquote>
+        <p>The fastest code is the code that never ships to the client.</p>
+      </blockquote>
+      <p>The practical discipline I ended up with is embarrassingly simple:
+      start with a static file. When a real interaction requirement appears —
+      not an imagined one, a filed ticket or a user complaint — add exactly
+      the mechanism that requirement needs and nothing more. A sprinkle of
+      vanilla script covers an astonishing amount of ground.</p>
+      <pre><code>&lt;details&gt;
+  &lt;summary&gt;No JavaScript required&lt;/summary&gt;
+  Disclosure widgets are native now.
+&lt;/details&gt;</code></pre>
+      <p>There is a maintenance dividend too. The static pages I shipped five
+      years ago still render identically today. The framework apps from the
+      same era have all been through two migrations and a bundler funeral.
+      Dependencies are a mortgage; sometimes the house is worth it, but the
+      payments never stop.</p>
+      <ul>
+        <li>Documents want HTML and CSS, not a runtime.</li>
+        <li>Interactions want the smallest mechanism that fits.</li>
+        <li>Frameworks want a justification, not a default.</li>
+      </ul>
+      <p>Your mileage will vary with the problem, and mine is only one data
+      point. But the next time a page-shaped problem comes along, it is worth
+      asking whether the browser alone might already be the framework you were
+      about to install.</p>
+    </div>
+  </div>
+</div>
+<div class="site-footer">FOOTERCLUTTER archived under /posts</div>
+</body>
+</html>

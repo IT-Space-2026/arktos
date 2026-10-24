@@ -1,0 +1,7 @@
+sid=a1b2c3; secure; HttpOnly; SameSite=Lax; expires=Tue, 01-Jan-2030 00:00:00 GMT; domain=.example.com; path=/
+pref=dark%20mode; domain=sub.example.com; path=/app
+tok=xyz; SameSite=Strict; expires=Thu, 01-Jan-2032 00:00:00 GMT; domain=.strict.example; path=/deep/path
+track=t1; secure; SameSite=None; expires=Tue, 01-Jan-2030 00:00:00 GMT; domain=.none.example; path=/
+old=gone; expires=Thu, 01-Jan-1970 00:00:01 GMT; domain=.example.com; path=/
+hostcook=hv; path=/x
+uname=täst; domain=.example.com; path=/

@@ -30,7 +30,10 @@
 
 #include <QtTest/QtTest>
 #include <QtNetwork/QtNetwork>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
 #include <qtemporarydir.h>
+#include <cstring>
 
 #include "adblockmanager.h"
 #include "trancolist.h"
@@ -124,6 +127,7 @@ private slots:
     void init();
 
     void rankProbes();
+    void ffiParity();
     void builtinSeedRanks();
     void updateConsentGate();
     void updateRoundTrip();
@@ -203,6 +207,32 @@ void tst_TrancoList::rankProbes()
     QCOMPARE(rc_tranco_rank("not a host"), 0u);
     QCOMPARE(rc_tranco_rank("127.0.0.1"), 0u);
     QCOMPARE(rc_tranco_rank(nullptr), 0u);
+#endif
+}
+
+void tst_TrancoList::ffiParity()
+{
+#if defined(ARKTOS_RUSTCORE)
+    // RC06: the rank the site-trust composite surfaces (what the Qt
+    // panel displays) must equal the raw ABI rank for the same fixed
+    // host set — one merged table, one answer.
+    const QStringList hosts = {
+        QStringLiteral("ranked-fixture.test"),
+        QStringLiteral("www.ranked-fixture.test"),
+        QStringLiteral("sub.deep-fixture.test"),
+        QStringLiteral("deep-fixture.test"),
+        QStringLiteral("unlisted.invalid"),
+    };
+    for (const QString &host : hosts) {
+        const quint32 raw = rc_tranco_rank(host.toUtf8().constData());
+        char *json = rc_sitetrust_lookup(host.toUtf8().constData(), 1);
+        QVERIFY(json);
+        const QJsonObject verdict = QJsonDocument::fromJson(
+            QByteArray::fromRawData(json, int(strlen(json)))).object();
+        rc_string_free(json);
+        QCOMPARE(verdict.value(QLatin1String("rank")).toInt(),
+                 int(raw));
+    }
 #endif
 }
 

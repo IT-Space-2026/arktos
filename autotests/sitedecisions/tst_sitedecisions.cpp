@@ -53,6 +53,8 @@
 
 #if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
+#include <rustcore.h>
+#include <cstring>
 #endif
 
 class tst_SiteDecisions : public QObject
@@ -73,6 +75,7 @@ private slots:
     void replaceAndLookup();
     void snapshotReflectsChange();
     void corruptFileTolerance();
+    void ffiWrittenDataParity();
     void legacyMigration();
     void persistenceAcrossReload();
 #else
@@ -244,6 +247,93 @@ void tst_SiteDecisions::corruptFileTolerance()
     QVERIFY(SiteDecisionStore::reload());
     QVERIFY(SiteDecisionStore::get(SiteDecisionStore::KindPopup,
                                    QLatin1String("back.example"), &value));
+}
+
+void tst_SiteDecisions::ffiWrittenDataParity()
+{
+    // RC06: a façade-written row reads identically through the raw C
+    // ABI, a raw-ABI write surfaces through the façade, and the
+    // profile-scoped anchoring keeps the stores isolated — the Qt
+    // shim is a passthrough, never a second implementation.
+    QVERIFY(SiteDecisionStore::set(SiteDecisionStore::KindJavaScript,
+                                   QLatin1String("ffi.example"),
+                                   QLatin1String("block")));
+    // Raw get on the currently-anchored (default-profile) store.
+    RcBuffer out{nullptr, 0};
+    QCOMPARE(rc_sitedec_get(SiteDecisionStore::KindJavaScript,
+                          "ffi.example", &out),
+             RC_OK);
+    QVERIFY(out.data);
+    QCOMPARE(QByteArray(reinterpret_cast<char *>(out.data),
+                        qsizetype(out.len)),
+             QByteArray("block"));
+    rc_buffer_free(out);
+
+    // A raw suffix lookup resolves the same row.
+    char *raw = rc_sitedec_lookup(SiteDecisionStore::KindJavaScript,
+                                  "deep.ffi.example");
+    QVERIFY(raw);
+    const QJsonObject hit = QJsonDocument::fromJson(
+        QByteArray::fromRawData(raw, int(strlen(raw)))).object();
+    rc_string_free(raw);
+    QCOMPARE(hit.value(QLatin1String("key")).toString(),
+             QLatin1String("ffi.example"));
+    QCOMPARE(hit.value(QLatin1String("value")).toString(),
+             QLatin1String("block"));
+
+    // Raw list + raw snapshot both carry the row.
+    raw = rc_sitedec_list(SiteDecisionStore::KindJavaScript);
+    QVERIFY(raw);
+    const QJsonObject listed = QJsonDocument::fromJson(
+        QByteArray::fromRawData(raw, int(strlen(raw)))).object();
+    rc_string_free(raw);
+    QCOMPARE(listed.value(QLatin1String("ffi.example")).toString(),
+             QLatin1String("block"));
+    raw = rc_sitedec_snapshot();
+    QVERIFY(raw);
+    const QJsonObject snap = QJsonDocument::fromJson(
+        QByteArray::fromRawData(raw, int(strlen(raw)))).object();
+    rc_string_free(raw);
+    QCOMPARE(snap.value(QLatin1String("kinds")).toObject()
+                 .value(QLatin1String("js")).toObject()
+                 .value(QLatin1String("ffi.example")).toString(),
+             QLatin1String("block"));
+
+    // Reverse direction: a raw-ABI write surfaces through the façade.
+    QCOMPARE(rc_sitedec_set(SiteDecisionStore::KindPopup,
+                            "raw.example", "allow"),
+             RC_OK);
+    QString value;
+    QVERIFY(SiteDecisionStore::get(SiteDecisionStore::KindPopup,
+                                   QLatin1String("raw.example"), &value));
+    QCOMPARE(value, QLatin1String("allow"));
+
+    // Profile-scoped: the façade re-anchors the store under
+    // profiles/<id>/ — raw calls afterwards read THAT file, and the
+    // default-profile store stays untouched.
+    const QString profileId = QLatin1String("rc06-profile");
+    QVERIFY(SiteDecisionStore::set(profileId,
+                                   SiteDecisionStore::KindCookie,
+                                   QLatin1String("scoped.example"),
+                                   QLatin1String("session")));
+    out = {nullptr, 0};
+    QCOMPARE(rc_sitedec_get(SiteDecisionStore::KindCookie,
+                            "scoped.example", &out),
+             RC_OK);
+    QVERIFY(out.data);
+    QCOMPARE(QByteArray(reinterpret_cast<char *>(out.data),
+                        qsizetype(out.len)),
+             QByteArray("session"));
+    rc_buffer_free(out);
+    QVERIFY(!SiteDecisionStore::get(SiteDecisionStore::KindCookie,
+                                    QLatin1String("scoped.example"),
+                                    &value));
+
+    // Sweep the profile store (an emptied kind removes its file) and
+    // re-anchor the suite on the default profile.
+    SiteDecisionStore::replace(profileId, SiteDecisionStore::KindCookie,
+                               QHash<QString, QString>());
+    SiteDecisionStore::reset();
 }
 
 void tst_SiteDecisions::legacyMigration()

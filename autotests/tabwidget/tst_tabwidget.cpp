@@ -58,8 +58,11 @@
 #include <qsettings.h>
 
 #ifdef ARKTOS_RUSTCORE
+#include <arktos_core.h>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QTemporaryDir>
 #endif
 
 class tst_TabWidget : public QObject
@@ -135,6 +138,7 @@ private slots:
     void newTabStartPage();
     void lazySessionRestore();
     void engineSessionRestore();
+    void rustcoreSessionRoundTrip();
     void lazyRestoreUnderContainerFilter();
     void lazyRestoreInsideCollapsedGroup();
     void otrPendingRestoreExcluded();
@@ -3543,6 +3547,138 @@ void tst_TabWidget::lazyRestoreInsideCollapsedGroup()
 
     settings.remove(QLatin1String("performance/lazyRestoreTabs"));
     settings.remove(QLatin1String("performance/alwaysLoadPinnedTabs"));
+}
+
+// RC13: a manifest the C++ writer produces restores identically
+// through the rustcore store — sessionStateJson() -> ac_session_save
+// -> ac_session_load -> restoreSessionState() on a fresh strip.  The
+// path-bound facade handle is what production code uses: the legacy
+// anchored spelling races the process-global dir when another rc_*
+// consumer re-anchors mid-test.  Private exclusion rides the same
+// leg: an all-OTR window marks itself "private" and the store strips
+// it before the file lands.
+void tst_TabWidget::rustcoreSessionRoundTrip()
+{
+#ifndef ARKTOS_RUSTCORE
+    QSKIP("rustcore store is not built into this configuration");
+#else
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QByteArray root = tmp.path().toUtf8();
+    AcConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.struct_size = sizeof(cfg);
+    cfg.api_version = AC_API_VERSION;
+    cfg.data_root = root.constData();
+    cfg.app_name = "arktos";
+    AcCore *core = ac_init(&cfg);
+    QVERIFY(core);
+    const auto shutdown = qScopeGuard([core] { ac_shutdown(core); });
+
+    AcSession *work = ac_session(core, "work");
+    AcSession *fallback = ac_session(core, "default");
+    QVERIFY(work && fallback);
+    // Per-profile binding: "work" owns profiles/work/session.dat and
+    // the default handle can never see it.
+    QCOMPARE(ac_session_exists(work), 0);
+
+    const QUrl u1("data:text/plain,rc-one");
+    const QUrl u2("data:text/plain,rc-two");
+    QJsonObject windowRecord;
+    {
+        SubTabWidget widget;
+        widget.newTab();
+        widget.loadUrl(u1, TabWidget::CurrentTab);
+        widget.loadUrl(u2, TabWidget::NewTab);
+        QTRY_COMPARE_WITH_TIMEOUT(widget.webView(1)->url(), u2, 15000);
+        windowRecord = widget.sessionStateJson();
+        QCOMPARE(windowRecord.value(QLatin1String("tabs"))
+                     .toArray().count(), 2);
+        while (widget.count())
+            widget.closeTab(0);
+    }
+
+    // The saveSession() envelope: shell blob + persona tag per window,
+    // version/windows at the root.
+    windowRecord.insert(QLatin1String("shell"),
+        QString::fromLatin1(QByteArray("AAAA").toBase64()));
+    windowRecord.insert(QLatin1String("profile"),
+                        QStringLiteral("work"));
+    const auto writeManifest = [work](const QJsonObject &win) {
+        QJsonObject root;
+        root.insert(QLatin1String("version"), 1);
+        QJsonArray windows;
+        windows.append(win);
+        root.insert(QLatin1String("windows"), windows);
+        const QByteArray blob =
+            QJsonDocument(root).toJson(QJsonDocument::Compact);
+        return ac_session_save(
+            work,
+            reinterpret_cast<const uint8_t *>(blob.constData()),
+            size_t(blob.size()));
+    };
+    QCOMPARE(writeManifest(windowRecord), RC_OK);
+    QVERIFY(QFileInfo::exists(
+        tmp.path() + QLatin1String("/profiles/work/session.dat")));
+    QCOMPARE(ac_session_exists(work), 1);
+    QCOMPARE(ac_session_exists(fallback), 0);
+
+    {
+        AcBuffer stored{nullptr, 0};
+        QCOMPARE(ac_session_load(work, &stored), RC_OK);
+        const QByteArray loaded(
+            reinterpret_cast<const char *>(stored.data),
+            int(stored.len));
+        ac_buffer_free(stored);
+        const QJsonDocument doc = QJsonDocument::fromJson(loaded);
+        QVERIFY(doc.isObject());
+        const QJsonArray wins = doc.object()
+            .value(QLatin1String("windows")).toArray();
+        QCOMPARE(wins.count(), 1);
+        const QJsonObject back = wins.at(0).toObject();
+        QCOMPARE(back.value(QLatin1String("profile")).toString(),
+                 QStringLiteral("work"));
+        QCOMPARE(back.value(QLatin1String("tabs")).toArray().count(),
+                 2);
+
+        SubTabWidget fresh;
+        QVERIFY(fresh.restoreSessionState(back));
+        QCOMPARE(fresh.count(), 2);
+        QTRY_COMPARE_WITH_TIMEOUT(fresh.webView(0)->url(), u1, 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(fresh.webView(1)->url(), u2, 15000);
+        while (fresh.count())
+            fresh.closeTab(0);
+    }
+
+    // An all-OTR window: the writer marks it "private" and the store
+    // strips the whole record — nothing private reaches the file.
+    BrowserApplication::setPrivate(true);
+    {
+        SubTabWidget priv;
+        priv.newTab();
+        priv.loadUrl(u1, TabWidget::CurrentTab);
+        QTRY_COMPARE_WITH_TIMEOUT(priv.webView(0)->url(), u1, 15000);
+        QJsonObject pwin = priv.sessionStateJson();
+        QCOMPARE(pwin.value(QLatin1String("tabs")).toArray().count(), 0);
+        QVERIFY(pwin.value(QLatin1String("private")).toBool());
+        QCOMPARE(writeManifest(pwin), RC_OK);
+        AcBuffer out{nullptr, 0};
+        QCOMPARE(ac_session_load(work, &out), RC_OK);
+        const QByteArray loaded(
+            reinterpret_cast<const char *>(out.data), int(out.len));
+        ac_buffer_free(out);
+        const QJsonDocument doc = QJsonDocument::fromJson(loaded);
+        QVERIFY(doc.object().value(QLatin1String("windows"))
+                    .toArray().isEmpty());
+        while (priv.count())
+            priv.closeTab(0);
+    }
+    BrowserApplication::setPrivate(false);
+    QCOMPARE(ac_session_clear(work), RC_OK);
+    QCOMPARE(ac_session_exists(work), 0);
+    ac_session_close(work);
+    ac_session_close(fallback);
+#endif
 }
 
 // SESS01/SEC07 — lazily restored OTR tabs never create a pending

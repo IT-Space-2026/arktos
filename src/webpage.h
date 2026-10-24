@@ -275,6 +275,10 @@ private:
     // site->container rule into a tab bound to the ruled container —
     // true when this page must refuse the request.
     bool divertToContainerRule(const QUrl &url);
+    // The spawn half of a divert (rate cap + tab/window hand-off),
+    // shared with the MD02 navpolicy verdict path — false on a dead
+    // container id or an exceeded rate cap, i.e. "let it commit".
+    bool divertToContainer(const QUrl &url, const QString &target);
     // SAFE01: HTTPS-Only warning page — shown when an http:
     // main-frame navigation survives the https-first upgrade pass.
     void showHttpWarning(const QUrl &url);

@@ -30,10 +30,13 @@
 #include <qfile.h>
 #include <qframe.h>
 #include <qguiapplication.h>
+#include <qimage.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 #include <qlabel.h>
 #include <qlayout.h>
+#include <qmap.h>
+#include <qpixmap.h>
 #include <qscreen.h>
 #include <qtimer.h>
 #include <qtoolbutton.h>
@@ -97,13 +100,61 @@ QString manifestIconPath(const QString &extensionPath, int targetSize)
     return best >= 0 ? candidates.value(best) : QString();
 }
 
-// Extension glyph at toolbar size — the manifest's own artwork when
-// it ships any, else the generic add-on glyph through the icon theme
-// (native sets carry a real application-x-addon; the bundled art is
-// the fallback).  Cached by extension id — icon files change only
-// with an extension update, which reloads the extension anyway.
+// Best-fit key in a size map: the smallest declared size >= target,
+// else the largest, else the unsized (0) entry — the same pick rule
+// manifestIconPath uses.
+template <typename T>
+int pickIconSize(const QMap<int, T> &sizes, int targetSize)
+{
+    int best = -1;
+    int largest = -1;
+    for (auto it = sizes.constBegin(); it != sizes.constEnd(); ++it) {
+        if (it.key() <= 0)
+            continue;
+        if (it.key() > largest)
+            largest = it.key();
+        if (it.key() >= targetSize && (best < 0 || it.key() < best))
+            best = it.key();
+    }
+    if (best < 0)
+        best = largest;
+    if (best < 0 && sizes.contains(0))
+        best = 0;
+    return best;
+}
+
+// Extension glyph at toolbar size — a chrome.action.setIcon runtime
+// override first (decoded pixels are authoritative, then bundle-
+// relative paths), then the manifest's own artwork, else the generic
+// add-on glyph through the icon theme (native sets carry a real
+// application-x-addon; the bundled art is the fallback).  Cached by
+// extension id — icon files change only with an extension update,
+// which reloads the extension anyway; recorded overrides bypass the
+// cache since they change at runtime.
 QIcon extensionIcon(const ExtensionManager::ExtensionInfo &info, int edge)
 {
+    if (!info.actionIconImages.isEmpty()) {
+        const int k = pickIconSize(info.actionIconImages, edge);
+        if (k >= 0) {
+            const QImage image = info.actionIconImages.value(k);
+            if (!image.isNull())
+                return QIcon(QPixmap::fromImage(
+                    image.scaled(edge, edge, Qt::KeepAspectRatio,
+                                 Qt::SmoothTransformation)));
+        }
+    }
+    if (!info.actionIconPaths.isEmpty() && !info.path.isEmpty()) {
+        const int k = pickIconSize(info.actionIconPaths, edge);
+        if (k >= 0) {
+            const QPixmap pixmap(info.path + QLatin1Char('/')
+                                 + info.actionIconPaths.value(k));
+            if (!pixmap.isNull())
+                return QIcon(pixmap.scaled(edge, edge,
+                                           Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation));
+        }
+    }
+
     static QHash<QString, QIcon> cache;
     const QString key = info.id + QLatin1Char('@') + QString::number(edge);
     const auto cached = cache.constFind(key);

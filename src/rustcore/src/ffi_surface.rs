@@ -263,7 +263,8 @@ fn custody_and_blob_crypto_surface() {
 #[test]
 fn cred_and_autofill_surface() {
     let _g = guard();
-    init(&tmpdir("credaf"));
+    let dir = tmpdir("credaf");
+    init(&dir);
 
     // Bad-argument forms on the cred family.
     let name = cs("site/login");
@@ -323,6 +324,20 @@ fn cred_and_autofill_surface() {
         unsafe { crate::rc_autofill_set_addresses(b"[42]".as_ptr(), 4) },
         RcStatus::InvalidArgument
     );
+
+    // RC17 custody leg over the real ABI: the sealed payload is
+    // 0600 and the store dir was tightened to 0700 (the tmpdir
+    // starts at the umask default, typically 0755).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &std::path::Path| {
+            std::fs::metadata(p).unwrap().permissions().mode() & 0o777
+        };
+        let store_file = std::path::Path::new(&dir).join("autofill-store.dat");
+        assert_eq!(mode(&store_file), 0o600);
+        assert_eq!(mode(std::path::Path::new(&dir)), 0o700);
+    }
 
     // Reseal under a wrong from-key fails closed — AEAD reject.
     let (k1, k2) = ([1u8; 32], [2u8; 32]);
@@ -590,6 +605,22 @@ fn readability_and_extverify_entry_points() {
     );
     let verdict = take_buf(&mut out);
     assert!(String::from_utf8_lossy(&verdict).contains("\"ok\":true"));
+    assert!(String::from_utf8_lossy(&verdict).contains("\"lang\""));
+    // Repeat calls over the same input return byte-identical verdicts —
+    // the reader overlay must never render a different article on retry.
+    let mut out2 = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::rc_readability_extract(
+                article.as_ptr(),
+                article.len(),
+                base.as_ptr(),
+                &mut out2,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(take_buf(&mut out2), verdict);
     assert_eq!(
         unsafe {
             crate::rc_readability_extract(ptr::null(), 4, base.as_ptr(), &mut out)
@@ -955,6 +986,11 @@ fn history_ffi_roundtrip() {
     let sugg = take_str(unsafe { crate::rc_history_suggest(u1.as_ptr(), 10) });
     assert!(sugg.unwrap_or_default().contains("http://one/"));
 
+    // Top-hosts ranking over the same store — the most-visited host
+    // leads with its newest visit as the representative entry.
+    let tops = take_str(unsafe { crate::rc_history_top_hosts(10) });
+    assert!(tops.unwrap_or_default().contains("one"));
+
     // Icon table.
     let host = cs("one");
     let png = b"\x89PNG fake";
@@ -982,6 +1018,58 @@ fn history_ffi_roundtrip() {
         unsafe { crate::rc_hist_icon_get(host.as_ptr(), &mut icon) },
         RcStatus::NotFound
     );
+
+    // RC04: the filtered-listing query surface.
+    let q_all = take_str(unsafe { crate::rc_hist_query(cs("{}").as_ptr()) })
+        .unwrap();
+    let all: serde_json::Value = serde_json::from_str(&q_all).unwrap();
+    assert_eq!(all.as_array().unwrap().len(), 2);
+    let term = take_str(unsafe {
+        crate::rc_hist_query(cs(r#"{"term":"two"}"#).as_ptr())
+    })
+    .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&term).unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let ranged = take_str(unsafe {
+        crate::rc_hist_query(
+            cs(r#"{"from_ms":1500,"until_ms":2500}"#).as_ptr(),
+        )
+    })
+    .unwrap();
+    let ranged: serde_json::Value = serde_json::from_str(&ranged).unwrap();
+    assert_eq!(ranged.as_array().unwrap().len(), 1);
+    assert_eq!(ranged[0]["url"], "http://two/");
+    let page = take_str(unsafe {
+        crate::rc_hist_query(cs(r#"{"offset":1,"limit":1}"#).as_ptr())
+    })
+    .unwrap();
+    let page: serde_json::Value = serde_json::from_str(&page).unwrap();
+    assert_eq!(page.as_array().unwrap().len(), 1);
+    assert_eq!(page[0]["url"], "http://one/");
+    // Malformed specs are errors, never "match all".
+    assert!(unsafe { crate::rc_hist_query(cs("[1]").as_ptr()) }.is_null());
+    assert!(unsafe { crate::rc_hist_query(ptr::null()) }.is_null());
+
+    // RC04: bulk retention expiry returns the deleted count and
+    // respects the inclusive boundary.
+    let mut removed: i64 = -1;
+    assert_eq!(
+        unsafe { crate::rc_hist_expire_older_than(999, &mut removed) },
+        RcStatus::Ok
+    );
+    assert_eq!(removed, 0);
+    assert_eq!(
+        unsafe {
+            crate::rc_hist_expire_older_than(1000, ptr::null_mut())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_hist_count() }, 1);
 
     // Ranged + full clears and remove.
     assert_eq!(
@@ -1056,6 +1144,45 @@ fn session_ffi_roundtrip() {
         unsafe { crate::rc_session_save(b"{bad".as_ptr(), 4) },
         RcStatus::Corrupt
     );
+
+    // RC13 lifecycle marker over the same anchored dir: arm -> dirty,
+    // a second start reports the unclean run and counts it, a clean
+    // exit disarms; the restore guard is its own flag.
+    assert_eq!(unsafe { crate::rc_session_dirty() }, 0);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_session_last_exit(&mut out) },
+        RcStatus::NotFound
+    );
+    assert_eq!(unsafe { crate::rc_session_mark_start() }, 0);
+    assert_eq!(unsafe { crate::rc_session_dirty() }, 1);
+    assert_eq!(unsafe { crate::rc_session_mark_start() }, 1);
+    assert_eq!(unsafe { crate::rc_session_crash_count() }, 1);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_session_last_exit(&mut out) },
+        RcStatus::Ok
+    );
+    let rec = take_buf(&mut out);
+    assert_eq!(
+        String::from_utf8_lossy(&rec),
+        "unclean (crash or external kill)"
+    );
+    assert_eq!(unsafe { crate::rc_session_mark_exit(0) }, RcStatus::Ok);
+    assert_eq!(unsafe { crate::rc_session_dirty() }, 0);
+    assert_eq!(unsafe { crate::rc_session_crash_count() }, 0);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_session_last_exit(&mut out) },
+        RcStatus::Ok
+    );
+    let rec = take_buf(&mut out);
+    assert_eq!(String::from_utf8_lossy(&rec), "clean rc=0");
+    assert_eq!(
+        unsafe { crate::rc_session_set_restoring(1) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_session_restoring() }, 1);
 }
 
 #[test]
@@ -1567,4 +1694,3075 @@ fn profilevault_surface() {
         std::fs::read(format!("{out2}/sub/b.txt")).unwrap(),
         b"payload-two"
     );
+}
+
+// RC02: the typed per-profile settings store — handle lifecycle,
+// every typed get/set, ini import, and the bad-argument paths.
+#[test]
+fn settings_surface() {
+    let _g = guard();
+    let root = tmpdir("settings");
+    let croot = cs(&root);
+
+    // Bad-argument forms first.
+    assert!(unsafe { crate::rc_settings_open(ptr::null(), ptr::null()) }.is_null());
+    assert!(take_str(unsafe { crate::rc_last_error_message() })
+        .unwrap()
+        .contains("data root"));
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), ptr::null()) };
+    assert!(!h.is_null());
+    let key = cs("privacy/securityLevel");
+    assert_eq!(
+        unsafe { crate::rc_settings_get_bool(ptr::null_mut(), key.as_ptr(), ptr::null_mut()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_settings_get_bool(h, ptr::null(), ptr::null_mut()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_settings_get_bool(h, key.as_ptr(), ptr::null_mut()) },
+        RcStatus::NotFound
+    );
+    assert_eq!(
+        unsafe { crate::rc_settings_set_string(h, key.as_ptr(), ptr::null()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_settings_import_ini(h, ptr::null()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(unsafe { crate::rc_settings_contains(ptr::null_mut(), key.as_ptr()) }, 0);
+
+    // Typed writes + typed reads over the C ABI.
+    let bval = cs("bools/t");
+    assert_eq!(
+        unsafe { crate::rc_settings_set_bool(h, bval.as_ptr(), 1) },
+        RcStatus::Ok
+    );
+    let mut b = 0i32;
+    assert_eq!(
+        unsafe { crate::rc_settings_get_bool(h, bval.as_ptr(), &mut b) },
+        RcStatus::Ok
+    );
+    assert_eq!(b, 1);
+
+    assert_eq!(
+        unsafe { crate::rc_settings_set_int(h, key.as_ptr(), 2) },
+        RcStatus::Ok
+    );
+    let mut i = 0i64;
+    assert_eq!(
+        unsafe { crate::rc_settings_get_int(h, key.as_ptr(), &mut i) },
+        RcStatus::Ok
+    );
+    assert_eq!(i, 2);
+    assert_eq!(unsafe { crate::rc_settings_contains(h, key.as_ptr()) }, 1);
+
+    let dkey = cs("num/zoom");
+    assert_eq!(
+        unsafe { crate::rc_settings_set_double(h, dkey.as_ptr(), 1.5) },
+        RcStatus::Ok
+    );
+    let mut d = 0.0f64;
+    assert_eq!(
+        unsafe { crate::rc_settings_get_double(h, dkey.as_ptr(), &mut d) },
+        RcStatus::Ok
+    );
+    assert_eq!(d, 1.5);
+
+    let skey = cs("MainWindow/home");
+    let sval = cs("https://example.test/");
+    assert_eq!(
+        unsafe { crate::rc_settings_set_string(h, skey.as_ptr(), sval.as_ptr()) },
+        RcStatus::Ok
+    );
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_settings_get_string(h, skey.as_ptr(), &mut out) },
+        RcStatus::Ok
+    );
+    assert_eq!(take_buf(&mut out), b"https://example.test/");
+    // The typed JSON accessor.
+    assert_eq!(
+        unsafe { crate::rc_settings_get(h, skey.as_ptr(), &mut out) },
+        RcStatus::Ok
+    );
+    assert!(String::from_utf8(take_buf(&mut out))
+        .unwrap()
+        .contains("\"t\":\"s\""));
+
+    let blob = [0xde, 0xad, 0xbe, 0xef];
+    let bkey = cs("MainWindow/geometry");
+    assert_eq!(
+        unsafe {
+            crate::rc_settings_set_bytes(h, bkey.as_ptr(), blob.as_ptr(), blob.len())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_settings_get_bytes(h, bkey.as_ptr(), &mut out) },
+        RcStatus::Ok
+    );
+    assert_eq!(take_buf(&mut out), blob);
+
+    let lkey = cs("searchShortcuts/engines");
+    let list = br#"["ddg","g"]"#;
+    assert_eq!(
+        unsafe {
+            crate::rc_settings_set_list(h, lkey.as_ptr(), list.as_ptr(), list.len())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_settings_get_list(h, lkey.as_ptr(), &mut out) },
+        RcStatus::Ok
+    );
+    assert!(String::from_utf8(take_buf(&mut out))
+        .unwrap()
+        .contains("ddg"));
+    // A malformed list payload is rejected without touching the store.
+    assert_eq!(
+        unsafe {
+            crate::rc_settings_set_list(h, lkey.as_ptr(), b"nope".as_ptr(), 4)
+        },
+        RcStatus::InvalidArgument
+    );
+
+    // list-prefix + remove + sync + ini import + close.
+    let listed = take_str(unsafe {
+        crate::rc_settings_list(h, cs("privacy").as_ptr())
+    })
+    .unwrap();
+    assert_eq!(listed, r#"["privacy/securityLevel"]"#);
+    let all = take_str(unsafe { crate::rc_settings_list(h, ptr::null()) }).unwrap();
+    assert!(all.contains("MainWindow/home"));
+    assert_eq!(
+        unsafe { crate::rc_settings_remove(h, key.as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_settings_contains(h, key.as_ptr()) }, 0);
+    assert_eq!(unsafe { crate::rc_settings_sync(h) }, RcStatus::Ok);
+
+    // The real-QSettings fixture: profile ini under profiles/<id>/
+    // imports on first open through the C ABI itself.
+    let inid = format!("{root}/profiles/fixture");
+    std::fs::create_dir_all(&inid).unwrap();
+    std::fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/profile-settings.ini"),
+        format!("{inid}/settings.ini"),
+    )
+    .unwrap();
+    let pid = cs("fixture");
+    let ph = unsafe { crate::rc_settings_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!ph.is_null());
+    let fk = cs("history/historyLimit");
+    assert_eq!(
+        unsafe { crate::rc_settings_get_int(ph, fk.as_ptr(), &mut i) },
+        RcStatus::Ok
+    );
+    assert_eq!(i, 30);
+    let bk = cs("MainWindow/geometry");
+    assert_eq!(
+        unsafe { crate::rc_settings_get_bytes(ph, bk.as_ptr(), &mut out) },
+        RcStatus::Ok
+    );
+    assert_eq!(take_buf(&mut out)[..2], [0x01, 0xd9]);
+
+    // Explicit import of a "global" ini filters by scope and fills
+    // absent keys only — the fixture's securityLevel=2 wins.
+    let gini = format!("{root}/global.conf");
+    std::fs::write(&gini, "[privacy]\nsecurityLevel=9\nextraKey=9\n\n[MainWindow]\ndefaultEngine=servo\n").unwrap();
+    let gpath = cs(&gini);
+    assert_eq!(
+        unsafe { crate::rc_settings_import_ini(ph, gpath.as_ptr()) },
+        RcStatus::Ok
+    );
+    let ek = cs("MainWindow/defaultEngine");
+    assert_eq!(unsafe { crate::rc_settings_contains(ph, ek.as_ptr()) }, 0);
+    let pk = cs("privacy/securityLevel");
+    assert_eq!(
+        unsafe { crate::rc_settings_get_int(ph, pk.as_ptr(), &mut i) },
+        RcStatus::Ok
+    );
+    assert_eq!(i, 2);
+    let xk = cs("privacy/extraKey");
+    assert_eq!(
+        unsafe { crate::rc_settings_get_int(ph, xk.as_ptr(), &mut i) },
+        RcStatus::Ok
+    );
+    assert_eq!(i, 9);
+
+    unsafe {
+        crate::rc_settings_close(ph);
+        crate::rc_settings_close(h);
+        crate::rc_settings_close(ptr::null_mut());
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// RC19: the container registry + namespace map over the C ABI —
+// CRUD on a profile-bound settings handle, the C++ layout's keys
+// landing byte-for-byte, and the derivation entry points.
+#[test]
+fn containers_surface() {
+    let _g = guard();
+    let root = tmpdir("containers");
+    let croot = cs(&root);
+    let pid = cs("work");
+
+    // Bad handles/args degrade, never crash.
+    assert!(unsafe { crate::rc_containers_list(ptr::null_mut()) }.is_null());
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!h.is_null());
+    assert!(unsafe { crate::rc_containers_get(h, ptr::null()) }.is_null());
+    assert!(unsafe {
+        crate::rc_containers_create(h, ptr::null(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_containers_create(h, b"nope".as_ptr(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_containers_create(ptr::null_mut(), b"{}".as_ptr(), 2)
+    }
+    .is_null());
+    // An empty registry reads as [].
+    let list = take_str(unsafe { crate::rc_containers_list(h) }).unwrap();
+    assert_eq!(list, "[]");
+
+    // create -> the row JSON carries the minted uuid-shape id.
+    let spec = b"{\"name\":\"Work\",\"color\":\"#ff8800\",\"icon\":\"w\"}";
+    let made = take_str(unsafe {
+        crate::rc_containers_create(h, spec.as_ptr(), spec.len())
+    })
+    .unwrap();
+    let row: serde_json::Value = serde_json::from_str(&made).unwrap();
+    let id = row["id"].as_str().unwrap().to_string();
+    assert_eq!(id.len(), 36);
+    assert!(id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
+    assert_eq!(row["name"], "Work");
+    assert_eq!(row["icon"], "w");
+    // Blank names refuse.
+    let blank = b"{\"name\":\" \"}";
+    assert!(unsafe {
+        crate::rc_containers_create(h, blank.as_ptr(), blank.len())
+    }
+    .is_null());
+
+    // The C++ layout's keys landed: order list + per-id fields.
+    let ok = cs("containers/order");
+    let mut buf = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_settings_get_list(h, ok.as_ptr(), &mut buf) },
+        RcStatus::Ok
+    );
+    let order: Vec<String> =
+        serde_json::from_slice(&take_buf(&mut buf)).unwrap();
+    assert_eq!(order, vec![id.clone()]);
+    let cid = cs(&id);
+    let got = take_str(unsafe { crate::rc_containers_get(h, cid.as_ptr()) });
+    let row: serde_json::Value =
+        serde_json::from_str(&got.unwrap()).unwrap();
+    assert_eq!(row["color"], "#ff8800");
+
+    // update: rename + recolor + clear the icon; unknown ids 404.
+    let patch = b"{\"name\":\"Vault\",\"icon\":null}";
+    assert_eq!(
+        unsafe {
+            crate::rc_containers_update(h, cid.as_ptr(), patch.as_ptr(), patch.len())
+        },
+        RcStatus::Ok
+    );
+    let row: serde_json::Value = serde_json::from_str(
+        &take_str(unsafe { crate::rc_containers_get(h, cid.as_ptr()) })
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(row["name"], "Vault");
+    assert_eq!(row["color"], "#ff8800");
+    assert_eq!(row["icon"], "");
+    assert_eq!(
+        unsafe {
+            crate::rc_containers_update(
+                h,
+                cs("ghost").as_ptr(),
+                patch.as_ptr(),
+                patch.len(),
+            )
+        },
+        RcStatus::NotFound
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_containers_update(h, cid.as_ptr(), b"nope".as_ptr(), 4)
+        },
+        RcStatus::InvalidArgument
+    );
+    // An unregistered id reads as NULL without an error.
+    assert!(unsafe { crate::rc_containers_get(h, cs("ghost").as_ptr()) }
+        .is_null());
+
+    // The namespace derivation — the ContainerManager path contract
+    // verbatim plus the cookie-partition key.
+    let ns = take_str(unsafe {
+        crate::rc_containers_namespace(croot.as_ptr(), pid.as_ptr(), cid.as_ptr())
+    })
+    .unwrap();
+    let ns: serde_json::Value = serde_json::from_str(&ns).unwrap();
+    assert_eq!(
+        ns["storage_name"],
+        format!("arktos-container-work-{id}")
+    );
+    assert_eq!(
+        ns["storage_path"],
+        format!("{root}/profiles/work/containers/{id}")
+    );
+    assert_eq!(
+        ns["cache_path"],
+        format!("{root}/profiles/work/cache/containers/{id}")
+    );
+    assert_eq!(
+        ns["default_data_path"],
+        format!("{root}/QtWebEngine/arktos-container-work-{id}")
+    );
+    assert_eq!(ns["cookie_partition"], id);
+    // The default container and bad ids have no namespace.
+    assert!(unsafe {
+        crate::rc_containers_namespace(croot.as_ptr(), pid.as_ptr(), cs("").as_ptr())
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_containers_namespace(
+            ptr::null(),
+            pid.as_ptr(),
+            cid.as_ptr(),
+        )
+    }
+    .is_null());
+
+    // remove -> group + order entry gone; second remove 404s.
+    assert_eq!(
+        unsafe { crate::rc_containers_remove(h, cid.as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_containers_remove(h, cid.as_ptr()) },
+        RcStatus::NotFound
+    );
+    assert_eq!(
+        unsafe { crate::rc_containers_remove(h, ptr::null()) },
+        RcStatus::InvalidArgument
+    );
+    let list = take_str(unsafe { crate::rc_containers_list(h) }).unwrap();
+    assert_eq!(list, "[]");
+
+    unsafe { crate::rc_settings_close(h) };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// RC03: the profile registry — handle lifecycle, CRUD, the ambient
+// id and the BrowserPaths-mirroring path accessors, all over the C
+// ABI.
+#[test]
+fn profiles_surface() {
+    let _g = guard();
+    let root = tmpdir("profiles");
+    let croot = cs(&root);
+    let seed = cs("Seeded");
+
+    // Bad opens return NULL and stash the reason.
+    assert!(unsafe { crate::rc_profiles_open(ptr::null(), ptr::null()) }.is_null());
+    let bad = CString::new([b'n', b'o', 0xff]).unwrap();
+    assert!(
+        unsafe { crate::rc_profiles_open(croot.as_ptr(), bad.as_ptr()) }.is_null()
+    );
+
+    let h = unsafe { crate::rc_profiles_open(croot.as_ptr(), seed.as_ptr()) };
+    assert!(!h.is_null());
+
+    // Fresh open materializes the default row — seeded name.
+    let listed = take_str(unsafe { crate::rc_profiles_list(h) }).unwrap();
+    assert!(listed.contains("\"id\":\"default\""));
+    assert!(listed.contains("\"name\":\"Seeded\""));
+    assert!(std::path::Path::new(&format!("{root}/profiles.json")).exists());
+    let file = take_str(unsafe { crate::rc_profiles_file(h) }).unwrap();
+    assert_eq!(file, format!("{root}/profiles.json"));
+
+    // Bad-handle / bad-pointer reads degrade, never crash.
+    assert!(take_str(unsafe { crate::rc_profiles_list(ptr::null_mut()) }).is_none());
+    assert!(take_str(unsafe { crate::rc_profiles_get(h, ptr::null()) }).is_none());
+    assert!(take_str(unsafe { crate::rc_profiles_get(h, cs("ghost").as_ptr()) }).is_none());
+    assert_eq!(
+        unsafe { crate::rc_profiles_rename(h, ptr::null(), cs("x").as_ptr()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_profiles_rename(
+                h,
+                cs("ghost").as_ptr(),
+                cs("x").as_ptr()
+            )
+        },
+        RcStatus::NotFound
+    );
+
+    // create -> unique slug id; the row reads back over the ABI.
+    let new_id = take_str(unsafe {
+        crate::rc_profiles_create(h, cs("Work Stuff!").as_ptr())
+    })
+    .unwrap();
+    assert_eq!(new_id, "work-stuff");
+    let row = take_str(unsafe {
+        crate::rc_profiles_get(h, cs("work-stuff").as_ptr())
+    })
+    .unwrap();
+    assert!(row.contains("\"name\":\"Work Stuff!\""));
+    assert!(std::path::Path::new(&format!("{root}/profiles/work-stuff"))
+        .is_dir());
+    assert!(take_str(unsafe {
+        crate::rc_profiles_create(h, ptr::null())
+    })
+    .is_none());
+
+    // rename + avatar + path accessors.
+    assert_eq!(
+        unsafe {
+            crate::rc_profiles_rename(h, cs("work-stuff").as_ptr(), cs("Day Job").as_ptr())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_profiles_set_avatar(
+                h,
+                cs("work-stuff").as_ptr(),
+                cs("../evil.png").as_ptr()
+            )
+        },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_profiles_set_avatar(
+                h,
+                cs("work-stuff").as_ptr(),
+                cs("me.png").as_ptr()
+            )
+        },
+        RcStatus::Ok
+    );
+    let dir = take_str(unsafe {
+        crate::rc_profiles_dir(h, cs("work-stuff").as_ptr())
+    })
+    .unwrap();
+    assert_eq!(dir, format!("{root}/profiles/work-stuff"));
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_cache_dir(h, cs("w").as_ptr()) }).unwrap(),
+        format!("{root}/profiles/w/cache")
+    );
+    assert_eq!(
+        take_str(unsafe {
+            crate::rc_profiles_engine_storage_dir(h, cs("w").as_ptr())
+        })
+        .unwrap(),
+        format!("{root}/profiles/w/QtWebEngine")
+    );
+    assert_eq!(
+        take_str(unsafe {
+            crate::rc_profiles_engine_cache_dir(h, cs("w").as_ptr())
+        })
+        .unwrap(),
+        format!("{root}/profiles/w/cache/QtWebEngine")
+    );
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_settings_dir(h, cs("w").as_ptr()) }).unwrap(),
+        format!("{root}/profiles/w")
+    );
+    assert_eq!(
+        take_str(unsafe {
+            crate::rc_profiles_avatar_path(h, cs("work-stuff").as_ptr())
+        })
+        .unwrap(),
+        format!("{root}/profiles/work-stuff/me.png")
+    );
+    // A non-slug id resolves to "default", never escapes the tree.
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_dir(h, cs("../x").as_ptr()) }).unwrap(),
+        format!("{root}/profiles/default")
+    );
+    // NULL id resolves to default too.
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_dir(h, ptr::null()) }).unwrap(),
+        format!("{root}/profiles/default")
+    );
+
+    // Ambient persona — per-handle process state.
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_active(h) }).unwrap(),
+        "default"
+    );
+    assert_eq!(
+        unsafe { crate::rc_profiles_set_active(h, cs("work-stuff").as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_active(h) }).unwrap(),
+        "work-stuff"
+    );
+    assert_eq!(
+        unsafe { crate::rc_profiles_set_active(h, cs("../nope").as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_active(h) }).unwrap(),
+        "default"
+    );
+
+    // slugify over the ABI; NULL tolerated.
+    assert_eq!(
+        take_str(unsafe { crate::rc_profiles_slugify(cs("My Stuff").as_ptr()) }).unwrap(),
+        "my-stuff"
+    );
+    assert!(take_str(unsafe { crate::rc_profiles_slugify(ptr::null()) }).is_none());
+
+    // delete refuses default/non-slug, removes a real profile's row
+    // and dir.
+    assert_eq!(
+        unsafe { crate::rc_profiles_delete(h, cs("default").as_ptr()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_profiles_delete(h, cs("work-stuff").as_ptr()) },
+        RcStatus::Ok
+    );
+    assert!(!std::path::Path::new(&format!("{root}/profiles/work-stuff")).exists());
+    assert!(take_str(unsafe {
+        crate::rc_profiles_get(h, cs("work-stuff").as_ptr())
+    })
+    .is_none());
+    assert_eq!(
+        unsafe { crate::rc_profiles_delete(h, cs("work-stuff").as_ptr()) },
+        RcStatus::NotFound
+    );
+    assert_eq!(
+        unsafe { crate::rc_profiles_reload(h) },
+        RcStatus::Ok
+    );
+
+    unsafe {
+        crate::rc_profiles_close(h);
+        crate::rc_profiles_close(ptr::null_mut());
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// ---- RC15: per-profile cookie database --------------------------------
+
+#[test]
+fn cookies_ffi_roundtrip() {
+    let _g = guard();
+    let dir = tmpdir("rc-cookies");
+    init(&dir);
+
+    // Bad-input legs: every entry point degrades, none crash.  (The
+    // store is process-global — a prior test may have left it open,
+    // so the not-initialized legs live in the module's own tests.)
+    assert_eq!(
+        unsafe { crate::rc_cookies_set(b"{}".as_ptr(), 2) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_cookies_set(ptr::null(), 0) },
+        RcStatus::InvalidArgument
+    );
+
+    // Open on the anchored data dir (NULL path).
+    assert_eq!(
+        unsafe { crate::rc_cookies_open(ptr::null()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_cookies_is_open() }, 1);
+    assert!(std::path::Path::new(&dir).join("cookies.db").exists());
+    assert_eq!(unsafe { crate::rc_cookies_role() }, 0); // authoritative
+    assert_eq!(unsafe { crate::rc_cookies_set_role(1) }, RcStatus::Ok);
+    assert_eq!(unsafe { crate::rc_cookies_role() }, 1); // mirror
+    assert_eq!(
+        unsafe { crate::rc_cookies_set_role(9) },
+        RcStatus::InvalidArgument
+    );
+
+    // CRUD over the JSON record lane.
+    let rec = br#"{"name":"sid","value":"v1","domain":".example.com",
+        "path":"/","expires":2000000000000,"secure":true,
+        "httpOnly":true,"sameSite":2}"#;
+    assert_eq!(
+        unsafe { crate::rc_cookies_set(rec.as_ptr(), rec.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_cookies_count(ptr::null()) }, 1);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::rc_cookies_get(
+                cs("example.com").as_ptr(),
+                cs("sid").as_ptr(),
+                cs("/").as_ptr(),
+                ptr::null(),
+                &mut out,
+            )
+        },
+        RcStatus::Ok
+    );
+    let got: serde_json::Value =
+        serde_json::from_slice(&take_buf(&mut out)).unwrap();
+    assert_eq!(got["value"], "v1");
+    assert_eq!(got["sameSite"], 2);
+    assert_eq!(got["hostOnly"], false);
+    assert_eq!(got["httpOnly"], true);
+    // A miss is RC_NOT_FOUND.
+    assert_eq!(
+        unsafe {
+            crate::rc_cookies_get(
+                cs("example.com").as_ptr(),
+                cs("nope").as_ptr(),
+                cs("/").as_ptr(),
+                ptr::null(),
+                &mut out_buf(),
+            )
+        },
+        RcStatus::NotFound
+    );
+
+    // The send-match: https sees the secure row, http does not.
+    let req = br#"{"url":"https://sub.example.com/"}"#;
+    let names =
+        take_str(unsafe { crate::rc_cookies_for_url(req.as_ptr(), req.len()) })
+            .unwrap();
+    assert!(names.contains("sid"));
+    let req = br#"{"url":"http://sub.example.com/"}"#;
+    let names =
+        take_str(unsafe { crate::rc_cookies_for_url(req.as_ptr(), req.len()) })
+            .unwrap();
+    assert!(!names.contains("sid"));
+
+    // The Set-Cookie ingest lane — live parse + store verdict.
+    let verdict = take_str(unsafe {
+        crate::rc_cookies_store_header(
+            cs("https://m.example.com/deep/x").as_ptr(),
+            cs("tok=abc; Max-Age=3600; Secure; SameSite=Strict").as_ptr(),
+            ptr::null(),
+        )
+    })
+    .unwrap();
+    assert!(verdict.contains("\"stored\":true"));
+    let got: serde_json::Value = serde_json::from_slice(
+        &{
+            let mut b = out_buf();
+            assert_eq!(
+                unsafe {
+                    crate::rc_cookies_get(
+                        cs("m.example.com").as_ptr(),
+                        cs("tok").as_ptr(),
+                        cs("/deep").as_ptr(),
+                        ptr::null(),
+                        &mut b,
+                    )
+                },
+                RcStatus::Ok
+            );
+            take_buf(&mut b)
+        },
+    )
+    .unwrap();
+    assert_eq!(got["sameSite"], 3);
+    assert_eq!(got["hostOnly"], true); // no Domain attr -> host-exact
+
+    // The gate consults the sibling sitedecisions.json — seed a block
+    // rule through the sibling store's own surface, then gate it.
+    assert_eq!(
+        unsafe {
+            crate::rc_sitedec_set(
+                cs("cookie").as_ptr(),
+                cs("bad.example").as_ptr(),
+                cs("block").as_ptr(),
+            )
+        },
+        RcStatus::Ok
+    );
+    let gate_in = br#"{"host":"bad.example"}"#;
+    let verdict =
+        take_str(unsafe { crate::rc_cookies_gate(gate_in.as_ptr(), gate_in.len()) })
+            .unwrap();
+    assert!(verdict.contains("\"accept\":false"));
+    let gate_in = br#"{"host":"ok.example","accept_policy":0}"#;
+    let verdict =
+        take_str(unsafe { crate::rc_cookies_gate(gate_in.as_ptr(), gate_in.len()) })
+            .unwrap();
+    assert!(verdict.contains("\"accept\":true"));
+
+    // Import the real Qt toRawForm fixture (6 domain-carrying rows
+    // land; the host-cookie line is skipped).
+    let fixture = cs(&format!(
+        "{}/testdata/cookies/export.txt",
+        env!("CARGO_MANIFEST_DIR")
+    ));
+    let report = take_str(unsafe {
+        crate::rc_cookies_import(fixture.as_ptr(), ptr::null())
+    })
+    .unwrap();
+    assert!(report.contains("\"imported\":6"));
+    assert!(report.contains("\"skipped\":1"));
+    // Export round-trips through the same file shape.
+    let out_file = format!("{dir}/cookies-export.txt");
+    let cout = cs(&out_file);
+    assert_eq!(
+        unsafe { crate::rc_cookies_export(cout.as_ptr(), ptr::null()) },
+        RcStatus::Ok
+    );
+    let exported = std::fs::read_to_string(&out_file).unwrap();
+    assert!(exported.contains("sid=a1b2c3; secure; HttpOnly; SameSite=Lax"));
+    assert!(exported.contains("domain=.example.com"));
+
+    // Host sweep + partition clear + purge ops.
+    assert_eq!(
+        unsafe {
+            crate::rc_cookies_remove_for_host(
+                cs("example.com").as_ptr(),
+                ptr::null(),
+            )
+        },
+        RcStatus::Ok
+    );
+    // expired-purge drops the 1970 row the fixture carried.
+    assert_eq!(
+        unsafe { crate::rc_cookies_purge_expired(9999999999999) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_cookies_purge_session() },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_cookies_clear(ptr::null()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_cookies_count(ptr::null()) }, 0);
+    assert_eq!(
+        unsafe {
+            crate::rc_cookies_remove(
+                cs("x.com").as_ptr(),
+                cs("n").as_ptr(),
+                cs("/").as_ptr(),
+                ptr::null(),
+            )
+        },
+        RcStatus::Ok
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn icons_ffi_roundtrip() {
+    let _g = guard();
+    // The anchored data dir IS the profile dir — the rc_* lane lands
+    // on <dir>/cache/icons (rustCoreEnsureDataDirFor's contract).
+    let dir = tmpdir("rc-icons");
+    init(&dir);
+
+    // Bad-input legs: every entry point degrades, none crash.
+    assert_eq!(
+        unsafe { crate::rc_icons_put(ptr::null(), b"x".as_ptr(), 1) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_icons_put(cs("https://x/").as_ptr(), ptr::null(), 4) },
+        RcStatus::InvalidArgument
+    );
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_icons_get(ptr::null(), &mut out) },
+        RcStatus::InvalidArgument
+    );
+    assert!(unsafe { crate::rc_icons_key(ptr::null()) }.is_null());
+
+    // Round-trip + dedup-by-host through the C ABI.
+    let png = b"\x89PNG-ffi";
+    let url = cs("https://Icon.Example/a");
+    let url2 = cs("https://icon.example/b");
+    assert_eq!(
+        unsafe { crate::rc_icons_put(url.as_ptr(), png.as_ptr(), png.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_icons_count() }, 1);
+    // A second page of the same host rewrites the one record.
+    assert_eq!(
+        unsafe { crate::rc_icons_put(url2.as_ptr(), png.as_ptr(), png.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_icons_count() }, 1);
+    assert_eq!(
+        unsafe { crate::rc_icons_get(url.as_ptr(), &mut out) },
+        RcStatus::Ok
+    );
+    assert_eq!(take_buf(&mut out), png);
+    // The derived key matches the historyIconKey contract.
+    assert_eq!(
+        take_str(unsafe { crate::rc_icons_key(url.as_ptr()) }).as_deref(),
+        Some("icon.example")
+    );
+    let list = take_str(unsafe { crate::rc_icons_list() }).unwrap();
+    assert!(list.contains("\"key\":\"icon.example\""));
+    // Files live under the cache lane, never the data root proper.
+    assert!(
+        std::path::Path::new(&dir)
+            .join("cache/icons/icons.json")
+            .exists()
+    );
+    assert!(!std::path::Path::new(&dir).join("icons").exists());
+
+    // Miss is NotFound; the sweep drops only aged rows.
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_icons_get(cs("https://other/").as_ptr(), &mut out) },
+        RcStatus::NotFound
+    );
+    let mut removed: i64 = -1;
+    assert_eq!(
+        unsafe { crate::rc_icons_sweep(0, &mut removed) },
+        RcStatus::Ok
+    );
+    assert_eq!(removed, 0);
+    assert_eq!(
+        unsafe { crate::rc_icons_sweep(9999999999999, &mut removed) },
+        RcStatus::Ok
+    );
+    assert_eq!(removed, 1);
+    assert_eq!(unsafe { crate::rc_icons_count() }, 0);
+
+    // remove + clear legs.
+    assert_eq!(
+        unsafe { crate::rc_icons_put(url.as_ptr(), png.as_ptr(), png.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_icons_remove(url.as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_icons_count() }, 0);
+    assert_eq!(
+        unsafe { crate::rc_icons_put(url.as_ptr(), png.as_ptr(), png.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_icons_clear() }, RcStatus::Ok);
+    // The wipe removes the store wholesale; a subsequent read lazily
+    // rebuilds the (empty) index — the imported flag must persist.
+    assert!(
+        !std::path::Path::new(&dir)
+            .join("cache/icons")
+            .exists()
+    );
+    assert_eq!(unsafe { crate::rc_icons_count() }, 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- RC07: the arktos_core.h facade -------------------------------------
+//
+// The facade forwards every op to the same rc_* entry points, so the
+// parity assertions are cheap: the interesting seam is the
+// profile-bound re-anchoring (two personas interleaved over the
+// process-global stores must never cross) and the
+// (module, profile_id) callback stamping.
+
+fn ac_cfg<'a>(root: &'a CString) -> crate::facade::AcConfig {
+    crate::facade::AcConfig {
+        struct_size: std::mem::size_of::<crate::facade::AcConfig>() as u32,
+        api_version: crate::facade::AC_API_VERSION,
+        data_root: root.as_ptr(),
+        app_name: ptr::null(),
+        default_profile_name: ptr::null(),
+    }
+}
+
+#[test]
+fn facade_init_and_accessors() {
+    let _g = guard();
+    let root = tmpdir("ac-init");
+    let croot = cs(&root);
+
+    // housekeeping
+    assert_eq!(crate::facade::ac_api_version(), 12);
+    assert_ne!(crate::facade::ac_capabilities(), 0);
+
+    // rejected configs fail clean with a stashed error
+    assert!(unsafe { crate::facade::ac_init(ptr::null()) }.is_null());
+    assert!(!unsafe { crate::facade::ac_last_error() }.is_null());
+    let mut bad = ac_cfg(&croot);
+    bad.struct_size = 4;
+    assert!(unsafe { crate::facade::ac_init(&bad) }.is_null());
+    let mut bad = ac_cfg(&croot);
+    bad.api_version = 999;
+    assert!(unsafe { crate::facade::ac_init(&bad) }.is_null());
+    let mut bad = ac_cfg(&croot);
+    bad.data_root = ptr::null();
+    assert!(unsafe { crate::facade::ac_init(&bad) }.is_null());
+
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+
+    // every accessor mints a usable handle
+    let gs = unsafe { crate::facade::ac_settings(core, ptr::null()) };
+    let ps = unsafe { crate::facade::ac_settings(core, cs("work").as_ptr()) };
+    let pr = unsafe { crate::facade::ac_profiles(core) };
+    let h = unsafe { crate::facade::ac_history(core, cs("work").as_ptr()) };
+    let b = unsafe { crate::facade::ac_bookmarks(core, cs("work").as_ptr()) };
+    let p = unsafe { crate::facade::ac_policy(core, cs("work").as_ptr()) };
+    assert!(!gs.is_null() && !ps.is_null() && !pr.is_null());
+    assert!(!h.is_null() && !b.is_null() && !p.is_null());
+    assert_eq!(
+        unsafe { crate::facade::ac_history_exists(core, cs("work").as_ptr()) },
+        1
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_history_exists(core, cs("nobody").as_ptr()) },
+        0
+    );
+
+    // AcSettings IS RcSettings — a legacy call on the facade-minted
+    // handle stays legal, and the ac_* spelling reads it back.
+    assert_eq!(
+        unsafe {
+            crate::rc_settings_set_string(
+                ps,
+                cs("k").as_ptr(),
+                cs("v").as_ptr(),
+            )
+        },
+        RcStatus::Ok
+    );
+    let mut got = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_settings_get_string(ps, cs("k").as_ptr(), &mut got)
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(String::from_utf8_lossy(&take_buf(&mut got)), "v");
+    assert_eq!(
+        unsafe { crate::facade::ac_settings_sync(ps) },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/settings.json")
+        .exists());
+
+    // profiles through the facade spelling
+    let list = take_str(unsafe { crate::facade::ac_profiles_list(pr) }).unwrap();
+    assert!(list.contains("\"id\":\"default\""));
+    assert!(
+        take_str(unsafe { crate::facade::ac_profiles_slugify(cs("Me Work").as_ptr()) })
+            .unwrap()
+            == "me-work"
+    );
+
+    // history via the bound handle — the ac write is visible to the
+    // legacy rc_* reader (same open store).
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                h,
+                cs("https://a.example/").as_ptr(),
+                cs("A").as_ptr(),
+                1_000,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_hist_count(h) }, 1);
+    assert_eq!(unsafe { crate::rc_hist_count() }, 1);
+    let sugg =
+        take_str(unsafe { crate::facade::ac_hist_suggest(h, cs("a.example").as_ptr(), 5) })
+            .unwrap();
+    assert!(sugg.contains("https://a.example/"));
+
+    // bookmarks via the bound handle — rc_* ops land in the same tree.
+    let r = unsafe { crate::facade::ac_bm_root(b) };
+    assert_ne!(r, 0);
+    let node = unsafe {
+        crate::facade::ac_bm_create(
+            b,
+            r,
+            -1,
+            cs(r#"{"title":"X","url":"https://x.example/"}"#).as_ptr(),
+        )
+    };
+    assert_ne!(node, 0);
+    assert_eq!(
+        unsafe { crate::rc_bm_find(cs("https://x.example/").as_ptr()) },
+        node
+    );
+    assert_eq!(unsafe { crate::facade::ac_bm_child_count(b, r) }, 1);
+    assert_eq!(
+        unsafe { crate::facade::ac_bm_save(b, ptr::null()) },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/bookmarks.xbel")
+        .exists());
+    assert_eq!(
+        unsafe { crate::facade::ac_bm_reload(b) },
+        RcStatus::Ok
+    );
+
+    // policy via the bound handle — the sitedec write lands in the
+    // profile's own directory.
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_sitedec_set(
+                p,
+                cs("cookie").as_ptr(),
+                cs("x.example").as_ptr(),
+                cs("block").as_ptr(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/sitedecisions.json")
+        .exists());
+    assert_eq!(
+        unsafe { crate::facade::ac_blocklist_reload(p) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_blocklist_check(p, cs("not-blocked.example").as_ptr())
+        },
+        0
+    );
+    let snap = take_str(unsafe { crate::facade::ac_sitedec_snapshot(p) }).unwrap();
+    assert!(snap.contains("x.example"));
+    assert!(crate::facade::ac_policy_eval_generation() > 0);
+
+    // RC13: the session handle is path-bound — writes land in the
+    // bound profile's dir and reads never touch the global anchor.
+    let s = unsafe { crate::facade::ac_session(core, cs("work").as_ptr()) };
+    assert!(!s.is_null());
+    assert_eq!(unsafe { crate::facade::ac_session_exists(s) }, 0);
+    let manifest = br#"{"version":1,"windows":[{"shell":"","current":0,
+        "tabs":[{"url":"https://w/","engine":"servo","state":"",
+                 "scroll":{"x":0,"y":120}}]}]}"#;
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_session_save(s, manifest.as_ptr(), manifest.len())
+        },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/session.dat")
+        .exists());
+    assert_eq!(unsafe { crate::facade::ac_session_exists(s) }, 1);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::facade::ac_session_load(s, &mut out) },
+        RcStatus::Ok
+    );
+    let loaded = take_buf(&mut out);
+    let text = String::from_utf8_lossy(&loaded);
+    assert!(text.contains("https://w/") && text.contains("\"scroll\""));
+    // The lifecycle marker binds the same profile dir.
+    assert_eq!(unsafe { crate::facade::ac_session_dirty(s) }, 0);
+    assert_eq!(unsafe { crate::facade::ac_session_mark_start(s) }, 0);
+    assert_eq!(unsafe { crate::facade::ac_session_dirty(s) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_session_mark_start(s) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_session_crash_count(s) }, 1);
+    assert_eq!(
+        unsafe { crate::facade::ac_session_mark_exit(s, 0) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_session_dirty(s) }, 0);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::facade::ac_session_last_exit(s, &mut out) },
+        RcStatus::Ok
+    );
+    assert_eq!(String::from_utf8_lossy(&take_buf(&mut out)), "clean rc=0");
+    assert_eq!(
+        unsafe { crate::facade::ac_session_set_restoring(s, 1) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_session_restoring(s) }, 1);
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/session.state")
+        .exists());
+    // A different persona's handle sees none of it.
+    let s2 = unsafe { crate::facade::ac_session(core, ptr::null()) };
+    assert!(!s2.is_null());
+    assert_eq!(unsafe { crate::facade::ac_session_exists(s2) }, 0);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::facade::ac_session_load(s2, &mut out) },
+        RcStatus::NotFound
+    );
+    unsafe {
+        crate::facade::ac_session_clear(s);
+        crate::facade::ac_session_close(s2);
+        crate::facade::ac_session_close(s);
+    }
+    assert!(!std::path::Path::new(&root)
+        .join("profiles/work/session.dat")
+        .exists());
+
+    // RC15: the cookies handle binds profiles/<id>/cookies.db — the
+    // accessor opens it now and ops re-assert the bound path.
+    let ck = unsafe { crate::facade::ac_cookies(core, cs("work").as_ptr()) };
+    assert!(!ck.is_null());
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/cookies.db")
+        .exists());
+    assert_eq!(unsafe { crate::facade::ac_cookies_role(ck) }, 0);
+    let rec = br#"{"name":"n","value":"v","domain":".example.com",
+        "expires":2000000000000}"#;
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_set(ck, rec.as_ptr(), rec.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_count(ck, ptr::null()) },
+        1
+    );
+    let list = take_str(unsafe {
+        crate::facade::ac_cookies_list(ck, ptr::null())
+    })
+    .unwrap();
+    assert!(list.contains("\"name\":\"n\""));
+    let req = br#"{"url":"https://www.example.com/"}"#;
+    let matched = take_str(unsafe {
+        crate::facade::ac_cookies_for_url(ck, req.as_ptr(), req.len())
+    })
+    .unwrap();
+    assert!(matched.contains("\"name\":\"n\""));
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_cookies_get(
+                ck,
+                cs("example.com").as_ptr(),
+                cs("n").as_ptr(),
+                cs("/").as_ptr(),
+                ptr::null(),
+                &mut out,
+            )
+        },
+        RcStatus::Ok
+    );
+    take_buf(&mut out);
+    // The verdict lanes forward over the bound handle.
+    let verdict = take_str(unsafe {
+        crate::facade::ac_cookies_store_header(
+            ck,
+            cs("https://h.example.com/").as_ptr(),
+            cs("sh=1; Max-Age=60").as_ptr(),
+            ptr::null(),
+        )
+    })
+    .unwrap();
+    assert!(verdict.contains("\"stored\":true"));
+    let gate_in = br#"{"host":"h.example.com"}"#;
+    let gate = take_str(unsafe {
+        crate::facade::ac_cookies_gate(ck, gate_in.as_ptr(), gate_in.len())
+    })
+    .unwrap();
+    assert!(gate.contains("\"accept\":true"));
+    let fixture = cs(&format!(
+        "{}/testdata/cookies/export.txt",
+        env!("CARGO_MANIFEST_DIR")
+    ));
+    let report = take_str(unsafe {
+        crate::facade::ac_cookies_import(ck, fixture.as_ptr(), ptr::null())
+    })
+    .unwrap();
+    assert!(report.contains("\"imported\":6"));
+    let out_file = format!("{root}/cookies-out.txt");
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_cookies_export(ck, cs(&out_file).as_ptr(), ptr::null())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_purge_session(ck) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_cookies_remove_for_host(
+                ck,
+                cs("example.com").as_ptr(),
+                ptr::null(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_clear(ck, ptr::null()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_count(ck, ptr::null()) },
+        0
+    );
+
+    // RC16: the icons handle is path-bound to profiles/<id> — the
+    // cache lands under its cache/icons lane and never touches the
+    // process-global anchor.
+    let ic = unsafe { crate::facade::ac_icons(core, cs("work").as_ptr()) };
+    assert!(!ic.is_null());
+    assert_eq!(
+        take_str(unsafe {
+            crate::facade::ac_icons_key(ic, cs("https://ICON.example/x").as_ptr())
+        })
+        .as_deref(),
+        Some("icon.example")
+    );
+    let png = b"\x89PNG-ac";
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_icons_put(
+                ic,
+                cs("https://icon.example/a").as_ptr(),
+                png.as_ptr(),
+                png.len(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_icons_put(
+                ic,
+                cs("https://icon.example/b").as_ptr(),
+                png.as_ptr(),
+                png.len(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_icons_count(ic) }, 1);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_icons_get(
+                ic,
+                cs("https://icon.example/a").as_ptr(),
+                &mut out,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(take_buf(&mut out), png);
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/cache/icons/icons.json")
+        .exists());
+    assert!(!std::path::Path::new(&root)
+        .join("profiles/work/icons")
+        .exists());
+    let list = take_str(unsafe { crate::facade::ac_icons_list(ic) }).unwrap();
+    assert!(list.contains("\"key\":\"icon.example\""));
+    let mut removed: i64 = -1;
+    assert_eq!(
+        unsafe { crate::facade::ac_icons_sweep(ic, 9999999999999, &mut removed) },
+        RcStatus::Ok
+    );
+    assert_eq!(removed, 1);
+    assert_eq!(unsafe { crate::facade::ac_icons_count(ic) }, 0);
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_icons_put(
+                ic,
+                cs("https://icon.example/").as_ptr(),
+                png.as_ptr(),
+                png.len(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_icons_remove(ic, cs("https://icon.example/").as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_icons_clear(ic) },
+        RcStatus::Ok
+    );
+
+    // RC19: the containers handle binds the persona's settings
+    // scope — registry ops land in profiles/<id>/settings.json's
+    // "containers" group, the namespace derives its paths.
+    let ct = unsafe { crate::facade::ac_containers(core, cs("work").as_ptr()) };
+    assert!(!ct.is_null());
+    let spec = b"{\"name\":\"Side\",\"color\":\"#00aa88\"}";
+    let made = take_str(unsafe {
+        crate::facade::ac_containers_create(ct, spec.as_ptr(), spec.len())
+    })
+    .unwrap();
+    let row: serde_json::Value = serde_json::from_str(&made).unwrap();
+    let cid_s = row["id"].as_str().unwrap().to_string();
+    let cid = cs(&cid_s);
+    let listed = take_str(unsafe { crate::facade::ac_containers_list(ct) }).unwrap();
+    assert!(listed.contains(&cid_s));
+    let ns = take_str(unsafe {
+        crate::facade::ac_containers_namespace(ct, cid.as_ptr())
+    })
+    .unwrap();
+    let ns: serde_json::Value = serde_json::from_str(&ns).unwrap();
+    assert_eq!(
+        ns["storage_path"],
+        format!("{root}/profiles/work/containers/{cid_s}")
+    );
+    assert_eq!(ns["cookie_partition"], cid_s);
+    let patch = b"{\"color\":\"#112233\"}";
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_containers_update(
+                ct,
+                cid.as_ptr(),
+                patch.as_ptr(),
+                patch.len(),
+            )
+        },
+        RcStatus::Ok
+    );
+    let row: serde_json::Value = serde_json::from_str(
+        &take_str(unsafe {
+            crate::facade::ac_containers_get(ct, cid.as_ptr())
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(row["color"], "#112233");
+    assert_eq!(
+        unsafe { crate::facade::ac_containers_remove(ct, cid.as_ptr()) },
+        RcStatus::Ok
+    );
+    assert!(unsafe {
+        crate::facade::ac_containers_get(ct, cid.as_ptr())
+    }
+    .is_null());
+
+    // RC21: the notes handle binds profiles/<id>/notes.json.
+    let nt = unsafe { crate::facade::ac_notes(core, cs("work").as_ptr()) };
+    assert!(!nt.is_null());
+    assert_eq!(unsafe { crate::facade::ac_notes_is_persistent(nt) }, 1);
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_notes_insert(
+                nt,
+                0,
+                cs("facade note").as_ptr(),
+                cs("body").as_ptr(),
+            )
+        },
+        0
+    );
+    assert_eq!(unsafe { crate::facade::ac_notes_count(nt) }, 1);
+    assert_eq!(
+        unsafe { crate::facade::ac_notes_sync(nt) },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/work/notes.json")
+        .exists());
+    unsafe { crate::facade::ac_notes_close(nt) };
+
+    // explicit closes, then shutdown reclaims the rest — both
+    // NULL-tolerant.
+    unsafe {
+        crate::facade::ac_containers_close(ct);
+        crate::facade::ac_icons_close(ic);
+        crate::facade::ac_cookies_close(ck);
+        crate::facade::ac_hist_close(h);
+        crate::facade::ac_bm_close(b);
+        crate::facade::ac_policy_close(p);
+        crate::facade::ac_settings_close(gs);
+        crate::facade::ac_settings_close(ps);
+        crate::facade::ac_profiles_close(pr);
+        crate::facade::ac_shutdown(core);
+        crate::facade::ac_shutdown(ptr::null_mut());
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn facade_profile_isolation() {
+    let _g = guard();
+    let root = tmpdir("ac-iso");
+    let croot = cs(&root);
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+
+    // Two bound handles over the process-global history store — each
+    // call re-anchors to its own profile.
+    let ha = unsafe { crate::facade::ac_history(core, cs("alice").as_ptr()) };
+    let hb = unsafe { crate::facade::ac_history(core, cs("bob").as_ptr()) };
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                ha,
+                cs("https://alice.example/").as_ptr(),
+                cs("A").as_ptr(),
+                10,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_hist_count(hb) }, 0);
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                hb,
+                cs("https://bob.example/").as_ptr(),
+                cs("B").as_ptr(),
+                20,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_hist_count(ha) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_hist_count(hb) }, 1);
+    unsafe {
+        crate::facade::ac_hist_close(ha);
+        crate::facade::ac_hist_close(hb);
+    }
+
+    // Same for bookmarks — interleaved ops stay per-profile.
+    let ba = unsafe { crate::facade::ac_bookmarks(core, cs("alice").as_ptr()) };
+    let bb = unsafe { crate::facade::ac_bookmarks(core, cs("bob").as_ptr()) };
+    let ra = unsafe { crate::facade::ac_bm_root(ba) };
+    let created = unsafe {
+        crate::facade::ac_bm_create(
+            ba,
+            ra,
+            -1,
+            cs(r#"{"title":"a","url":"https://a1.example/"}"#).as_ptr(),
+        )
+    };
+    if created == 0 {
+        panic!(
+            "ac_bm_create failed: ra={ra} err={:?}",
+            take_str(unsafe { crate::facade::ac_last_error() })
+        );
+    }
+    assert_eq!(
+        unsafe { crate::facade::ac_bm_find(bb, cs("https://a1.example/").as_ptr()) },
+        0
+    );
+    let rb = unsafe { crate::facade::ac_bm_root(bb) };
+    assert_ne!(
+        unsafe {
+            crate::facade::ac_bm_create(
+                bb,
+                rb,
+                -1,
+                cs(r#"{"title":"b","url":"https://b1.example/"}"#).as_ptr(),
+            )
+        },
+        0
+    );
+    assert_ne!(
+        unsafe { crate::facade::ac_bm_find(ba, cs("https://a1.example/").as_ptr()) },
+        0
+    );
+    assert_ne!(
+        unsafe { crate::facade::ac_bm_find(bb, cs("https://b1.example/").as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_bm_save(ba, ptr::null()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_bm_save(bb, ptr::null()) },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/alice/bookmarks.xbel")
+        .exists());
+    assert!(std::path::Path::new(&root)
+        .join("profiles/bob/bookmarks.xbel")
+        .exists());
+    unsafe {
+        crate::facade::ac_bm_close(ba);
+        crate::facade::ac_bm_close(bb);
+    }
+
+    // Policy isolation: each persona's sitedecisions.json.
+    let pa = unsafe { crate::facade::ac_policy(core, cs("alice").as_ptr()) };
+    let pb = unsafe { crate::facade::ac_policy(core, cs("bob").as_ptr()) };
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_sitedec_set(
+                pa,
+                cs("cookie").as_ptr(),
+                cs("alice.example").as_ptr(),
+                cs("block").as_ptr(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/alice/sitedecisions.json")
+        .exists());
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_sitedec_get(
+                pb,
+                cs("cookie").as_ptr(),
+                cs("alice.example").as_ptr(),
+                &mut out,
+            )
+        },
+        RcStatus::NotFound
+    );
+    unsafe {
+        crate::facade::ac_policy_close(pa);
+        crate::facade::ac_policy_close(pb);
+    }
+
+    // Cookie isolation: alice's rows never reach bob's db.
+    let ca = unsafe { crate::facade::ac_cookies(core, cs("alice").as_ptr()) };
+    let cb = unsafe { crate::facade::ac_cookies(core, cs("bob").as_ptr()) };
+    let rec = br#"{"name":"n","value":"a","domain":".alice.example",
+        "expires":2000000000000}"#;
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_set(ca, rec.as_ptr(), rec.len()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_cookies_count(ca, ptr::null()) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_cookies_count(cb, ptr::null()) }, 0);
+    assert!(std::path::Path::new(&root)
+        .join("profiles/alice/cookies.db")
+        .exists());
+    assert!(std::path::Path::new(&root)
+        .join("profiles/bob/cookies.db")
+        .exists());
+    unsafe {
+        crate::facade::ac_cookies_close(ca);
+        crate::facade::ac_cookies_close(cb);
+    }
+
+    // Icon isolation: each persona's cache/icons lane is its own.
+    let ia = unsafe { crate::facade::ac_icons(core, cs("alice").as_ptr()) };
+    let ib = unsafe { crate::facade::ac_icons(core, cs("bob").as_ptr()) };
+    let png = b"\x89PNG-iso";
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_icons_put(
+                ia,
+                cs("https://alice.example/").as_ptr(),
+                png.as_ptr(),
+                png.len(),
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_icons_count(ia) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_icons_count(ib) }, 0);
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_icons_get(
+                ib,
+                cs("https://alice.example/").as_ptr(),
+                &mut out,
+            )
+        },
+        RcStatus::NotFound
+    );
+    assert!(std::path::Path::new(&root)
+        .join("profiles/alice/cache/icons/icons.json")
+        .exists());
+    // Bob's store holds no icon files — his count read above may have
+    // persisted the (empty) index itself, which carries no rows.
+    assert!(
+        std::fs::read_dir(
+            std::path::Path::new(&root).join("profiles/bob/cache/icons")
+        )
+        .map(|rd| !rd.flatten().any(|e| {
+            e.file_name().to_string_lossy().ends_with(".png")
+        }))
+        .unwrap_or(true)
+    );
+    unsafe {
+        crate::facade::ac_icons_close(ia);
+        crate::facade::ac_icons_close(ib);
+        crate::facade::ac_shutdown(core);
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn facade_callbacks_carry_profile() {
+    let _g = guard();
+    let root = tmpdir("ac-cb");
+    let croot = cs(&root);
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+
+    static AC_HITS: AtomicUsize = AtomicUsize::new(0);
+    thread_local! {
+        static LAST: std::cell::RefCell<(String, String)> =
+            const { std::cell::RefCell::new((String::new(), String::new())) };
+    }
+    unsafe extern "C" fn cb(
+        topic: *const std::os::raw::c_char,
+        profile: *const std::os::raw::c_char,
+        _ud: *mut c_void,
+    ) {
+        let t = unsafe { CStr::from_ptr(topic) }
+            .to_string_lossy()
+            .into_owned();
+        let p = if profile.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(profile) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        LAST.with(|l| *l.borrow_mut() = (t, p));
+        AC_HITS.fetch_add(1, Ordering::SeqCst);
+    }
+    unsafe {
+        crate::facade::ac_set_change_callback(core, Some(cb), ptr::null_mut())
+    };
+
+    // A facade-bound mutation stamps the profile.
+    let h = unsafe { crate::facade::ac_history(core, cs("work").as_ptr()) };
+    let base = AC_HITS.load(Ordering::SeqCst);
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                h,
+                cs("https://n.example/").as_ptr(),
+                cs("N").as_ptr(),
+                1,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert!(AC_HITS.load(Ordering::SeqCst) > base);
+    LAST.with(|l| {
+        let (t, p) = l.borrow().clone();
+        assert_eq!(t, "history");
+        assert_eq!(p, "work");
+    });
+    unsafe { crate::facade::ac_hist_close(h) };
+
+    // A legacy rc_* mutation reaches the subscriber with a NULL
+    // profile (no binding to report).
+    let db = cs(&format!("{root}/profiles/work/history.db"));
+    assert_eq!(
+        unsafe { crate::rc_hist_open(db.as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_hist_add(
+                cs("https://legacy.example/").as_ptr(),
+                cs("L").as_ptr(),
+                2,
+            )
+        },
+        RcStatus::Ok
+    );
+    LAST.with(|l| {
+        let (t, p) = l.borrow().clone();
+        assert_eq!(t, "history");
+        assert!(p.is_empty());
+    });
+
+    // Settings writes stamp their scope's profile; the global scope
+    // stamps NULL.
+    let s = unsafe { crate::facade::ac_settings(core, cs("work").as_ptr()) };
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_settings_set_string(
+                s,
+                cs("k").as_ptr(),
+                cs("v").as_ptr(),
+            )
+        },
+        RcStatus::Ok
+    );
+    LAST.with(|l| {
+        let (t, p) = l.borrow().clone();
+        assert_eq!(t, "settings");
+        assert_eq!(p, "work");
+    });
+    unsafe { crate::facade::ac_settings_close(s) };
+
+    // A cookie mutation stamps the "cookies" topic + bound profile.
+    let ck = unsafe { crate::facade::ac_cookies(core, cs("work").as_ptr()) };
+    let rec = br#"{"name":"n","domain":".example.com",
+        "expires":2000000000000}"#;
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_set(ck, rec.as_ptr(), rec.len()) },
+        RcStatus::Ok
+    );
+    LAST.with(|l| {
+        let (t, p) = l.borrow().clone();
+        assert_eq!(t, "cookies");
+        assert_eq!(p, "work");
+    });
+    unsafe { crate::facade::ac_cookies_close(ck) };
+
+    // Clearing the callback silences it; shutdown after clear is safe.
+    unsafe { crate::facade::ac_set_change_callback(core, None, ptr::null_mut()) };
+    let before = AC_HITS.load(Ordering::SeqCst);
+    let h2 = unsafe { crate::facade::ac_history(core, cs("work").as_ptr()) };
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                h2,
+                cs("https://silent.example/").as_ptr(),
+                cs("S").as_ptr(),
+                3,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(AC_HITS.load(Ordering::SeqCst), before);
+    unsafe {
+        crate::facade::ac_hist_close(h2);
+        crate::facade::ac_shutdown(core);
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn facade_bad_handles_fail_clean() {
+    let _g = guard();
+    let root = tmpdir("ac-bad");
+    let croot = cs(&root);
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+
+    // NULL handles return the failure spelling, never crash.
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                ptr::null(),
+                cs("u").as_ptr(),
+                cs("t").as_ptr(),
+                1,
+            )
+        },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(unsafe { crate::facade::ac_hist_count(ptr::null()) }, -1);
+    assert_eq!(unsafe { crate::facade::ac_bm_root(ptr::null()) }, 0);
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_sitedec_set(
+                ptr::null(),
+                cs("cookie").as_ptr(),
+                cs("k").as_ptr(),
+                cs("v").as_ptr(),
+            )
+        },
+        RcStatus::InvalidArgument
+    );
+    let err = take_str(unsafe { crate::facade::ac_last_error() }).unwrap();
+    assert!(err.contains("bad"));
+    // Cookies legs on NULL handles degrade the same way.
+    assert_eq!(
+        unsafe { crate::facade::ac_cookies_role(ptr::null()) },
+        -1
+    );
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_cookies_set(ptr::null(), b"{}".as_ptr(), 2)
+        },
+        RcStatus::InvalidArgument
+    );
+    assert!(unsafe {
+        crate::facade::ac_cookies_list(ptr::null(), ptr::null())
+    }
+    .is_null());
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_cookies_purge_expired(ptr::null(), 0)
+        },
+        RcStatus::InvalidArgument
+    );
+    // Accessors on a NULL core fail, not crash.
+    assert!(unsafe { crate::facade::ac_settings(ptr::null_mut(), ptr::null()) }
+        .is_null());
+    assert!(unsafe { crate::facade::ac_cookies(ptr::null_mut(), ptr::null()) }
+        .is_null());
+    unsafe { crate::facade::ac_shutdown(core) };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// ---- RC14 torctl surface ------------------------------------------------
+
+/// Scripted control-port mock for the FFI legs: answers GETINFO with a
+/// data-block reply plus one interleaved 650 event, everything else OK.
+fn tor_mock() -> (u16, std::thread::JoinHandle<()>) {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{IpAddr, TcpListener};
+    let listener =
+        TcpListener::bind((IpAddr::from([127, 0, 0, 1]), 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let join = std::thread::spawn(move || {
+        if let Ok((conn, _)) = listener.accept() {
+            let _ = conn.set_read_timeout(Some(
+                std::time::Duration::from_secs(10),
+            ));
+            let mut writer = conn.try_clone().unwrap();
+            let mut reader = BufReader::new(conn);
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => {}
+                }
+                let cmd = line.trim_end();
+                let reply = if cmd.starts_with("GETINFO circ") {
+                    "250+circuit-status=\r\n3 BUILT $AA~G\r\n.\r\n250 OK\r\n"
+                } else if cmd.starts_with("GETINFO ev") {
+                    "650 CIRC 4 BUILT $BB~M\r\n250-ev=1\r\n250 OK\r\n"
+                } else {
+                    "250 OK\r\n"
+                };
+                if writer.write_all(reply.as_bytes()).is_err() {
+                    return;
+                }
+            }
+        }
+    });
+    (port, join)
+}
+
+#[test]
+fn torctl_surface() {
+    // Bad-argument legs first — NULL handles/pointers degrade to the
+    // failure spelling, never a crash.
+    assert!(unsafe { crate::rc_tor_open(ptr::null(), 9051) }.is_null());
+    assert!(unsafe { crate::rc_tor_open(cs("8.8.8.8").as_ptr(), 9051) }
+        .is_null());
+    assert!(unsafe { crate::rc_tor_open(cs("example.org").as_ptr(), 9051) }
+        .is_null());
+    unsafe { crate::rc_tor_close(ptr::null_mut()) };
+    assert_eq!(unsafe { crate::rc_tor_state(ptr::null()) }, 0);
+    assert!(unsafe { crate::rc_tor_error(ptr::null()) }.is_null());
+    assert!(unsafe { crate::rc_tor_take_event(ptr::null()) }.is_null());
+    assert!(unsafe { crate::rc_tor_take_error(ptr::null()) }.is_null());
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_tor_take_reply(ptr::null(), &mut out) },
+        RcStatus::InvalidArgument
+    );
+    for seq in [
+        unsafe { crate::rc_tor_send(ptr::null(), cs("X").as_ptr()) },
+        unsafe { crate::rc_tor_getinfo(ptr::null(), cs("k").as_ptr()) },
+        unsafe { crate::rc_tor_setevents(ptr::null(), cs("CIRC").as_ptr()) },
+        unsafe { crate::rc_tor_takeownership(ptr::null()) },
+        unsafe { crate::rc_tor_signal(ptr::null(), cs("NEWNYM").as_ptr()) },
+        unsafe {
+            crate::rc_tor_auth_cookie(ptr::null(), b"c".as_ptr(), 32)
+        },
+        unsafe {
+            crate::rc_tor_auth_cookie_file(ptr::null(), cs("/x").as_ptr())
+        },
+        unsafe {
+            crate::rc_tor_auth_password(ptr::null(), b"p".as_ptr(), 1)
+        },
+    ] {
+        assert_eq!(seq, -1);
+    }
+
+    // Live leg over the C ABI against the scripted mock.
+    let (port, _join) = tor_mock();
+    let h = unsafe { crate::rc_tor_open(cs("127.0.0.1").as_ptr(), port) };
+    assert!(!h.is_null());
+    assert_eq!(unsafe { crate::rc_tor_state(h) }, 1 /* CONNECTED */);
+    assert_eq!(
+        take_str(unsafe { crate::rc_tor_error(h) }).as_deref(),
+        Some("")
+    );
+
+    // Bad-argument legs on a live handle.
+    assert_eq!(unsafe { crate::rc_tor_send(h, ptr::null()) }, -1);
+    assert_eq!(
+        unsafe { crate::rc_tor_send(h, cs("a\rb").as_ptr()) },
+        -1
+    );
+    assert_eq!(unsafe { crate::rc_tor_getinfo(h, ptr::null()) }, -1);
+    assert_eq!(
+        unsafe { crate::rc_tor_auth_cookie(h, ptr::null(), 32) },
+        -1
+    );
+    assert_eq!(
+        unsafe { crate::rc_tor_auth_cookie(h, b"x".as_ptr(), 31) },
+        -1
+    );
+    assert_eq!(
+        unsafe { crate::rc_tor_auth_password(h, ptr::null(), 0) },
+        -1
+    );
+
+    let seq = unsafe { crate::rc_tor_getinfo(h, cs("circ").as_ptr()) };
+    assert!(seq > 0);
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut reply: Option<serde_json::Value> = None;
+    while std::time::Instant::now() < deadline {
+        let mut out = out_buf();
+        if unsafe { crate::rc_tor_take_reply(h, &mut out) } == RcStatus::Ok {
+            let raw = take_buf(&mut out);
+            reply = Some(serde_json::from_slice(&raw).unwrap());
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let reply = reply.expect("no reply landed");
+    assert_eq!(reply["seq"].as_u64().unwrap(), seq as u64);
+    assert_eq!(reply["code"].as_i64().unwrap(), 250);
+    let lines: Vec<&str> = reply["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(lines, vec!["circuit-status=", "3 BUILT $AA~G", "OK"]);
+
+    // The 650 line queues as an async event, not into the reply.
+    let seq = unsafe { crate::rc_tor_getinfo(h, cs("ev").as_ptr()) };
+    assert!(seq > 0);
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut event: Option<String> = None;
+    while std::time::Instant::now() < deadline {
+        if let Some(e) = take_str(unsafe { crate::rc_tor_take_event(h) }) {
+            event = Some(e);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(event.as_deref(), Some("CIRC 4 BUILT $BB~M"));
+    // ...and its reply still completes.
+    while std::time::Instant::now() < deadline {
+        let mut out = out_buf();
+        if unsafe { crate::rc_tor_take_reply(h, &mut out) } == RcStatus::Ok {
+            take_buf(&mut out);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    // Drained queues report the empty spelling.
+    let mut out = out_buf();
+    assert_eq!(
+        unsafe { crate::rc_tor_take_reply(h, &mut out) },
+        RcStatus::NotFound
+    );
+    assert!(unsafe { crate::rc_tor_take_event(h) }.is_null());
+    assert!(unsafe { crate::rc_tor_take_error(h) }.is_null());
+
+    unsafe { crate::rc_tor_close(h) };
+
+    // A second open/close cycle proves a freed handle left nothing
+    // behind — "localhost" exercises the name-resolution gate (any
+    // resolved answer must still be loopback).
+    let (port2, _j2) = tor_mock();
+    let h2 = unsafe { crate::rc_tor_open(cs("localhost").as_ptr(), port2) };
+    if !h2.is_null() {
+        assert_eq!(unsafe { crate::rc_tor_state(h2) }, 1);
+        unsafe { crate::rc_tor_close(h2) };
+    }
+}
+
+// RC20: every rc_updates_* entry point — pure ops (bad-argument
+// spellings plus one verdict leg each) and the settings-backed state
+// surface on a global-scope handle.
+#[test]
+fn updates_surface() {
+    let _g = guard();
+
+    // Bad-argument legs first.
+    assert!(unsafe { crate::rc_updates_normalize_version(ptr::null()) }
+        .is_null());
+    assert_eq!(
+        unsafe { crate::rc_updates_compare_versions(ptr::null(), cs("1").as_ptr()) },
+        -2
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_compare_versions(cs("1").as_ptr(), ptr::null()) },
+        -2
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_is_trusted_url(ptr::null(), cs("https://x").as_ptr()) },
+        -1
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_is_trusted_url(cs("https://x").as_ptr(), ptr::null()) },
+        -1
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_channel_accepts(ptr::null(), 0, 0) },
+        -1
+    );
+    assert!(unsafe {
+        crate::rc_updates_parse_manifest(ptr::null(), 4, cs("https://a").as_ptr())
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_updates_parse_manifest(b"{}".as_ptr(), 2, ptr::null())
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_updates_platform_pick(cs("linux").as_ptr(), ptr::null(),
+            b"[]".as_ptr(), 2)
+    }
+    .is_null());
+    assert!(unsafe { crate::rc_updates_state(ptr::null_mut()) }.is_null());
+    assert_eq!(
+        unsafe { crate::rc_updates_record_check(ptr::null_mut(), 1) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_snooze(ptr::null_mut(), 1) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_set_skipped(ptr::null_mut(), cs("v1").as_ptr()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_set_channel(ptr::null_mut(), cs("beta").as_ptr()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_should_notify(ptr::null_mut(),
+                cs("v2").as_ptr(), cs("v1").as_ptr(), 0)
+        },
+        -1
+    );
+
+    // Pure ops over the ABI.
+    let n = take_str(unsafe {
+        crate::rc_updates_normalize_version(cs("v1.2.3-rc1+x").as_ptr())
+    })
+    .unwrap();
+    assert_eq!(n, "1.2.3");
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_compare_versions(cs("v0.13").as_ptr(), cs("0.12").as_ptr())
+        },
+        1
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_compare_versions(cs("1.0").as_ptr(), cs("1.0.0").as_ptr())
+        },
+        0
+    );
+    let api = cs("https://api.github.com/x");
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_is_trusted_url(
+                cs("https://github.com/a/b.deb").as_ptr(), api.as_ptr())
+        },
+        1
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_is_trusted_url(
+                cs("javascript:alert(1)").as_ptr(), api.as_ptr())
+        },
+        0
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_channel_accepts(cs("stable").as_ptr(), 0, 1) },
+        0
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_channel_accepts(cs("beta").as_ptr(), 0, 1) },
+        1
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_channel_accepts(cs("nightly").as_ptr(), 0, 0) },
+        -1
+    );
+
+    // Manifest parse + platform pick over the ABI.
+    let manifest = br#"{"tag_name":"v9.9","name":"Arktos v9.9",
+        "html_url":"https://github.com/o/r/releases/x",
+        "assets":[
+            {"name":"a.deb","browser_download_url":"https://github.com/x/a.deb","size":7},
+            {"name":"b.exe","browser_download_url":"javascript:x","size":1}
+        ]}"#;
+    let parsed = take_str(unsafe {
+        crate::rc_updates_parse_manifest(
+            manifest.as_ptr(), manifest.len(), api.as_ptr())
+    })
+    .unwrap();
+    let pj: serde_json::Value = serde_json::from_str(&parsed).unwrap();
+    assert_eq!(pj["version"], "v9.9");
+    assert_eq!(pj["draft"], false);
+    assert_eq!(pj["assets"].as_array().unwrap().len(), 1);
+    assert_eq!(pj["assets"][0]["name"], "a.deb");
+    assert!(unsafe {
+        crate::rc_updates_parse_manifest(b"nope{".as_ptr(), 5, api.as_ptr())
+    }
+    .is_null());
+
+    let pick = take_str(unsafe {
+        crate::rc_updates_platform_pick(
+            cs("linux").as_ptr(), cs("debian").as_ptr(),
+            pj["assets"].to_string().as_ptr(),
+            pj["assets"].to_string().len())
+    })
+    .unwrap();
+    let pk: serde_json::Value = serde_json::from_str(&pick).unwrap();
+    assert_eq!(pk["candidates"].as_array().unwrap().len(), 1);
+    assert_eq!(pk["ambiguous"], false);
+
+    // The state surface on a global-scope settings handle.
+    let root = tmpdir("updates");
+    let croot = cs(&root);
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), ptr::null()) };
+    assert!(!h.is_null());
+    let st = take_str(unsafe { crate::rc_updates_state(h) }).unwrap();
+    let sj: serde_json::Value = serde_json::from_str(&st).unwrap();
+    assert_eq!(sj["last_check_ms"], 0);
+    assert_eq!(sj["channel"], "stable");
+
+    assert_eq!(
+        unsafe { crate::rc_updates_record_check(h, 1_700_000_000_000) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_snooze(h, 1_800_000_000_000) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_set_skipped(h, cs("v9.9").as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_set_channel(h, cs("beta").as_ptr()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_updates_set_channel(h, cs("bogus").as_ptr()) },
+        RcStatus::InvalidArgument
+    );
+    let st = take_str(unsafe { crate::rc_updates_state(h) }).unwrap();
+    let sj: serde_json::Value = serde_json::from_str(&st).unwrap();
+    assert_eq!(sj["last_check_ms"], 1_700_000_000_000i64);
+    assert_eq!(sj["snooze_until_ms"], 1_800_000_000_000i64);
+    assert_eq!(sj["skipped_version"], "v9.9");
+    assert_eq!(sj["channel"], "beta");
+
+    // The notify verdict reads the persisted state: snoozed + the
+    // skipped tag both refuse; past the deadline a fresh tag fires.
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_should_notify(h,
+                cs("v9.9").as_ptr(), cs("v1.0").as_ptr(), 0)
+        },
+        0
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_updates_should_notify(h,
+                cs("v10").as_ptr(), cs("v1.0").as_ptr(), 2_000_000_000_000)
+        },
+        1
+    );
+
+    // NULL clears the skipped-version filter; <=0 clears the snooze.
+    assert_eq!(
+        unsafe { crate::rc_updates_set_skipped(h, ptr::null()) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::rc_updates_snooze(h, 0) }, RcStatus::Ok);
+    let st = take_str(unsafe { crate::rc_updates_state(h) }).unwrap();
+    let sj: serde_json::Value = serde_json::from_str(&st).unwrap();
+    assert_eq!(sj["skipped_version"], "");
+    assert_eq!(sj["snooze_until_ms"], 0);
+
+    unsafe { crate::rc_settings_close(h) };
+}
+
+// RC21: every rc_notes_* entry point — the volatile off-the-record
+// binding, the explicit-file lane, the root+profile lane and the
+// facade's ac_notes_* forwards, happy path plus bad-argument legs.
+#[test]
+fn notes_surface() {
+    let _g = guard();
+
+    // Bad-argument legs first — NULL handles everywhere.
+    assert_eq!(unsafe { crate::rc_notes_count(ptr::null_mut()) }, -1);
+    assert!(unsafe { crate::rc_notes_get(ptr::null_mut(), 0) }.is_null());
+    assert!(unsafe { crate::rc_notes_list(ptr::null_mut()) }.is_null());
+    assert_eq!(
+        unsafe {
+            crate::rc_notes_insert(ptr::null_mut(), 0, cs("t").as_ptr(),
+                cs("b").as_ptr())
+        },
+        -1
+    );
+    let mut changed = -1;
+    assert_eq!(
+        unsafe {
+            crate::rc_notes_set_title(ptr::null_mut(), 0, cs("t").as_ptr(),
+                &mut changed)
+        },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_notes_set_body(ptr::null_mut(), 0, cs("b").as_ptr(),
+                &mut changed)
+        },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_notes_set_markdown(ptr::null_mut(), 0, 1, &mut changed) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_notes_remove(ptr::null_mut(), 0, 1) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_notes_sync(ptr::null_mut()) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(unsafe { crate::rc_notes_is_persistent(ptr::null_mut()) }, 0);
+    assert_eq!(unsafe { crate::rc_notes_is_dirty(ptr::null_mut()) }, 0);
+    unsafe { crate::rc_notes_close(ptr::null_mut()) }; // NULL-tolerant
+    // A non-slug profile id refuses; an empty root with a slug does too.
+    assert!(unsafe {
+        crate::rc_notes_open(cs("/tmp/x").as_ptr(), cs("Bad Id").as_ptr())
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_notes_open(cs("").as_ptr(), cs("work").as_ptr())
+    }
+    .is_null());
+
+    // The volatile lane — NULL profile id, CRUD in memory, sync and
+    // close flush nothing.
+    let v = unsafe { crate::rc_notes_open(cs("/nonexistent").as_ptr(), ptr::null()) };
+    assert!(!v.is_null());
+    assert_eq!(unsafe { crate::rc_notes_is_persistent(v) }, 0);
+    assert_eq!(unsafe { crate::rc_notes_insert(v, 0, ptr::null(), cs("secret").as_ptr()) }, 0);
+    assert_eq!(unsafe { crate::rc_notes_count(v) }, 1);
+    assert_eq!(unsafe { crate::rc_notes_is_dirty(v) }, 1);
+    assert_eq!(unsafe { crate::rc_notes_sync(v) }, RcStatus::Ok);
+    unsafe { crate::rc_notes_close(v) };
+
+    // The explicit-file lane — the standalone model's binding.
+    let root = tmpdir("notes");
+    let croot = cs(&root);
+    let file = format!("{root}/deep/notes.json");
+    let cfile = cs(&file);
+    let h = unsafe { crate::rc_notes_open_file(cfile.as_ptr()) };
+    assert!(!h.is_null());
+    assert_eq!(unsafe { crate::rc_notes_is_persistent(h) }, 1);
+
+    // insert at clamped rows; NULL title reads as "".
+    assert_eq!(unsafe { crate::rc_notes_insert(h, 9, cs("A").as_ptr(), cs("body a").as_ptr()) }, 0);
+    assert_eq!(unsafe { crate::rc_notes_insert(h, 0, ptr::null(), cs("lead").as_ptr()) }, 0);
+    assert_eq!(unsafe { crate::rc_notes_count(h) }, 2);
+
+    // get/list over the ABI — the persisted object shape.
+    let g = take_str(unsafe { crate::rc_notes_get(h, 0) }).unwrap();
+    let gj: serde_json::Value = serde_json::from_str(&g).unwrap();
+    assert_eq!(gj["title"], "");
+    assert_eq!(gj["body"], "lead");
+    assert_eq!(gj["markdown"], false);
+    let l = take_str(unsafe { crate::rc_notes_list(h) }).unwrap();
+    let lj: serde_json::Value = serde_json::from_str(&l).unwrap();
+    assert_eq!(lj.as_array().unwrap().len(), 2);
+    assert_eq!(lj[1]["title"], "A");
+    assert!(unsafe { crate::rc_notes_get(h, 7) }.is_null());
+
+    // Setters: changed flags mirror the model's setData contract.
+    assert_eq!(
+        unsafe { crate::rc_notes_set_title(h, 0, cs("lead t").as_ptr(), &mut changed) },
+        RcStatus::Ok
+    );
+    assert_eq!(changed, 1);
+    assert_eq!(
+        unsafe { crate::rc_notes_set_title(h, 0, cs("lead t").as_ptr(), &mut changed) },
+        RcStatus::Ok
+    );
+    assert_eq!(changed, 0); // identical value — the setData false return
+    assert_eq!(
+        unsafe { crate::rc_notes_set_body(h, 1, cs("milk").as_ptr(), &mut changed) },
+        RcStatus::Ok
+    );
+    assert_eq!(changed, 1);
+    assert_eq!(
+        unsafe { crate::rc_notes_set_markdown(h, 1, 1, &mut changed) },
+        RcStatus::Ok
+    );
+    assert_eq!(changed, 1);
+    assert_eq!(
+        unsafe { crate::rc_notes_set_title(h, 9, cs("x").as_ptr(), &mut changed) },
+        RcStatus::NotFound
+    );
+    // NULL out_changed is legal; a NULL value pointer is not.
+    assert_eq!(
+        unsafe { crate::rc_notes_set_title(h, 0, cs("z").as_ptr(), ptr::null_mut()) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::rc_notes_set_title(h, 0, ptr::null(), &mut changed) },
+        RcStatus::InvalidArgument
+    );
+
+    // removeRows refusals then a real span.
+    assert_eq!(
+        unsafe { crate::rc_notes_remove(h, -1, 1) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(
+        unsafe { crate::rc_notes_remove(h, 1, 5) },
+        RcStatus::InvalidArgument
+    );
+    assert_eq!(unsafe { crate::rc_notes_remove(h, 0, 1) }, RcStatus::Ok);
+    assert_eq!(unsafe { crate::rc_notes_count(h) }, 1);
+
+    // Dirty until sync commits — the file materializes with the
+    // parent dir created like the C++ mkpath.
+    assert_eq!(unsafe { crate::rc_notes_is_dirty(h) }, 1);
+    assert_eq!(unsafe { crate::rc_notes_sync(h) }, RcStatus::Ok);
+    assert_eq!(unsafe { crate::rc_notes_is_dirty(h) }, 0);
+    assert!(std::path::Path::new(&file).exists());
+    unsafe { crate::rc_notes_close(h) };
+
+    // A C++-shaped file reads identically through the FFI — the
+    // spec's cross-write leg, both directions.
+    let h2 = unsafe { crate::rc_notes_open_file(cfile.as_ptr()) };
+    assert!(!h2.is_null());
+    assert_eq!(unsafe { crate::rc_notes_count(h2) }, 1);
+    let g = take_str(unsafe { crate::rc_notes_get(h2, 0) }).unwrap();
+    let gj: serde_json::Value = serde_json::from_str(&g).unwrap();
+    assert_eq!(gj["title"], "A");
+    assert_eq!(gj["body"], "milk");
+    assert_eq!(gj["markdown"], true);
+    unsafe { crate::rc_notes_close(h2) };
+
+    // The root+profile lane — profiles/<id>/notes.json.
+    let pid = cs("work");
+    let hp = unsafe { crate::rc_notes_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!hp.is_null());
+    assert_eq!(unsafe { crate::rc_notes_insert(hp, 0, cs("w").as_ptr(), cs("wb").as_ptr()) }, 0);
+    unsafe { crate::rc_notes_close(hp) }; // close flushes the dirty store
+    assert!(std::path::Path::new(&format!("{root}/profiles/work/notes.json")).exists());
+
+    // The facade spelling on the same store — one file, two lanes.
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+    let an = unsafe { crate::facade::ac_notes(core, pid.as_ptr()) };
+    assert!(!an.is_null());
+    assert_eq!(unsafe { crate::facade::ac_notes_count(an) }, 1);
+    let l = take_str(unsafe { crate::facade::ac_notes_list(an) }).unwrap();
+    assert!(l.contains("\"title\":\"w\""));
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_notes_set_body(an, 0, cs("wb2").as_ptr(),
+                &mut changed)
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(changed, 1);
+    assert_eq!(
+        unsafe { crate::facade::ac_notes_insert(an, 5, cs("w2").as_ptr(), ptr::null()) },
+        1
+    );
+    let g = take_str(unsafe { crate::facade::ac_notes_get(an, 1) }).unwrap();
+    assert!(g.contains("\"title\":\"w2\""));
+    assert_eq!(
+        unsafe { crate::facade::ac_notes_set_markdown(an, 1, 1, &mut changed) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_notes_is_dirty(an) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_notes_sync(an) }, RcStatus::Ok);
+    assert_eq!(
+        unsafe { crate::facade::ac_notes_remove(an, 0, 1) },
+        RcStatus::Ok
+    );
+    assert_eq!(unsafe { crate::facade::ac_notes_count(an) }, 1);
+    assert_eq!(unsafe { crate::facade::ac_notes_is_persistent(an) }, 1);
+    unsafe { crate::facade::ac_notes_close(an) };
+    unsafe { crate::facade::ac_shutdown(core) };
+}
+
+// MD04: the download-interception decision layer over the C ABI —
+// pure ops on a NULL store, the store-bound ops on a profile-bound
+// settings handle, the records/rules lanes, and the facade spelling.
+#[test]
+fn dlwpolicy_surface() {
+    let _g = guard();
+    let root = tmpdir("dlwpolicy");
+    let croot = cs(&root);
+    let pid = cs("work");
+
+    // Pure ops answer on a NULL store; store-bound ops refuse.
+    let pure = b"{\"op\":\"sanitize_name\",\"suggested\":\"a/b/c.zip\"}";
+    let got = take_str(unsafe {
+        crate::rc_dlw_call(ptr::null(), pure.as_ptr(), pure.len())
+    })
+    .unwrap();
+    assert!(got.contains("\"name\":\"c.zip\""));
+    let bound = b"{\"op\":\"records_list\"}";
+    assert!(unsafe {
+        crate::rc_dlw_call(ptr::null(), bound.as_ptr(), bound.len())
+    }
+    .is_null());
+
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!h.is_null());
+    // Bad payloads degrade, never crash.
+    assert!(unsafe {
+        crate::rc_dlw_call(h, ptr::null(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_dlw_call(h, b"nope".as_ptr(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_dlw_call(h, b"{\"op\":\"bogus\"}".as_ptr(), 15)
+    }
+    .is_null());
+
+    // A verdict composes over the profile's rules — a blocked
+    // extension authored through the facade lane blocks.
+    let set = b"{\"op\":\"rule_set\",\"key\":\"blocked_extensions\",\"value\":[\"exe\"]}";
+    let r = take_str(unsafe {
+        crate::rc_dlw_call(h, set.as_ptr(), set.len())
+    })
+    .unwrap();
+    assert!(r.contains("\"mutated\":true"));
+    let verd = b"{\"op\":\"verdict\",\"url\":\"https://h/f.exe\"}";
+    let v = take_str(unsafe {
+        crate::rc_dlw_call(h, verd.as_ptr(), verd.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"action\":\"block\""));
+
+    // The records lane round-trips and clears.
+    let save = b"{\"op\":\"records_save\",\"records\":[{\"url\":\"https://h/a\",\"location\":\"/tmp/a\",\"done\":true,\"size\":7}]}";
+    let r = take_str(unsafe {
+        crate::rc_dlw_call(h, save.as_ptr(), save.len())
+    })
+    .unwrap();
+    assert!(r.contains("\"saved\":1"));
+    let l = take_str(unsafe {
+        crate::rc_dlw_call(h, bound.as_ptr(), bound.len())
+    })
+    .unwrap();
+    assert!(l.contains("\"url\":\"https://h/a\""));
+    assert!(std::path::Path::new(&format!("{root}/profiles/work/downloads.json")).exists());
+    let clr = b"{\"op\":\"records_clear\"}";
+    let r = take_str(unsafe {
+        crate::rc_dlw_call(h, clr.as_ptr(), clr.len())
+    })
+    .unwrap();
+    assert!(r.contains("\"cleared\":true"));
+    unsafe { crate::rc_settings_close(h) };
+
+    // The facade spelling on the same profile — one store, two lanes.
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+    let ah = unsafe { crate::facade::ac_dlwpolicy(core, pid.as_ptr()) };
+    assert!(!ah.is_null());
+    let v = take_str(unsafe {
+        crate::facade::ac_dlw_call(ah, verd.as_ptr(), verd.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"action\":\"block\""));
+    let l = take_str(unsafe {
+        crate::facade::ac_dlw_call(ah, bound.as_ptr(), bound.len())
+    })
+    .unwrap();
+    assert!(l.contains("\"records\":[]"));
+    unsafe { crate::facade::ac_dlwpolicy_close(ah) };
+    // A NULL facade handle degrades.
+    assert!(unsafe {
+        crate::facade::ac_dlw_call(ptr::null(), pure.as_ptr(), pure.len())
+    }
+    .is_null());
+    unsafe { crate::facade::ac_shutdown(core) };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// MD05: the privacy-policy store view over the C ABI — the pure
+// "defaults" op on a NULL store, the bound-profile flags/gpc/
+// verdict lanes, the int gpc surface, and the facade spelling.
+#[test]
+fn privacy_surface() {
+    let _g = guard();
+    let root = tmpdir("privacy");
+    let croot = cs(&root);
+    let pid = cs("work");
+
+    // "defaults" answers on a NULL store; store-bound ops refuse.
+    let pure = b"{\"op\":\"defaults\"}";
+    let got = take_str(unsafe {
+        crate::rc_privacy_call(ptr::null(), pure.as_ptr(), pure.len())
+    })
+    .unwrap();
+    assert!(got.contains("\"gpc_signal\":true"));
+    let bound = b"{\"op\":\"flags\"}";
+    assert!(unsafe {
+        crate::rc_privacy_call(ptr::null(), bound.as_ptr(), bound.len())
+    }
+    .is_null());
+    assert_eq!(
+        unsafe { crate::rc_privacy_gpc(ptr::null_mut(), 0) },
+        -1
+    );
+
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!h.is_null());
+    // Bad payloads degrade, never crash.
+    assert!(unsafe {
+        crate::rc_privacy_call(h, ptr::null(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_privacy_call(h, b"nope".as_ptr(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_privacy_call(h, b"{\"op\":\"bogus\"}".as_ptr(), 15)
+    }
+    .is_null());
+
+    // A pristine persona: every fail-on toggle true, gpc sends,
+    // the unified verdict folds all three reads.
+    let f = take_str(unsafe {
+        crate::rc_privacy_call(h, bound.as_ptr(), bound.len())
+    })
+    .unwrap();
+    assert!(f.contains("\"gpc_signal\":true"));
+    assert!(f.contains("\"strip_tracking_params\":true"));
+    assert!(f.contains("\"adblock_enabled\":true"));
+    assert_eq!(unsafe { crate::rc_privacy_gpc(h, 0) }, 1);
+    let verd = b"{\"op\":\"verdict\"}";
+    let v = take_str(unsafe {
+        crate::rc_privacy_call(h, verd.as_ptr(), verd.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"gpc\":true"));
+
+    // A per-profile write flips only that persona's answer — and
+    // tor_mode overrides either way.
+    let gpckey = cs("privacy/gpcSignal");
+    let set = unsafe {
+        crate::rc_settings_set_bool(h, gpckey.as_ptr(), 0)
+    };
+    assert_eq!(set, RcStatus::Ok);
+    assert_eq!(unsafe { crate::rc_privacy_gpc(h, 0) }, 0);
+    assert_eq!(unsafe { crate::rc_privacy_gpc(h, 1) }, 1);
+    let gq = b"{\"op\":\"gpc\"}";
+    let g = take_str(unsafe {
+        crate::rc_privacy_call(h, gq.as_ptr(), gq.len())
+    })
+    .unwrap();
+    assert!(g.contains("\"send\":false"));
+    unsafe { crate::rc_settings_close(h) };
+
+    // The facade spelling on the same profile — one store, two
+    // lanes.
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+    let ah = unsafe { crate::facade::ac_privacy(core, pid.as_ptr()) };
+    assert!(!ah.is_null());
+    assert_eq!(unsafe { crate::facade::ac_privacy_gpc(ah, 0) }, 0);
+    assert_eq!(unsafe { crate::facade::ac_privacy_gpc(ah, 1) }, 1);
+    let other = unsafe {
+        crate::facade::ac_privacy(core, cs("other").as_ptr())
+    };
+    assert_eq!(unsafe { crate::facade::ac_privacy_gpc(other, 0) }, 1);
+    let vf = take_str(unsafe {
+        crate::facade::ac_privacy_call(ah, verd.as_ptr(), verd.len())
+    })
+    .unwrap();
+    assert!(vf.contains("\"gpc\":false"));
+    unsafe { crate::facade::ac_privacy_close(ah) };
+    unsafe { crate::facade::ac_privacy_close(other) };
+    // NULL facade handles degrade.
+    assert!(unsafe {
+        crate::facade::ac_privacy_call(ptr::null(), pure.as_ptr(), pure.len())
+    }
+    .is_null());
+    assert_eq!(unsafe { crate::facade::ac_privacy_gpc(ptr::null(), 0) }, -1);
+    unsafe { crate::facade::ac_shutdown(core) };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// MD06: the per-persona URL-sanitize policy over the C ABI — the
+// pure "defaults" op on a NULL store, the bound-profile clean /
+// ruleset / toggle lanes, the legacy extraParams merge, and the
+// facade spelling.
+#[test]
+fn urlclean_surface() {
+    let _g = guard();
+    let root = tmpdir("urlclean");
+    let croot = cs(&root);
+    let pid = cs("work");
+
+    // "defaults" answers on a NULL store; store-bound ops refuse.
+    let pure = b"{\"op\":\"defaults\"}";
+    let got = take_str(unsafe {
+        crate::rc_urlclean_call(ptr::null(), pure.as_ptr(), pure.len())
+    })
+    .unwrap();
+    assert!(got.contains("\"copy_enabled\":true"));
+    let bound = b"{\"op\":\"clean\",\"url\":\"https://a/?utm_source=x\"}";
+    assert!(unsafe {
+        crate::rc_urlclean_call(ptr::null(), bound.as_ptr(), bound.len())
+    }
+    .is_null());
+
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!h.is_null());
+    // Bad payloads degrade, never crash.
+    assert!(unsafe {
+        crate::rc_urlclean_call(h, ptr::null(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_urlclean_call(h, b"nope".as_ptr(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_urlclean_call(h, b"{\"op\":\"bogus\"}".as_ptr(), 15)
+    }
+    .is_null());
+
+    // A pristine persona cleans with the vendored ruleset.
+    let v = take_str(unsafe {
+        crate::rc_urlclean_call(h, bound.as_ptr(), bound.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"changed\":true"));
+    assert!(v.contains("https://a/\""));
+
+    // The legacy extraParams list merges on top of the ruleset.
+    let extras = cs("urlcleaner/extraParams");
+    let list = b"[\"partner\",\"session*\"]";
+    assert_eq!(
+        unsafe {
+            crate::rc_settings_set_list(h, extras.as_ptr(),
+                                        list.as_ptr(), list.len())
+        },
+        RcStatus::Ok
+    );
+    let e = b"{\"op\":\"clean\",\"url\":\"https://a/?partner=p&id=1\",\"purpose\":\"copy\"}";
+    let v = take_str(unsafe {
+        crate::rc_urlclean_call(h, e.as_ptr(), e.len())
+    })
+    .unwrap();
+    assert!(v.contains("https://a/?id=1"));
+
+    // A per-profile ruleset override replaces the global list;
+    // urlclean.json lands under the bound profile dir.
+    let set = b"{\"op\":\"ruleset_set\",\"ruleset\":{\"version\":1,\"params\":[\"only_this\"]}}";
+    let r = take_str(unsafe {
+        crate::rc_urlclean_call(h, set.as_ptr(), set.len())
+    })
+    .unwrap();
+    assert!(r.contains("\"mutated\":true"));
+    assert!(std::path::Path::new(&format!("{root}/profiles/work/urlclean.json")).exists());
+    let v = take_str(unsafe {
+        crate::rc_urlclean_call(h, bound.as_ptr(), bound.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"changed\":false"));
+    // The composite the snapshot loader embeds.
+    let cp = b"{\"op\":\"clean_policy\"}";
+    let v = take_str(unsafe {
+        crate::rc_urlclean_call(h, cp.as_ptr(), cp.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"source\":\"profile\""));
+    assert!(v.contains("only_this"));
+    assert!(v.contains("partner"));
+    let rs = b"{\"op\":\"ruleset_reset\"}";
+    let r = take_str(unsafe {
+        crate::rc_urlclean_call(h, rs.as_ptr(), rs.len())
+    })
+    .unwrap();
+    assert!(r.contains("\"reset\":true"));
+
+    // The copy toggle is facade-authored; the nav toggle stays
+    // Qt-owned and refuses the write.
+    let se = b"{\"op\":\"set_enabled\",\"purpose\":\"copy\",\"value\":false}";
+    let r = take_str(unsafe {
+        crate::rc_urlclean_call(h, se.as_ptr(), se.len())
+    })
+    .unwrap();
+    assert!(r.contains("\"mutated\":true"));
+    let v = take_str(unsafe {
+        crate::rc_urlclean_call(h, e.as_ptr(), e.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"enabled\":false"));
+    let sne = b"{\"op\":\"set_enabled\",\"purpose\":\"nav\",\"value\":false}";
+    assert!(unsafe {
+        crate::rc_urlclean_call(h, sne.as_ptr(), sne.len())
+    }
+    .is_null());
+    unsafe { crate::rc_settings_close(h) };
+
+    // The facade spelling on the same profile — one store, two
+    // lanes.
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+    let ah = unsafe { crate::facade::ac_urlclean(core, pid.as_ptr()) };
+    assert!(!ah.is_null());
+    let v = take_str(unsafe {
+        crate::facade::ac_urlclean_call(ah, e.as_ptr(), e.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"enabled\":false"));
+    let other = unsafe {
+        crate::facade::ac_urlclean(core, cs("other").as_ptr())
+    };
+    let v = take_str(unsafe {
+        crate::facade::ac_urlclean_call(other, bound.as_ptr(), bound.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"changed\":true"));
+    unsafe { crate::facade::ac_urlclean_close(ah) };
+    unsafe { crate::facade::ac_urlclean_close(other) };
+    // A NULL facade handle degrades.
+    assert!(unsafe {
+        crate::facade::ac_urlclean_call(ptr::null(), pure.as_ptr(), pure.len())
+    }
+    .is_null());
+    unsafe { crate::facade::ac_shutdown(core) };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// MD08: the session snapshot/restore policy view over the C ABI —
+// the pure "defaults" op on a NULL store, the bound-profile reads
+// (snapshot timing, dirty classes, retention, staleness, restore
+// answers), and the facade spelling on the AcSession handle.
+#[test]
+fn sesspolicy_surface() {
+    let _g = guard();
+    let root = tmpdir("sesspolicy");
+    let croot = cs(&root);
+    let pid = cs("work");
+
+    // "defaults" answers on a NULL store; "stale" refuses without
+    // a bound dir; the other reads degrade to the compiled-in
+    // constants rather than guessing.
+    let pure = b"{\"op\":\"defaults\"}";
+    let got = take_str(unsafe {
+        crate::rc_sesspolicy_call(ptr::null(), pure.as_ptr(), pure.len())
+    })
+    .unwrap();
+    assert!(got.contains("\"interval_ms\":3000"));
+    assert!(got.contains("\"maxwait_ms\":15000"));
+    assert!(got.contains("\"crash_restore\":\"ask\""));
+    assert!(got.contains("\"startup_default\":2"));
+    let stale = b"{\"op\":\"stale\"}";
+    assert!(unsafe {
+        crate::rc_sesspolicy_call(ptr::null(), stale.as_ptr(), stale.len())
+    }
+    .is_null());
+    let snap = b"{\"op\":\"snapshot\"}";
+    let got = take_str(unsafe {
+        crate::rc_sesspolicy_call(ptr::null(), snap.as_ptr(), snap.len())
+    })
+    .unwrap();
+    assert!(got.contains("\"interval_ms\":3000"));
+
+    let h = unsafe { crate::rc_settings_open(croot.as_ptr(), pid.as_ptr()) };
+    assert!(!h.is_null());
+    // Bad payloads degrade, never crash.
+    assert!(unsafe {
+        crate::rc_sesspolicy_call(h, ptr::null(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_sesspolicy_call(h, b"nope".as_ptr(), 4)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_sesspolicy_call(h, b"{\"op\":\"bogus\"}".as_ptr(), 15)
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::rc_sesspolicy_call(h, b"{\"op\":\"dirty\"}".as_ptr(), 14)
+    }
+    .is_null());
+
+    // A pristine persona: every dirty class on, no staleness.
+    let dk = b"{\"op\":\"dirty\",\"kind\":\"chrome\"}";
+    let v = take_str(unsafe {
+        crate::rc_sesspolicy_call(h, dk.as_ptr(), dk.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"dirty\":true"));
+    let v = take_str(unsafe {
+        crate::rc_sesspolicy_call(h, stale.as_ptr(), stale.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"stale\":false"));
+
+    // A per-profile write flips only that persona's answer.
+    let chrome_key = cs("session/dirtyOnChrome");
+    assert_eq!(
+        unsafe { crate::rc_settings_set_bool(h, chrome_key.as_ptr(), 0) },
+        RcStatus::Ok
+    );
+    let v = take_str(unsafe {
+        crate::rc_sesspolicy_call(h, dk.as_ptr(), dk.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"dirty\":false"));
+    let tabs_kind = b"{\"op\":\"dirty\",\"kind\":\"tabs\"}";
+    let v = take_str(unsafe {
+        crate::rc_sesspolicy_call(h, tabs_kind.as_ptr(), tabs_kind.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"dirty\":true"));
+
+    // The lifecycle op resolves the Qt-owned tab rows verbatim —
+    // pristine answers the C++ defaults, a dialog row lands live.
+    let lc = b"{\"op\":\"lifecycle\"}";
+    let v = take_str(unsafe {
+        crate::rc_sesspolicy_call(h, lc.as_ptr(), lc.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"suspend_idle_ms\":0"));
+    assert!(v.contains("\"memory_purge\":true"));
+    assert!(v.contains("\"lazy_restore\":false"));
+    assert!(v.contains("\"lazy_restore_pinned\":true"));
+    let suspend_key = cs("tabs/suspendTabs");
+    assert_eq!(
+        unsafe { crate::rc_settings_set_bool(h, suspend_key.as_ptr(), 1) },
+        RcStatus::Ok
+    );
+    let v = take_str(unsafe {
+        crate::rc_sesspolicy_call(h, lc.as_ptr(), lc.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"suspend_idle_ms\":1800000"));
+    unsafe { crate::rc_settings_close(h) };
+
+    // The facade spelling on the same profile — one store, two
+    // lanes, and "defaults" never opens the store.
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+    let ah = unsafe { crate::facade::ac_session(core, pid.as_ptr()) };
+    assert!(!ah.is_null());
+    let v = take_str(unsafe {
+        crate::facade::ac_session_policy(ah, dk.as_ptr(), dk.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"dirty\":false"));
+    let v = take_str(unsafe {
+        crate::facade::ac_session_policy(ah, pure.as_ptr(), pure.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"interval_ms\":3000"));
+    let other = unsafe { crate::facade::ac_session(core, cs("other").as_ptr()) };
+    let v = take_str(unsafe {
+        crate::facade::ac_session_policy(other, dk.as_ptr(), dk.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"dirty\":true"));
+    unsafe { crate::facade::ac_session_close(ah) };
+    unsafe { crate::facade::ac_session_close(other) };
+    // A NULL facade handle degrades.
+    assert!(unsafe {
+        crate::facade::ac_session_policy(ptr::null(), pure.as_ptr(), pure.len())
+    }
+    .is_null());
+    unsafe { crate::facade::ac_shutdown(core) };
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// MD02/MD09: the navigation-policy endpoints over the C ABI — the
+// phased decide manifest, the granular ops (predicates + the popup
+// gate's decide/record surface), and the facade spellings on
+// AcPolicy.  The popup matrix mirrors tst_popupblocker.
+#[test]
+fn navpolicy_surface() {
+    let _g = guard();
+    let root = tmpdir("navpolicy");
+    let croot = cs(&root);
+    // The persona-independent anchor — the dir must exist for the
+    // persisted popup rows (atomic_write never mkpaths).
+    std::fs::create_dir_all(format!("{root}/profiles/default")).unwrap();
+    init(&format!("{root}/profiles/default"));
+
+    // rc_nav_decide: bad payloads degrade to NULL (the adapter
+    // fails open), a phased manifest answers a verdict.
+    assert!(unsafe { crate::rc_nav_decide(ptr::null(), 4) }.is_null());
+    assert!(unsafe { crate::rc_nav_decide(b"nope".as_ptr(), 4) }.is_null());
+    let m = br#"{"url":"mailto:a@b.c","is_main_frame":true}"#;
+    let v = take_str(unsafe {
+        crate::rc_nav_decide(m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"action\":\"ask\""));
+    let m = br#"{"url":"https://e.example/","is_main_frame":true}"#;
+    let v = take_str(unsafe {
+        crate::rc_nav_decide(m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"action\":\"continue\""));
+
+    // rc_nav_call: bad payloads degrade, the predicates answer.
+    assert!(unsafe { crate::rc_nav_call(ptr::null(), 4) }.is_null());
+    assert!(unsafe { crate::rc_nav_call(b"nope".as_ptr(), 4) }.is_null());
+    assert!(unsafe {
+        crate::rc_nav_call(b"{\"op\":\"bogus\"}".as_ptr(), 15)
+    }
+    .is_null());
+    let m = br#"{"op":"browser_scheme","scheme":"https"}"#;
+    let v = take_str(unsafe {
+        crate::rc_nav_call(m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert_eq!(v, "true");
+
+    // ---- popup gate parity (the tst_popupblocker matrix) ----
+    let decide = |url: &str, enabled: bool| -> String {
+        let m = format!(
+            "{{\"op\":\"popup_decide\",\"url\":\"{url}\",\"shaped\":true,\"enabled\":{enabled}}}"
+        );
+        take_str(unsafe {
+            crate::rc_nav_call(m.as_ptr(), m.len())
+        })
+        .unwrap()
+    };
+    // Enabled + shaped + http(s) gates; the flag and the scheme
+    // floor allow everything else.
+    assert!(decide("http://example.com/", true).contains("\"block\""));
+    assert!(decide("https://example.com/", true).contains("\"block\""));
+    assert!(decide("http://example.com/", false)
+        .contains("\"allow\""));
+    for u in [
+        "file:///tmp/x.html",
+        "about:blank",
+        "data:text/html,x",
+        "qrc:/x.html",
+    ] {
+        assert!(decide(u, true).contains("\"allow\""), "{u}");
+    }
+
+    // popup_allow/persist -> decide allows, subdomains cover,
+    // siblings never; popup_remove scrubs; popup_list enumerates.
+    let allow = |host: &str, persistent: bool| -> String {
+        let m = format!(
+            "{{\"op\":\"popup_allow\",\"host\":\"{host}\",\"persistent\":{persistent}}}"
+        );
+        take_str(unsafe {
+            crate::rc_nav_call(m.as_ptr(), m.len())
+        })
+        .unwrap()
+    };
+    allow("example.com", true);
+    assert!(decide("http://example.com/", true).contains("\"allow\""));
+    assert!(decide("http://www.example.com/", true)
+        .contains("\"allow\""));
+    assert!(decide("http://notexample.com/", true)
+        .contains("\"block\""));
+    // Session overlay matches but never lists.
+    allow("session.test", false);
+    assert!(decide("http://www.session.test/", true)
+        .contains("\"allow\""));
+    let m = b"{\"op\":\"popup_list\"}";
+    let v = take_str(unsafe {
+        crate::rc_nav_call(m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("example.com"));
+    assert!(!v.contains("session.test"));
+    // popup_clear_session drops the overlay only.
+    let m = b"{\"op\":\"popup_clear_session\"}";
+    let v = take_str(unsafe {
+        crate::rc_nav_call(m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"cleared\":true"));
+    assert!(decide("http://session.test/", true).contains("\"block\""));
+    assert!(decide("http://example.com/", true).contains("\"allow\""));
+    // popup_remove scrubs the persistent row.
+    let m = br#"{"op":"popup_remove","host":"example.com"}"#;
+    let v = take_str(unsafe {
+        crate::rc_nav_call(m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"removed_persistent\":true"));
+    assert!(decide("http://example.com/", true).contains("\"block\""));
+
+    // The facade spellings on a "default"-bound AcPolicy — the
+    // persona-independent anchor the Qt adapter uses.
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+    let ah = unsafe { crate::facade::ac_policy(core, cs("default").as_ptr()) };
+    assert!(!ah.is_null());
+    let m = b"{\"op\":\"popup_list\"}";
+    let v = take_str(unsafe {
+        crate::facade::ac_nav_call(ah, m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"hosts\":[]"));
+    let a = br#"{"op":"popup_allow","host":"facade.example","persistent":true}"#;
+    let v = take_str(unsafe {
+        crate::facade::ac_nav_call(ah, a.as_ptr(), a.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"recorded\":true"));
+    assert!(decide("http://facade.example/", true).contains("\"allow\""));
+    let m = br#"{"url":"https://e.example/","is_main_frame":true}"#;
+    let v = take_str(unsafe {
+        crate::facade::ac_nav_decide(ah, m.as_ptr(), m.len())
+    })
+    .unwrap();
+    assert!(v.contains("\"action\":\"continue\""));
+    unsafe { crate::facade::ac_policy_close(ah) };
+    // NULL facade handles degrade.
+    assert!(unsafe {
+        crate::facade::ac_nav_call(ptr::null(), m.as_ptr(), m.len())
+    }
+    .is_null());
+    assert!(unsafe {
+        crate::facade::ac_nav_decide(ptr::null(), m.as_ptr(), m.len())
+    }
+    .is_null());
+    unsafe { crate::facade::ac_shutdown(core) };
+    let _ = std::fs::remove_dir_all(&root);
 }

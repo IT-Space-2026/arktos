@@ -475,9 +475,18 @@ impl Store {
     }
 
     fn save_autofill(&mut self) -> RcResult<()> {
+        let path = self.autofill_path()?;
+        // Custody covers the container too: the payload lands 0600
+        // via atomic_write and its dir is created/tightened to 0700 —
+        // the Qt side always mkpaths first, but an FFI-only consumer
+        // may not.  This must run before seal(): minting the file key
+        // already writes into the same dir.
+        if let Some(dir) = path.parent() {
+            crate::store::ensure_private_dir(dir)?;
+        }
         let plain = serialize(self.autofill.as_ref().unwrap());
         let blob = self.seal(&plain)?;
-        crate::store::atomic_write(&self.autofill_path()?, &blob)
+        crate::store::atomic_write(&path, &blob)
     }
 
     /// Wholescale replace + persist.  Returns Ok(false) when the set
@@ -709,5 +718,49 @@ mod tests {
         assert_eq!(got[0].name, "Ada");
         assert_eq!(got[0].last_used, 0);
         assert!(addresses_from_json(b"[{\"last_used\":\"x\"}]").is_err());
+    }
+
+    // RC17: the SecureStore custody bar — the sealed payload lands
+    // 0600 and its dir is created/tightened to 0700 even when the
+    // consumer never pre-made it.
+    #[cfg(unix)]
+    #[test]
+    fn store_lands_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &std::path::Path| {
+            fs::metadata(p).unwrap().permissions().mode() & 0o777
+        };
+        let root = std::env::temp_dir().join(format!(
+            "rustcore-autofill-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        // Missing dir: the save creates it owner-only.
+        let dir = root.join("profiles").join("p1");
+        let mut store = Store::default();
+        store.set_data_dir(dir.to_str().unwrap()).unwrap();
+        store.autofill_set(sample()).unwrap();
+        assert_eq!(mode(&dir.join(FILE_NAME)), 0o600);
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&dir.join(crate::store::KEY_FILE)), 0o600);
+
+        // A pre-existing loosened dir is tightened by the write.
+        let dir2 = root.join("profiles").join("p2");
+        fs::create_dir_all(&dir2).unwrap();
+        fs::set_permissions(&dir2, fs::Permissions::from_mode(0o755))
+            .unwrap();
+        let mut store = Store::default();
+        store.set_data_dir(dir2.to_str().unwrap()).unwrap();
+        store
+            .autofill_set_addresses(vec![sample_address()])
+            .unwrap();
+        assert_eq!(mode(&dir2), 0o700);
+        assert_eq!(mode(&dir2.join(FILE_NAME)), 0o600);
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

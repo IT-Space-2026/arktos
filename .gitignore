@@ -85,3 +85,10 @@ flatpak/.build.log
 spikes/webkit/wk21/dns-shim.so
 spikes/webkit/wk21/wk21-probe
 spikes/webkit/wk21/.wk21-run/
+
+# CEF01 spike build + run artifacts
+spikes/cef/qcefprobe/qcefprobe
+spikes/cef/qcefprobe/*.o
+spikes/cef/qcefprobe/moc_*.cpp
+spikes/cef/qcefprobe/cef-*.png
+spikes/cef/qcefprobe/extensions/

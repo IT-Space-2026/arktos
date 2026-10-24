@@ -548,6 +548,18 @@ public:
     virtual bool isOffTheRecord() const = 0;
     virtual QString storageName() const = 0;
 
+    // RC09: the owning app-persona id — the binding every profile-bound
+    // facade store (history, settings, site decisions) keys on.  Same
+    // precedence as BrowserProfile::profileIdFor: an "arktosProfileId"
+    // property tag wins (it is the only channel an OTR or container
+    // profile's persona can travel on), then the storageName parse —
+    // "arktos" is the default persona, "arktos-<id>" is persona <id>
+    // ("arktos-container-*" deliberately never parses).  A foreign or
+    // empty name — Servo's single shared context — rides the ambient
+    // persona, the fallback the WebKit backend's persona lookups
+    // already apply.
+    QString profileId() const;
+
     // UA01/UA03 user agent.
     virtual void setUserAgent(const QString &userAgent) = 0;
 

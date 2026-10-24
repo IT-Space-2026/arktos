@@ -710,6 +710,7 @@ const UNSUPPORTED_PERMISSIONS: &[&str] = &[
     "topSites",
     "tts",
     "ttsEngine",
+    "userScripts",
     "vpnProvider",
     "wallpaper",
     "webAuthenticationProxy",

@@ -29,7 +29,12 @@
 #include <functional>
 #include <deque>
 
+#ifdef ARKTOS_RUSTCORE
+#include <qhash.h>
+struct RcTorCtl;
+#else
 class QTcpSocket;
+#endif
 
 // Minimal client for the Tor control protocol (control-spec.txt,
 // tor.git).  Line protocol over a plain loopback TCP socket:
@@ -43,6 +48,11 @@ class QTcpSocket;
 // Every command is queued and its callback fired exactly once with the
 // final status code (250 on success, 4xx/5xx on error) and the reply
 // payload lines (code prefix stripped; data-block lines appended raw).
+//
+// RC14: under ARKTOS_RUSTCORE the protocol client is the rustcore
+// torctl crate (rc_tor_* — same serialized one-command-in-flight
+// semantics, replies/events drained off the "torctl" change topic);
+// the signals and callback contract here are unchanged either way.
 class TorControl : public QObject
 {
     Q_OBJECT
@@ -95,6 +105,17 @@ signals:
     void asyncEvent(const QString &line);
 
 private:
+#ifdef ARKTOS_RUSTCORE
+    // Drains the handle's reply/event/error queues and reports link
+    // state — the rustcore answer to onReadyRead + the socket signals.
+    void drainRust();
+    void sendSeq(qint64 seq, const ReplyCallback &callback);
+
+    RcTorCtl *m_ctl;
+    // seq -> reply callback for commands still awaiting a reply.
+    QHash<qint64, ReplyCallback> m_callbacks;
+    bool m_disconnectEmitted;
+#else
     void sendNext();
     void onReadyRead();
     bool takeLine(QByteArray *line);
@@ -113,6 +134,7 @@ private:
     // Collecting a "250+key=" data block until the "." terminator.
     bool m_inDataBlock;
     QStringList m_replyLines;
+#endif
 };
 
 #endif // TORCONTROL_H

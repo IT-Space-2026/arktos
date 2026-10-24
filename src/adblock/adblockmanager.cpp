@@ -46,6 +46,8 @@
 
 #if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
+#include "privacyrequestinterceptor.h"
+#include <qjsonobject.h>
 #endif
 #if defined(ARKTOS_ADBLOCK_RUST)
 #include "adblockrustengine.h"
@@ -675,7 +677,22 @@ void AdBlockManager::load()
 
     ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("AdBlock"));
-    m_enabled = settings.value(QLatin1String("enabled"), m_enabled).toBool();
+    bool haveEnabled = false;
+#if defined(ARKTOS_RUSTCORE)
+    // MD05: the enabled bit shares the privacy module's unified
+    // verdict — one bound-persona store read answers the tracker-
+    // strip and adblock policy questions together; the QSettings
+    // consult stays the no-bridge fallback.
+    const QJsonObject pv = PrivacyRequestInterceptor::privacyStoreCall(
+        m_profileId, {{QLatin1String("op"), QLatin1String("verdict")}});
+    if (pv.contains(QLatin1String("adblock"))) {
+        m_enabled =
+            pv.value(QLatin1String("adblock")).toBool(m_enabled);
+        haveEnabled = true;
+    }
+#endif
+    if (!haveEnabled)
+        m_enabled = settings.value(QLatin1String("enabled"), m_enabled).toBool();
 
     // Default subscriptions point at live mirrors of the community
     // lists; the historical adblockplus.mozdev.org host is dead.

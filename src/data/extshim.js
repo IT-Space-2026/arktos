@@ -62,13 +62,23 @@
  *   chrome.contextMenus — create/update/remove* registry host-side;
  *                         onClicked event (rendering is EXT16)
  *   chrome.sidePanel    — options recorded host-side; no panel UI
- *   chrome.management   — ER15: getSelf answers the real ExtensionInfo
- *                         shape (id/name/version/enabled/installType)
- *                         host-side; other members typed no-permission/
- *                         unsupported
+ *   chrome.management   — ER15+MD16/17: getSelf answers the real
+ *                         ExtensionInfo shape (id/name/version/enabled/
+ *                         installType) host-side; the 'management'
+ *                         grant unlocks getAll/get over the manager's
+ *                         records + the permissionWarnings pair +
+ *                         setEnabled/uninstall/uninstallSelf riding
+ *                         the manager's engine calls (onEnabled/
+ *                         onDisabled/onUninstalled fan out host-side);
+ *                         the rest typed no-permission/unsupported
  *   chrome.sidebarAction— ER15: Firefox-shape sugar when the manifest
  *                         declares sidebar_action — panel/title/icon
  *                         bookkeeping; open/close typed unsupported
+ *   chrome.identity    — MD35: getRedirectURL alone answers
+ *                        (Chromium's own renderer-side derivation:
+ *                        https://<id>.chromiumapp.org/<path>,
+ *                        synchronous + ungated); every other member
+ *                        stays under the typed-unsupported wildcard
  *   other absent ns     — unsupportedNs(): calls answer typed errors,
  *                         on* event registration is recorded
  *
@@ -133,6 +143,21 @@
     var bridgeQueue = [];
     var bridgeWatch = null;
     var hostEventWired = false;
+    // MD18: resolve fn for an in-flight requestUpdateCheck — the
+    // verdict arrives as an '__arktos.updateCheck' push.
+    var updateCheckWaiter = null;
+    // MD24: ticket -> {resolve,reject} for in-flight
+    // downloads.download calls — the bridge answers a ticket
+    // synchronously and the minted Chrome download id arrives as an
+    // '__arktos.downloadCreated' push once the engine's async
+    // request lands on an item card.
+    var downloadCreatedWaiters = {};
+    // MD29: ticket -> {resolve,reject} for in-flight dns.resolve
+    // calls — the bridge answers a ticket synchronously and the
+    // resolved addresses (or the typed failure) arrive as an
+    // '__arktos.dnsResolved' push once QHostInfo's off-thread
+    // lookup completes.
+    var dnsResolveWaiters = {};
 
     function flushBridgeQueue() {
         var q = bridgeQueue;
@@ -169,6 +194,56 @@
             // getViews composes its return array from this.
             if (payload && payload.contexts)
                 shim.contexts = payload.contexts;
+            return;
+        }
+        if (name === '__arktos.updateCheck') {
+            // MD18: the requestUpdateCheck verdict — the check runs
+            // real network fetches the invoke reply cannot wait
+            // out, so the backend pushes the result instead.
+            if (updateCheckWaiter)
+                updateCheckWaiter(payload || {});
+            return;
+        }
+        if (name === '__arktos.downloadCreated') {
+            // MD24: the deferred downloads.download answer — a
+            // {ticket,id} push resolves the pending call with the
+            // minted Chrome download id; a {ticket,error} push
+            // rejects it typed (the engine never produced an item:
+            // policy block, external handoff, dead service).
+            var dlTicket = payload && String(payload.ticket);
+            var dlWaiter = dlTicket
+                && downloadCreatedWaiters[dlTicket];
+            if (dlWaiter) {
+                delete downloadCreatedWaiters[dlTicket];
+                if (payload.error)
+                    dlWaiter.reject(typedError(
+                        String(payload.error),
+                        'chrome.downloads.download'));
+                else
+                    dlWaiter.resolve(payload.id);
+            }
+            return;
+        }
+        if (name === '__arktos.dnsResolved') {
+            // MD29: the deferred dns.resolve answer — a
+            // {ticket,addresses} push resolves the pending call
+            // with Chrome's DnsResolveInfo shape; a {ticket,error}
+            // push rejects it typed (resolver error, bounded wait
+            // expired).
+            var dnsTicket = payload && String(payload.ticket);
+            var dnsWaiter = dnsTicket
+                && dnsResolveWaiters[dnsTicket];
+            if (dnsWaiter) {
+                delete dnsResolveWaiters[dnsTicket];
+                if (payload.error)
+                    dnsWaiter.reject(typedError(
+                        String(payload.error),
+                        'chrome.dns.resolve'));
+                else
+                    dnsWaiter.resolve({
+                        addresses: payload.addresses || []
+                    });
+            }
             return;
         }
         if (name === '__arktos.portConnect') {
@@ -702,7 +777,8 @@
     // Re-assert every shim surface the engine may have redefined.
     // Idempotent by construction — a no-op when nothing was swapped.
     var tabsProxyRef = null, tabsNsRef = null;
-    var bridgeLocalRef = null, bridgeSessionRef = null;
+    var bridgeLocalRef = null, bridgeSessionRef = null,
+        bridgeSyncRef = null;
     var wrappedOnMessageRef = null, shimSendMessageRef = null;
     var shimConnectRef = null;
     var offscreenNsRef = null;   // ER10 — member-identity re-assert
@@ -752,12 +828,12 @@
             for (var tk in tabsNsRef) {
                 if (tk === '__arktosShim')
                     continue;
-                // sendMessage is an identity override like
+                // sendMessage/connect are identity overrides like
                 // runtime.connect: the native binding can only reach
                 // the dead service worker, the hosted route is the
-                // live one — fill it even over a native member.
+                // live one — fill them even over a native member.
                 if (chrome.tabs[tk] === undefined
-                        || tk === 'sendMessage')
+                        || tk === 'sendMessage' || tk === 'connect')
                     safeSet(chrome.tabs, tk, tabsNsRef[tk],
                             'chrome.tabs.' + tk);
             }
@@ -827,6 +903,9 @@
             if (bridgeSessionRef && st.session !== bridgeSessionRef)
                 safeSet(st, 'session', bridgeSessionRef,
                         'chrome.storage.session');
+            if (bridgeSyncRef && st.sync !== bridgeSyncRef)
+                safeSet(st, 'sync', bridgeSyncRef,
+                        'chrome.storage.sync');
         }
         var rt2 = chrome.runtime;
         if (rt2 && typeof rt2 === 'object') {
@@ -1514,7 +1593,7 @@
         // them; listeners must land on the shim event.
         var connEvents = ['onConnect', 'onConnectExternal',
                           'onMessageExternal', 'onInstalled',
-                          'onStartup'];
+                          'onStartup', 'onUpdateAvailable'];
         for (var ce = 0; ce < connEvents.length; ++ce) {
             (function (cname) {
                 var evName = 'runtime.' + cname;
@@ -1617,13 +1696,19 @@
                 return p;
             }, 'chrome.runtime.getPlatformInfo');
         }
-        if (typeof rt.setUninstallURL !== 'function') {
-            rtSet('setUninstallURL', function (url, cb) {
-                note('chrome.runtime.setUninstallURL recorded '
-                     + '(no uninstall flow)');
-                return okCall(undefined, cb);
-            }, 'chrome.runtime.setUninstallURL');
-        }
+        // MD18: the lifecycle trio install unconditionally like
+        // connect — a native binding can only reach the dead service
+        // worker, so the bridge verdict is authoritative.
+        rtSet('setUninstallURL', function (url, cb) {
+            var p = call('runtime', 'setUninstallURL',
+                         { url: String(url || '') });
+            if (cb)
+                p.then(function () { cb(); },
+                       function (e) {
+                           answerCb(cb, undefined, e.message);
+                       });
+            return p;
+        }, 'chrome.runtime.setUninstallURL');
         if (typeof rt.openOptionsPage !== 'function') {
             rtSet('openOptionsPage', function (cb) {
                 // EXT17: opens options_ui.page in a normal tab via
@@ -1638,12 +1723,57 @@
                 return p;
             }, 'chrome.runtime.openOptionsPage');
         }
-        if (typeof rt.requestUpdateCheck !== 'function') {
-            rtSet('requestUpdateCheck', function (cb) {
-                return failCall('runtime.requestUpdateCheck',
-                                'unsupported', cb);
-            }, 'chrome.runtime.requestUpdateCheck');
-        }
+        rtSet('requestUpdateCheck', function (cb) {
+            var p = new Promise(function (resolve, reject) {
+                var finish = function (r) {
+                    if (updateCheckWaiter !== finish)
+                        return;
+                    updateCheckWaiter = null;
+                    var status = (r && r.status) || 'throttled';
+                    var details = {};
+                    if (r && r.version !== undefined)
+                        details.version = r.version;
+                    if (r && r.error !== undefined)
+                        details.error = r.error;
+                    if (cb) {
+                        // Chrome's callback shape is (status, details).
+                        try { cb(status, details); } catch (e) {}
+                    }
+                    resolve({ status: status, details: details });
+                };
+                if (updateCheckWaiter) {
+                    // Chrome answers 'throttled' to a concurrent
+                    // request — the backend does the same.
+                    if (cb) {
+                        try { cb('throttled', {}); } catch (e) {}
+                    }
+                    resolve({ status: 'throttled', details: {} });
+                    return;
+                }
+                updateCheckWaiter = finish;
+                call('runtime', 'requestUpdateCheck', {})
+                    .then(function (r) {
+                        // An immediate verdict (throttled) comes
+                        // back on the reply; a real check's verdict
+                        // arrives as '__arktos.updateCheck'.
+                        if (r && r.status)
+                            finish(r);
+                    })
+                    .catch(function (e) {
+                        if (updateCheckWaiter === finish)
+                            updateCheckWaiter = null;
+                        reject(e);
+                    });
+                // The fetch path has its own (longer) timeouts
+                // host-side; this only bounds a verdict that never
+                // arrives at all.
+                setTimeout(function () {
+                    finish({ status: 'throttled',
+                             error: 'update-check-timeout' });
+                }, 90000);
+            });
+            return p;
+        }, 'chrome.runtime.requestUpdateCheck');
         if (typeof rt.restartAfterDelay !== 'function') {
             rtSet('restartAfterDelay', function (delay, cb) {
                 return failCall('runtime.restartAfterDelay',
@@ -1669,14 +1799,34 @@
                 return deadPort(app, 'no-native-messaging');
             }, 'chrome.runtime.connectNative');
         }
-        if (typeof rt.reload !== 'function') {
-            rtSet('reload', function () {
-                recordGap('chrome.runtime.reload', 'unsupported');
-            }, 'chrome.runtime.reload');
-        }
+        rtSet('reload', function () {
+            // chrome.runtime.reload — the backend's unload+load IS
+            // the reload.  The reply may never land because this
+            // context dies with the unload; Chrome gives reload no
+            // callback anyway.
+            call('runtime', 'reload', {}).catch(function () {});
+        }, 'chrome.runtime.reload');
     }
 
     // --- chrome.extension (legacy alias surface) ----------------------
+    // The isAllowed*Access verdicts live host-side in invokeExtension
+    // — the bridge call is what lets a future incognito/file: grant
+    // surface flip the answer in one place.  Today's truthful reply
+    // is false either way, which is also the bridge-failure fallback
+    // (never a typed gap for a question we can answer).
+    function extensionAccessQuery(method, cb) {
+        var p = call('extension', method, {});
+        if (cb)
+            p.then(function (v) { answerCb(cb, v === true); },
+                   function () { cb(false); });
+        return p;
+    }
+    var extAllowedIncognitoRef = function (cb) {
+        return extensionAccessQuery('isAllowedIncognitoAccess', cb);
+    };
+    var extAllowedFileSchemeRef = function (cb) {
+        return extensionAccessQuery('isAllowedFileSchemeAccess', cb);
+    };
     if (typeof chrome !== 'undefined') {
         installNs('extension', {
             getURL: function (p) {
@@ -1692,12 +1842,8 @@
             getViews: extensionGetViews,
             getBackgroundPage: extensionGetBackgroundPage,
             inIncognitoContext: false,
-            isAllowedIncognitoAccess: function (cb) {
-                return okCall(false, cb);
-            },
-            isAllowedFileSchemeAccess: function (cb) {
-                return okCall(false, cb);
-            },
+            isAllowedIncognitoAccess: extAllowedIncognitoRef,
+            isAllowedFileSchemeAccess: extAllowedFileSchemeRef,
             onRequest: makeEvent('extension.onRequest'),
             lastError: null
         });
@@ -1742,6 +1888,22 @@
             .catch(function () {});
     }
 
+    // MD19 — Chrome's published area quotas, mirrored onto the
+    // bridge-backed areas; the host enforces the same bounds.
+    var STORAGE_AREA_QUOTAS = {
+        local: { QUOTA_BYTES: 10485760 },
+        sync: {
+            QUOTA_BYTES: 102400,
+            QUOTA_BYTES_PER_ITEM: 8192,
+            MAX_ITEMS: 512,
+            MAX_WRITE_OPERATIONS_PER_HOUR: 1800,
+            MAX_WRITE_OPERATIONS_PER_MINUTE: 120,
+            MAX_SUSTAINED_WRITE_OPERATIONS_PER_MINUTE: 1000000
+        },
+        session: { QUOTA_BYTES: 10485760 },
+        managed: {}
+    };
+
     function bridgeStorageArea(areaName) {
         var areaEvent = makeEvent('storage.' + areaName + '.onChanged');
         function afterMutate(result) {
@@ -1753,7 +1915,7 @@
                 return;
             storageChangedPost(areaName, changes);
         }
-        return {
+        var area = {
             get: function (keys, cb) {
                 var p = call('storage', areaName + '.get',
                              { keys: keys === undefined ? null : keys });
@@ -1804,11 +1966,34 @@
                            function () { cb(0); });
                 return p;
             },
-            setAccessLevel: function (level, cb) {
-                return okCall(undefined, cb);
+            getKeys: function (cb) {
+                var p = call('storage', areaName + '.getKeys', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v || []); },
+                           function (e) {
+                               answerCb(cb, [],
+                                        e && e.message || String(e));
+                           });
+                return p;
+            },
+            setAccessLevel: function (accessLevel, cb) {
+                var p = call('storage', areaName + '.setAccessLevel',
+                             { accessLevel: accessLevel });
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                           });
+                return p.then(function () {});
             },
             onChanged: areaEvent
         };
+        var quotas = STORAGE_AREA_QUOTAS[areaName];
+        if (quotas)
+            for (var q in quotas)
+                area[q] = quotas[q];
+        return area;
     }
     shim.storageArea = bridgeStorageArea;   // test seam
 
@@ -2019,11 +2204,29 @@
         } else {
             adoptRealArea('session');
         }
+        // MD19: sync persists through the bridge like local — there
+        // is no cloud sync in Arktos, so the honest answer is a
+        // profile-local store, not the volatile session map.
+        if (!chrome.storage.sync
+                || typeof chrome.storage.sync.get !== 'function') {
+            bridgeSyncRef = bridgeStorageArea('sync');
+            if (safeSet(chrome.storage, 'sync', bridgeSyncRef,
+                        'chrome.storage.sync'))
+                note('chrome.storage.sync: bridge-backed store '
+                     + 'persisted profile-local — no cloud sync in '
+                     + 'Arktos, the area does not roam');
+        } else {
+            adoptRealArea('sync');
+        }
         if (!chrome.storage.managed) {
             safeSet(chrome.storage, 'managed', {
                 get: function (keys, cb) {
                     touch('chrome.storage.managed.get');
                     return okCall({}, cb);
+                },
+                getKeys: function (cb) {
+                    touch('chrome.storage.managed.getKeys');
+                    return okCall([], cb);
                 },
                 onChanged: makeEvent('storage.managed.onChanged')
             }, 'chrome.storage.managed');
@@ -2183,6 +2386,17 @@
         });
     }
 
+    // Binary payloads for the bridge — ImageData.data is a
+    // Uint8ClampedArray, which marshals as a sparse object instead of
+    // bytes; chunked fromCharCode + btoa keeps it compact and exact.
+    function bytesToBase64(bytes) {
+        var bin = '';
+        for (var i = 0; i < bytes.length; i += 8192)
+            bin += String.fromCharCode.apply(
+                null, bytes.subarray(i, i + 8192));
+        return btoa(bin);
+    }
+
     // --- chrome.action / chrome.browserAction ----------------------------
     // No native toolbar delegate exists — setters feed the per-
     // extension action-state registry EXT08's button strip reads.
@@ -2259,8 +2473,45 @@
                 return p;
             },
             setIcon: function (details, cb) {
-                return failCall('action.setIcon',
-                                'unsupported', cb);
+                details = details || {};
+                // ImageData can't cross the bridge — encode the raw
+                // RGBA as base64 ({width,height,rgba}); a size->image
+                // map carries the same shape per key.  path entries
+                // pass through verbatim; the host applies the
+                // bundle-path hygiene.
+                var args = { tabId: details.tabId };
+                var encImage = function (img) {
+                    if (!img || !img.data || !img.width || !img.height)
+                        return null;
+                    return { width: img.width, height: img.height,
+                             rgba: bytesToBase64(img.data) };
+                };
+                if (details.path) {
+                    if (typeof details.path === 'string')
+                        args.path = details.path;
+                    else {
+                        var pm = {};
+                        for (var pk in details.path)
+                            pm[pk] = String(details.path[pk]);
+                        args.path = pm;
+                    }
+                }
+                if (details.imageData) {
+                    if (details.imageData.data)
+                        args.imageData = encImage(details.imageData);
+                    else {
+                        var im = {};
+                        for (var ik in details.imageData)
+                            im[ik] = encImage(details.imageData[ik]);
+                        args.imageData = im;
+                    }
+                }
+                var p = call('action', 'setIcon', args);
+                if (cb)
+                    p.then(function () { cb(); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message); });
+                return p.then(function () {});
             },
             setPopup: function (details, cb) {
                 var p = call('action', 'set',
@@ -2301,12 +2552,37 @@
                            function () { cb(true); });
                 return p;
             },
+            // MD37: getUserSettings answers the real pin state —
+            // the EXT08 strip's membership truth, resolved host-side
+            // off the loaded extension list.  onUserSettingsChanged
+            // installs as an honest never-firing event: no pin UI
+            // exists, so the answer cannot change.  openPopup has no
+            // programmatic surface (the bubble only opens from its
+            // own strip button) — typed, not silent.  Chrome keeps
+            // all three action-only; the browserAction mirror below
+            // deliberately skips them.
+            getUserSettings: function (cb) {
+                var p = call('action', 'getUserSettings', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message); });
+                return p;
+            },
+            openPopup: function (options, cb) {
+                touch('chrome.action.openPopup');
+                return failCall('action.openPopup', 'unsupported', cb);
+            },
+            onUserSettingsChanged:
+                makeEvent('action.onUserSettingsChanged'),
             onClicked: actionOnClicked
         };
         installNs('action', actionApi);
         var b = {};
         for (var k in actionApi)
-            b[k] = actionApi[k];
+            if (k !== 'getUserSettings' && k !== 'openPopup'
+                    && k !== 'onUserSettingsChanged')
+                b[k] = actionApi[k];
         b.onClicked = actionOnClicked;
         installNs('browserAction', b);
     }
@@ -2376,6 +2652,137 @@
                        function (e) { answerCb(cb, undefined, e.message); });
             return p;
         };
+        // MD10 — the core op set.  Every member rides the real
+        // dispatch; the callback conventions match the query/get
+        // wrappers above (undefined + lastError on a typed failure).
+        tabsNs.remove = function (tabIds, cb) {
+            var ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+            var p = call('tabs', 'remove', { ids: ids });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        tabsNs.reload = function (tabId, reloadProperties, cb) {
+            if (typeof tabId === 'function') {
+                cb = tabId; tabId = null; reloadProperties = null;
+            } else if (typeof reloadProperties === 'function') {
+                cb = reloadProperties; reloadProperties = null;
+            }
+            var p = call('tabs', 'reload',
+                         { id: tabId,
+                           bypassCache: !!(reloadProperties
+                               && reloadProperties.bypassCache) });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        tabsNs.duplicate = function (tabId, cb) {
+            var p = call('tabs', 'duplicate', { id: tabId });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        tabsNs.highlight = function (highlightInfo, cb) {
+            var info = highlightInfo || {};
+            var p = call('tabs', 'highlight',
+                         { windowId: info.windowId,
+                           indexes: info.tabs });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        tabsNs.move = function (tabIds, moveProperties, cb) {
+            var info = moveProperties || {};
+            var ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+            var p = call('tabs', 'move',
+                         { ids: ids, index: info.index,
+                           windowId: info.windowId });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        tabsNs.goBack = function (tabId, cb) {
+            if (typeof tabId === 'function') { cb = tabId; tabId = null; }
+            var p = call('tabs', 'goBack', { id: tabId });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        tabsNs.goForward = function (tabId, cb) {
+            if (typeof tabId === 'function') { cb = tabId; tabId = null; }
+            var p = call('tabs', 'goForward', { id: tabId });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        tabsNs.discard = function (tabId, cb) {
+            if (typeof tabId === 'function') { cb = tabId; tabId = null; }
+            var p = call('tabs', 'discard', { id: tabId })
+                .then(function (v) {
+                    // Chrome hands back undefined for a tab it could
+                    // not discard — the backend's null is that answer.
+                    return (v === null) ? undefined : v;
+                });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        // MD26 — group membership ops live under chrome.tabs in the
+        // real API: group() is the only group-CREATE surface,
+        // ungroup() drops the listed tabs out of their groups.
+        tabsNs.group = function (options, cb) {
+            var p = call('tabs', 'group', { options: options || {} });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        tabsNs.ungroup = function (tabIds, cb) {
+            var opts = {};
+            if (Array.isArray(tabIds))
+                opts.tabIds = tabIds;
+            else
+                opts.tabId = tabIds;
+            var p = call('tabs', 'ungroup', { options: opts });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        // Deprecated Chrome spellings — aliases over the query
+        // surface, kept for MV2-era callers.
+        tabsNs.getAllInWindow = function (windowId, cb) {
+            var p = call('tabs', 'query',
+                         { query: { windowId:
+                             (windowId === undefined
+                              || windowId === null) ? -2 : windowId } });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, [], e.message); });
+            return p;
+        };
+        tabsNs.getSelected = function (windowId, cb) {
+            var p = call('tabs', 'query',
+                         { query: { active: true,
+                             windowId:
+                             (windowId === undefined
+                              || windowId === null) ? -2 : windowId } })
+                .then(function (v) {
+                    return (v && v.length) ? v[0] : undefined;
+                });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
         tabsNs.sendMessage = function (tabId, msg, opts, cb) {
             if (typeof opts === 'function') {
                 cb = opts;
@@ -2433,6 +2840,137 @@
                     });
             });
         };
+        // MD12 — tabs.connect(tabId, connectInfo): a long-lived Port
+        // to the tab's page agent over the same ER02 relay machinery
+        // sendMessage uses.  The bridge call registers THIS context
+        // as the local end on the chan and pushes the offer to the
+        // agent; its runtime.onConnect answers 'portAccept' and from
+        // then on postMessage/onMessage/onDisconnect ride the shared
+        // 'relay' port ops.  The API cannot refuse synchronously —
+        // a typed failure lands as an immediate onDisconnect, the
+        // same surface Chrome's 'Could not establish connection'
+        // takes.
+        tabsNs.connect = function (tabId, connectInfo) {
+            var info = connectInfo || {};
+            touch('chrome.tabs.connect');
+            var localId = 'p' + (++shim.seq) + '#' + Date.now();
+            var chan = cfg.id + '#' + localId;
+            var port = newPort(info.name || '', chan, localId);
+            call('tabs', 'connect',
+                 { id: tabId, chan: chan, portId: localId,
+                   name: info.name || '', opts: info })
+                .then(function (sender) {
+                    // The reply carries the tab end's MessageSender —
+                    // Chrome fills the connecting port's sender.tab.
+                    if (sender && typeof sender === 'object')
+                        port.sender = sender;
+                })
+                .catch(function (e) {
+                    var msg = (e && e.message)
+                        ? String(e.message)
+                        : 'chrome.tabs.connect failed';
+                    recordGap('chrome.tabs.connect', msg);
+                    if (port.disconnected)
+                        return;
+                    port.disconnected = true;
+                    delete shim.ports[localId];
+                    setTimeout(function () {
+                        // Chrome sets lastError for the duration of
+                        // the onDisconnect listeners only.
+                        setLastError(msg);
+                        port.onDisconnect.__fire([port]);
+                        clearLastError();
+                    }, 0);
+                });
+            return port;
+        };
+        // MD11 — zoom + capture.  Zoom rides the tab's real zoom
+        // machinery; zoomSettings are a recorded model the backend
+        // merges over honest defaults (mode:'disabled' refuses later
+        // setZoom calls); captureVisibleTab is gated by the backend's
+        // seesUrls coverage check — an uncovered tab answers a typed
+        // no-permission rejection, never a blank image.
+        tabsNs.getZoom = function (tabId, cb) {
+            if (typeof tabId === 'function') { cb = tabId; tabId = null; }
+            var p = call('tabs', 'getZoom', { id: tabId });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        tabsNs.setZoom = function (tabId, zoomFactor, cb) {
+            // setZoom(tabId, factor) or setZoom(factor) — a lone
+            // number is always the factor, never the tabId.
+            if (typeof tabId === 'function') {
+                cb = tabId; tabId = null; zoomFactor = undefined;
+            }
+            if (typeof zoomFactor === 'function') {
+                cb = zoomFactor; zoomFactor = undefined;
+            }
+            if (zoomFactor === undefined || zoomFactor === null) {
+                zoomFactor = tabId;
+                tabId = null;
+            }
+            var p = call('tabs', 'setZoom',
+                         { id: tabId, zoom: zoomFactor });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        tabsNs.getZoomSettings = function (tabId, cb) {
+            if (typeof tabId === 'function') { cb = tabId; tabId = null; }
+            var p = call('tabs', 'getZoomSettings', { id: tabId });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
+        tabsNs.setZoomSettings = function (tabId, zoomSettings, cb) {
+            // setZoomSettings(tabId, settings) or
+            // setZoomSettings(settings).
+            if (typeof tabId === 'function') {
+                cb = tabId; tabId = null; zoomSettings = undefined;
+            }
+            if (typeof zoomSettings === 'function') {
+                cb = zoomSettings; zoomSettings = undefined;
+            }
+            if (zoomSettings === undefined || zoomSettings === null) {
+                zoomSettings = tabId;
+                tabId = null;
+            }
+            var p = call('tabs', 'setZoomSettings',
+                         { id: tabId, settings: zoomSettings || {} });
+            if (cb)
+                p.then(function () { answerCb(cb); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p.then(function () {});
+        };
+        tabsNs.captureVisibleTab = function (windowId, options, cb) {
+            // captureVisibleTab(windowId?, options?, cb) — a lone
+            // object is the options bag, a lone number the windowId.
+            if (typeof windowId === 'function') {
+                cb = windowId; windowId = null; options = undefined;
+            }
+            if (typeof options === 'function') {
+                cb = options; options = undefined;
+            }
+            if (options === undefined || options === null) {
+                if (windowId !== null
+                        && typeof windowId === 'object') {
+                    options = windowId;
+                    windowId = null;
+                } else {
+                    options = {};
+                }
+            }
+            var p = call('tabs', 'captureVisibleTab',
+                         { windowId: windowId, options: options });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) { answerCb(cb, undefined, e.message); });
+            return p;
+        };
         var tabsProxy = new Proxy(tabsNs, {
             get: function (t, prop) {
                 if (prop === 'then')
@@ -2469,8 +3007,9 @@
     // --- chrome.windows -----------------------------------------------------
     // EXT17: real window-level answers over the bridge (the EXT16
     // hub's window set — private/tor windows are invisible); events
-    // are the shim events EXT16 pushes.  create/update/remove keep
-    // their typed-error stubs via fillNs below.
+    // are the shim events EXT16 pushes.  MD13: the getInfo argument
+    // (populate, windowTypes) crosses too — the host populates the
+    // tabs array and filters honestly.
     if (typeof chrome !== 'undefined') {
         var winNs = { __arktosShim: true };
         var winEventNames = ['onCreated', 'onRemoved',
@@ -2487,8 +3026,15 @@
                           && typeof a[a.length - 1] === 'function')
                     ? a.pop() : null;
                 var args = {};
-                if (a.length && typeof a[0] === 'number')
-                    args.id = a[0];
+                // Chrome's signatures: get(windowId, getInfo),
+                // getCurrent/getLastFocused/getAll(getInfo) — a
+                // number is the id, an object is getInfo.
+                for (var i = 0; i < a.length; ++i) {
+                    if (typeof a[i] === 'number')
+                        args.id = a[i];
+                    else if (a[i] && typeof a[i] === 'object')
+                        args.getInfo = a[i];
+                }
                 var p = call('windows', method, args);
                 if (cb)
                     p.then(function (v) { answerCb(cb, v); },
@@ -3118,6 +3664,121 @@
         });
     }
 
+    // --- chrome.userScripts -----------------------------------------------
+    // MD32 — the MV3 user-script surface over the same host-side
+    // registry as the scripting/contentScripts fronts (its own
+    // 'userScripts' api key — the fronts never see each other's ids).
+    // RegisteredUserScript specs carry js[] ExtensionFileSource
+    // objects ({file}|{code}); every matches[] pattern is re-proved
+    // against host coverage BEFORE arming, and armed specs join the
+    // shared agent realm on the next matching navigation.  The
+    // declared 'userScripts' permission gates the namespace — Chrome
+    // additionally carries a user-facing scripts toggle that has no
+    // Arktos surface, so the grant + install consent are the gate.
+    // world:'USER_SCRIPT'/'MAIN' and worldId collapse onto the one
+    // agent realm — the approximation comes back in result.notes.
+    // configureWorld records Chrome's WorldProperties honestly;
+    // getWorldConfigurations/resetWorldConfiguration read and clear
+    // that record (the realm itself does not change shape).
+    if (typeof chrome !== 'undefined') {
+        installNs('userScripts', {
+            __arktosShim: true,
+            ExecutionWorld: { MAIN: 'MAIN', USER_SCRIPT: 'USER_SCRIPT' },
+            register: function (scripts, cb) {
+                touch('chrome.userScripts.register');
+                var p = call('userScripts', 'register', {
+                    scripts: Array.isArray(scripts) ? scripts : null
+                }).then(function (v) {
+                    if (v && v.notes)
+                        v.notes.forEach(function (n) { note(n); });
+                });
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p.then(function () {});
+            },
+            unregister: function (filter, cb) {
+                touch('chrome.userScripts.unregister');
+                var p = call('userScripts', 'unregister', {
+                    filter: { ids: filter && filter.ids || null }
+                }).then(function () {});
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            getScripts: function (filter, cb) {
+                touch('chrome.userScripts.getScripts');
+                var p = call('userScripts', 'getScripts', {
+                    filter: { ids: filter && filter.ids || null }
+                });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v || []); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            update: function (scripts, cb) {
+                touch('chrome.userScripts.update');
+                var p = call('userScripts', 'update', {
+                    scripts: Array.isArray(scripts) ? scripts : null
+                }).then(function (v) {
+                    if (v && v.notes)
+                        v.notes.forEach(function (n) { note(n); });
+                });
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p.then(function () {});
+            },
+            configureWorld: function (properties, cb) {
+                touch('chrome.userScripts.configureWorld');
+                var p = call('userScripts', 'configureWorld', {
+                    properties:
+                        (properties && typeof properties === 'object')
+                            ? properties : null
+                }).then(function () {});
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            getWorldConfigurations: function (cb) {
+                touch('chrome.userScripts.getWorldConfigurations');
+                var p = call('userScripts', 'getWorldConfigurations',
+                             {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v || []); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            },
+            resetWorldConfiguration: function (worldId, cb) {
+                touch('chrome.userScripts.resetWorldConfiguration');
+                var p = call('userScripts',
+                             'resetWorldConfiguration', {
+                    worldId: (worldId === undefined) ? null : worldId
+                }).then(function () {});
+                if (cb)
+                    p.then(function () { answerCb(cb); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message);
+                           });
+                return p;
+            }
+        });
+    }
+
     // --- chrome.offscreen -------------------------------------------------
     // ER10 — one second-class host page per extension (Chrome's
     // single-document rule): the host spawns a hidden navigation-
@@ -3530,18 +4191,43 @@
                 return p;
             }
         };
-        var mgmtRest = ['get', 'getAll', 'setEnabled', 'uninstall',
-            'uninstallSelf', 'launchApp', 'generateAppForLink',
-            'getPermissionWarningsById',
-            'getPermissionWarningsByManifest'];
-        for (var mm = 0; mm < mgmtRest.length; ++mm) {
-            (function (m) {
+        // MD16: getAll/get + the permissionWarnings pair are served
+        // over the manager's records; MD17 serves the mutations
+        // (setEnabled/uninstall/uninstallSelf) over the manager's
+        // engine calls — only the launch members still answer the
+        // backend's typed errors.  Every member ships its real
+        // arguments so the served calls reach real data and the
+        // typed ones stay honest.
+        var mgmtArgs = {
+            get: function (a) { return { id: a[0] }; },
+            getAll: function () { return {}; },
+            getPermissionWarningsById:
+                function (a) { return { id: a[0] }; },
+            getPermissionWarningsByManifest:
+                function (a) { return { manifest: a[0] }; },
+            setEnabled:
+                function (a) { return { id: a[0], enabled: !!a[1] }; },
+            uninstall:
+                function (a) {
+                    return { id: a[0], options: a[1] || {} };
+                },
+            uninstallSelf:
+                function (a) { return { options: a[0] || {} }; },
+            setLaunchType:
+                function (a) { return { id: a[0], launchType: a[1] }; },
+            launchApp: function (a) { return { id: a[0] }; },
+            generateAppForLink:
+                function (a) { return { url: a[0], title: a[1] }; }
+        };
+        for (var mk in mgmtArgs) {
+            (function (m, map) {
                 mgmtNs[m] = function () {
-                    var a = arguments;
-                    var cb = (a.length && typeof a[a.length - 1]
-                              === 'function')
-                        ? a[a.length - 1] : null;
-                    var p = call('management', m, {});
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('management', m, map(a));
                     if (cb)
                         p.then(function (v) { answerCb(cb, v); },
                                function (e) {
@@ -3551,7 +4237,7 @@
                                });
                     return p;
                 };
-            })(mgmtRest[mm]);
+            })(mk, mgmtArgs[mk]);
         }
         installNs('management', mgmtNs);
         mgmtNsRef = mgmtNs;
@@ -3663,6 +4349,817 @@
     }
     installSidebarAction();
 
+    // --- chrome.bookmarks ---------------------------------------------
+    // MD21: Chrome exposes the object to every extension — the grant
+    // is enforced per call, so an extension that never declared
+    // 'bookmarks' still sees the namespace and hears the backend's
+    // typed no-permission.  Every member rides the bridge over the
+    // RC05 store; node ids "0"/"1"/"2" name root/bar/menu like Chrome
+    // and every other id is a store-handle serial the backend hands
+    // out.
+    function installBookmarks() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.bookmarks; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var bmNs = {
+            __arktosShim: true,
+            // Deprecated-but-readable Chrome constants.
+            MAX_WRITE_OPERATIONS_PER_HOUR: 1000000,
+            MAX_SUSTAINED_WRITE_OPERATIONS_PER_MINUTE: 1000000,
+            onCreated: makeEvent('bookmarks.onCreated'),
+            onRemoved: makeEvent('bookmarks.onRemoved'),
+            onChanged: makeEvent('bookmarks.onChanged'),
+            onMoved: makeEvent('bookmarks.onMoved'),
+            onChildrenReordered:
+                makeEvent('bookmarks.onChildrenReordered'),
+            onImportBegan: makeEvent('bookmarks.onImportBegan'),
+            onImportEnded: makeEvent('bookmarks.onImportEnded')
+        };
+        var bmArgs = {
+            get: function (a) {
+                return typeof a[0] === 'string'
+                    ? { id: a[0] } : { ids: a[0] };
+            },
+            getChildren: function (a) { return { id: a[0] }; },
+            getRecent: function (a) { return { count: a[0] }; },
+            getTree: function () { return {}; },
+            getSubTree: function (a) { return { id: a[0] }; },
+            search: function (a) { return { query: a[0] }; },
+            create: function (a) { return { props: a[0] || {} }; },
+            move: function (a) {
+                return { id: a[0], destination: a[1] || {} };
+            },
+            update: function (a) {
+                return { id: a[0], changes: a[1] || {} };
+            },
+            remove: function (a) { return { id: a[0] }; },
+            removeTree: function (a) { return { id: a[0] }; }
+        };
+        for (var mk in bmArgs) {
+            (function (m, map) {
+                bmNs[m] = function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('bookmarks', m, map(a));
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mk, bmArgs[mk]);
+        }
+        installNs('bookmarks', bmNs);
+    }
+    installBookmarks();
+
+    // --- chrome.history -----------------------------------------------
+    // MD22: same posture as bookmarks — Chrome exposes the object to
+    // every extension and the 'history' grant is enforced per call
+    // by the backend, so the namespace is always installed.  Every
+    // member rides the bridge over the RC04 store; a HistoryItem's
+    // id is the backend's deterministic url serial.
+    function installHistory() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.history; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var histNs = {
+            __arktosShim: true,
+            onVisited: makeEvent('history.onVisited'),
+            onVisitRemoved: makeEvent('history.onVisitRemoved')
+        };
+        var histArgs = {
+            search: function (a) { return { query: a[0] }; },
+            getVisits: function (a) {
+                return { url: a[0] && a[0].url };
+            },
+            addUrl: function (a) {
+                return { url: a[0] && a[0].url };
+            },
+            deleteUrl: function (a) {
+                return { url: a[0] && a[0].url };
+            },
+            deleteRange: function (a) {
+                var r = a[0] || {};
+                return { startTime: r.startTime, endTime: r.endTime };
+            },
+            deleteAll: function () { return {}; }
+        };
+        for (var mk in histArgs) {
+            (function (m, map) {
+                histNs[m] = function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('history', m, map(a));
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mk, histArgs[mk]);
+        }
+        installNs('history', histNs);
+    }
+    installHistory();
+
+    // --- chrome.cookies -------------------------------------------------
+    // MD23: same posture as history/bookmarks — the object answers
+    // in every extension context and the 'cookies' grant plus host
+    // coverage are enforced per call by the backend (invokeCookies),
+    // so the namespace is always installed.  Reads ride the RC15
+    // persistent mirror, set/remove write the live engine store and
+    // the mirror; details objects pass through verbatim.
+    function installCookies() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.cookies; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var ckNs = {
+            __arktosShim: true,
+            onChanged: makeEvent('cookies.onChanged')
+        };
+        var ckArgs = {
+            get: function (a) { return a[0] || {}; },
+            getAll: function (a) { return a[0] || {}; },
+            set: function (a) { return a[0] || {}; },
+            remove: function (a) { return a[0] || {}; },
+            getAllCookieStores: function () { return {}; }
+        };
+        for (var mk in ckArgs) {
+            (function (m, map) {
+                ckNs[m] = function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('cookies', m, map(a));
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mk, ckArgs[mk]);
+        }
+        installNs('cookies', ckNs);
+    }
+    installCookies();
+
+    // --- chrome.downloads -----------------------------------------------
+    // MD24: same posture as cookies/history — the object answers in
+    // every extension context and the 'downloads' grant is enforced
+    // per call by the backend (invokeDownloads), so the namespace is
+    // always installed.  The members ride DownloadManager's own
+    // record list; download() is the one deferred member — the
+    // bridge answers a ticket and the real Chrome download id
+    // arrives as an '__arktos.downloadCreated' host push once the
+    // engine's asynchronous request lands on an item card (the same
+    // policy path a page-issued download runs).
+    function installDownloads() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.downloads; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var dlNs = {
+            __arktosShim: true,
+            onCreated: makeEvent('downloads.onCreated'),
+            onChanged: makeEvent('downloads.onChanged'),
+            onErased: makeEvent('downloads.onErased'),
+            // Chrome's filename-suggestion hook — Arktos keeps the
+            // dlwpolicy naming path, so the host never pushes this
+            // event; it exists so a listener registration is not a
+            // TypeError, and the registration itself is noted.
+            onDeterminingFilename: makeEvent(
+                'downloads.onDeterminingFilename',
+                { onAdd: function () {
+                    note('chrome.downloads.onDeterminingFilename '
+                         + 'registered — no event source (the '
+                         + 'dlwpolicy naming path never consults '
+                         + 'extensions)');
+                } })
+        };
+        var dlArgs = {
+            download: function (a) { return a[0] || {}; },
+            search: function (a) { return { query: a[0] || {} }; },
+            pause: function (a) { return { id: a[0] }; },
+            resume: function (a) { return { id: a[0] }; },
+            cancel: function (a) { return { id: a[0] }; },
+            open: function (a) { return { id: a[0] }; },
+            show: function (a) { return { id: a[0] }; },
+            showDefaultFolder: function () { return {}; },
+            erase: function (a) { return { query: a[0] || {} }; },
+            removeFile: function (a) { return { id: a[0] }; },
+            getFileIcon: function (a) {
+                return { id: a[0], options: a[1] || {} };
+            },
+            // Chrome-shelf surface — routed to the bridge like the
+            // served members so the backend's typed 'unsupported'
+            // (and the recorded gap) is the authoritative answer.
+            acceptDanger: function (a) { return { id: a[0] }; },
+            drag: function (a) { return { id: a[0] }; },
+            setShelfEnabled: function (a) {
+                return { enabled: !!a[0] };
+            },
+            setUiOptions: function (a) { return { options: a[0] || {} }; }
+        };
+        for (var mk in dlArgs) {
+            (function (m, map) {
+                dlNs[m] = function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var inner = call('downloads', m, map(a));
+                    var p;
+                    if (m === 'download') {
+                        // Deferred member: the invoke reply is a
+                        // ticket, the id arrives on the push.  A
+                        // missing ticket means the backend refused
+                        // the deferred shape itself.
+                        p = inner.then(function (reply) {
+                            var ticket = reply && reply.ticket;
+                            if (ticket === undefined) {
+                                return Promise.reject(typedError(
+                                    'start-failed',
+                                    'chrome.downloads.download'));
+                            }
+                            return new Promise(
+                                function (resolve, reject) {
+                                    downloadCreatedWaiters[
+                                        String(ticket)] = {
+                                            resolve: resolve,
+                                            reject: reject
+                                        };
+                                });
+                        });
+                    } else {
+                        p = inner;
+                    }
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mk, dlArgs[mk]);
+        }
+        installNs('downloads', dlNs);
+    }
+    installDownloads();
+
+    // --- chrome.sessions --------------------------------------------------
+    // MD25: same posture as downloads/history — the object answers
+    // in every extension context and the 'sessions' grant is
+    // enforced per call by the backend (invokeSessions), so the
+    // namespace is always installed.  getRecentlyClosed/restore ride
+    // TabWidget's per-window closed-tab undo stacks; getDevices is
+    // the honest empty list (no sync service); MAX_SESSION_RESULTS
+    // is Chrome's published bound — the same 25 the stack enforces.
+    function installSessions() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.sessions; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var sessNs = {
+            __arktosShim: true,
+            MAX_SESSION_RESULTS: 25,
+            onChanged: makeEvent('sessions.onChanged')
+        };
+        var sessArgs = {
+            getDevices: function (a) { return { filter: a[0] || {} }; },
+            getRecentlyClosed: function (a) {
+                return { filter: a[0] || {} };
+            },
+            restore: function (a) { return { sessionId: a[0] }; }
+        };
+        for (var mk in sessArgs) {
+            (function (m, map) {
+                sessNs[m] = function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('sessions', m, map(a));
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mk, sessArgs[mk]);
+        }
+        installNs('sessions', sessNs);
+    }
+    installSessions();
+
+    // --- chrome.tabGroups -----------------------------------------------
+    // MD26: same posture as sessions — the object answers in every
+    // extension context and the 'tabGroups' grant is enforced per
+    // call by the backend (invokeTabGroups), so the namespace is
+    // always installed.  get/query/update/move/ungroup ride the
+    // TABGRP machinery; creation lives at chrome.tabs.group like the
+    // real API; TAB_GROUP_ID_NONE is Chrome's published -1 constant.
+    function installTabGroups() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.tabGroups; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var tgNs = {
+            __arktosShim: true,
+            TAB_GROUP_ID_NONE: -1,
+            onCreated: makeEvent('tabGroups.onCreated'),
+            onUpdated: makeEvent('tabGroups.onUpdated'),
+            onMoved: makeEvent('tabGroups.onMoved'),
+            onRemoved: makeEvent('tabGroups.onRemoved')
+        };
+        var tgArgs = {
+            get: function (a) { return { groupId: a[0] }; },
+            query: function (a) { return { query: a[0] || {} }; },
+            update: function (a) {
+                return { groupId: a[0], props: a[1] || {} };
+            },
+            move: function (a) {
+                return { groupId: a[0], props: a[1] || {} };
+            },
+            ungroup: function (a) { return { groupIds: a[0] }; }
+        };
+        for (var mk in tgArgs) {
+            (function (m, map) {
+                tgNs[m] = function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('tabGroups', m, map(a));
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            })(mk, tgArgs[mk]);
+        }
+        installNs('tabGroups', tgNs);
+    }
+    installTabGroups();
+
+    // --- chrome.topSites --------------------------------------------------
+    // MD27: Chrome's smallest namespace — get() alone, no events, no
+    // constants.  The 'topSites' grant is enforced per call by the
+    // backend (invokeTopSites), so the object is always installed;
+    // the ranked rows come off the RC04 hosts rollup.
+    function installTopSites() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.topSites; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var tsNs = { __arktosShim: true };
+        tsNs.get = function () {
+            var a = Array.prototype.slice.call(arguments);
+            var cb = null;
+            if (a.length && typeof a[a.length - 1] === 'function')
+                cb = a.pop();
+            var p = call('topSites', 'get', {});
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined,
+                                    e && e.message || String(e));
+                       });
+            return p;
+        };
+        installNs('topSites', tsNs);
+    }
+    installTopSites();
+
+    // --- chrome.browsingData ------------------------------------------------
+    // MD28: settings()/remove() plus the five served remove* members
+    // (history/cookies/downloads/cache/formData) ride the CLR01 clear
+    // plan on the backend — 'browsingData' is enforced per call
+    // there, so the object is always installed.  The other nine
+    // remove* members Chrome publishes stay typed 'unsupported':
+    // fillNs() below adds them as typed stubs onto this object.
+    function installBrowsingData() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.browsingData; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var bdNs = { __arktosShim: true };
+        var mk = function (m, map) {
+            return function () {
+                var a = Array.prototype.slice.call(arguments);
+                var cb = null;
+                if (a.length
+                        && typeof a[a.length - 1] === 'function')
+                    cb = a.pop();
+                var p = call('browsingData', m, map(a));
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            };
+        };
+        bdNs.settings = mk('settings', function () { return {}; });
+        bdNs.remove = mk('remove', function (a) {
+            return { options: a[0] || {}, dataToRemove: a[1] };
+        });
+        var singles = ['removeHistory', 'removeCookies',
+                       'removeDownloads', 'removeCache',
+                       'removeFormData'];
+        for (var i = 0; i < singles.length; ++i) {
+            bdNs[singles[i]] = mk(singles[i], function (a) {
+                return { options: a[0] || {} };
+            });
+        }
+        installNs('browsingData', bdNs);
+    }
+    installBrowsingData();
+
+    // --- chrome.dns ---------------------------------------------------
+    // MD29: Chrome publishes resolve() alone and upstream only on
+    // ChromeOS; here the namespace answers for every hosted context
+    // — the 'dns' grant is enforced per call by the backend
+    // (invokeDns).  resolve() is the deferred member like
+    // downloads.download: the bridge answers a ticket and the
+    // DnsResolveInfo {addresses:[...]} (or the typed failure) lands
+    // on the '__arktos.dnsResolved' push once the off-thread lookup
+    // completes.
+    function installDns() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.dns; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var dnsNs = { __arktosShim: true };
+        dnsNs.resolve = function () {
+            var a = Array.prototype.slice.call(arguments);
+            var cb = null;
+            if (a.length && typeof a[a.length - 1] === 'function')
+                cb = a.pop();
+            var p = call('dns', 'resolve', { hostname: a[0] })
+                .then(function (reply) {
+                    var ticket = reply && reply.ticket;
+                    if (ticket === undefined) {
+                        return Promise.reject(typedError(
+                            'resolve-failed',
+                            'chrome.dns.resolve'));
+                    }
+                    return new Promise(
+                        function (resolve, reject) {
+                            dnsResolveWaiters[String(ticket)] = {
+                                resolve: resolve,
+                                reject: reject
+                            };
+                        });
+                });
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined,
+                                    e && e.message || String(e));
+                       });
+            return p;
+        };
+        installNs('dns', dnsNs);
+    }
+    installDns();
+
+    // --- chrome.system --------------------------------------------------
+    // MD30: the honest-machine-facts namespace.  Every member routes
+    // to the bridge and the backend (invokeSystem) enforces the
+    // per-sub-namespace 'system.<sub>' grant like Chrome — the grant
+    // is checked before the surface so a declared-but-unserved sub
+    // (network here, powerSource/... upstream) answers 'unsupported',
+    // never a TypeError.  memory/cpu/display/storage getInfo answer
+    // measured values; storage.getAvailableCapacity is live;
+    // ejectDevice and the ChromeOS-only display mutators keep the
+    // backend's typed 'unsupported'.  The on* events exist so a
+    // registration is never a TypeError — there is no event source
+    // yet, so adding a listener is noted once.
+    function installSystem() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.system; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var noArgs = function () { return {}; };
+        var mk = function (sub, m, map) {
+            return function () {
+                var a = Array.prototype.slice.call(arguments);
+                var cb = null;
+                if (a.length
+                        && typeof a[a.length - 1] === 'function')
+                    cb = a.pop();
+                var p = call('system', sub + '.' + m, map(a));
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            };
+        };
+        var noSource = function (p) {
+            return { onAdd: function () {
+                note('chrome.system.' + p + ' registered — no '
+                     + 'event source for this sub-namespace');
+            } };
+        };
+        var sysNs = {
+            __arktosShim: true,
+            memory: {
+                getInfo: mk('memory', 'getInfo', noArgs)
+            },
+            cpu: {
+                getInfo: mk('cpu', 'getInfo', noArgs)
+            },
+            display: {
+                getInfo: mk('display', 'getInfo',
+                            function (a) { return { flags: a[0] }; }),
+                // ChromeOS-only mutators — routed so the backend's
+                // typed 'unsupported' is the authoritative answer.
+                getDisplayLayout: mk('display', 'getDisplayLayout',
+                                     noArgs),
+                enableUnifiedDesktop: mk('display',
+                                         'enableUnifiedDesktop',
+                                         noArgs),
+                overscanCalibrationStart: mk('display',
+                    'overscanCalibrationStart', noArgs),
+                overscanCalibrationComplete: mk('display',
+                    'overscanCalibrationComplete', noArgs),
+                overscanCalibrationReset: mk('display',
+                    'overscanCalibrationReset', noArgs),
+                overscanCalibrationClear: mk('display',
+                    'overscanCalibrationClear', noArgs),
+                showNativeTouchCalibration: mk('display',
+                    'showNativeTouchCalibration', noArgs),
+                startCustomTouchCalibration: mk('display',
+                    'startCustomTouchCalibration', noArgs),
+                completeCustomTouchCalibration: mk('display',
+                    'completeCustomTouchCalibration', noArgs),
+                clearTouchCalibration: mk('display',
+                    'clearTouchCalibration', noArgs),
+                setMirrorMode: mk('display', 'setMirrorMode',
+                    function (a) { return { info: a[0] }; }),
+                setDisplayProperties: mk('display',
+                    'setDisplayProperties',
+                    function (a) {
+                        return { id: a[0], info: a[1] };
+                    }),
+                onDisplayChanged: makeEvent(
+                    'system.display.onDisplayChanged',
+                    noSource('display.onDisplayChanged'))
+            },
+            storage: {
+                getInfo: mk('storage', 'getInfo', noArgs),
+                getAvailableCapacity: mk('storage',
+                    'getAvailableCapacity',
+                    function (a) { return { id: a[0] }; }),
+                ejectDevice: mk('storage', 'ejectDevice',
+                                function (a) { return { id: a[0] }; }),
+                onAttached: makeEvent('system.storage.onAttached',
+                                      noSource('storage.onAttached')),
+                onDetached: makeEvent('system.storage.onDetached',
+                                      noSource('storage.onDetached'))
+            },
+            // Declared-grant-but-unserved sub — the backend answers
+            // 'no-permission' undeclared, 'unsupported' declared.
+            network: {
+                getNetworkInterfaces: mk('network',
+                                         'getNetworkInterfaces',
+                                         noArgs)
+            }
+        };
+        installNs('system', sysNs);
+    }
+    installSystem();
+
+    // --- chrome.privacy ---------------------------------------------------
+    // MD31: the ChromeSetting surface.  Every sub-namespace member is
+    // a setting object {get,set,clear,onChange} — get/set/clear route
+    // to the bridge so the backend's verdict (invokePrivacy, under
+    // the declared 'privacy' grant) is authoritative: the eight
+    // members with a real mapping read/write the browser's actual
+    // toggles, and Chrome's remaining published members answer typed
+    // 'unsupported' — never a TypeError, never a fake store.
+    // onChange is a real shim event the host fans out on
+    // extension-driven mutations (extensionbackgroundhost's
+    // shapedPayload resolves each context's own levelOfControl);
+    // user-driven settings-dialog flips have no event source yet.
+    function installPrivacy() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.privacy; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var mkSetting = function (sub, member) {
+            var path = sub + '.' + member;
+            var mk = function (op) {
+                return function () {
+                    var a = Array.prototype.slice.call(arguments);
+                    var cb = null;
+                    if (a.length
+                            && typeof a[a.length - 1] === 'function')
+                        cb = a.pop();
+                    var p = call('privacy', path + '.' + op,
+                                 { details: a[0] || {} });
+                    if (cb)
+                        p.then(function (v) { answerCb(cb, v); },
+                               function (e) {
+                                   answerCb(cb, undefined,
+                                            e && e.message
+                                            || String(e));
+                               });
+                    return p;
+                };
+            };
+            return {
+                get: mk('get'),
+                set: mk('set'),
+                clear: mk('clear'),
+                onChange: makeEvent('privacy.' + path + '.onChange')
+            };
+        };
+        var privacyNs = {
+            __arktosShim: true,
+            network: {
+                networkPredictionEnabled:
+                    mkSetting('network', 'networkPredictionEnabled'),
+                webRTCIPHandlingPolicy:
+                    mkSetting('network', 'webRTCIPHandlingPolicy'),
+                // Chrome-published but unservable — the backend's
+                // typed 'unsupported' is the authoritative answer.
+                webRTCNonProxiedUdpEnabled:
+                    mkSetting('network', 'webRTCNonProxiedUdpEnabled'),
+                webRTCUDPPortRange:
+                    mkSetting('network', 'webRTCUDPPortRange')
+            },
+            services: {
+                autofillAddressEnabled:
+                    mkSetting('services', 'autofillAddressEnabled'),
+                autofillCreditCardEnabled:
+                    mkSetting('services', 'autofillCreditCardEnabled'),
+                autofillEnabled:
+                    mkSetting('services', 'autofillEnabled'),
+                passwordSavingEnabled:
+                    mkSetting('services', 'passwordSavingEnabled'),
+                safeBrowsingEnabled:
+                    mkSetting('services', 'safeBrowsingEnabled'),
+                safeBrowsingExtendedReportingEnabled:
+                    mkSetting('services',
+                              'safeBrowsingExtendedReportingEnabled'),
+                searchSuggestEnabled:
+                    mkSetting('services', 'searchSuggestEnabled'),
+                spellingServiceEnabled:
+                    mkSetting('services', 'spellingServiceEnabled'),
+                translationEnabled:
+                    mkSetting('services', 'translationEnabled')
+            },
+            websites: {
+                adMeasurementEnabled:
+                    mkSetting('websites', 'adMeasurementEnabled'),
+                doNotTrackEnabled:
+                    mkSetting('websites', 'doNotTrackEnabled'),
+                fledgeEnabled:
+                    mkSetting('websites', 'fledgeEnabled'),
+                hyperlinkAuditingEnabled:
+                    mkSetting('websites', 'hyperlinkAuditingEnabled'),
+                privacySandboxEnabled:
+                    mkSetting('websites', 'privacySandboxEnabled'),
+                protectedContentEnabled:
+                    mkSetting('websites', 'protectedContentEnabled'),
+                referrersEnabled:
+                    mkSetting('websites', 'referrersEnabled'),
+                thirdPartyCookiesAllowed:
+                    mkSetting('websites', 'thirdPartyCookiesAllowed'),
+                topicsEnabled:
+                    mkSetting('websites', 'topicsEnabled')
+            }
+        };
+        installNs('privacy', privacyNs);
+    }
+    installPrivacy();
+
+    // --- chrome.fontSettings -------------------------------------------
+    // MD33: the real font surface.  getFontList answers the system
+    // family list; getFont/getDefaultFontSize/
+    // getDefaultFixedFontSize/getMinimumFontSize read the browser's
+    // real engine defaults and set*/clear* write the persisted
+    // persona settings back through the bridge — the backend
+    // (invokeFontSettings, under the declared 'fontSettings' grant)
+    // is authoritative: Chrome's 'math' generic family and per-script
+    // (non-'Zyyy') fonts have no Qt engine mapping and keep the
+    // typed 'unsupported', never a TypeError.  The four on*Changed
+    // events are real shim events the host fans out on extension-
+    // driven mutations (levelOfControl resolves per observer);
+    // user-driven settings-dialog flips have no event source yet.
+    function installFontSettings() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.fontSettings; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var mk = function (m) {
+            return function () {
+                var a = Array.prototype.slice.call(arguments);
+                var cb = null;
+                if (a.length
+                        && typeof a[a.length - 1] === 'function')
+                    cb = a.pop();
+                var p = call('fontSettings', m,
+                             { details: a[0] || {} });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                               });
+                return p;
+            };
+        };
+        var fontNs = {
+            __arktosShim: true,
+            getFontList: mk('getFontList'),
+            getFont: mk('getFont'),
+            setFont: mk('setFont'),
+            clearFont: mk('clearFont'),
+            getDefaultFontSize: mk('getDefaultFontSize'),
+            setDefaultFontSize: mk('setDefaultFontSize'),
+            clearDefaultFontSize: mk('clearDefaultFontSize'),
+            getDefaultFixedFontSize: mk('getDefaultFixedFontSize'),
+            setDefaultFixedFontSize: mk('setDefaultFixedFontSize'),
+            clearDefaultFixedFontSize:
+                mk('clearDefaultFixedFontSize'),
+            getMinimumFontSize: mk('getMinimumFontSize'),
+            setMinimumFontSize: mk('setMinimumFontSize'),
+            clearMinimumFontSize: mk('clearMinimumFontSize'),
+            onFontChanged: makeEvent('fontSettings.onFontChanged'),
+            onDefaultFontSizeChanged:
+                makeEvent('fontSettings.onDefaultFontSizeChanged'),
+            onFixedFontSizeChanged:
+                makeEvent('fontSettings.onFixedFontSizeChanged'),
+            onMinimumFontSizeChanged:
+                makeEvent('fontSettings.onMinimumFontSizeChanged')
+        };
+        installNs('fontSettings', fontNs);
+    }
+    installFontSettings();
+
     // --- native-but-partial namespace repair ------------------------------
     // Qt ships SUBSET bindings: a namespace can exist natively while
     // individual members are absent — Bitwarden's boot crashed on
@@ -3672,6 +5169,120 @@
     // namespace that exists as a real object, fill missing on*
     // events with shim events and missing methods with typed-error
     // functions — real members are never touched.
+    // --- chrome.declarativeNetRequest -------------------------------
+    // MD34: the functional subset — every member routes to the
+    // bridge and lands in DeclarativeNetRequest's registry; the
+    // backend applies Chrome's grant gates (declarativeNetRequest /
+    // declarativeNetRequestWithHostAccess / ...Feedback) and returns
+    // typed errors for what this layer cannot serve
+    // (response-side header ops, tabIds conditions,
+    // setExtensionActionOptions).  Constants ship the real Chrome
+    // values so feature-detection reads honest numbers.
+    function installDeclarativeNetRequest() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.declarativeNetRequest; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var dnr = {
+            __arktosShim: true,
+            DYNAMIC_RULESET_ID: '_dynamic',
+            SESSION_RULESET_ID: '_session',
+            GUARANTEED_MINIMUM_STATIC_RULES: 30000,
+            MAX_NUMBER_OF_STATIC_RULESETS: 100,
+            MAX_NUMBER_OF_ENABLED_STATIC_RULESETS: 50,
+            MAX_NUMBER_OF_STATIC_RULES: 30000,
+            MAX_NUMBER_OF_DYNAMIC_AND_SESSION_RULES: 5000,
+            MAX_NUMBER_OF_DYNAMIC_RULES: 30000,
+            MAX_NUMBER_OF_SESSION_RULES: 5000,
+            MAX_NUMBER_OF_REGEX_RULES: 1000,
+            MAX_NUMBER_OF_UNSAFE_DYNAMIC_RULES: 5000,
+            MAX_NUMBER_OF_UNSAFE_SESSION_RULES: 5000,
+            MAX_GETMATCHEDRULES_CALLS_PER_INTERVAL: 20,
+            GETMATCHEDRULES_QUOTA_INTERVAL: 600,
+            RuleActionType: {
+                BLOCK: 'block', REDIRECT: 'redirect',
+                ALLOW: 'allow',
+                ALLOW_ALL_REQUESTS: 'allowAllRequests',
+                UPGRADE_SCHEME: 'upgradeScheme',
+                MODIFY_HEADERS: 'modifyHeaders'
+            },
+            HeaderOperation: {
+                APPEND: 'append', SET: 'set', REMOVE: 'remove'
+            },
+            ResourceType: {
+                MAIN_FRAME: 'main_frame', SUB_FRAME: 'sub_frame',
+                STYLESHEET: 'stylesheet', SCRIPT: 'script',
+                IMAGE: 'image', FONT: 'font', OBJECT: 'object',
+                XMLHTTPREQUEST: 'xmlhttprequest', PING: 'ping',
+                CSP_REPORT: 'csp_report', MEDIA: 'media',
+                WEBSOCKET: 'websocket',
+                WEBTRANSPORT: 'webtransport',
+                WEBBUNDLE: 'webbundle', OTHER: 'other'
+            },
+            DomainType: {
+                FIRST_PARTY: 'firstParty', THIRD_PARTY: 'thirdParty'
+            },
+            UnsupportedRegexReason: {
+                SYNTAX_ERROR: 'syntaxError',
+                MEMORY_LIMIT_EXCEEDED: 'memoryLimitExceeded'
+            },
+            onRuleMatchedDebug:
+                makeEvent('declarativeNetRequest.onRuleMatchedDebug')
+        };
+        var mk = function (m, wrap) {
+            return function (arg, cb) {
+                var args = {};
+                if (wrap)
+                    args[wrap] = arg || {};
+                var p = call('declarativeNetRequest', m, args);
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                           });
+                return p;
+            };
+        };
+        dnr.updateSessionRules = mk('updateSessionRules', 'options');
+        dnr.updateDynamicRules = mk('updateDynamicRules', 'options');
+        dnr.getSessionRules = mk('getSessionRules', 'filter');
+        dnr.getDynamicRules = mk('getDynamicRules', 'filter');
+        dnr.getEnabledRulesets = function (cb) {
+            var p = call('declarativeNetRequest', 'getEnabledRulesets',
+                         {});
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined,
+                                    e && e.message || String(e));
+                       });
+            return p;
+        };
+        dnr.updateEnabledRulesets =
+            mk('updateEnabledRulesets', 'options');
+        dnr.getAvailableStaticRuleCount = function (cb) {
+            var p = call('declarativeNetRequest',
+                         'getAvailableStaticRuleCount', {});
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined,
+                                    e && e.message || String(e));
+                       });
+            return p;
+        };
+        dnr.getMatchedRules = mk('getMatchedRules', 'filter');
+        dnr.isRegexSupported = mk('isRegexSupported', 'query');
+        dnr.testMatchOutcome = mk('testMatchOutcome', 'request');
+        dnr.setExtensionActionOptions =
+            mk('setExtensionActionOptions', 'options');
+        installNs('declarativeNetRequest', dnr);
+    }
+    installDeclarativeNetRequest();
+
     function fillNs(nsName, events, methods) {
         var ns = chrome[nsName];
         if (!ns || typeof ns !== 'object')
@@ -3757,9 +5368,18 @@
             forceMember(ext, 'getBackgroundPage',
                         extensionGetBackgroundPage,
                         'chrome.extension.getBackgroundPage');
-            fillNs('extension', ['onRequest', 'onRequestExternal'],
-                   ['isAllowedIncognitoAccess',
-                    'isAllowedFileSchemeAccess']);
+            fillNs('extension', ['onRequest', 'onRequestExternal']);
+            // MD15: the isAllowed* verdicts are identity overrides
+            // like getViews — a native member answers from
+            // Chromium's extension registry, which the hosted
+            // context is not part of; the bridge call reaches
+            // invokeExtension's authoritative verdict instead.
+            forceMember(ext, 'isAllowedIncognitoAccess',
+                        extAllowedIncognitoRef,
+                        'chrome.extension.isAllowedIncognitoAccess');
+            forceMember(ext, 'isAllowedFileSchemeAccess',
+                        extAllowedFileSchemeRef,
+                        'chrome.extension.isAllowedFileSchemeAccess');
             if (ext.inIncognitoContext === undefined) {
                 try { ext.inIncognitoContext = false; }
                 catch (e) {}
@@ -3805,14 +5425,6 @@
                 'getBadgeText', 'setBadgeBackgroundColor',
                 'getBadgeBackgroundColor', 'setPopup', 'getPopup',
                 'enable', 'disable']);
-        fillNs('declarativeNetRequest',
-               ['onRuleMatchedDebug'],
-               ['updateDynamicRules', 'updateSessionRules',
-                'getEnabledRulesets', 'updateEnabledRulesets',
-                'getDynamicRules', 'getSessionRules',
-                'setExtensionActionOptions',
-                'getMatchedRules', 'isRegexSupported',
-                'testMatchOutcome']);
         fillNs('declarativeContent', [],
                []);
         fillNs('sessions', ['onChanged'],
@@ -3839,7 +5451,7 @@
                ['getAll', 'get', 'getSelf', 'getPermissionWarningsById',
                 'getPermissionWarningsByManifest',
                 'setEnabled', 'uninstall', 'uninstallSelf',
-                'launchApp', 'generateAppForLink']);
+                'setLaunchType', 'launchApp', 'generateAppForLink']);
         fillNs('browsingData', [],
                ['settings', 'remove', 'removeAppcache', 'removeCache',
                 'removeCacheStorage', 'removeCookies',
@@ -3852,6 +5464,10 @@
                ['executeScript', 'insertCSS', 'removeCSS',
                 'registerContentScripts', 'getRegisteredContentScripts',
                 'unregisterContentScripts', 'updateContentScripts']);
+        fillNs('userScripts', [],
+               ['register', 'unregister', 'getScripts', 'update',
+                'configureWorld', 'getWorldConfigurations',
+                'resetWorldConfiguration']);
         fillNs('offscreen', [],
                ['createDocument', 'closeDocument', 'hasDocument']);
         fillNs('sidePanel', [],
@@ -3895,8 +5511,6 @@
                 'onMenuItemActivated', 'onSurroundingTextChanged',
                 'onReset'],
                []);
-        fillNs('privacy', [],
-               []);
         fillNs('nativeMessaging', [], []);
     }
 
@@ -3906,15 +5520,14 @@
     // on* properties yield real shim events whose registrations are
     // noted.  Nothing claims to work that doesn't.
     var unsupportedNames = [
-        'windows', 'cookies', 'bookmarks', 'identity', 'gcm',
-        'nativeMessaging', 'privacy', 'topSites', 'history',
+        'windows', 'gcm',
+        'nativeMessaging',
         'scripting', 'offscreen', 'omnibox', 'devtools',
-        'fontSettings', 'tabGroups', 'userScripts',
-        'declarativeNetRequest', 'declarativeContent',
-        'browsingData', 'management', 'sessions', 'downloads',
-        'power', 'system', 'tts', 'enterprise', 'debugger',
+        'declarativeContent',
+        'management',
+        'power', 'tts', 'enterprise', 'debugger',
         'processes', 'readingList', 'search', 'favicon', 'tabCapture',
-        'input', 'dns', 'documentScan', 'fileSystemProvider',
+        'input', 'documentScan', 'fileSystemProvider',
         'printing', 'vpnProvider', 'wallpaper', 'audio',
         'accessibilityFeatures', 'autofill', 'certificateProvider',
         'contentSettings', 'desktopCapture', 'displaySource',
@@ -3922,7 +5535,7 @@
         'platformKeys', 'printerProvider', 'signedInDevices',
         'systemIndicator', 'chromeOs'
     ];
-    function unsupportedNs(path) {
+    function unsupportedNs(path, served) {
         var noted = {};
         return new Proxy({}, {
             get: function (t, prop) {
@@ -3930,6 +5543,10 @@
                     return undefined;    // stay non-thenable
                 if (typeof prop !== 'string')
                     return undefined;
+                if (served
+                        && Object.prototype.hasOwnProperty
+                               .call(served, prop))
+                    return served[prop];
                 var p = path + '.' + prop;
                 if (prop.indexOf('on') === 0
                         && prop.length > 2
@@ -3976,6 +5593,32 @@
                               false);
             } catch (e) {}
         }
+        // MD35: chrome.identity — getRedirectURL is the one member
+        // honestly derivable, and Chromium itself serves it from a
+        // renderer-side custom binding rather than an extension
+        // function: the path normalized to a leading '/', appended
+        // to the https://<id>.chromiumapp.org origin — synchronous
+        // and ungated like Chrome.  Every other member and on* event
+        // stays under the same typed-unsupported wildcard (the
+        // Google-account family has no Arktos surface).  The backend
+        // mirrors the derivation for bridge-routed calls
+        // (invokeIdentity).
+        if (chrome.identity === undefined)
+            installNs('identity',
+                      unsupportedNs('chrome.identity', {
+                          getRedirectURL: function (path) {
+                              touch('chrome.identity.getRedirectURL');
+                              if (path === null || path === undefined)
+                                  path = '/';
+                              else
+                                  path = String(path);
+                              if (path[0] !== '/')
+                                  path = '/' + path;
+                              return 'https://' + cfg.id
+                                     + '.chromiumapp.org' + path;
+                          }
+                      }),
+                      false);
         // windows.* does have a real event source (the EXT16 hub
         // pushes onCreated/onRemoved/onFocusChanged): pre-create them
         // so the typed-error proxy hands out real events without the
@@ -4073,6 +5716,7 @@
         'chrome.scripting.registerContentScripts',
         'chrome.scripting.unregisterContentScripts',
         'chrome.contentScripts.register',
+        'chrome.userScripts.register', 'chrome.userScripts.getScripts',
         'chrome.offscreen.createDocument',
         'chrome.management.getSelf',
         'chrome.browsingData.remove',

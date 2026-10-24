@@ -69,6 +69,7 @@ private slots:
     void cleanup();
 
     void blockDecision();
+    void ffiParity();
     void builtinSeedBlocks();
     void warningCommits();
     void proceedAllowsHostSession();
@@ -258,6 +259,34 @@ void tst_DomainBlock::blockDecision()
     QVERIFY(!P::shouldBlockDomain(
                 QUrl("https://bad-fixture.test/")));
     QVERIFY(!P::isDomainBlocked(QStringLiteral("bad-fixture.test")));
+#endif
+}
+
+void tst_DomainBlock::ffiParity()
+{
+#if defined(ARKTOS_RUSTCORE)
+    // RC06: the C++ decision surface and the raw ABI must agree on
+    // every host of a fixed set — the Qt layer is a passthrough over
+    // the same table, never a second implementation.
+    const QStringList hosts = {
+        QStringLiteral("bad-fixture.test"),
+        QStringLiteral("deep.bad-fixture.test"),
+        QStringLiteral("listed-parent.test"),
+        QStringLiteral("sub.listed.test"),
+        QStringLiteral("deep.sub.listed.test"),
+        // A listed subdomain never ranks up to its parent.
+        QStringLiteral("listed.test"),
+        QStringLiteral("clean-fixture.test"),
+        // Substring lookalikes are not suffix matches.
+        QStringLiteral("notbad-fixture.test"),
+        QStringLiteral("bad-fixture.test.evil.test"),
+        QString(),
+    };
+    for (const QString &host : hosts) {
+        const int raw = rc_blocklist_check(host.toUtf8().constData());
+        QCOMPARE(PrivacyRequestInterceptor::isDomainBlocked(host),
+                 raw == 1);
+    }
 #endif
 }
 

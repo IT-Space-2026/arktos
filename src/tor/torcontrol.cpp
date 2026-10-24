@@ -20,6 +20,280 @@
 #include "torcontrol.h"
 
 #include <qfile.h>
+
+#ifdef ARKTOS_RUSTCORE
+
+// RC14: the protocol client lives in the rustcore torctl crate
+// (rc_tor_*).  This file keeps the exact public contract — same
+// signals, same callback fires exactly once with (code, lines), -1
+// when the link dies first — and maps the pull-drain model onto the
+// "torctl" change topic the bridge re-emits queued on this thread.
+
+#include "rustcorebridge.h"
+
+#include <qcoreapplication.h>
+#include <qjsonarray.h>
+#include <qjsondocument.h>
+#include <qjsonobject.h>
+
+#include <rustcore.h>
+
+namespace {
+
+// Fires a reply callback once with the -1 spelling — the reason text
+// comes from the thread-local rustcore error when one is set (the
+// socket path put its own reason strings in the lines).
+void failCallbackNow(const TorControl::ReplyCallback &callback)
+{
+    if (!callback)
+        return;
+    QStringList lines;
+    char *err = rc_last_error_message();
+    if (err && *err)
+        lines << QString::fromUtf8(err);
+    rc_string_free(err);
+    callback(-1, lines);
+}
+
+} // namespace
+
+TorControl::TorControl(QObject *parent)
+    : QObject(parent)
+    , m_ctl(nullptr)
+    , m_disconnectEmitted(false)
+{
+    // The crate's reader thread announces every queued reply, async
+    // event and link-state change through the "torctl" topic; the
+    // bridge trampoline hops it onto this thread already queued.
+    if (QCoreApplication::instance()) {
+        connect(RustCoreBridge::instance(),
+                &RustCoreBridge::storeChanged, this,
+                [this](const QString &topic) {
+            if (topic == QLatin1String("torctl"))
+                drainRust();
+        });
+    }
+}
+
+TorControl::~TorControl()
+{
+    // rc_tor_close flushes the pending commands into -1 replies inside
+    // the handle, but the drain that would dispatch them lands after
+    // this object is gone — sever and drop silently, the same
+    // teardown discipline the socket path documented.
+    if (m_ctl) {
+        rc_tor_close(m_ctl);
+        m_ctl = nullptr;
+    }
+    m_callbacks.clear();
+}
+
+void TorControl::connectToHost(const QHostAddress &address, quint16 port)
+{
+    if (m_ctl) {
+        // Reconnect: sever first so in-flight commands flush into -1
+        // replies, drain so their callbacks fire exactly once, then
+        // free the handle.
+        rc_tor_disconnect(m_ctl);
+        drainRust();
+        rc_tor_close(m_ctl);
+        m_ctl = nullptr;
+        m_callbacks.clear();
+    }
+    m_disconnectEmitted = false;
+    const QByteArray host = address.toString().toLatin1();
+    // Loopback-only is enforced inside — a non-loopback host is an
+    // open failure here, matching the no-leak rule.
+    m_ctl = rc_tor_open(host.constData(), port);
+    if (!m_ctl) {
+        char *err = rc_last_error_message();
+        emit errorMessage(QString::fromUtf8(
+            err && *err ? err : "connect failed"));
+        rc_string_free(err);
+        return;
+    }
+    // rc_tor_open connects synchronously — a returned handle is
+    // already live, the same point the socket path emitted
+    // connected() at.
+    emit connected();
+}
+
+void TorControl::disconnectFromHost()
+{
+    if (!m_ctl)
+        return;
+    // Pending commands flush as -1 replies, the state lands on
+    // RC_TOR_CLOSED; the drain then fires those callbacks and
+    // disconnected() — exactly the socket path's ordering.
+    rc_tor_disconnect(m_ctl);
+    drainRust();
+}
+
+bool TorControl::isConnected() const
+{
+    return m_ctl && rc_tor_state(m_ctl) == RC_TOR_CONNECTED;
+}
+
+void TorControl::sendSeq(qint64 seq, const ReplyCallback &callback)
+{
+    if (seq < 0) {
+        failCallbackNow(callback);
+        return;
+    }
+    if (callback)
+        m_callbacks.insert(seq, callback);
+}
+
+void TorControl::sendCommand(const QByteArray &command,
+                             const ReplyCallback &callback)
+{
+    if (!m_ctl || rc_tor_state(m_ctl) != RC_TOR_CONNECTED) {
+        failCallbackNow(callback);
+        return;
+    }
+    sendSeq(rc_tor_send(m_ctl, command.constData()), callback);
+}
+
+void TorControl::authenticateCookie(const QByteArray &cookie,
+                                    const ReplyCallback &callback)
+{
+    // The cookie is 32 raw bytes; the protocol wants it hex-encoded
+    // as a single unquoted token — the length check mirrors the
+    // socket path and never reaches the wire on failure.
+    if (cookie.size() != 32) {
+        if (callback)
+            callback(-1, QStringList()
+                     << QLatin1String("bad control_auth_cookie length"));
+        return;
+    }
+    if (!m_ctl || rc_tor_state(m_ctl) != RC_TOR_CONNECTED) {
+        failCallbackNow(callback);
+        return;
+    }
+    sendSeq(rc_tor_auth_cookie(
+                m_ctl,
+                reinterpret_cast<const uint8_t *>(cookie.constData()),
+                size_t(cookie.size())),
+            callback);
+}
+
+void TorControl::authenticateCookieFile(const QString &path,
+                                        const ReplyCallback &callback)
+{
+    if (!m_ctl || rc_tor_state(m_ctl) != RC_TOR_CONNECTED) {
+        failCallbackNow(callback);
+        return;
+    }
+    // The read happens inside the crate — the cookie never crosses
+    // the ABI as a buffer.
+    const QByteArray p = path.toUtf8();
+    sendSeq(rc_tor_auth_cookie_file(m_ctl, p.constData()), callback);
+}
+
+void TorControl::takeOwnership(const ReplyCallback &callback)
+{
+    if (!m_ctl || rc_tor_state(m_ctl) != RC_TOR_CONNECTED) {
+        failCallbackNow(callback);
+        return;
+    }
+    sendSeq(rc_tor_takeownership(m_ctl), callback);
+}
+
+void TorControl::setEvents(const QStringList &events,
+                           const ReplyCallback &callback)
+{
+    if (!m_ctl || rc_tor_state(m_ctl) != RC_TOR_CONNECTED) {
+        failCallbackNow(callback);
+        return;
+    }
+    const QByteArray list = events.join(QLatin1Char(' ')).toLatin1();
+    sendSeq(rc_tor_setevents(m_ctl, list.constData()), callback);
+}
+
+void TorControl::getInfo(const QString &key,
+                         const ReplyCallback &callback)
+{
+    if (!m_ctl || rc_tor_state(m_ctl) != RC_TOR_CONNECTED) {
+        failCallbackNow(callback);
+        return;
+    }
+    const QByteArray k = key.toLatin1();
+    sendSeq(rc_tor_getinfo(m_ctl, k.constData()), callback);
+}
+
+void TorControl::signalShutdown(const ReplyCallback &callback)
+{
+    if (!m_ctl || rc_tor_state(m_ctl) != RC_TOR_CONNECTED) {
+        failCallbackNow(callback);
+        return;
+    }
+    sendSeq(rc_tor_signal(m_ctl, "SHUTDOWN"), callback);
+}
+
+void TorControl::signalNewNym(const ReplyCallback &callback)
+{
+    if (!m_ctl || rc_tor_state(m_ctl) != RC_TOR_CONNECTED) {
+        failCallbackNow(callback);
+        return;
+    }
+    sendSeq(rc_tor_signal(m_ctl, "NEWNYM"), callback);
+}
+
+// Pulls everything the reader thread queued: completed replies
+// dispatch to their submitter's callback in order, async 650 lines
+// re-emit as asyncEvent, protocol complaints as errorMessage, and a
+// Closed state reports the connection error + disconnected once.
+void TorControl::drainRust()
+{
+    if (!m_ctl)
+        return;
+    for (;;) {
+        RcBuffer buf{nullptr, 0};
+        if (rc_tor_take_reply(m_ctl, &buf) != RC_OK)
+            break;
+        const QByteArray raw(
+            reinterpret_cast<const char *>(buf.data),
+            qsizetype(buf.len));
+        rc_buffer_free(buf);
+        const QJsonObject obj = QJsonDocument::fromJson(raw).object();
+        const qint64 seq = qint64(obj.value(QLatin1String("seq"))
+                                      .toDouble());
+        const int code = obj.value(QLatin1String("code")).toInt(-1);
+        QStringList lines;
+        for (const QJsonValue &v :
+             obj.value(QLatin1String("lines")).toArray())
+            lines << v.toString();
+        const ReplyCallback callback = m_callbacks.take(seq);
+        if (callback)
+            callback(code, lines);
+    }
+    for (;;) {
+        char *line = rc_tor_take_event(m_ctl);
+        if (!line)
+            break;
+        emit asyncEvent(QString::fromUtf8(line));
+        rc_string_free(line);
+    }
+    for (;;) {
+        char *line = rc_tor_take_error(m_ctl);
+        if (!line)
+            break;
+        emit errorMessage(QString::fromUtf8(line));
+        rc_string_free(line);
+    }
+    if (rc_tor_state(m_ctl) == RC_TOR_CLOSED && !m_disconnectEmitted) {
+        m_disconnectEmitted = true;
+        char *err = rc_tor_error(m_ctl);
+        const QString msg = QString::fromUtf8(err ? err : "");
+        rc_string_free(err);
+        if (!msg.isEmpty())
+            emit errorMessage(msg);
+        emit disconnected();
+    }
+}
+
+#else
+
 #include <qtcpsocket.h>
 
 TorControl::TorControl(QObject *parent)
@@ -228,3 +502,5 @@ void TorControl::onReadyRead()
         }
     }
 }
+
+#endif // ARKTOS_RUSTCORE

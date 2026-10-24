@@ -23,6 +23,8 @@
 // yet.  ENG04 wires the real adapters onto it.
 #include "engineinterface.h"
 
+#include "browserpaths.h"
+
 #include <qfile.h>
 
 qint64 Engine::Page::processMemoryKb(qint64 pid)
@@ -56,4 +58,24 @@ qint64 Engine::Page::processMemoryKb(qint64 pid)
 qint64 Engine::Page::residentMemoryKb() const
 {
     return processMemoryKb(renderProcessId());
+}
+
+QString Engine::Profile::profileId() const
+{
+    const QVariant tag = property("arktosProfileId");
+    if (tag.isValid()) {
+        const QString id = tag.toString();
+        if (BrowserPaths::isProfileId(id))
+            return id;
+    }
+    const QString name = storageName();
+    if (name == QLatin1String("arktos"))
+        return QStringLiteral("default");
+    if (name.startsWith(QLatin1String("arktos-"))
+            && !name.startsWith(QLatin1String("arktos-container-"))) {
+        const QString id = name.mid(7);
+        if (BrowserPaths::isProfileId(id))
+            return id;
+    }
+    return BrowserPaths::activeProfileId();
 }

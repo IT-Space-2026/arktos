@@ -102,6 +102,89 @@
 //!     Threefish-1024-XEX + Skein-MAC opt-in), honest distinct
 //!     WrongPassword / Tampered errors, and a two-pass unseal that
 //!     cannot leave partial output.
+//!   * facade (RC07): the stable arktos_core.h ABI — AcCore owning
+//!     per-profile-bound module handles over the RC02–06 stores
+//!     (ac_settings/ac_profiles/ac_history/ac_bookmarks/ac_policy),
+//!     ac_* thin forwards to the rc_* entry points, and the
+//!     (module, profile_id) change-callback lane.  The rc_* surface
+//!     stays live for legacy callers until RC08 migrates them.
+//!   * torctl (RC14): the Tor control-protocol client — loopback-only
+//!     connect, COOKIE + password AUTHENTICATE (secrets zeroized),
+//!     serialized commands with exactly-once reply completion, async
+//!     650-event capture and a pull-drain FFI announced through the
+//!     "torctl" change topic.  Deliberately not a facade module: it
+//!     binds no profile and owns no store.
+//!   * cookies (RC15): the per-profile cookie database —
+//!     <profile>/cookies.db, container-partitioned, Qt-jar-verified
+//!     matching (host-only/domain reach, RFC6265 §5.1.4 paths, secure
+//!     gating, SameSite send filter), Set-Cookie parse, toRawForm
+//!     import/export and an authoritative/mirror role flag that
+//!     honestly reports whether the file IS the jar (Servo/WPE) or a
+//!     durable copy behind an engine-owned one (Chromium).
+//!   * containers (RC19): the Firefox-style container registry —
+//!     a typed specialization over the profile scope's settings
+//!     store (the same "containers" group ContainerManager
+//!     persists), plus the storage-namespace map engines partition
+//!     cookies/cache/site data by (storage root, VSEC02 cache tree,
+//!     Qt residue dir, storage name, cookie-partition key).
+//!   * updates (RC20): the update-check's policy + parse half —
+//!     GitHub-release manifest parse behind the trusted-download-URL
+//!     gate, normalize/compare, the platform asset pick, channel
+//!     rules (stable/beta vs draft/prerelease), and the
+//!     last-check/snooze/skipped state as typed helpers over the
+//!     GLOBAL settings scope.  The network fetch stays Qt-side.
+//!   * navpolicy (MD02): the acceptNavigationRequest-time verdicts —
+//!     scheme classification vs the browser-handled allowlist, the
+//!     SEC02 external-handoff gate with per-profile scheme overrides,
+//!     per-profile blocked hosts, the abp-subscribe rewrite, the
+//!     staged-pdf viewer clamp, the file: directory reroute, the
+//!     CONT04 container divert and the sanitize-on-view pdf claim —
+//!     phase-scoped so the Qt page's kept gates stay in their exact
+//!     order; the override rules live in the bound profile's
+//!     sitedecisions.json ("nav-scheme"/"nav-block" kinds).
+//!   * permpolicy (MD03): the SEC05 permission-broker verdicts — the
+//!     hard-deny/ask-capable feature tables, the security-origin key
+//!     normalization, and the remembered+session decision pipeline
+//!     behind rc_perm_call.  Durable rows are sitedecisions.json's
+//!     "webperm" kind; session answers are process-global and
+//!     OTR-namespaced.  Dialogs stay Qt-side.
+//!   * dlwpolicy (MD04): the download-interception verdicts — the
+//!     suggested-name sanitizer, the dangerous-extension/executable-
+//!     mime threat tables, the save-as gate, the external-handler
+//!     handoff, the rustdl engine claim, the finished-row removal
+//!     verdict and the download history records behind rc_dlw_call.
+//!     Legacy downloadmanager/* keys read from the bound profile's
+//!     settings.json; facade-authored rules and records live in
+//!     downloads.json beside it.  Dialogs, QProcess and the
+//!     filesystem stay Qt-side.
+//!   * privacy (MD05): the per-profile privacy-policy store view —
+//!     the typed privacy/* flag reads (incl. the referer-bool
+//!     migration and the urlCleaning/stripTrackingParams alias), the
+//!     per-persona Sec-GPC decision the interceptors consult at
+//!     request time, and the unified {gpc,strip,adblock} verdict the
+//!     tracker-strip and adblock policy reads share.  Read-only over
+//!     the bound scope's settings.json — Qt keeps the writes and all
+//!     execution.
+//!   * urlclean (MD06): the per-profile URL-sanitize policy — the
+//!     editable ruleset override (profiles/<id>/urlclean.json, the
+//!     urlstrip grammar), the copy-path toggle, the nav-path toggle
+//!     read shared with the privacy module, the legacy
+//!     urlcleaner/extraParams merge, and the clean_policy composite
+//!     the snapshot loader ships to policy::strip_target.  The
+//!     clipboard write and the redirect application stay Qt-side.
+//!   * sesspolicy (MD08): the session snapshot/restore policy —
+//!     the AutoSaver debounce + ceiling, the dirty-on-what class
+//!     gate, the retention caps (max age / windows / tabs), the
+//!     crash-restore answer and the startup-mode fallback, typed
+//!     reads over the bound profile's "session/" settings rows.
+//!     Read-only; the timers, the restore prompt and the manifest
+//!     truncation stay Qt-side.
+//!   * notes (RC21): the per-profile side-panel note list —
+//!     profiles/<id>/notes.json in the C++ writer's compact
+//!     sorted-key JSON shape, row-addressed CRUD preserving the
+//!     model's insert/remove/display order, a volatile
+//!     off-the-record binding, and a dirty+sync contract that
+//!     carries the Qt AutoSaver debounce across the FFI boundary.
 //!
 mod autofill;
 mod bidi;
@@ -110,11 +193,19 @@ mod bookmarkhtml;
 mod bookmarks;
 mod clearplan;
 mod confusables_table;
+mod containers;
+mod cookies;
 mod cred;
+mod dlwpolicy;
 mod error;
 mod extverify;
+mod facade;
 mod history;
+mod icons;
+mod inifmt;
 mod lookalike;
+mod navpolicy;
+mod notes;
 mod notify;
 mod omnibox;
 mod opensearch;
@@ -122,16 +213,24 @@ mod palette;
 mod parsers;
 mod pdfdoc;
 mod pdfsanitize;
+mod permpolicy;
 mod policy;
+mod privacy;
+mod profiles;
 mod profilevault;
 mod qrcode;
 mod readability;
 mod session;
+mod sesspolicy;
+mod settings;
 mod sitedecisions;
 mod sitetrust;
 mod store;
 mod tlsprobe;
+mod torctl;
 mod tranco;
+mod updates;
+mod urlclean;
 mod urlstrip;
 mod useragent;
 mod util;
@@ -141,7 +240,7 @@ mod util;
 mod ffi_surface;
 
 use std::ffi::CString;
-use std::os::raw::{c_char, c_void};
+use std::os::raw::{c_char, c_int, c_void};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
@@ -1126,6 +1225,337 @@ pub unsafe extern "C" fn rc_policy_call(
     .unwrap_or(ptr::null_mut())
 }
 
+// ---- navigation-request policy (MD02) ----------------------------------
+// The acceptNavigationRequest-time verdicts: scheme classification, the
+// external-handoff gate, per-profile scheme/host overrides, the abp
+// rewrite, the staged-pdf clamp, the file-dir reroute, the container
+// divert and the pdf claim.  The Qt page marshals a manifest per consult
+// phase and applies the verdict; all execution stays shell-side.
+
+/// Evaluates one navigation manifest (JSON) and returns the verdict as
+/// a JSON string — see navpolicy.rs for the phase/verdict grammar.
+/// NULL on malformed input or panic — the adapter must fail open
+/// (treat NULL as "continue", never as a block).
+/// Free the result with rc_string_free().
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_nav_decide(
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => {
+                let verdict = navpolicy::decide(&manifest);
+                util::to_c_string(verdict.to_string())
+            }
+            None => {
+                error::set_error("bad nav manifest");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Generic granular navpolicy endpoint — JSON in {"op":..., params},
+/// JSON out.  Ops: decide, browser_scheme, scheme_class,
+/// rate_limit_interstitial, untrusted_input, page_link, staged_viewer,
+/// nav_rule, plus the MD09 popup-gate ops (popup_decide,
+/// popup_is_allowed, popup_allow, popup_remove, popup_list,
+/// popup_clear, popup_clear_session).  NULL on error — see
+/// rc_last_error_message().  Free the result with rc_string_free().
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_nav_call(
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let (result, mutated) = catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match navpolicy::call_json(&manifest) {
+                Ok(result) => {
+                    let mutated = result
+                        .get("mutated")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false);
+                    (util::to_c_string(result.to_string()), mutated)
+                }
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    (ptr::null_mut(), false)
+                }
+            },
+            None => {
+                error::set_error("bad nav call payload");
+                (ptr::null_mut(), false)
+            }
+        }
+    }))
+    .unwrap_or((ptr::null_mut(), false));
+    if mutated {
+        notify::emit("sitedecisions");
+    }
+    result
+}
+
+// ---- web-permission policy (MD03) --------------------------------------
+// The SEC05 broker's decision layer: the feature tables, the origin
+// key normalization, the remembered+session pipeline.  Durable rows
+// are sitedecisions.json's "webperm" kind (the anchored dir's file,
+// like every store consumer); the modal queue and the engine's
+// grant()/deny() stay Qt-side.
+
+/// Generic granular permpolicy endpoint — JSON in {"op":..., params},
+/// JSON out.  Ops: decide, stored, resolve, remove, clear,
+/// feature_class, key_for, session_clear — see permpolicy.rs.
+/// NULL on error — see rc_last_error_message(); a caller that cannot
+/// get a verdict must fail toward its own local consult (never a
+/// silent grant).  Free the result with rc_string_free().
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_perm_call(
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let (result, mutated) = catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match permpolicy::call_json(&manifest) {
+                Ok(result) => {
+                    let mutated = result
+                        .get("mutated")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false);
+                    (util::to_c_string(result.to_string()), mutated)
+                }
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    (ptr::null_mut(), false)
+                }
+            },
+            None => {
+                error::set_error("bad perm call payload");
+                (ptr::null_mut(), false)
+            }
+        }
+    }))
+    .unwrap_or((ptr::null_mut(), false));
+    if mutated {
+        notify::emit("sitedecisions");
+    }
+    result
+}
+
+// ---- download-interception policy (MD04) ------------------------------
+// The DownloadManager's decision layer: the suggested-name sanitizer,
+// the dangerous-extension/executable-mime threat tables, the
+// save-as prompt gate, the external-handler handoff, the rustdl
+// engine claim, the finished-row removal verdict, the per-profile
+// rule view and the download history records.  The legacy
+// downloadmanager/* keys keep living in the bound profile's
+// settings.json (the C++ writers still own them); the facade-
+// authored rules and records live in downloads.json beside it.
+// The Qt manager keeps the dialogs, the QProcess handoff and the
+// filesystem execution — this surface only answers questions.
+
+/// Evaluates one download-policy manifest (JSON) and returns the
+/// verdict/result as a JSON string — see dlwpolicy.rs for the op
+/// grammar.  `h` is the bound profile's RcSettings (rc_settings_open
+/// or ac_dlw_call's per-op open); NULL is legal for the pure ops
+/// (sanitize_name, threat, external_argv) — store-bound ops then
+/// fail with a stashed error, never a guessed rule.  Mutating ops
+/// emit the "dlpolicy" change topic.  Free the result with
+/// rc_string_free().
+///
+/// # Safety
+/// `h` must come from rc_settings_open or be NULL; `json` must point
+/// to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_dlw_call(
+    h: *const settings::RcSettings,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let (result, mutated) = catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { h.as_ref() };
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match dlwpolicy::call_json(s, &manifest) {
+                Ok(result) => {
+                    let mutated = result
+                        .get("mutated")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false);
+                    (util::to_c_string(result.to_string()), mutated)
+                }
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    (ptr::null_mut(), false)
+                }
+            },
+            None => {
+                error::set_error("bad dlw call payload");
+                (ptr::null_mut(), false)
+            }
+        }
+    }))
+    .unwrap_or((ptr::null_mut(), false));
+    if mutated {
+        notify::emit("dlpolicy");
+    }
+    result
+}
+
+// ---- privacy policy store view (MD05) ---------------------------------
+// The per-persona privacy/* flag reads, the Sec-GPC decision the
+// request interceptors consult at request time, and the unified
+// {gpc,strip,adblock} verdict.  Read-only — the Qt writers own the
+// keys; this surface only answers questions.
+
+/// Evaluates one privacy manifest (JSON) against the bound profile's
+/// settings store — see privacy.rs for the op grammar (flags, flag,
+/// gpc, verdict; "defaults" is the only NULL-store-legal op).  NULL
+/// on malformed input, a missing store or panic — the adapter must
+/// keep its local consult, never guess a toggle.  Free the result
+/// with rc_string_free().
+///
+/// # Safety
+/// `h` must come from rc_settings_open or be NULL; `json` must point
+/// to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_privacy_call(
+    h: *const settings::RcSettings,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { h.as_ref() };
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match privacy::call_json(s, &manifest) {
+                Ok(result) => util::to_c_string(result.to_string()),
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    ptr::null_mut()
+                }
+            },
+            None => {
+                error::set_error("bad privacy call payload");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The per-profile Sec-GPC decision — 1 when the bound persona sends
+/// "Sec-GPC: 1" (its gpcSignal row, or unconditionally when
+/// tor_mode != 0), 0 when not, -1 on error.  The engine adapters
+/// call this at request time; a -1 keeps their verdict-bit
+/// fallback, never a phantom off/on flip.
+///
+/// # Safety
+/// `h` must come from rc_settings_open/ac_privacy or be NULL (which
+/// answers -1).
+#[no_mangle]
+pub unsafe extern "C" fn rc_privacy_gpc(
+    h: *const settings::RcSettings,
+    tor_mode: c_int,
+) -> c_int {
+    catch_unwind(AssertUnwindSafe(|| match unsafe { h.as_ref() } {
+        Some(s) => {
+            if privacy::gpc(s, tor_mode != 0) {
+                1
+            } else {
+                0
+            }
+        }
+        None => {
+            error::set_error("rc_privacy_gpc needs a bound profile store");
+            -1
+        }
+    }))
+    .unwrap_or(-1)
+}
+
+// ---- URL-sanitize policy (MD06) ---------------------------------------
+// The per-profile URL-cleaning decision layer: the editable ruleset
+// override (profiles/<id>/urlclean.json, urlstrip grammar), the
+// copy-path toggle, the nav-path toggle read shared with the privacy
+// module (privacy/urlCleaning stays Qt-owned), the legacy
+// urlcleaner/extraParams merge, and the clean_policy composite the
+// snapshot loader ships to policy::strip_target.  The clipboard
+// write and the redirect application stay caller-side — this surface
+// only answers questions.
+
+/// Evaluates one urlclean manifest (JSON) against the bound
+/// profile's stores — see urlclean.rs for the op grammar (clean,
+/// enabled, set_enabled, params, ruleset_get/set/reset,
+/// clean_policy; "defaults" is the only NULL-store-legal op).  NULL
+/// on malformed input, a missing store or panic — the adapter must
+/// keep its local consult, never guess a verdict.  Mutating ops emit
+/// the "urlclean" change topic.  Free the result with
+/// rc_string_free().
+///
+/// # Safety
+/// `h` must come from rc_settings_open or be NULL; `json` must point
+/// to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_urlclean_call(
+    h: *const settings::RcSettings,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let (result, mutated) = catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { h.as_ref() };
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match urlclean::call_json(s, &manifest) {
+                Ok(result) => {
+                    let mutated = result
+                        .get("mutated")
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false);
+                    (util::to_c_string(result.to_string()), mutated)
+                }
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    (ptr::null_mut(), false)
+                }
+            },
+            None => {
+                error::set_error("bad urlclean call payload");
+                (ptr::null_mut(), false)
+            }
+        }
+    }))
+    .unwrap_or((ptr::null_mut(), false));
+    if mutated {
+        // The nav pipeline reads the ruleset off the snapshot, so a
+        // ruleset write only lands at the next snapshot push — the
+        // generation bump still matters: memoized verdicts computed
+        // under the old set must never outlive it.
+        policy::bump_eval_generation();
+        notify::emit("urlclean");
+    }
+    result
+}
+
 // ---- Tranco rank table (TRUST04) -------------------------------------
 
 /// The host's Tranco rank, or 0 when unlisted (Tranco ranks start at
@@ -1639,7 +2069,7 @@ pub unsafe extern "C" fn rc_readability_probe(html: *const u8, len: usize) -> i3
 /// Probe + extract in one pass — the ReaderMode::enter() path.  The
 /// JSON verdict (rc_buffer_free) always carries
 /// {"ok","probably","title","byline","siteName","excerpt","dir",
-/// "length","content"} — "content" is the article fragment sanitized
+/// "lang","length","content"} — "content" is the article fragment sanitized
 /// against the reader-view ruleset and is populated only when "ok".
 /// RC_INVALID_ARGUMENT on bad pointers or oversized input.
 ///
@@ -2475,6 +2905,70 @@ pub unsafe extern "C" fn rc_hist_clear_since(since_ms: i64) -> RcStatus {
     st
 }
 
+/// Deletes every visit at or before `cutoff_ms` (ms-epoch) — the bulk
+/// retention expiry behind HistoryManager's daysToExpire rule; the
+/// caller computes the local-time boundary.  Icons are kept.
+/// `out_removed` may be null; when given it receives the deleted
+/// row count.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_expire_older_than(
+    cutoff_ms: i64,
+    out_removed: *mut i64,
+) -> RcStatus {
+    let st = status_of(|| {
+        let removed = history::with(|s| s.expire_older_than(cutoff_ms))?;
+        if !out_removed.is_null() {
+            unsafe { *out_removed = removed };
+        }
+        Ok(())
+    });
+    if st == RcStatus::Ok {
+        notify::emit("history");
+    }
+    st
+}
+
+/// Runs a filtered listing query — the store-side query surface
+/// (RC04).  `spec_json` is an object, all fields optional:
+///   "term"     case-insensitive substring on url OR title (the
+///              history dialog's all-columns fixed-string match)
+///   "from_ms"  inclusive visited_at lower bound (ms-epoch)
+///   "until_ms" inclusive visited_at upper bound
+///   "limit"    max rows returned — absent or <0 is unbounded
+///   "offset"   rows skipped after filtering
+/// Returns a JSON array [{"url","title","ts"}, ...] in the same
+/// deduped newest-first order rc_hist_entry_at iterates.  NULL on a
+/// malformed spec or an unopened store; free with rc_string_free().
+///
+/// # Safety
+/// `spec_json` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_hist_query(spec_json: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(spec) = (unsafe { util::cstr(spec_json) }) else {
+            error::set_error("bad query pointer");
+            return ptr::null_mut();
+        };
+        history::with(|h| match h.query(spec) {
+            Ok(j) => util::to_c_string(j),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        })
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 // ---- session store (RCORE03) -------------------------------------------
 
 /// Validates the JSON session manifest and atomically installs it as
@@ -2581,6 +3075,160 @@ pub unsafe extern "C" fn rc_session_decode(
         buffer_out(out, session::decode(data)?);
         Ok(())
     })
+}
+
+// ---- session lifecycle marker (RC13) -------------------------------------
+//
+// session.state next to session.dat: the clean-shutdown flag +
+// crash-dirty record + restore-loop guard, so "restore previous
+// session?" works identically on every engine.  Same semantics as
+// BrowserProfile's markSession* sentinels — the C++ side drives both.
+
+/// Boots the session marker: returns 1 when the previous run's armed
+/// marker survived (it died uncleanly — crash counter bumped,
+/// "unclean" breadcrumb written), 0 on a clean/absent record, -1 on
+/// error (rc_last_error_message).  Either way this run's marker is
+/// now armed.
+///
+/// # Safety
+/// No pointers; thread-safe behind the store lock.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_mark_start() -> i32 {
+    catch_unwind(AssertUnwindSafe(|| match session::mark_start() {
+        Ok(dirty) => dirty as i32,
+        Err(e) => {
+            error::set_error(&e.msg);
+            -1
+        }
+    }))
+    .unwrap_or(-1)
+}
+
+/// Records a clean exit — disarms the marker, resets the crash
+/// counter, breadcrumbs "clean rc=N".
+///
+/// # Safety
+/// No pointers; thread-safe behind the store lock.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_mark_exit(code: i32) -> RcStatus {
+    status_of(|| session::mark_exit(code))
+}
+
+/// Records a handled signal termination — clean for crash-loop
+/// purposes, but the breadcrumb names the signal.
+///
+/// # Safety
+/// No pointers; thread-safe behind the store lock.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_mark_terminated(signal: i32) -> RcStatus {
+    status_of(|| session::mark_terminated(signal))
+}
+
+/// True while the session marker reads armed — at boot, a still-armed
+/// marker means the previous run never recorded an exit.
+///
+/// # Safety
+/// No pointers.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_dirty() -> i32 {
+    catch_unwind(AssertUnwindSafe(session::dirty)).unwrap_or(false) as i32
+}
+
+/// The consecutive-unclean count — the crash-loop signal.
+///
+/// # Safety
+/// No pointers.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_crash_count() -> i32 {
+    catch_unwind(AssertUnwindSafe(|| session::crash_count() as i32)).unwrap_or(0)
+}
+
+/// The last recorded exit breadcrumb ("clean rc=0", "terminated by
+/// signal N (NAME)", "unclean (crash or external kill)").
+/// RC_NOT_FOUND when none was ever written.
+///
+/// # Safety
+/// `out` receives a buffer to release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_last_exit(out: *mut RcBuffer) -> RcStatus {
+    status_of(|| {
+        match session::last_exit() {
+            Some(s) => {
+                buffer_out(out, s.into_bytes());
+                Ok(())
+            }
+            None => error::fail(RcStatus::NotFound, "no recorded exit"),
+        }
+    })
+}
+
+/// Arms/disarms the restore-loop guard — set before tabs reopen,
+/// cleared by the next successful save.
+///
+/// # Safety
+/// No pointers; thread-safe behind the store lock.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_set_restoring(on: i32) -> RcStatus {
+    status_of(|| session::set_restoring(on != 0))
+}
+
+/// True while the restore guard reads armed — a crash mid-restore
+/// leaves it set so the next boot prompts instead of looping.
+///
+/// # Safety
+/// No pointers.
+#[no_mangle]
+pub unsafe extern "C" fn rc_session_restoring() -> i32 {
+    catch_unwind(AssertUnwindSafe(session::restoring)).unwrap_or(false) as i32
+}
+
+// ---- session snapshot/restore policy (MD08) ---------------------------
+// The session pipeline's decision layer: the AutoSaver debounce +
+// ceiling, the dirty-on-what class gate, the retention caps (snapshot
+// max age / window / tab counts), the crash-restore answer and the
+// startup-mode fallback.  Typed reads over the bound profile's
+// settings.json ("session/" prefix) — the Qt writers own the keys;
+// this surface only answers questions.  The timers, the restore
+// prompt and the manifest truncation all stay Qt-side.
+
+/// Evaluates one session-policy manifest (JSON) against the bound
+/// profile's settings store — see sesspolicy.rs for the op grammar
+/// (defaults, policy, snapshot, dirty, retention, stale, restore;
+/// "defaults" is the only NULL-store-legal op, and the other reads
+/// degrade to the compiled-in constants on an absent store — only
+/// "stale" genuinely needs the dir).  NULL on malformed input or
+/// panic — the caller keeps its compiled-in consult, never guesses.
+/// Read-only: no change topic is emitted.  Free the result with
+/// rc_string_free().
+///
+/// # Safety
+/// `h` must come from rc_settings_open or be NULL; `json` must point
+/// to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_sesspolicy_call(
+    h: *const settings::RcSettings,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let s = unsafe { h.as_ref() };
+        match unsafe { util::bytes(json, len) }
+            .and_then(|d| policy::parse_json(d).ok())
+        {
+            Some(manifest) => match sesspolicy::call_json(s, &manifest) {
+                Ok(result) => util::to_c_string(result.to_string()),
+                Err(e) => {
+                    error::set_error(&e.msg);
+                    ptr::null_mut()
+                }
+            },
+            None => {
+                error::set_error("bad sesspolicy call payload");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 // ---- omnibox (OMNI01) -------------------------------------------------
@@ -2696,6 +3344,28 @@ pub unsafe extern "C" fn rc_history_suggest(
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         match history::with(|h| h.suggest(term, limit, now)) {
+            Ok(json) => util::to_c_string(json),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Most-visited hosts for chrome.topSites (MD27) — a JSON array
+/// `[{"host","url","title","visits","first_seen"}, ...]` ordered by
+/// visit count (descending, earliest first_seen breaking ties), each
+/// host's newest visit supplying the representative url/title.
+/// `limit` <= 0 picks the default 20.  NULL on error (store not
+/// open: rc_last_error_message).  Free with rc_string_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_history_top_hosts(
+    limit: i64,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match history::with(|h| h.top_hosts(limit)) {
             Ok(json) => util::to_c_string(json),
             Err(e) => {
                 error::set_error(&e.msg);
@@ -3175,6 +3845,2757 @@ pub unsafe extern "C" fn rc_sitedec_reload() -> RcStatus {
 #[no_mangle]
 pub unsafe extern "C" fn rc_sitedec_reset() -> RcStatus {
     status_of(sitedecisions::reset)
+}
+
+// ---- RC15: per-profile cookie database ----
+//
+// The Servo/WPE jar's persistent home and Chromium's durable mirror:
+// cookies.db under the profile dir (or the anchored data dir on this
+// surface), container-partitioned rows, Qt-jar-verified matching, and
+// a stored role flag distinguishing "this file IS the jar" from "the
+// engine owns the jar; this is its on-disk shadow".  Mutations emit
+// the "cookies" change topic; returned records are the JSON shape
+// cookies::Cookie::to_json emits.
+
+/// NULL-or-NUL-terminated-UTF-8 for the optional string params the
+/// cookie surface takes: NULL -> Ok(None); a non-NULL pointer that is
+/// not valid UTF-8 is an error, never a silent default.
+unsafe fn cookies_opt(ptr: *const c_char) -> error::RcResult<Option<String>> {
+    if ptr.is_null() {
+        return Ok(None);
+    }
+    unsafe { util::cstr(ptr) }
+        .map(|s| Some(s.to_string()))
+        .ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad string pointer".into(),
+        })
+}
+
+/// Opens the cookie database.  `path` NULL resolves to
+/// <data dir>/cookies.db; an explicit path binds a profile dir (the
+/// facade's per-profile lane passes profiles/<id>/cookies.db).
+///
+/// # Safety
+/// `path` must be NULL or NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_open(path: *const c_char) -> RcStatus {
+    status_of(|| {
+        let path = unsafe { cookies_opt(path) }?;
+        cookies::with(|s| s.open(path.as_deref()))
+    })
+}
+
+/// 1 while a database is open — the cheap probe (never errors).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_is_open() -> i32 {
+    catch_unwind(AssertUnwindSafe(|| i32::from(cookies::with(|s| s.is_open()))))
+        .unwrap_or(0)
+}
+
+/// The declared mode — 0 authoritative (this file IS the jar), 1
+/// mirror (an engine owns the jar; this is its durable shadow),
+/// -1 on error (not open).  Honest capability reporting: the caller
+/// decides what to trust based on who declared the role.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_role() -> i64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        cookies::with(|s| s.role()).unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
+}
+
+/// Declares the mode (0 or 1) — recorded in the db's meta table so
+/// tooling reading the file later knows what it last served.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_set_role(role: i64) -> RcStatus {
+    status_of(|| cookies::with(|s| s.set_role(role)))
+}
+
+/// Upserts one cookie record — the JSON shape Cookie::to_json emits
+/// ({"container":"","name":"","value":"","domain":"","path":"/",
+/// "expires":ms|null,"secure":b,"httpOnly":b,"sameSite":n,
+/// "hostOnly":b,"created":ms}).  An already-past expiry deletes the
+/// row (the Set-Cookie eviction rule); an identical rewrite is a
+/// no-op (no "cookies" notification).
+///
+/// # Safety
+/// `json` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_set(json: *const u8, len: usize) -> RcStatus {
+    let mut changed = false;
+    let status = status_of(|| {
+        let json = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad json pointer".into(),
+        })?;
+        let v: serde_json::Value = serde_json::from_slice(json).map_err(|e| {
+            error::Fail {
+                status: RcStatus::InvalidArgument,
+                msg: format!("cookie json: {e}"),
+            }
+        })?;
+        let c = cookies::Cookie::from_json(&v)?;
+        cookies::with(|s| s.set(&c)).map(|o| {
+            changed = o != cookies::SetOutcome::Noop;
+        })
+    });
+    if status == RcStatus::Ok && changed {
+        notify::emit("cookies");
+    }
+    status
+}
+
+/// One cookie by key — RC_NOT_FOUND when absent; the record JSON in
+/// `out` (free with rc_buffer_free).
+///
+/// # Safety
+/// `domain`/`name`/`path` must be NUL-terminated UTF-8; `container`
+/// may be NULL ("" = the default partition); `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_get(
+    domain: *const c_char,
+    name: *const c_char,
+    path: *const c_char,
+    container: *const c_char,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let domain = unsafe { util::cstr(domain) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad domain pointer".into(),
+        })?;
+        let name = unsafe { util::cstr(name) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad name pointer".into(),
+        })?;
+        let path = unsafe { util::cstr(path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad path pointer".into(),
+        })?;
+        let container = unsafe { cookies_opt(container) }?.unwrap_or_default();
+        let c = cookies::with(|s| s.get(&container, &domain, &name, &path))?;
+        buffer_out(out, c.to_json().to_string().into_bytes());
+        Ok(())
+    })
+}
+
+/// Deletes one cookie by key — RC_OK either way.
+///
+/// # Safety
+/// `domain`/`name`/`path` must be NUL-terminated UTF-8; `container`
+/// may be NULL ("" = default).
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_remove(
+    domain: *const c_char,
+    name: *const c_char,
+    path: *const c_char,
+    container: *const c_char,
+) -> RcStatus {
+    let mut removed = false;
+    let status = status_of(|| {
+        let domain = unsafe { util::cstr(domain) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad domain pointer".into(),
+        })?;
+        let name = unsafe { util::cstr(name) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad name pointer".into(),
+        })?;
+        let path = unsafe { util::cstr(path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad path pointer".into(),
+        })?;
+        let container = unsafe { cookies_opt(container) }?.unwrap_or_default();
+        cookies::with(|s| s.remove(&container, &domain, &name, &path))
+            .map(|r| removed = r)
+    });
+    if status == RcStatus::Ok && removed {
+        notify::emit("cookies");
+    }
+    status
+}
+
+/// Every cookie of a partition (NULL container = the whole db) as a
+/// JSON array of records — the cookie-manager listing lane.
+/// Caller frees with rc_string_free().
+///
+/// # Safety
+/// `container` must be NULL or NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_list(container: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let container = match unsafe { cookies_opt(container) } {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match cookies::with(|s| s.list(container.as_deref())) {
+            Ok(rows) => {
+                let arr: Vec<serde_json::Value> =
+                    rows.iter().map(cookies::Cookie::to_json).collect();
+                util::to_c_string(serde_json::Value::Array(arr).to_string())
+            }
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The send-match — which cookies ride a request.  `request` is JSON:
+/// {"url":"https://h/p","container":"","first_party":"h"|null,
+/// "now_ms":0} — first_party engages the SameSite cross-site filter;
+/// now_ms 0 = system clock.  Returns a JSON array of records in
+/// RFC6265 §5.4 send order (longest path, then earliest created).
+/// Caller frees with rc_string_free().
+///
+/// # Safety
+/// `request` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_for_url(
+    request: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let body = match unsafe { util::bytes(request, len) } {
+            Some(b) => b,
+            None => {
+                error::set_error("bad request pointer");
+                return ptr::null_mut();
+            }
+        };
+        let v: serde_json::Value = match serde_json::from_slice(body) {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&format!("for_url json: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        match cookies::ForUrl::from_json(&v)
+            .and_then(|req| cookies::with(|s| s.for_url(&req)))
+        {
+            Ok(rows) => {
+                let arr: Vec<serde_json::Value> =
+                    rows.iter().map(cookies::Cookie::to_json).collect();
+                util::to_c_string(serde_json::Value::Array(arr).to_string())
+            }
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Parses + stores one Set-Cookie header value against `url` — the
+/// authoritative backend's ingest lane.  Returns a verdict JSON
+/// {"stored":bool,"reason":"stored"|"deleted"|"…"} (caller frees).
+///
+/// # Safety
+/// `url`/`header` must be NUL-terminated UTF-8; `container` may be
+/// NULL ("" = default).
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_store_header(
+    url: *const c_char,
+    header: *const c_char,
+    container: *const c_char,
+) -> *mut c_char {
+    let mut stored = false;
+    let out = catch_unwind(AssertUnwindSafe(|| {
+        let url = match unsafe { util::cstr(url) } {
+            Some(u) => u,
+            None => {
+                error::set_error("bad url pointer");
+                return ptr::null_mut();
+            }
+        };
+        let header = match unsafe { util::cstr(header) } {
+            Some(h) => h,
+            None => {
+                error::set_error("bad header pointer");
+                return ptr::null_mut();
+            }
+        };
+        let container = match unsafe { cookies_opt(container) } {
+            Ok(c) => c.unwrap_or_default(),
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match cookies::with(|s| s.store_header(&container, &url, &header)) {
+            Ok(v) => {
+                stored = v.get("stored").and_then(serde_json::Value::as_bool)
+                    == Some(true);
+                util::to_c_string(v.to_string())
+            }
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut());
+    if stored {
+        notify::emit("cookies");
+    }
+    out
+}
+
+/// The cookie-policy gate — may this attempt proceed, and with what
+/// rewrites.  Consults the sibling sitedecisions.json "cookie" kind
+/// (the file CookieJar's exceptions already persist through) plus the
+/// caller-supplied policy snapshot.  Input/output shapes are
+/// documented on cookies::gate.  Caller frees the returned JSON.
+///
+/// # Safety
+/// `input` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_gate(
+    input: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let body = match unsafe { util::bytes(input, len) } {
+            Some(b) => b,
+            None => {
+                error::set_error("bad gate input pointer");
+                return ptr::null_mut();
+            }
+        };
+        let v: serde_json::Value = match serde_json::from_slice(body) {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&format!("gate json: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        match cookies::with(|s| {
+            let dir = s.dir().ok_or_else(|| error::Fail {
+                status: RcStatus::NotInitialized,
+                msg: "rc_cookies_open() has not been called".into(),
+            })?;
+            cookies::gate(&dir, &v)
+        }) {
+            Ok(verdict) => util::to_c_string(verdict.to_string()),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Imports a QNetworkCookie::toRawForm file — one raw line per row,
+/// the shape the vendored NetworkCookieJar saveState streams and
+/// testdata/cookies/export.txt carries.  Lines lacking a Domain
+/// attribute are skipped (there is no request host to key them on).
+/// Returns a JSON report {"imported":N,"skipped":M} — caller frees.
+///
+/// # Safety
+/// `path` must be NUL-terminated UTF-8; `container` may be NULL
+/// ("" = default partition).
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_import(
+    path: *const c_char,
+    container: *const c_char,
+) -> *mut c_char {
+    let mut imported = false;
+    let out = catch_unwind(AssertUnwindSafe(|| {
+        let path = match unsafe { util::cstr(path) } {
+            Some(p) => p,
+            None => {
+                error::set_error("bad import path pointer");
+                return ptr::null_mut();
+            }
+        };
+        let container = match unsafe { cookies_opt(container) } {
+            Ok(c) => c.unwrap_or_default(),
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let meta = match std::fs::metadata(&path) {
+            Ok(m) => m,
+            Err(e) => {
+                error::set_error(&format!("import source: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        if meta.len() > 32 * 1024 * 1024 {
+            error::set_error("import file over 32 MiB cap");
+            return ptr::null_mut();
+        }
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                error::set_error(&format!("import read: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        match cookies::with(|s| s.import_text(&container, &text)) {
+            Ok(v) => {
+                imported = v.get("imported").and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
+                    > 0;
+                util::to_c_string(v.to_string())
+            }
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut());
+    if imported {
+        notify::emit("cookies");
+    }
+    out
+}
+
+/// Exports the partition (NULL container = all) as toRawForm lines —
+/// the same file shape rc_cookies_import reads back.  Written
+/// atomically under the caller's path.
+///
+/// # Safety
+/// `path` must be NUL-terminated UTF-8; `container` may be NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_export(
+    path: *const c_char,
+    container: *const c_char,
+) -> RcStatus {
+    status_of(|| {
+        let path = unsafe { util::cstr(path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad export path pointer".into(),
+        })?;
+        let container = unsafe { cookies_opt(container) }?;
+        let text = cookies::with(|s| s.export_text(container.as_deref()))?;
+        store::atomic_write(std::path::Path::new(&path), text.as_bytes())
+    })
+}
+
+/// Wipes a partition — `container` NULL wipes the whole database.
+/// RC_OK either way.
+///
+/// # Safety
+/// `container` must be NULL or NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_clear(container: *const c_char) -> RcStatus {
+    let container = match unsafe { cookies_opt(container) } {
+        Ok(c) => c,
+        Err(e) => {
+            error::set_error(&e.msg);
+            return e.status;
+        }
+    };
+    let mut wiped = 0u64;
+    let status = status_of(|| {
+        cookies::with(|s| s.clear(container.as_deref())).map(|n| wiped = n)
+    });
+    if status == RcStatus::Ok && wiped > 0 {
+        notify::emit("cookies");
+    }
+    status
+}
+
+/// The shield panel's "clear site data" sweep — drops rows scoped to
+/// the host or a subdomain it controls, plus rows on a parent domain
+/// the site still receives (CookieJar::removeCookiesForHost verbatim).
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8; `container` may be NULL
+/// ("" = default partition).
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_remove_for_host(
+    host: *const c_char,
+    container: *const c_char,
+) -> RcStatus {
+    let mut removed = 0u64;
+    let status = status_of(|| {
+        let host = unsafe { util::cstr(host) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad host pointer".into(),
+        })?;
+        let container = unsafe { cookies_opt(container) }?.unwrap_or_default();
+        cookies::with(|s| s.remove_for_host(&container, &host)).map(|n| {
+            removed = n;
+        })
+    });
+    if status == RcStatus::Ok && removed > 0 {
+        notify::emit("cookies");
+    }
+    status
+}
+
+/// Row count — a partition, or the whole db on a NULL container.
+/// -1 on error (not open).
+///
+/// # Safety
+/// `container` must be NULL or NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_count(container: *const c_char) -> i64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let container = match unsafe { cookies_opt(container) } {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        cookies::with(|s| s.count(container.as_deref())).unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
+}
+
+/// Deletes rows whose expiry is at or before `now_ms`.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_purge_expired(now_ms: i64) -> RcStatus {
+    let mut n = 0u64;
+    let status = status_of(|| {
+        cookies::with(|s| s.purge_expired(now_ms)).map(|c| n = c)
+    });
+    if status == RcStatus::Ok && n > 0 {
+        notify::emit("cookies");
+    }
+    status
+}
+
+/// The exit-sweep: drops every session row (the C++ jar's endSession
+/// equivalent — also run automatically at open).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_cookies_purge_session() -> RcStatus {
+    let mut n = 0u64;
+    let status = status_of(|| cookies::with(|s| s.purge_session()).map(|c| n = c));
+    if status == RcStatus::Ok && n > 0 {
+        notify::emit("cookies");
+    }
+    status
+}
+
+// ---- RC16: per-profile site-icon cache ----
+//
+// The disposable lane: icon records keyed by page-url/origin, pointing
+// at PNG files under <data dir>/cache/icons/ — never the data root.
+// Fetch is Qt/engine-side (the page already carries the bytes); this
+// store owns the index, the dedup-by-host file naming, the expiry
+// sweep and the file lifecycle.  Mutations emit the "icons" change
+// topic.  See icons.rs for the layout and the legacy import.
+
+/// Stores the favicon PNG for `url`'s icon key — the lowercase host,
+/// or the whole url when it carries no host (the historyIconKey rule
+/// the LocationBarSiteIcon consumers rely on).  Every page of a host
+/// shares one file.  A rewrite carrying identical bytes is a no-op.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8; `png` points to `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_put(
+    url: *const c_char,
+    png: *const u8,
+    len: usize,
+) -> RcStatus {
+    let mut changed = false;
+    let status = status_of(|| {
+        let url = unsafe { util::cstr(url) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad icon url pointer".into(),
+        })?;
+        let data = unsafe { util::bytes(png, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad icon pointer".into(),
+        })?;
+        icons::put(url, data).map(|c| changed = c)
+    });
+    if status == RcStatus::Ok && changed {
+        notify::emit("icons");
+    }
+    status
+}
+
+/// Fetches the stored favicon PNG for `url`'s key; RC_NOT_FOUND when
+/// the site has none.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8; `out` receives a buffer to
+/// release with rc_buffer_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_get(url: *const c_char, out: *mut RcBuffer) -> RcStatus {
+    status_of(|| {
+        let url = unsafe { util::cstr(url) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad icon url pointer".into(),
+        })?;
+        buffer_out(out, icons::get(url)?);
+        Ok(())
+    })
+}
+
+/// Drops the icon record for `url`'s key — RC_OK either way.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_remove(url: *const c_char) -> RcStatus {
+    let mut removed = false;
+    let status = status_of(|| {
+        let url = unsafe { util::cstr(url) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad icon url pointer".into(),
+        })?;
+        icons::remove(url).map(|r| removed = r)
+    });
+    if status == RcStatus::Ok && removed {
+        notify::emit("icons");
+    }
+    status
+}
+
+/// Wipes the profile's whole icon cache — the clearIconDatabase
+/// equivalent.  RC_OK whether or not anything existed.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_clear() -> RcStatus {
+    let had = catch_unwind(AssertUnwindSafe(|| icons::count().unwrap_or(0)))
+        .unwrap_or(0)
+        > 0;
+    let status = status_of(icons::clear);
+    if status == RcStatus::Ok && had {
+        notify::emit("icons");
+    }
+    status
+}
+
+/// Expiry sweep: drops records not refreshed at-or-before `cutoff_ms`
+/// and unlinks their files — the caller computes the retention
+/// boundary (HistoryManager passes its history cutoff).  `out_removed`
+/// may be NULL; when given it receives the dropped count.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_sweep(
+    cutoff_ms: i64,
+    out_removed: *mut i64,
+) -> RcStatus {
+    let mut removed = 0u64;
+    let status = status_of(|| icons::sweep(cutoff_ms).map(|n| removed = n));
+    if status == RcStatus::Ok {
+        if !out_removed.is_null() {
+            unsafe { *out_removed = removed as i64 };
+        }
+        if removed > 0 {
+            notify::emit("icons");
+        }
+    }
+    status
+}
+
+/// Record count; -1 on error (no anchored data dir).
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_count() -> i64 {
+    catch_unwind(AssertUnwindSafe(|| icons::count().unwrap_or(-1))).unwrap_or(-1)
+}
+
+/// The store's icon key for `url` — lowercase host, or the whole url
+/// when hostless; the derivation both FFI spellings share.  Caller
+/// frees with rc_string_free; NULL on invalid input.
+///
+/// # Safety
+/// `url` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_key(url: *const c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let url = match unsafe { util::cstr(url) } {
+            Some(u) => u,
+            None => {
+                error::set_error("bad icon url pointer");
+                return ptr::null_mut();
+            }
+        };
+        match icons::key_for(url) {
+            Ok(k) => util::to_c_string(k),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The index rows as a JSON array — [{"key","file","updated",
+/// "pages":[]}] — caller frees with rc_string_free.  NULL on error.
+///
+/// # Safety
+///
+/// Exported C ABI — every pointer argument is untrusted: invalid
+/// pointers/sizes degrade to an error return rather than UB, but
+/// callers must still pass pointers valid for the documented
+/// access (NUL-terminated strings, `len`-sized buffers, writable
+/// out-params).  Returned `char*`/`RcBuffer` results are
+/// caller-owned — free with `rc_string_free`/`rc_buffer_free`.
+#[no_mangle]
+pub unsafe extern "C" fn rc_icons_list() -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| match icons::list() {
+        Ok(v) => match CString::new(v) {
+            Ok(c) => c.into_raw(),
+            Err(_) => {
+                error::set_error("icon list is not utf8-clean");
+                ptr::null_mut()
+            }
+        },
+        Err(e) => {
+            error::set_error(&e.msg);
+            ptr::null_mut()
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+// ---- RC02: typed per-profile settings store ----
+//
+// The profile-bound key-value store replacing ProfileSettings'
+// persistence — scope (global, or profiles/<id>/ under the data
+// root) is bound at rc_settings_open(), so no rc_set_data_dir
+// re-anchoring is needed and alternating personas is cheap.
+// settings.json is canonical; the legacy QSettings ini pair is a
+// one-shot read source (profile ini auto-imported on first open,
+// the global ini through rc_settings_import_ini with the MPROF04
+// classification filter).  Mutations persist atomically and emit
+// the "settings" topic.
+
+fn settings_ref<'a>(
+    h: *const settings::RcSettings,
+) -> error::RcResult<&'a settings::RcSettings> {
+    unsafe { h.as_ref() }.ok_or_else(|| error::Fail {
+        status: RcStatus::InvalidArgument,
+        msg: "bad settings handle".into(),
+    })
+}
+
+/// Opens the store for `profile_id` (NULL/empty selects the global
+/// scope) under `data_root` — a real path, not the process-global
+/// data dir.  Returns an opaque handle or NULL (error stashed).
+///
+/// # Safety
+/// String pointers must be NUL-terminated UTF-8; the returned
+/// handle is released with rc_settings_close().
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_open(
+    data_root: *const c_char,
+    profile_id: *const c_char,
+) -> *mut settings::RcSettings {
+    catch_unwind(AssertUnwindSafe(|| {
+        let root = match unsafe { util::cstr(data_root) } {
+            Some(r) => r,
+            None => {
+                error::set_error("bad data root pointer");
+                return ptr::null_mut();
+            }
+        };
+        // NULL means global scope; a non-NULL pointer that is not
+        // valid UTF-8 is an error, never a silent scope switch.
+        let pid = if profile_id.is_null() {
+            None
+        } else {
+            match unsafe { util::cstr(profile_id) } {
+                Some(p) => Some(p),
+                None => {
+                    error::set_error("bad profile id pointer");
+                    return ptr::null_mut();
+                }
+            }
+        };
+        match settings::RcSettings::open(root, pid) {
+            Ok(h) => Box::into_raw(Box::new(h)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Releases a handle from rc_settings_open().  NULL-tolerant.
+///
+/// # Safety
+/// `h` must come from rc_settings_open and not be used afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_close(h: *mut settings::RcSettings) {
+    if !h.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            drop(unsafe { Box::from_raw(h) });
+        }));
+    }
+}
+
+/// One-shot legacy import: merges a QSettings ini file at `path`.
+/// Profile-scope handles keep only isProfileKey()-classified keys;
+/// global-scope handles keep the complement.  Never overwrites an
+/// existing key; a second call is a no-op.
+///
+/// # Safety
+/// `path` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_import_ini(
+    h: *mut settings::RcSettings,
+    path: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let path = unsafe { util::cstr(path) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad ini path pointer".into(),
+        })?;
+        h.import_ini(path)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// 1 when `key` exists in this store.
+///
+/// # Safety
+/// `key` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_contains(
+    h: *const settings::RcSettings,
+    key: *const c_char,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(_) => return 0,
+        };
+        match unsafe { util::cstr(key) } {
+            Some(k) => i32::from(h.contains(k).unwrap_or(false)),
+            None => 0,
+        }
+    }))
+    .unwrap_or(0)
+}
+
+/// The stored value as `{"t":"s|b|i|d|x|l","v":...}` JSON —
+/// RC_NOT_FOUND when absent.  The typed accessor the Qt bridge
+/// rebuilds a QVariant from.
+///
+/// # Safety
+/// `key` must be NUL-terminated UTF-8; `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_get(
+    h: *const settings::RcSettings,
+    key: *const c_char,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        let v = h.get(key)?;
+        let json = settings::value_to_json(&v).to_string();
+        buffer_out(out, json.into_bytes());
+        Ok(())
+    })
+}
+
+macro_rules! settings_getter {
+    ($name:ident, $out:ty, $call:ident, $fill:expr) => {
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(
+            h: *const settings::RcSettings,
+            key: *const c_char,
+            out: *mut $out,
+        ) -> RcStatus {
+            status_of(|| {
+                let h = settings_ref(h)?;
+                let key =
+                    unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+                        status: RcStatus::InvalidArgument,
+                        msg: "bad key pointer".into(),
+                    })?;
+                let value = h.$call(key)?;
+                match unsafe { out.as_mut() } {
+                    Some(slot) => {
+                        $fill(slot, value);
+                        Ok(())
+                    }
+                    None => Err(error::Fail {
+                        status: RcStatus::InvalidArgument,
+                        msg: "bad out pointer".into(),
+                    }),
+                }
+            })
+        }
+    };
+}
+
+settings_getter!(rc_settings_get_bool, i32, get_bool, |slot: &mut i32, v: bool| {
+    *slot = i32::from(v)
+});
+settings_getter!(rc_settings_get_int, i64, get_int, |slot: &mut i64, v: i64| {
+    *slot = v
+});
+settings_getter!(
+    rc_settings_get_double,
+    f64,
+    get_double,
+    |slot: &mut f64, v: f64| *slot = v
+);
+
+/// Reads `key` as UTF-8 text into `out` (QVariant toString()
+/// semantics — any stored type converts).  RC_NOT_FOUND when absent.
+///
+/// # Safety
+/// `key` must be NUL-terminated UTF-8; `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_get_string(
+    h: *const settings::RcSettings,
+    key: *const c_char,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        buffer_out(out, h.get_string(key)?.into_bytes());
+        Ok(())
+    })
+}
+
+/// Reads `key` as raw bytes into `out`.  RC_NOT_FOUND when absent.
+///
+/// # Safety
+/// `key` must be NUL-terminated UTF-8; `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_get_bytes(
+    h: *const settings::RcSettings,
+    key: *const c_char,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        buffer_out(out, h.get_bytes(key)?);
+        Ok(())
+    })
+}
+
+/// Reads `key` as a JSON array of strings into `out`
+/// (QStringList semantics — a scalar becomes a one-element list).
+/// RC_NOT_FOUND when absent.
+///
+/// # Safety
+/// `key` must be NUL-terminated UTF-8; `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_get_list(
+    h: *const settings::RcSettings,
+    key: *const c_char,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        let json = serde_json::to_string(&h.get_list(key)?).map_err(|e| {
+            error::Fail {
+                status: RcStatus::Corrupt,
+                msg: format!("encode settings list: {e}"),
+            }
+        })?;
+        buffer_out(out, json.into_bytes());
+        Ok(())
+    })
+}
+
+/// Stores a UTF-8 string; persists atomically and emits "settings".
+///
+/// # Safety
+/// All pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_set_string(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+    value: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        let value = unsafe { util::cstr(value) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad value pointer".into(),
+        })?;
+        h.set(key, settings::Value::Str(value.to_string()))
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Stores a bool (0/1).  # Safety: `key` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_set_bool(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+    value: i32,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        h.set(key, settings::Value::Bool(value != 0))
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Stores a 64-bit integer.  # Safety: `key` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_set_int(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+    value: i64,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        h.set(key, settings::Value::Int(value))
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Stores a finite double.  # Safety: `key` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_set_double(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+    value: f64,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        h.set(key, settings::Value::Dbl(value))
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Stores raw bytes.  # Safety: `value` must point to `len` readable
+/// bytes; `key` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_set_bytes(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+    value: *const u8,
+    len: usize,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        let v = unsafe { util::bytes(value, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad value pointer".into(),
+        })?;
+        h.set(key, settings::Value::Bytes(v.to_vec()))
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Stores a string list, marshaled as a JSON array of strings.
+/// # Safety: `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_set_list(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        let raw = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad json pointer".into(),
+        })?;
+        let list: Vec<String> =
+            serde_json::from_slice(raw).map_err(|e| error::Fail {
+                status: RcStatus::InvalidArgument,
+                msg: format!("settings list payload: {e}"),
+            })?;
+        h.set(key, settings::Value::List(list))
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Drops `key` (idempotent), persists, emits "settings".
+/// # Safety: `key` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_remove(
+    h: *mut settings::RcSettings,
+    key: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let key = unsafe { util::cstr(key) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad key pointer".into(),
+        })?;
+        h.remove(key)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("settings");
+    }
+    status
+}
+
+/// Keys under `prefix` (boundary match — `prefix` and `prefix/…`;
+/// NULL/empty lists all) as a JSON array.  rc_string_free result.
+///
+/// # Safety
+/// `prefix` must be NULL or NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_list(
+    h: *const settings::RcSettings,
+    prefix: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let prefix = unsafe { util::cstr(prefix) };
+        match h.list(prefix) {
+            Ok(keys) => util::to_c_string(
+                serde_json::to_string(&keys).unwrap_or_else(|_| "[]".into()),
+            ),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Flushes the store — mutations already write through, so this is
+/// the QSettings sync() call shape, kept for API completeness.
+///
+/// # Safety
+/// `h` must come from rc_settings_open.
+#[no_mangle]
+pub unsafe extern "C" fn rc_settings_sync(
+    h: *mut settings::RcSettings,
+) -> RcStatus {
+    status_of(|| settings_ref(h)?.sync())
+}
+
+// ---- RC19: container registry + storage-namespace map ----
+//
+// ContainerManager's registry is a typed specialization over the
+// settings store — the "containers" group of the PROFILE scope, so
+// every op here runs on an RcSettings handle bound to the owning
+// persona (global-scope handles see no containers; the group is a
+// classified persona key).  The id list ("order") plus per-id
+// name/color/icon keys match the C++ layout byte-for-byte — a
+// registry written here is what loadRegistry reads on the next
+// scope open, and the C++ ProfileSettings mirror keeps the
+// settings.ini compat bytes flowing when C++ authors the change.
+// The namespace map is a pure derivation: the same storage root /
+// VSEC02 cache tree / Qt residue dir / storage name ContainerManager
+// computes, plus the cookie-partition key the cookies db (RC15)
+// partitions rows on.  Mutations emit the "containers" topic.
+
+fn containers_cstr<'a>(p: *const c_char, what: &str) -> error::RcResult<&'a str> {
+    unsafe { util::cstr(p) }.ok_or_else(|| error::Fail {
+        status: RcStatus::InvalidArgument,
+        msg: format!("bad {what} pointer"),
+    })
+}
+
+fn containers_json_out(v: serde_json::Value) -> *mut c_char {
+    util::to_c_string(v.to_string())
+}
+
+/// The bound profile's container registry as a JSON array of
+/// {"id","name","color","icon"} in creation order — NULL + stashed
+/// error on a bad handle.  Free with rc_string_free().
+///
+/// # Safety
+/// `h` must come from rc_settings_open/ac_settings.
+#[no_mangle]
+pub unsafe extern "C" fn rc_containers_list(
+    h: *const settings::RcSettings,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match containers::list(h) {
+            Ok(rows) => containers_json_out(serde_json::Value::Array(
+                rows.iter().map(containers::to_json).collect(),
+            )),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// One registry row {"id","name","color","icon"} — NULL when the id
+/// is unregistered (a miss is not an error).  Free with
+/// rc_string_free().
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_containers_get(
+    h: *const settings::RcSettings,
+    id: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let id = match containers_cstr(id, "container id") {
+            Ok(i) => i,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match containers::get(h, id) {
+            Ok(c) => containers_json_out(containers::to_json(&c)),
+            Err(e) if e.status == RcStatus::NotFound => ptr::null_mut(),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Creates a container from JSON {"name","color","icon"?} — the id
+/// is minted here (v4 uuid, the C++ hex-with-dashes shape) and
+/// appended to "order".  Returns the row {"id",...}; NULL + stashed
+/// error on failure.  Free with rc_string_free().
+///
+/// # Safety
+/// `json` must point to `len` readable bytes of UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_containers_create(
+    h: *mut settings::RcSettings,
+    json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    let made = catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let raw = match unsafe { util::bytes(json, len) } {
+            Some(r) => r,
+            None => {
+                error::set_error("bad container json pointer");
+                return ptr::null_mut();
+            }
+        };
+        let spec: serde_json::Value = match serde_json::from_slice(raw) {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&format!("container spec: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        let name = spec.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let color = spec.get("color").and_then(|v| v.as_str()).unwrap_or("");
+        let icon = spec.get("icon").and_then(|v| v.as_str());
+        match containers::create(h, name, color, icon) {
+            Ok(c) => containers_json_out(containers::to_json(&c)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut());
+    if !made.is_null() {
+        notify::emit("containers");
+    }
+    made
+}
+
+/// Patches one registry row — JSON {"name"?,"color"?,"icon"?}; an
+/// "icon" of "" (or null) clears it.  RC_NOT_FOUND on an
+/// unregistered id.
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8; `json` points to `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_containers_update(
+    h: *mut settings::RcSettings,
+    id: *const c_char,
+    json: *const u8,
+    len: usize,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let id = containers_cstr(id, "container id")?;
+        let raw = unsafe { util::bytes(json, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad container patch pointer".into(),
+        })?;
+        let spec: serde_json::Value =
+            serde_json::from_slice(raw).map_err(|e| error::Fail {
+                status: RcStatus::InvalidArgument,
+                msg: format!("container patch: {e}"),
+            })?;
+        let mut patch = containers::Patch::default();
+        if let Some(v) = spec.get("name") {
+            patch.name =
+                Some(v.as_str().ok_or_else(|| error::Fail {
+                    status: RcStatus::InvalidArgument,
+                    msg: "container patch: name must be a string".into(),
+                })?);
+        }
+        if let Some(v) = spec.get("color") {
+            patch.color =
+                Some(v.as_str().ok_or_else(|| error::Fail {
+                    status: RcStatus::InvalidArgument,
+                    msg: "container patch: color must be a string".into(),
+                })?);
+        }
+        if let Some(v) = spec.get("icon") {
+            patch.icon =
+                Some(if v.is_null() { "" } else {
+                    v.as_str().ok_or_else(|| error::Fail {
+                        status: RcStatus::InvalidArgument,
+                        msg: "container patch: icon must be a string or null"
+                            .into(),
+                    })?
+                });
+        }
+        containers::update(h, id, &patch)?;
+        Ok(())
+    });
+    if status == RcStatus::Ok {
+        notify::emit("containers");
+    }
+    status
+}
+
+/// removeRegistry()'s store half — the <id>/ group plus its "order"
+/// entry.  RC_NOT_FOUND on an unregistered id; the on-disk storage
+/// trees are the caller's job (rc_containers_namespace gives their
+/// paths) — same split as deleteContainer.
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_containers_remove(
+    h: *mut settings::RcSettings,
+    id: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let id = containers_cstr(id, "container id")?;
+        match containers::remove(h, id)? {
+            true => Ok(()),
+            false => Err(error::Fail {
+                status: RcStatus::NotFound,
+                msg: "no such container".into(),
+            }),
+        }
+    });
+    if status == RcStatus::Ok {
+        notify::emit("containers");
+    }
+    status
+}
+
+/// The storage namespace for a registered container id — JSON
+/// {"storage_name","storage_path","cache_path","default_data_path",
+/// "cookie_partition"} matching ContainerManager's storagePath /
+/// cachePathFor / defaultDataPathFor / storageNameFor, plus the
+/// RC15 cookie-partition key.  `data_root` is the APP data root
+/// (BrowserPaths::dataRoot).  NULL + stashed error on a bad id —
+/// the default ("") container has no namespace of its own.
+///
+/// # Safety
+/// All pointers must be NUL-terminated UTF-8; free the result with
+/// rc_string_free().
+#[no_mangle]
+pub unsafe extern "C" fn rc_containers_namespace(
+    data_root: *const c_char,
+    profile_id: *const c_char,
+    container_id: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let root = match containers_cstr(data_root, "data root") {
+            Ok(r) => r,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let pid = match containers_cstr(profile_id, "profile id") {
+            Ok(p) => p,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let cid = match containers_cstr(container_id, "container id") {
+            Ok(c) => c,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match containers::namespace(root, pid, cid) {
+            Ok(n) => containers_json_out(containers::namespace_json(&n)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+// ---- RC20: update-check policy + manifest parse ----
+//
+// UpdateChecker's non-network half.  The pure ops (normalize/
+// compare, trusted-URL gate, manifest parse, platform pick, channel
+// rule) are stateless; the check state (lastCheckMs, snoozeUntilMs,
+// skippedVersion, channel) is a typed specialization over the
+// settings store — GLOBAL scope by design (the check is
+// application-level; "updates" is not an MPROF04 profile group), so
+// callers pass a global-bound RcSettings handle (ac_settings(core,
+// NULL) reaches the same store).  A profile-bound handle still
+// works — it would scope the keys to that persona, which nothing
+// else reads.  Mutations emit the "updates" topic.
+
+fn updates_cstr<'a>(p: *const c_char, what: &str) -> error::RcResult<&'a str> {
+    unsafe { util::cstr(p) }.ok_or_else(|| error::Fail {
+        status: RcStatus::InvalidArgument,
+        msg: format!("bad {what} pointer"),
+    })
+}
+
+/// UpdateChecker::normalizedVersion — the normalized tag as a fresh
+/// string (rc_string_free), NULL + stashed error on a bad pointer.
+///
+/// # Safety
+/// `version` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_normalize_version(
+    version: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match updates_cstr(version, "version") {
+            Ok(v) => util::to_c_string(updates::normalize_version(v)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// UpdateChecker::compareVersions — -1/0/+1 on the normalized forms
+/// (numeric elementwise when both sides parse, string compare else).
+/// -2 with a stashed error on a bad pointer — never a verdict.
+///
+/// # Safety
+/// Both pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_compare_versions(
+    a: *const c_char,
+    b: *const c_char,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let a = match updates_cstr(a, "version a") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -2;
+            }
+        };
+        let b = match updates_cstr(b, "version b") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -2;
+            }
+        };
+        updates::compare_versions(a, b)
+    }))
+    .unwrap_or(-2)
+}
+
+/// The AUDIT04 download-URL gate — 1 trusted / 0 refused, -1 with a
+/// stashed error on a bad pointer.
+///
+/// # Safety
+/// Both pointers must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_is_trusted_url(
+    url: *const c_char,
+    api_url: *const c_char,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let u = match updates_cstr(url, "url") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        let a = match updates_cstr(api_url, "api url") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        updates::is_trusted_download_url(u, a) as i32
+    }))
+    .unwrap_or(-1)
+}
+
+/// The channel rule — 1 when a manifest with `draft`/`prerelease`
+/// flags is an offer on `channel` ("stable"/"beta", "" = stable),
+/// 0 when it is not, -1 on an unknown channel or bad pointer.
+///
+/// # Safety
+/// `channel` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_channel_accepts(
+    channel: *const c_char,
+    draft: i32,
+    prerelease: i32,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let c = match updates_cstr(channel, "channel") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        match updates::channel_from_str(c) {
+            Ok(c) => {
+                updates::channel_accepts(c, draft != 0, prerelease != 0) as i32
+            }
+            Err(e) => {
+                error::set_error(&e.msg);
+                -1
+            }
+        }
+    }))
+    .unwrap_or(-1)
+}
+
+/// UpdateChecker::parseReleaseJson — a GitHub release manifest
+/// (`payload`/`len`) gated against `api_url`.  Returns JSON
+/// {"version","title","page_url","draft","prerelease",
+/// "assets":[{"name","url","size"}]} — caller frees with
+/// rc_string_free; NULL + stashed error on malformed input.
+///
+/// # Safety
+/// `payload` must point to `len` readable bytes; `api_url` must be
+/// NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_parse_manifest(
+    payload: *const u8,
+    len: usize,
+    api_url: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let raw = match unsafe { util::bytes(payload, len) } {
+            Some(r) => r,
+            None => {
+                error::set_error("bad manifest pointer");
+                return ptr::null_mut();
+            }
+        };
+        let api = match updates_cstr(api_url, "api url") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match updates::parse_release(raw, api) {
+            Ok(r) => containers_json_out(serde_json::json!({
+                "version": r.version,
+                "title": r.title,
+                "page_url": r.page_url,
+                "draft": r.draft,
+                "prerelease": r.prerelease,
+                "assets": r.assets.iter().map(|a| serde_json::json!({
+                    "name": a.name,
+                    "url": a.url,
+                    "size": a.size,
+                })).collect::<Vec<_>>(),
+            })),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// UpdateChecker::platformAssetsFor — `assets_json` is the
+/// "assets" array parse_manifest emits (or any [{"name","url",
+/// "size"}] list).  Returns {"candidates":[{...}],"ambiguous":bool}
+/// preference-ordered; free with rc_string_free.  NULL + stashed
+/// error on bad input.
+///
+/// # Safety
+/// `os` and `os_release_id_like` must be NUL-terminated UTF-8
+/// ("" is legal for the id-like); `assets_json` points to `len`
+/// bytes of UTF-8 JSON.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_platform_pick(
+    os: *const c_char,
+    os_release_id_like: *const c_char,
+    assets_json: *const u8,
+    len: usize,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let os = match updates_cstr(os, "os") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let id_like = match updates_cstr(os_release_id_like, "os-release") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let raw = match unsafe { util::bytes(assets_json, len) } {
+            Some(r) => r,
+            None => {
+                error::set_error("bad assets pointer");
+                return ptr::null_mut();
+            }
+        };
+        let spec: serde_json::Value = match serde_json::from_slice(raw) {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&format!("assets json: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        let mut assets = Vec::new();
+        for row in spec.as_array().cloned().unwrap_or_default() {
+            assets.push(updates::ReleaseAsset {
+                name: row.get("name").and_then(|x| x.as_str()).unwrap_or("").into(),
+                url: row.get("url").and_then(|x| x.as_str()).unwrap_or("").into(),
+                size: row.get("size").and_then(|x| x.as_f64()).map(|f| f as i64).unwrap_or(0),
+            });
+        }
+        let pick = updates::platform_pick(os, id_like, &assets);
+        containers_json_out(serde_json::json!({
+            "candidates": pick.candidates.iter().map(|&i| serde_json::json!({
+                "name": assets[i].name,
+                "url": assets[i].url,
+                "size": assets[i].size,
+            })).collect::<Vec<_>>(),
+            "ambiguous": pick.ambiguous,
+        }))
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The persisted check state as JSON {"last_check_ms",
+/// "snooze_until_ms","skipped_version","channel"} — the GLOBAL
+/// scope's "updates/" keys.  NULL + stashed error on a bad handle;
+/// free with rc_string_free.
+///
+/// # Safety
+/// `h` must come from rc_settings_open/ac_settings.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_state(
+    h: *const settings::RcSettings,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match updates::read_state(h) {
+            Ok(s) => containers_json_out(s.to_json()),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Stamps the last-check time (ms since epoch).
+///
+/// # Safety
+/// `h` must come from rc_settings_open/ac_settings.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_record_check(
+    h: *mut settings::RcSettings,
+    now_ms: i64,
+) -> RcStatus {
+    let status = status_of(|| updates::record_check(settings_ref(h)?, now_ms));
+    if status == RcStatus::Ok {
+        notify::emit("updates");
+    }
+    status
+}
+
+/// Snoozes update notifications until `until_ms` (<= 0 clears).
+///
+/// # Safety
+/// `h` must come from rc_settings_open/ac_settings.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_snooze(
+    h: *mut settings::RcSettings,
+    until_ms: i64,
+) -> RcStatus {
+    let status = status_of(|| updates::snooze(settings_ref(h)?, until_ms));
+    if status == RcStatus::Ok {
+        notify::emit("updates");
+    }
+    status
+}
+
+/// The tag the user dismissed — NULL clears the filter.
+///
+/// # Safety
+/// `version` must be NUL-terminated UTF-8 or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_set_skipped(
+    h: *mut settings::RcSettings,
+    version: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = settings_ref(h)?;
+        let v = if version.is_null() {
+            None
+        } else {
+            Some(updates_cstr(version, "version")?)
+        };
+        updates::set_skipped(h, v)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("updates");
+    }
+    status
+}
+
+/// Persists the channel — "stable"/"beta" only; an unknown name is
+/// RC_ERR_INVALID and changes nothing.
+///
+/// # Safety
+/// `channel` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_set_channel(
+    h: *mut settings::RcSettings,
+    channel: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        updates::set_channel(
+            settings_ref(h)?,
+            updates_cstr(channel, "channel")?,
+        )
+    });
+    if status == RcStatus::Ok {
+        notify::emit("updates");
+    }
+    status
+}
+
+/// The notify verdict for a remote tag vs the local version at
+/// `now_ms`: newer, unskipped, unsnoozed — 1 notify / 0 don't, -1 on
+/// bad input.
+///
+/// # Safety
+/// `h` must come from rc_settings_open/ac_settings; the versions
+/// must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_updates_should_notify(
+    h: *const settings::RcSettings,
+    remote_version: *const c_char,
+    local_version: *const c_char,
+    now_ms: i64,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match settings_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        let remote = match containers_cstr(remote_version, "remote version") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        let local = match containers_cstr(local_version, "local version") {
+            Ok(v) => v,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return -1;
+            }
+        };
+        match updates::read_state(h) {
+            Ok(s) => updates::should_notify(&s, remote, local, now_ms) as i32,
+            Err(e) => {
+                error::set_error(&e.msg);
+                -1
+            }
+        }
+    }))
+    .unwrap_or(-1)
+}
+
+// ---- RC21: per-profile side-panel notes store ----
+//
+// The sidebar's ordered multi-note list — profiles/<id>/notes.json
+// in the C++ writer's compact sorted-key JSON shape (see notes.rs
+// for the byte-compat details).  rc_notes_open binds a persona's
+// file; a NULL/empty profile id — or an empty path on
+// rc_notes_open_file — mints the VOLATILE off-the-record store the
+// model hands private/tor windows: CRUD in memory, sync() a no-op,
+// nothing reaches disk.  Row-addressed ops mirror the model
+// contract (clamped insert rows, refused remove ranges, identical-
+// value setters reporting "unchanged"); mutations dirty the store
+// and emit "notes", sync()/close commit atomically — the AutoSaver
+// debounce rides across the boundary unchanged.
+
+fn notes_ref<'a>(h: *const notes::RcNotes) -> error::RcResult<&'a notes::RcNotes> {
+    unsafe { h.as_ref() }.ok_or_else(|| error::Fail {
+        status: RcStatus::InvalidArgument,
+        msg: "bad notes handle".into(),
+    })
+}
+
+/// Opens the notes store for `profile_id` under `data_root` — a
+/// slug binds profiles/<id>/notes.json, NULL/empty mints a volatile
+/// off-the-record store, a non-slug id is an error.  NULL handle +
+/// stashed error on failure; release with rc_notes_close().
+///
+/// # Safety
+/// String pointers must be NUL-terminated UTF-8 or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_open(
+    data_root: *const c_char,
+    profile_id: *const c_char,
+) -> *mut notes::RcNotes {
+    catch_unwind(AssertUnwindSafe(|| {
+        let root = unsafe { util::cstr(data_root) }.unwrap_or("");
+        let id = match unsafe { util::cstr(profile_id) } {
+            Some(s) if !s.is_empty() => Some(s),
+            _ => None,
+        };
+        match notes::RcNotes::open(root, id) {
+            Ok(h) => Box::into_raw(Box::new(h)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Opens the store bound to an explicit file — the standalone
+/// NotesModel(storageFile) lane (tests, per-path callers).
+/// NULL/empty mints a volatile store.  NULL + stashed error on
+/// failure; release with rc_notes_close().
+///
+/// # Safety
+/// `path` must be NUL-terminated UTF-8 or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_open_file(
+    path: *const c_char,
+) -> *mut notes::RcNotes {
+    catch_unwind(AssertUnwindSafe(|| {
+        let path = unsafe { util::cstr(path) }.unwrap_or("");
+        match notes::RcNotes::open_file(path) {
+            Ok(h) => Box::into_raw(Box::new(h)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Releases the store — a dirty persistent handle flushes first
+/// (the model destructor's saveIfNeccessary).  NULL-tolerant.
+///
+/// # Safety
+/// `h` must come from rc_notes_open/rc_notes_open_file/ac_notes,
+/// unused after.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_close(h: *mut notes::RcNotes) {
+    if h.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        drop(unsafe { Box::from_raw(h) });
+    }));
+}
+
+/// Row count — -1 on a bad handle.
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_count(h: *const notes::RcNotes) -> i64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        notes_ref(h).map(|h| h.count()).unwrap_or(-1)
+    }))
+    .unwrap_or(-1)
+}
+
+/// One note as JSON {"body","markdown","title"} — NULL on a bad
+/// handle or an out-of-range row (NotFound stashed).  Free with
+/// rc_string_free().
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_get(
+    h: *const notes::RcNotes,
+    row: i64,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match notes_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        match h.get(row) {
+            Ok(n) => util::to_c_string(
+                serde_json::json!({
+                    "body": n.body,
+                    "markdown": n.markdown,
+                    "title": n.title,
+                })
+                .to_string(),
+            ),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// The whole list as the persisted JSON array — the same shape the
+/// file carries.  NULL on a bad handle; free with rc_string_free().
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_list(h: *const notes::RcNotes) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match notes_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        util::to_c_string(
+            serde_json::Value::Array(
+                h.list()
+                    .iter()
+                    .map(|n| {
+                        serde_json::json!({
+                            "body": n.body,
+                            "markdown": n.markdown,
+                            "title": n.title,
+                        })
+                    })
+                    .collect(),
+            )
+            .to_string(),
+        )
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// insertNote — appends/inserts a {title, body} note at the
+/// clamped row (out-of-range positions prepend/append like qBound,
+/// never fail) with markdown cleared.  NULL title/body read as "".
+/// Returns the new row or -1 on error.
+///
+/// # Safety
+/// `h` must come from an open call; strings must be NUL-terminated
+/// UTF-8 or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_insert(
+    h: *mut notes::RcNotes,
+    row: i64,
+    title: *const c_char,
+    body: *const c_char,
+) -> i64 {
+    let mut out = -1i64;
+    let status = status_of(|| {
+        let h = notes_ref(h)?;
+        let title = unsafe { util::cstr(title) }.unwrap_or("");
+        let body = unsafe { util::cstr(body) }.unwrap_or("");
+        h.insert(row, title, body).map(|r| out = r)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("notes");
+    } else {
+        out = -1;
+    }
+    out
+}
+
+/// Shared setter tail: emits "notes" and writes `out_changed`
+/// (1 real change, 0 identical-value no-op — the model's setData
+/// false return) on success.
+fn notes_set_out(
+    status: RcStatus,
+    changed: bool,
+    out_changed: *mut i32,
+) -> RcStatus {
+    if status == RcStatus::Ok {
+        if !out_changed.is_null() {
+            unsafe { *out_changed = changed as i32 };
+        }
+        if changed {
+            notify::emit("notes");
+        }
+    }
+    status
+}
+
+/// Qt::EditRole — rename the note.  RC_NOT_FOUND out of range;
+/// an identical value is Ok + out_changed 0.
+///
+/// # Safety
+/// `h` must come from an open call; `value` must be NUL-terminated
+/// UTF-8; `out_changed` may be NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_set_title(
+    h: *mut notes::RcNotes,
+    row: i64,
+    value: *const c_char,
+    out_changed: *mut i32,
+) -> RcStatus {
+    let mut changed = false;
+    let status = status_of(|| {
+        let h = notes_ref(h)?;
+        let value = unsafe { util::cstr(value) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad title pointer".into(),
+        })?;
+        h.set_title(row, value).map(|c| changed = c)
+    });
+    notes_set_out(status, changed, out_changed)
+}
+
+/// BodyRole — the note's committed body text.  Same contract as
+/// rc_notes_set_title.
+///
+/// # Safety
+/// `h` must come from an open call; `value` must be NUL-terminated
+/// UTF-8; `out_changed` may be NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_set_body(
+    h: *mut notes::RcNotes,
+    row: i64,
+    value: *const c_char,
+    out_changed: *mut i32,
+) -> RcStatus {
+    let mut changed = false;
+    let status = status_of(|| {
+        let h = notes_ref(h)?;
+        let value = unsafe { util::cstr(value) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad body pointer".into(),
+        })?;
+        h.set_body(row, value).map(|c| changed = c)
+    });
+    notes_set_out(status, changed, out_changed)
+}
+
+/// MarkdownRole — the per-note render flag.  Same contract as
+/// rc_notes_set_title.
+///
+/// # Safety
+/// `h` must come from an open call; `out_changed` may be NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_set_markdown(
+    h: *mut notes::RcNotes,
+    row: i64,
+    on: i32,
+    out_changed: *mut i32,
+) -> RcStatus {
+    let mut changed = false;
+    let status = status_of(|| {
+        let h = notes_ref(h)?;
+        h.set_markdown(row, on != 0).map(|c| changed = c)
+    });
+    notes_set_out(status, changed, out_changed)
+}
+
+/// removeRows — deletes the [row, row+count) span.  RC_INVALID on
+/// a refused range (negative, empty or overflowing — the model's
+/// false return).
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_remove(
+    h: *mut notes::RcNotes,
+    row: i64,
+    count: i64,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = notes_ref(h)?;
+        h.remove(row, count)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("notes");
+    }
+    status
+}
+
+/// Commit — the AutoSaver-fired save(): persists when dirty, a
+/// no-op on a clean or volatile store.
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_sync(h: *mut notes::RcNotes) -> RcStatus {
+    status_of(|| {
+        let h = notes_ref(h)?;
+        h.sync()
+    })
+}
+
+/// 1 on a file-backed store, 0 on a volatile one or a bad handle —
+/// the model's isPersistent().
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_is_persistent(h: *const notes::RcNotes) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        notes_ref(h).map(|h| h.is_persistent() as i32).unwrap_or(0)
+    }))
+    .unwrap_or(0)
+}
+
+/// 1 while uncommitted mutations exist, 0 clean/bad handle.
+///
+/// # Safety
+/// `h` must come from an open call.
+#[no_mangle]
+pub unsafe extern "C" fn rc_notes_is_dirty(h: *const notes::RcNotes) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        notes_ref(h).map(|h| h.is_dirty() as i32).unwrap_or(0)
+    }))
+    .unwrap_or(0)
+}
+
+// ---- RC03: profile registry ----
+//
+// The persona list — <data root>/profiles.json, byte-compatible with
+// the MPROF01 writer both C++ implementations (ProfileRegistry,
+// ProfileStore) share.  The data root binds at rc_profiles_open();
+// list/create/rename/avatar/delete cover the registry rows and the
+// path accessors mirror BrowserPaths' per-profile layout so callers
+// never invent a second one.  The active id is per-handle process
+// state (the ambient persona), never persisted.  Mutations emit the
+// "profiles" topic.  Vault markers and live-window teardown stay
+// C++-side — the delete here is the store primitive the adapter
+// wraps.
+
+fn profiles_ref<'a>(
+    h: *const profiles::RcProfiles,
+) -> error::RcResult<&'a profiles::RcProfiles> {
+    unsafe { h.as_ref() }.ok_or_else(|| error::Fail {
+        status: RcStatus::InvalidArgument,
+        msg: "bad profiles handle".into(),
+    })
+}
+
+/// Opens the registry under `data_root` — a real path, not the
+/// process-global data dir.  `default_name_or_null` seeds the
+/// display name of the synthesized "default" row (the caller's
+/// QSettings "profile/name" value or its localized fallback).
+/// Returns an opaque handle or NULL (error stashed).
+///
+/// # Safety
+/// String pointers must be NUL-terminated UTF-8; the returned handle
+/// is released with rc_profiles_close().
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_open(
+    data_root: *const c_char,
+    default_name_or_null: *const c_char,
+) -> *mut profiles::RcProfiles {
+    catch_unwind(AssertUnwindSafe(|| {
+        let root = match unsafe { util::cstr(data_root) } {
+            Some(r) => r,
+            None => {
+                error::set_error("bad data root pointer");
+                return ptr::null_mut();
+            }
+        };
+        let seed = if default_name_or_null.is_null() {
+            None
+        } else {
+            match unsafe { util::cstr(default_name_or_null) } {
+                Some(s) => Some(s),
+                None => {
+                    error::set_error("bad default name pointer");
+                    return ptr::null_mut();
+                }
+            }
+        };
+        match profiles::RcProfiles::open(root, seed) {
+            Ok(h) => Box::into_raw(Box::new(h)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Releases a handle from rc_profiles_open().  NULL-tolerant.
+///
+/// # Safety
+/// `h` must come from rc_profiles_open and not be used afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_close(h: *mut profiles::RcProfiles) {
+    if !h.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            drop(unsafe { Box::from_raw(h) });
+        }));
+    }
+}
+
+/// Re-reads profiles.json from disk (the ProfileStore::reload seam).
+///
+/// # Safety
+/// `h` must come from rc_profiles_open.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_reload(
+    h: *mut profiles::RcProfiles,
+) -> RcStatus {
+    status_of(|| profiles_ref(h)?.reload())
+}
+
+/// Every profile as a JSON array of
+/// {id,name,avatar,createdAt} objects — the row order the file holds.
+/// rc_string_free the result; NULL on error.
+///
+/// # Safety
+/// `h` must come from rc_profiles_open.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_list(
+    h: *mut profiles::RcProfiles,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match profiles_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let rows: Vec<serde_json::Value> = h
+            .list()
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "id": p.id,
+                    "name": p.name,
+                    "avatar": p.avatar,
+                    "createdAt": p.created_at,
+                })
+            })
+            .collect();
+        util::to_c_string(
+            serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into()),
+        )
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// One profile as a JSON {id,name,avatar,createdAt} object; NULL on
+/// error (RC_NOT_FOUND stashed for an unknown id).
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_get(
+    h: *mut profiles::RcProfiles,
+    id: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let h = match profiles_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let id = match unsafe { util::cstr(id) } {
+            Some(i) => i,
+            None => {
+                error::set_error("bad id pointer");
+                return ptr::null_mut();
+            }
+        };
+        match h.get(id) {
+            Some(p) => util::to_c_string(
+                serde_json::json!({
+                    "id": p.id,
+                    "name": p.name,
+                    "avatar": p.avatar,
+                    "createdAt": p.created_at,
+                })
+                .to_string(),
+            ),
+            None => {
+                error::set_error("no such profile");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Creates a profile from `display_name`: slugified unique id,
+/// profiles/<id>/ created, registry row appended + persisted.
+/// Returns the new id (rc_string_free); NULL on failure.
+///
+/// # Safety
+/// `display_name` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_create(
+    h: *mut profiles::RcProfiles,
+    display_name: *const c_char,
+) -> *mut c_char {
+    let out = catch_unwind(AssertUnwindSafe(|| {
+        let h = match profiles_ref(h) {
+            Ok(h) => h,
+            Err(e) => {
+                error::set_error(&e.msg);
+                return ptr::null_mut();
+            }
+        };
+        let name = match unsafe { util::cstr(display_name) } {
+            Some(n) => n,
+            None => {
+                error::set_error("bad name pointer");
+                return ptr::null_mut();
+            }
+        };
+        match h.create(name) {
+            Ok(id) => util::to_c_string(id),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut());
+    if !out.is_null() {
+        notify::emit("profiles");
+    }
+    out
+}
+
+/// Renames a profile; persists and emits "profiles".  A blank name
+/// resolves to "Profile" like ProfileStore::renameProfile.
+///
+/// # Safety
+/// Both strings must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_rename(
+    h: *mut profiles::RcProfiles,
+    id: *const c_char,
+    name: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = profiles_ref(h)?;
+        let id = unsafe { util::cstr(id) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad id pointer".into(),
+        })?;
+        let name = unsafe { util::cstr(name) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad name pointer".into(),
+        })?;
+        h.rename(id, name)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("profiles");
+    }
+    status
+}
+
+/// Points a profile's avatar field at a basename inside
+/// profiles/<id>/ (the PNG itself is the Qt side's to write);
+/// NULL/empty clears the field.  Separators and dot segments are
+/// refused.  Persists and emits "profiles".
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8; `name_or_null` likewise or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_set_avatar(
+    h: *mut profiles::RcProfiles,
+    id: *const c_char,
+    name_or_null: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = profiles_ref(h)?;
+        let id = unsafe { util::cstr(id) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad id pointer".into(),
+        })?;
+        let name = if name_or_null.is_null() {
+            None
+        } else {
+            Some(unsafe { util::cstr(name_or_null) }.ok_or_else(|| {
+                error::Fail {
+                    status: RcStatus::InvalidArgument,
+                    msg: "bad avatar pointer".into(),
+                }
+            })?)
+        };
+        h.set_avatar(id, name)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("profiles");
+    }
+    status
+}
+
+/// Deletes a profile: removes the registry row and profiles/<id>/
+/// recursively.  "default" and non-slug ids are refused
+/// (RC_INVALID_ARGUMENT), unknown ids RC_NOT_FOUND.  Emits
+/// "profiles".
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_delete(
+    h: *mut profiles::RcProfiles,
+    id: *const c_char,
+) -> RcStatus {
+    let status = status_of(|| {
+        let h = profiles_ref(h)?;
+        let id = unsafe { util::cstr(id) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad id pointer".into(),
+        })?;
+        h.delete(id)
+    });
+    if status == RcStatus::Ok {
+        notify::emit("profiles");
+    }
+    status
+}
+
+/// The ambient persona id — per-handle process state mirroring
+/// BrowserPaths::activeProfileId ("default" before any push).
+/// rc_string_free the result.
+///
+/// # Safety
+/// `h` must come from rc_profiles_open.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_active(
+    h: *mut profiles::RcProfiles,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match profiles_ref(h) {
+            Ok(h) => util::to_c_string(h.active_id()),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Pushes the ambient persona — a non-slug id resolves to "default"
+/// like BrowserPaths::setActiveProfileId.  Process state only: not
+/// persisted, no change topic.
+///
+/// # Safety
+/// `id` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_set_active(
+    h: *mut profiles::RcProfiles,
+    id: *const c_char,
+) -> RcStatus {
+    status_of(|| {
+        let h = profiles_ref(h)?;
+        let id = unsafe { util::cstr(id) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad id pointer".into(),
+        })?;
+        h.set_active(id);
+        Ok(())
+    })
+}
+
+macro_rules! profiles_path_getter {
+    ($name:ident, $call:ident) => {
+        /// # Safety
+        /// `id` must be NULL (resolves to "default") or
+        /// NUL-terminated UTF-8.
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(
+            h: *mut profiles::RcProfiles,
+            id: *const c_char,
+        ) -> *mut c_char {
+            catch_unwind(AssertUnwindSafe(|| {
+                let h = match profiles_ref(h) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        error::set_error(&e.msg);
+                        return ptr::null_mut();
+                    }
+                };
+                let id = unsafe { util::cstr(id) }.unwrap_or("");
+                util::to_c_string(h.$call(id))
+            }))
+            .unwrap_or(ptr::null_mut())
+        }
+    };
+}
+
+// <root>/profiles/<id> — BrowserPaths::profileDataDir.  A non-slug
+// id resolves to "default" rather than escaping the tree.
+// rc_string_free the result.
+profiles_path_getter!(rc_profiles_dir, profile_dir);
+
+// <root>/profiles/<id>/cache — the profile's disposable lane.
+// rc_string_free the result.
+profiles_path_getter!(rc_profiles_cache_dir, cache_dir);
+
+// <root>/profiles/<id>/QtWebEngine — BrowserPaths::engineStorageDir.
+// rc_string_free the result.
+profiles_path_getter!(rc_profiles_engine_storage_dir, engine_storage_dir);
+
+// <root>/profiles/<id>/cache/QtWebEngine —
+// BrowserPaths::engineCacheDir.  rc_string_free the result.
+profiles_path_getter!(rc_profiles_engine_cache_dir, engine_cache_dir);
+
+// The dir an rc_settings profile scope anchors at — the profile
+// data dir itself.  rc_string_free the result.
+profiles_path_getter!(rc_profiles_settings_dir, settings_dir);
+
+// profiles/<id>/<avatar> — the row's avatar field joined under the
+// profile dir, falling back to profile-avatar.png when unset.
+// rc_string_free the result.
+profiles_path_getter!(rc_profiles_avatar_path, avatar_path);
+
+/// The registry file this handle owns — <root>/profiles.json.
+/// rc_string_free the result.
+///
+/// # Safety
+/// `h` must come from rc_profiles_open.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_file(
+    h: *mut profiles::RcProfiles,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match profiles_ref(h) {
+            Ok(h) => util::to_c_string(h.registry_path()),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Display name -> filesystem slug, mirroring
+/// ProfileStore::slugify.  rc_string_free the result.
+///
+/// # Safety
+/// `display_name` must be NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_profiles_slugify(
+    display_name: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match unsafe { util::cstr(display_name) } {
+            Some(n) => util::to_c_string(profiles::slugify(n)),
+            None => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 // ---- OSE01: OpenSearch engine registry ----
@@ -4115,6 +7536,356 @@ pub unsafe extern "C" fn rv_rewrap(
         let new = zeroize::Zeroizing::new(new.to_vec());
         profilevault::rewrap_file(std::path::Path::new(blob), &old, &new)
     })
+}
+
+// ---- tor control client (RC14) --------------------------------------
+//
+// Tor control-protocol port of torcontrol.cpp: loopback-only connect,
+// AUTHENTICATE (32-byte cookie hex token or quoted password), and the
+// serialized command queue — one command in flight, every submission
+// completing exactly once via take_reply (final code, or -1 when the
+// link dies first).  Async 650 events and protocol complaints drain
+// through take_event/take_error; each push emits "torctl" so the Qt
+// bridge can queue a drain.  rc_tor_open connects synchronously with
+// a bounded timeout — a returned handle is always live; a refused or
+// non-loopback target is NULL + rc_last_error_message().
+//
+// No-leak contract: the host must be a loopback literal or
+// "localhost" (resolved and re-verified), and AUTHENTICATE payloads
+// are assembled in zeroizing buffers that wipe on queue flush/drop.
+
+fn tor_ref<'a>(
+    h: *const torctl::RcTorCtl,
+) -> error::RcResult<&'a torctl::RcTorCtl> {
+    unsafe { h.as_ref() }.ok_or_else(|| error::Fail {
+        status: RcStatus::InvalidArgument,
+        msg: "bad tor handle".into(),
+    })
+}
+
+/// Sends `command` (no CRLF — must be a single line) and returns the
+/// sequence number take_reply reports it under, or -1 with
+/// rc_last_error_message() set.  Shared tail for every typed helper.
+unsafe fn tor_send_seq(
+    h: *const torctl::RcTorCtl,
+    f: impl FnOnce(&torctl::RcTorCtl) -> error::RcResult<u64>,
+) -> i64 {
+    match catch_unwind(AssertUnwindSafe(|| match tor_ref(h) {
+        Ok(h) => f(h),
+        Err(e) => Err(e),
+    })) {
+        Ok(Ok(seq)) => {
+            error::clear_error();
+            seq as i64
+        }
+        Ok(Err(e)) => {
+            error::set_error(&e.msg);
+            -1
+        }
+        Err(_) => {
+            error::set_error("panic inside rustcore");
+            -1
+        }
+    }
+}
+
+/// Connects to a tor control port at host:port — loopback only.
+/// Returns an opaque handle (rc_tor_close to release) or NULL with
+/// rc_last_error_message() set.
+///
+/// # Safety
+/// `host` must be NUL-terminated UTF-8 (an IP literal or "localhost").
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_open(
+    host: *const c_char,
+    port: u16,
+) -> *mut torctl::RcTorCtl {
+    catch_unwind(AssertUnwindSafe(|| {
+        let host = match unsafe { util::cstr(host) } {
+            Some(h) => h,
+            None => {
+                error::set_error("bad host pointer");
+                return ptr::null_mut();
+            }
+        };
+        match torctl::RcTorCtl::open(host, port) {
+            Ok(h) => Box::into_raw(Box::new(h)),
+            Err(e) => {
+                error::set_error(&e.msg);
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Severs the link but keeps the handle valid for draining: the
+/// in-flight/queued commands complete with code -1 and the state
+/// reads RC_TOR_CLOSED — the disconnectFromHost() spelling.
+///
+/// # Safety
+/// `h` must be a live rc_tor_open handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_disconnect(h: *mut torctl::RcTorCtl) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if let Ok(h) = tor_ref(h) {
+            h.close();
+        }
+    }));
+}
+
+/// Severs the link and releases the handle.  Outstanding commands
+/// complete with code -1 before the close lands; NULL-tolerant.
+///
+/// # Safety
+/// `h` must come from rc_tor_open and not be used afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_close(h: *mut torctl::RcTorCtl) {
+    if !h.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            drop(unsafe { Box::from_raw(h) });
+        }));
+    }
+}
+
+/// Link state: 1 connected, 2 closed, 0 for a bad handle.
+///
+/// # Safety
+/// `h` must be a live rc_tor_open handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_state(h: *const torctl::RcTorCtl) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        tor_ref(h).map(|h| h.state()).unwrap_or(0)
+    }))
+    .unwrap_or(0)
+}
+
+/// Connection error text ("" for a clean close or open link).
+/// Free with rc_string_free().
+///
+/// # Safety
+/// `h` must be a live rc_tor_open handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_error(h: *const torctl::RcTorCtl) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match tor_ref(h) {
+            Ok(h) => util::to_c_string(h.error_string()),
+            Err(_) => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Queues one control-protocol command line (no CRLF — a payload with
+/// a newline is rejected, never split).  Returns the reply's sequence
+/// number or -1.
+///
+/// # Safety
+/// `h` live handle; `command` NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_send(
+    h: *const torctl::RcTorCtl,
+    command: *const c_char,
+) -> i64 {
+    let cmd = match unsafe { util::cstr(command) } {
+        Some(c) => c.to_owned(),
+        None => {
+            error::set_error("bad command pointer");
+            return -1;
+        }
+    };
+    unsafe { tor_send_seq(h, move |h| h.send(&cmd)) }
+}
+
+/// AUTHENTICATE with the 32-byte control_auth_cookie (sent as hex).
+/// Bad length is an error before anything hits the wire.
+///
+/// # Safety
+/// `cookie` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_auth_cookie(
+    h: *const torctl::RcTorCtl,
+    cookie: *const u8,
+    len: usize,
+) -> i64 {
+    let bytes = unsafe { util::bytes(cookie, len) }.map(|b| b.to_vec());
+    match bytes {
+        Some(c) => unsafe { tor_send_seq(h, move |h| h.auth_cookie(&c)) },
+        None => {
+            error::set_error("bad cookie pointer");
+            -1
+        }
+    }
+}
+
+/// AUTHENTICATE with the cookie file at `path` — the secret is read
+/// inside the library and never crosses the ABI as a buffer.
+///
+/// # Safety
+/// `h` live handle; `path` NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_auth_cookie_file(
+    h: *const torctl::RcTorCtl,
+    path: *const c_char,
+) -> i64 {
+    let path = match unsafe { util::cstr(path) } {
+        Some(p) => p.to_owned(),
+        None => {
+            error::set_error("bad cookie path pointer");
+            return -1;
+        }
+    };
+    unsafe { tor_send_seq(h, move |h| h.auth_cookie_file(&path)) }
+}
+
+/// AUTHENTICATE with a password (HashedControlPassword mode), sent as
+/// an escaped QuotedString.
+///
+/// # Safety
+/// `pass` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_auth_password(
+    h: *const torctl::RcTorCtl,
+    pass: *const u8,
+    len: usize,
+) -> i64 {
+    let bytes = unsafe { util::bytes(pass, len) }.map(|b| b.to_vec());
+    match bytes {
+        Some(p) => unsafe { tor_send_seq(h, move |h| h.auth_password(&p)) },
+        None => {
+            error::set_error("bad password pointer");
+            -1
+        }
+    }
+}
+
+/// GETINFO <key> (a space-separated key list is legal per spec).
+///
+/// # Safety
+/// `h` live handle; `key` NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_getinfo(
+    h: *const torctl::RcTorCtl,
+    key: *const c_char,
+) -> i64 {
+    let key = match unsafe { util::cstr(key) } {
+        Some(k) => k.to_owned(),
+        None => {
+            error::set_error("bad getinfo key pointer");
+            return -1;
+        }
+    };
+    unsafe { tor_send_seq(h, move |h| h.getinfo(&key)) }
+}
+
+/// SETEVENTS <list> — space-separated names ("CIRC STREAM").
+///
+/// # Safety
+/// `h` live handle; `list` NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_setevents(
+    h: *const torctl::RcTorCtl,
+    list: *const c_char,
+) -> i64 {
+    let list = match unsafe { util::cstr(list) } {
+        Some(l) => l.to_owned(),
+        None => {
+            error::set_error("bad event list pointer");
+            return -1;
+        }
+    };
+    unsafe { tor_send_seq(h, move |h| h.setevents(&list)) }
+}
+
+/// TAKEOWNERSHIP — tor exits when this connection closes.
+///
+/// # Safety
+/// `h` must be a live rc_tor_open handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_takeownership(h: *const torctl::RcTorCtl) -> i64 {
+    unsafe { tor_send_seq(h, |h| h.takeownership()) }
+}
+
+/// SIGNAL <name> — NEWNYM, SHUTDOWN, RELOAD, …
+///
+/// # Safety
+/// `h` live handle; `name` NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_signal(
+    h: *const torctl::RcTorCtl,
+    name: *const c_char,
+) -> i64 {
+    let name = match unsafe { util::cstr(name) } {
+        Some(n) => n.to_owned(),
+        None => {
+            error::set_error("bad signal name pointer");
+            return -1;
+        }
+    };
+    unsafe { tor_send_seq(h, move |h| h.signal(&name)) }
+}
+
+/// Pops the oldest completed reply as
+/// {"seq":N,"code":C,"lines":[...]} into `out` (rc_buffer_free).
+/// RC_NOT_FOUND when nothing is pending.
+///
+/// # Safety
+/// `h` live handle; `out` writable.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_take_reply(
+    h: *const torctl::RcTorCtl,
+    out: *mut RcBuffer,
+) -> RcStatus {
+    status_of(|| {
+        let h = tor_ref(h)?;
+        let reply = h.take_reply().ok_or_else(|| error::Fail {
+            status: RcStatus::NotFound,
+            msg: "no completed reply".into(),
+        })?;
+        let json = serde_json::json!({
+            "seq": reply.seq,
+            "code": reply.code,
+            "lines": reply.lines,
+        });
+        buffer_out(out, json.to_string().into_bytes());
+        Ok(())
+    })
+}
+
+/// Pops the oldest async event line (code 650 stripped), NULL when
+/// the queue is empty.  Free with rc_string_free().
+///
+/// # Safety
+/// `h` must be a live rc_tor_open handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_take_event(
+    h: *const torctl::RcTorCtl,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match tor_ref(h).ok().and_then(|h| h.take_event()) {
+            Some(e) => util::to_c_string(e),
+            None => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Pops the oldest protocol complaint (unparsable line etc.), NULL
+/// when empty.  Free with rc_string_free().
+///
+/// # Safety
+/// `h` must be a live rc_tor_open handle.
+#[no_mangle]
+pub unsafe extern "C" fn rc_tor_take_error(
+    h: *const torctl::RcTorCtl,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        match tor_ref(h).ok().and_then(|h| h.take_error()) {
+            Some(e) => util::to_c_string(e),
+            None => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
 }
 
 #[cfg(test)]

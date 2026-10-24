@@ -21,6 +21,7 @@
 #define NAVIGATIONPOLICY_H
 
 #include <qbytearray.h>
+#include <qjsonobject.h>
 #include <qlist.h>
 #include <qpair.h>
 #include <qstring.h>
@@ -130,6 +131,14 @@ public:
         // loadSettings reader fills this from the site-decision store
         // (or the legacy QSettings list in no-rust builds).
         QStringList urlCleanExceptions;
+        // MD06: the bound persona's merged urlclean ruleset document
+        // (clean_policy's "ruleset" — profile override or the shared
+        // global set, extraParams folded in).  Empty object means no
+        // facade answered; rustcore then keeps the process-global
+        // urlstrip set.  Parsed once per push inside
+        // rc_policy_load_snapshot — the request path never re-reads
+        // the profile store.
+        QJsonObject urlCleanRuleset;
     };
     static void loadSnapshot(const Snapshot &snapshot);
 

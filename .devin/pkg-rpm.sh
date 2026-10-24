@@ -6,8 +6,8 @@
 # self-contained bundle from BuildProcess/bundle-linux.sh mapped onto
 # the FHS — /usr/bin/arktos launcher + private Qt 6.12 / QtWebEngine
 # under /usr/lib/arktos. The rust crates link statically (.a) so there
-# are no rust .so artifacts to ship; libservo_embed does not exist yet
-# (ENG03 gates it).
+# are no rust .so artifacts to ship; the optional libservo_embed.so
+# Servo backend rides along in $LIBDIR/lib when the tree built one.
 #
 # Subcommands:
 #   build        cargo for missing rust .a archives (optional), then the
@@ -147,6 +147,33 @@ spec_requires() {
     awk '/^Requires:/{sub(/^Requires:[ \t]*/,"");print}' "$1" | sort -u
 }
 
+# RC10 rust link-proof, shared by both verify paths (staged tree and
+# extracted rpm).  A cargo-less build silently degrades to the no-rust
+# fallback and still passes ldd + launch — assert the facade actually
+# linked when the tree was configured for it.  src/Makefile records the
+# qmake intent: it names libarktos_rustcore.a only while CONFIG+=rustcore
+# is on, so a deliberate no-rust re-qmake skips this instead of failing.
+# libservo_embed.so is the one rust artifact shipped as a file (dlopen'd
+# by ServoBackend) — when the tree built it, it must be inside.
+assert_rust_payload() {
+    local D="$1"
+    if grep -q 'libarktos_rustcore' "$SRCROOT/src/Makefile" 2>/dev/null; then
+        # Byte-grep, not nm|grep -q: grep -q's early exit SIGPIPEs nm
+        # mid-dump and pipefail reads that as failure.  "ac_init" only
+        # enters the binary via the rustcore objects.
+        grep -q 'ac_init' "$D/$LIBDIR/bin/arktos" \
+            || fail "configured for rustcore but ac_init missing" \
+                    "from $D/$LIBDIR/bin/arktos"
+        note "facade linked: ac_init present in the payload binary"
+    fi
+    if ls "$SRCROOT"/spikes/servo/servo-embed/target/*/libservo_embed.so \
+            >/dev/null 2>&1; then
+        [ -f "$D/$LIBDIR/lib/libservo_embed.so" ] \
+            || fail "libservo_embed.so built but missing from $D"
+        note "servo-embed staged: $LIBDIR/lib/libservo_embed.so"
+    fi
+}
+
 cmd_verify() {
     local arg="${1:-}"
     if [ -n "$arg" ] && [ "${arg%.rpm}" != "$arg" ]; then
@@ -228,6 +255,8 @@ cmd_verify() {
     local nreq; nreq=$(wc -l <"$spec_req")
     rm -f "$computed" "$spec_req"
 
+    assert_rust_payload "$D"
+
     command -v rpmlint >/dev/null \
         && rpmlint "$S" \
         || note "rpmlint not installed — static checks only"
@@ -266,6 +295,8 @@ verify_rpm() {
             "$R/$LIBDIR/libexec/QtWebEngineProcess" 2>&1 \
         | grep -cE 'not found' || true)
     [ "$m" -eq 0 ] || fail "$m unresolved libs in rpm payload"
+
+    assert_rust_payload "$R"
 
     mkdir -p "$R/home"
     sed "s|/usr/lib/arktos|$R/usr/lib/arktos|g" \

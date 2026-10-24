@@ -62,7 +62,11 @@ SUBDIRS  = \
     vaulte2e \
     vaultengine \
     qrcode \
+    readersanitizer \
+    rustcontainers \
     rustdownload \
+    rustnotes \
+    rustprofiles \
     safetext \
     sandbox \
     schemehandlers \

@@ -68,6 +68,8 @@
 
 #if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
+#include "rustcorebridge.h"
+#include <arktos_core.h>
 #endif
 
 #include <csignal>
@@ -704,7 +706,12 @@ void installGpcSignal(QWebEngineProfile *profile)
             scripts->remove(script);
     }
 
-    if (!PrivacyRequestInterceptor::storedGpcSignal()
+    // MD05: the toggle is persona data — the script follows the
+    // profile's OWN privacy store (gpcSignalEnabledForProfile
+    // resolves profileIdFor(profile) through rc_privacy_gpc), not
+    // the ambient profile's row storedGpcSignal() used to read.
+    if (!PrivacyRequestInterceptor::gpcSignalEnabledForProfile(
+            profileIdFor(profile))
         && profile != s_torProfile)
         return;
 
@@ -753,6 +760,26 @@ void applySettings(QWebEngineProfile *profile)
     fixedFont = settings.value(QLatin1String("fixedFont"), fixedFont).value<QFont>();
     engineSettings->setFontFamily(QWebEngineSettings::FixedFont, fixedFont.family());
     engineSettings->setFontSize(QWebEngineSettings::DefaultFixedFontSize, fixedFont.pointSize());
+
+    // MD33: chrome.fontSettings — generic families the settings
+    // dialog has no UI for persist as plain family-string keys
+    // (written through invokeFontSettings); absent keys keep the
+    // engine default.
+    static const struct {
+        const char *key;
+        QWebEngineSettings::FontFamily family;
+    } kExtraFontKeys[] = {
+        { "serifFont",     QWebEngineSettings::SerifFont },
+        { "sansSerifFont", QWebEngineSettings::SansSerifFont },
+        { "cursiveFont",   QWebEngineSettings::CursiveFont },
+        { "fantasyFont",   QWebEngineSettings::FantasyFont },
+    };
+    for (const auto &entry : kExtraFontKeys) {
+        const QString family =
+            settings.value(QLatin1String(entry.key)).toString();
+        if (!family.isEmpty())
+            engineSettings->setFontFamily(entry.family, family);
+    }
 
     // POPUP01: the attribute stays bound to the blocker preference.
     // false makes Chromium drop zero-user-gesture window.open calls of
@@ -1445,6 +1472,27 @@ static const char *terminationSignalName(int signalNumber)
     }
 }
 
+#if defined(ARKTOS_RUSTCORE)
+// RC13: mirror the app-level sentinel into rustcore's session.state
+// (profiles/default/ — the store the pre-RC13 manifest aggregate
+// used).  The facade handle binds the dir path-explicitly; the legacy
+// spelling re-anchors the process-global store, which any other rc_*
+// consumer can re-point mid-write.
+template<class F, class G>
+static void withDefaultSessionStore(F facadeOp, G legacyOp)
+{
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        if (AcSession *s = bridge->session(QStringLiteral("default"))) {
+            facadeOp(s);
+            ac_session_close(s);
+            return;
+        }
+    }
+    rustCoreEnsureDataDirFor(QStringLiteral("default"));
+    legacyOp();
+}
+#endif
+
 void markSessionStart()
 {
     ProfileSettings settings;
@@ -1473,6 +1521,13 @@ void markSessionStart()
     // The crash this detects never lets a destructor flush — force the
     // sentinel onto disk before the engine window opens.
     settings.sync();
+#if defined(ARKTOS_RUSTCORE)
+    if (!BrowserApplication::isTorMode()) {
+        withDefaultSessionStore(
+            [](AcSession *s) { ac_session_mark_start(s); },
+            [] { rc_session_mark_start(); });
+    }
+#endif
 }
 
 void markSessionCleanExit(int exitCode)
@@ -1489,6 +1544,13 @@ void markSessionCleanExit(int exitCode)
     settings.setValue(QLatin1String("browser/lastExit"),
         QStringLiteral("clean rc=%1").arg(exitCode));
     settings.sync();
+#if defined(ARKTOS_RUSTCORE)
+    if (!BrowserApplication::isTorMode()) {
+        withDefaultSessionStore(
+            [exitCode](AcSession *s) { ac_session_mark_exit(s, exitCode); },
+            [exitCode] { rc_session_mark_exit(exitCode); });
+    }
+#endif
 }
 
 void markSessionTerminated(int signalNumber)
@@ -1505,6 +1567,14 @@ void markSessionTerminated(int signalNumber)
             .arg(signalNumber)
             .arg(QLatin1String(terminationSignalName(signalNumber))));
     settings.sync();
+#if defined(ARKTOS_RUSTCORE)
+    if (!BrowserApplication::isTorMode()) {
+        withDefaultSessionStore(
+            [signalNumber](AcSession *s) {
+                ac_session_mark_terminated(s, signalNumber); },
+            [signalNumber] { rc_session_mark_terminated(signalNumber); });
+    }
+#endif
 }
 
 quint16 bidiDebugPort()

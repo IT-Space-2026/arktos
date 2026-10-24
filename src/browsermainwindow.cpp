@@ -340,6 +340,11 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
     // and instance() calls to THIS window's persona, not whatever
     // window happened to be active.
     BrowserPaths::setActiveProfileId(m_profileId);
+    // MD08: this is the SESSION saver — bind its profile so the
+    // dirty-on-what gate and the debounce timing come from the
+    // facade's sesspolicy queries instead of the compiled-in
+    // constants (which remain the fallback).
+    m_autoSaver->setSessionProfile(m_profileId);
     setAttribute(Qt::WA_DeleteOnClose, true);
     statusBar()->setSizeGripEnabled(true);
     // fixes https://bugzilla.mozilla.org/show_bug.cgi?id=219070
@@ -692,7 +697,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
             ensureSidebarPanel();
         ProfileSettings settings(m_profileId);
         settings.setValue(QLatin1String("MainWindow/showSidebar"), visible);
-        m_autoSaver->changeOccurred();
+        m_autoSaver->changeOccurredFor(AutoSaver::DirtySidebar);
     });
     connect(m_sidebarDock, &QDockWidget::dockLocationChanged,
             this, [this](Qt::DockWidgetArea area) {
@@ -799,7 +804,7 @@ BrowserMainWindow::~BrowserMainWindow()
     // on 'this' and must not run once destruction started.
     disconnect(m_sidebarFocusConnection);
     setNavBarEditMode(false);
-    m_autoSaver->changeOccurred();
+    m_autoSaver->changeOccurredFor(AutoSaver::DirtyLifecycle);
     m_autoSaver->saveIfNeccessary();
     // MPROF03: the ambient persona must not stay pinned to a dying
     // window — re-anchor to whichever window still holds focus (the
@@ -1302,8 +1307,10 @@ void BrowserMainWindow::setupMenu()
 
     QAction *viewTabBarAction = m_tabWidget->tabBar()->viewTabBarAction();
     m_viewMenu->addAction(viewTabBarAction);
-    connect(viewTabBarAction, &QAction::toggled,
-            m_autoSaver, &AutoSaver::changeOccurred);
+    connect(viewTabBarAction, &QAction::toggled, this,
+            [this](bool) {
+        m_autoSaver->changeOccurredFor(AutoSaver::DirtyChrome);
+    });
 
     // TABS09: the icon-only view mode is also reachable from the
     // tab strip's context menu — the bar owns the shared action.
@@ -3188,7 +3195,7 @@ void BrowserMainWindow::viewMenuBar()
 {
     m_menuBarVisible = !m_menuBarVisible;
     applyMenuBarVisibility();
-    m_autoSaver->changeOccurred();
+    m_autoSaver->changeOccurredFor(AutoSaver::DirtyChrome);
 }
 
 // MENU06: the menubar flag applied.  On a tor window the menu row is
@@ -3220,7 +3227,7 @@ void BrowserMainWindow::viewToolbar()
     } else {
         m_navigationBar->show();
     }
-    m_autoSaver->changeOccurred();
+    m_autoSaver->changeOccurredFor(AutoSaver::DirtyChrome);
 }
 
 void BrowserMainWindow::viewBookmarksBar()
@@ -3236,7 +3243,7 @@ void BrowserMainWindow::viewBookmarksBar()
         m_bookmarksToolbarFrame->show();
 #endif
     }
-    m_autoSaver->changeOccurred();
+    m_autoSaver->changeOccurredFor(AutoSaver::DirtyChrome);
 }
 
 void BrowserMainWindow::viewStatusbar()
@@ -3249,7 +3256,7 @@ void BrowserMainWindow::viewStatusbar()
 
     m_statusBarVisible = statusBar()->isVisible();
 
-    m_autoSaver->changeOccurred();
+    m_autoSaver->changeOccurredFor(AutoSaver::DirtyChrome);
 }
 
 void BrowserMainWindow::downloadManager()

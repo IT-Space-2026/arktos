@@ -133,12 +133,12 @@ private slots:
     void setHistory();
     void saveload_data();
     void saveload();
-#ifndef ARKTOS_RUSTCORE
     void icons();
     void iconsFromPage();
-#else
+#ifdef ARKTOS_RUSTCORE
     void iconPersistence();
     void legacyImport();
+    void legacyIconImport();
 #endif
 
     // TODO move to their own tests
@@ -536,7 +536,6 @@ void tst_HistoryManager::saveload()
     }
 }
 
-#ifndef ARKTOS_RUSTCORE
 static QImage iconImage(const QIcon &icon)
 {
     return icon.pixmap(8).toImage().convertToFormat(QImage::Format_ARGB32);
@@ -544,11 +543,18 @@ static QImage iconImage(const QIcon &icon)
 
 void tst_HistoryManager::icons()
 {
-    // HIST01: favicons are keyed by host and persisted under the data
-    // dir's icons/, so they survive restarts and apply to every
-    // history entry of the site.
+    // HIST01: favicons are keyed by host and persisted so they
+    // survive restarts and apply to every history entry of the site.
+    // RC16: under rustcore the store is the profile's disposable
+    // cache lane (cache/icons/); the pre-rustcore build writes its
+    // png files under the data dir's icons/.
+#ifdef ARKTOS_RUSTCORE
+    const QString iconPath = BrowserPaths::dataFilePath(
+        QLatin1String("cache/icons")) + QLatin1String("/icons-test.example.png");
+#else
     const QString iconPath = BrowserPaths::dataFilePath(
         QLatin1String("icons")) + QLatin1String("/icons-test.example.png");
+#endif
     QFile::remove(iconPath);
 
     QPixmap pixmap(8, 8);
@@ -600,15 +606,19 @@ void tst_HistoryManager::iconsFromPage()
 {
     // HIST01 end-to-end: QWebEnginePage::iconChanged must actually
     // deliver the favicon on Qt 6, feed the store and persist it.
+    // MPROF02: the page's profile owns the manager it feeds — the
+    // ambient instance() would never see the write, so resolve the
+    // persona-bound manager like addHistoryEntry_private does.
     LocalIconServer server;
     QVERIFY(server.start());
 
-    HistoryManager *manager = HistoryManager::instance();
+    QWebEngineProfile profile(QStringLiteral("arktos-historyicontest"));
+    const QString pid = BrowserProfile::profileIdFor(&profile);
+    HistoryManager *manager = HistoryManager::instanceFor(pid);
     const QUrl url = server.url(QStringLiteral("/page.html"));
     manager->clearIcons();
     manager->setHistory(HistoryList());
 
-    QWebEngineProfile profile(QStringLiteral("arktos-historyicontest"));
     WebPage page(&profile);
     QSignalSpy iconSpy(&page, &QWebEnginePage::iconChanged);
     page.load(url);
@@ -617,13 +627,20 @@ void tst_HistoryManager::iconsFromPage()
     const QIcon generic(QLatin1String(":graphics/defaulticon.png"));
     QVERIFY(iconImage(manager->icon(url)) != iconImage(generic));
 
-    const QString iconPath = BrowserPaths::dataFilePath(
-        QLatin1String("icons")) + QLatin1String("/127.0.0.1.png");
+#ifdef ARKTOS_RUSTCORE
+    const QString iconPath = BrowserPaths::profileDataFilePath(
+        pid, QLatin1String("cache/icons"))
+        + QLatin1String("/127.0.0.1.png");
+#else
+    const QString iconPath = BrowserPaths::profileDataFilePath(
+        pid, QLatin1String("icons")) + QLatin1String("/127.0.0.1.png");
+#endif
     QVERIFY(QFile::exists(iconPath));
 
     {
-        // restart: a fresh manager lazily loads the persisted icon
-        SubHistory restarted;
+        // restart: a fresh manager on the same persona lazily loads
+        // the persisted icon
+        HistoryManager restarted(nullptr, pid);
         QVERIFY(iconImage(restarted.icon(url)) != iconImage(generic));
     }
 
@@ -631,9 +648,10 @@ void tst_HistoryManager::iconsFromPage()
     manager->setHistory(HistoryList());
     QVERIFY(!QFile::exists(iconPath));
 }
-#else
-// RCORE02: favicons persist per-host in history.db and survive a
-// manager restart — the HIST01 store folded into the Rust core.
+#ifdef ARKTOS_RUSTCORE
+// RCORE02/RC16: favicons persist per-host in the profile's
+// cache/icons lane and survive a manager restart — the HIST01 store
+// moved out of history.db into the disposable icon cache.
 void tst_HistoryManager::iconPersistence()
 {
     const QUrl url(QStringLiteral("http://icons.example.com/page"));
@@ -641,10 +659,21 @@ void tst_HistoryManager::iconPersistence()
     pixmap.fill(QColor(12, 120, 200));
     const QIcon icon(pixmap);
 
+    const QString cacheDir = BrowserPaths::dataFilePath(
+        QLatin1String("cache/icons"));
+
     {
         SubHistory history;
         history.setIcon(url, icon);
     }
+    // The record lives under the disposable cache root — never the
+    // profile data dir's icons/.
+    QVERIFY(QFile::exists(cacheDir + QLatin1String("/icons.json")));
+    QVERIFY(QFile::exists(cacheDir
+                          + QLatin1String("/icons.example.com.png")));
+    QVERIFY(!QFile::exists(BrowserPaths::dataFilePath(
+                QLatin1String("icons"))
+            + QLatin1String("/icons.example.com.png")));
     {
         SubHistory history;
         const QColor pixel = history.icon(url)
@@ -658,6 +687,34 @@ void tst_HistoryManager::iconPersistence()
         QCOMPARE(other, QColor(12, 120, 200));
         history.clearIcons();
     }
+    QVERIFY(!QDir(cacheDir).exists());
+}
+
+// RC16 cutover: a pre-rustcore <profile>/icons/<host>.png store folds
+// into the cache lane on the profile's first icon touch — the legacy
+// file is read once and left in place.
+void tst_HistoryManager::legacyIconImport()
+{
+    const QString pid = QStringLiteral("iconimport");
+    const QString profileDir = BrowserPaths::profileDataDir(pid);
+    QVERIFY(QDir().mkpath(profileDir + QLatin1String("/icons")));
+    QPixmap pixmap(16, 16);
+    pixmap.fill(QColor(9, 99, 9));
+    QVERIFY(pixmap.save(profileDir
+                        + QLatin1String("/icons/legacy-icon.example.png"),
+                        "PNG"));
+
+    {
+        HistoryManager history(nullptr, pid);
+        const QColor pixel = history
+                .icon(QUrl(QStringLiteral("http://legacy-icon.example/")))
+                .pixmap(32, 32).toImage().pixelColor(8, 8);
+        QCOMPARE(pixel, QColor(9, 99, 9));
+        // The folded index lives under the disposable cache lane.
+        QVERIFY(QFile::exists(profileDir
+                              + QLatin1String("/cache/icons/icons.json")));
+    }
+    QDir(profileDir).removeRecursively();
 }
 
 // RCORE02 migration: a pre-SQLite QDataStream "history" file is

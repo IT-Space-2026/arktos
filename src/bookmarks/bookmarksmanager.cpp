@@ -93,24 +93,33 @@
 #ifdef ARKTOS_RUSTCORE
 #include "rustcorebridge.h"
 
-#include <rustcore.h>
+#include <arktos_core.h>
 
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 
-// Direct field writes bypass the undo commands (and BookmarkNode's
-// attach-time resync), so wherever the manager rewrites a field
-// itself the store copy has to be pushed explicitly.
+// RC08 facade dispatch — the node carries the AcBookmarks that bound
+// its file; a null store is the legacy rc_* path (no bridge).
 static void rustSyncTitle(BookmarkNode *node)
 {
-    if (node->handle())
-        rc_bm_set_title(node->handle(), node->title.toUtf8().constData());
+    if (node->handle()) {
+        const QByteArray title = node->title.toUtf8();
+        if (AcBookmarks *s = node->store())
+            ac_bm_set_title(s, node->handle(), title.constData());
+        else
+            rc_bm_set_title(node->handle(), title.constData());
+    }
 }
 
 static void rustSyncUrl(BookmarkNode *node)
 {
-    if (node->handle())
-        rc_bm_set_url(node->handle(), node->url.toUtf8().constData());
+    if (node->handle()) {
+        const QByteArray url = node->url.toUtf8();
+        if (AcBookmarks *s = node->store())
+            ac_bm_set_url(s, node->handle(), url.constData());
+        else
+            rc_bm_set_url(node->handle(), url.constData());
+    }
 }
 
 // `expanded` is written straight on the node by the dialog/toolbar —
@@ -119,8 +128,12 @@ static void rustSyncUrl(BookmarkNode *node)
 // the Rust parser read.
 static void rustSyncExpanded(const BookmarkNode *node)
 {
-    if (node->handle())
-        rc_bm_set_expanded(node->handle(), node->expanded ? 1 : 0);
+    if (node->handle()) {
+        if (AcBookmarks *s = node->store())
+            ac_bm_set_expanded(s, node->handle(), node->expanded ? 1 : 0);
+        else
+            rc_bm_set_expanded(node->handle(), node->expanded ? 1 : 0);
+    }
     if (node->childrenLoaded()) {
         const QList<BookmarkNode *> children = node->children();
         for (BookmarkNode *child : children)
@@ -206,9 +219,41 @@ void BookmarksManager::releaseFor(const QString &profileId)
 BookmarksManager::~BookmarksManager()
 {
     m_saveTimer->saveIfNeccessary();
+#ifdef ARKTOS_RUSTCORE
+    // Node teardown must run while the facade handle is still live —
+    // ~BookmarkNode destroys each subtree through it.  The undo stack
+    // outlives this body (member teardown) and still holds detached
+    // nodes carrying m_store, so flush it first or its commands'
+    // deletes hit a closed handle.
+    m_commands.clear();
+    m_bookmarkRootNode.reset();
+    ac_bm_close(m_bm);
+    m_bm = nullptr;
+#endif
 }
 
 #ifdef ARKTOS_RUSTCORE
+AcBookmarks *BookmarksManager::rustStore()
+{
+    // The app's data root moved after this handle was minted — its
+    // per-op re-assert would keep writing the OLD root's xbel.  The
+    // node view's store pointers dangle the moment the handle closes,
+    // so drop them first and mark the manager stale: ensureBound()
+    // rebuilds the view on the next call.
+    if (m_bm && RustCoreBridge::rootDrifted()) {
+        if (m_bookmarkRootNode)
+            m_bookmarkRootNode->dropRustHandles();
+        ac_bm_close(m_bm);
+        m_bm = nullptr;
+        m_stale = true;
+    }
+    if (!m_bm) {
+        if (RustCoreBridge *bridge = RustCoreBridge::serving())
+            m_bm = bridge->bookmarks(m_profileId);
+    }
+    return m_bm;
+}
+
 void BookmarksManager::ensureBound()
 {
     if (!m_stale)
@@ -254,7 +299,7 @@ void BookmarksManager::load()
     // The Rust store owns parsing and the canonical tree; the C++
     // nodes below are a lazily materialized view over its handles.
     //
-    // The tree is process-global: before rc_bm_load replaces it, the
+    // The tree is process-global: before our binding replaces it, the
     // previously bound manager's pending edits must reach ITS file
     // and its in-memory view marked stale — its handles point into
     // the tree we're about to free.
@@ -262,36 +307,88 @@ void BookmarksManager::load()
         s_boundManager->m_saveTimer->saveIfNeccessary();
         s_boundManager->m_stale = true;
     }
-    RcStatus st = RC_OK;
-    if (QFile::exists(bookmarkFile))
-        st = rc_bm_load(bookmarkFile.toUtf8().constData());
-    if (st != RC_OK || !QFile::exists(bookmarkFile)) {
-        // First run, or a document the safe parser refused: fall back
-        // to the bundled defaults like the Qt reader did, then warn.
+    const bool fileExists = QFile::exists(bookmarkFile);
+    bool needDefaults = !fileExists;
+    // The facade mint binds + loads the file (RC08) — but only when
+    // the bound path moved: a same-path remint inherits the
+    // process-global tree AS MUTATED since (a torn-down manager's
+    // node deletes emptied it), so an existing file needs the forced
+    // re-read rc_bm_load always did.  A document the safe parser
+    // refuses is the one mint/reload failure that leaves the core
+    // healthy: warn, quarantine the bytes, and remint against the
+    // now-missing file so the defaults leg sees an empty tree.
+    AcBookmarks *bm = rustStore();
+    if (bm && fileExists && ac_bm_reload(bm) != RC_OK) {
+        ac_bm_close(bm);
+        m_bm = nullptr;
+        bm = nullptr;
+    }
+    if (!bm && fileExists && RustCoreBridge::serving()) {
+        char *err = ac_last_error();
+        QMessageBox::warning(nullptr, QLatin1String("Loading Bookmark"),
+            tr("Error when loading bookmarks: %1")
+                .arg(QString::fromUtf8(err ? err : "")));
+        ac_string_free(err);
+        const QString quarantine = bookmarkFile + QLatin1String(".corrupt");
+        QFile::remove(quarantine);
+        if (QFile::rename(bookmarkFile, quarantine)) {
+            bm = rustStore();
+            needDefaults = true;
+        }
+    }
+    if (!bm) {
+        // Legacy path — no bridge, or the mint still fails (e.g. the
+        // quarantine rename lost).  Same open + fallbacks as before.
+        RcStatus st = RC_OK;
+        if (fileExists)
+            st = rc_bm_load(bookmarkFile.toUtf8().constData());
+        if (st != RC_OK || !fileExists) {
+            // First run, or a document the safe parser refused: fall
+            // back to the bundled defaults like the Qt reader did,
+            // then warn.
+            bool ok = false;
+            QFile defaults(QLatin1String(":defaultbookmarks.xbel"));
+            if (defaults.open(QIODevice::ReadOnly)) {
+                const QByteArray xbel = defaults.readAll();
+                ok = rc_bm_load_mem(
+                        reinterpret_cast<const uint8_t *>(xbel.constData()),
+                        size_t(xbel.size())) == RC_OK;
+            }
+            if (!ok) {
+                // Last resort: an empty root can never fail to parse.
+                static const char kEmptyXbel[] = "<xbel version=\"1.0\"/>";
+                rc_bm_load_mem(reinterpret_cast<const uint8_t *>(kEmptyXbel),
+                               sizeof(kEmptyXbel) - 1);
+            }
+            if (st != RC_OK) {
+                char *err = rc_last_error_message();
+                QMessageBox::warning(nullptr, QLatin1String("Loading Bookmark"),
+                    tr("Error when loading bookmarks: %1")
+                        .arg(QString::fromUtf8(err ? err : "")));
+                rc_string_free(err);
+            }
+        }
+    } else if (needDefaults) {
+        // First run or a quarantined file — the bundled defaults,
+        // written through the facade handle.
         bool ok = false;
         QFile defaults(QLatin1String(":defaultbookmarks.xbel"));
         if (defaults.open(QIODevice::ReadOnly)) {
             const QByteArray xbel = defaults.readAll();
-            ok = rc_bm_load_mem(
-                    reinterpret_cast<const uint8_t *>(xbel.constData()),
+            ok = ac_bm_load_mem(
+                    bm, reinterpret_cast<const uint8_t *>(xbel.constData()),
                     size_t(xbel.size())) == RC_OK;
         }
         if (!ok) {
-            // Last resort: an empty root can never fail to parse.
             static const char kEmptyXbel[] = "<xbel version=\"1.0\"/>";
-            rc_bm_load_mem(reinterpret_cast<const uint8_t *>(kEmptyXbel),
+            ac_bm_load_mem(bm,
+                           reinterpret_cast<const uint8_t *>(kEmptyXbel),
                            sizeof(kEmptyXbel) - 1);
-        }
-        if (st != RC_OK) {
-            char *err = rc_last_error_message();
-            QMessageBox::warning(nullptr, QLatin1String("Loading Bookmark"),
-                tr("Error when loading bookmarks: %1")
-                    .arg(QString::fromUtf8(err ? err : "")));
-            rc_string_free(err);
         }
     }
     m_bookmarkRootNode.reset(new BookmarkNode(BookmarkNode::Root));
-    m_bookmarkRootNode->setHandle(rc_bm_root());
+    m_bookmarkRootNode->setStore(bm);
+    m_bookmarkRootNode->setHandle(bm ? ac_bm_root(bm) : rc_bm_root());
     s_boundProfileId = m_profileId;
     s_boundManager = this;
 #else
@@ -383,7 +480,10 @@ void BookmarksManager::save() const
     rustSyncTitle(m_toolbar);
     rustSyncExpanded(m_bookmarkRootNode.get());
     // The store serializes and installs the file atomically itself.
-    if (rc_bm_save(bookmarkFile.toUtf8().constData()) != RC_OK)
+    const QByteArray out = bookmarkFile.toUtf8();
+    const RcStatus st = m_bm ? ac_bm_save(m_bm, out.constData())
+                             : rc_bm_save(out.constData());
+    if (st != RC_OK)
         qWarning() << "BookmarkManager: error saving to" << bookmarkFile;
 #else
     XbelWriter writer;
@@ -643,7 +743,12 @@ void BookmarksManager::importHtmlDocument(const QByteArray &html)
     if (!m_loaded)
         load();
     const uint64_t rootHandle = menu()->handle();
-    char *probeJson = rc_bm_import_html(rootHandle,
+    AcBookmarks *store = menu()->store();
+    char *probeJson = store
+        ? ac_bm_import_html(store, rootHandle,
+            reinterpret_cast<const uint8_t *>(html.constData()),
+            size_t(html.size()), RC_BM_IMPORT_DRY_RUN)
+        : rc_bm_import_html(rootHandle,
             reinterpret_cast<const uint8_t *>(html.constData()),
             size_t(html.size()), RC_BM_IMPORT_DRY_RUN);
     if (!probeJson) {
@@ -710,10 +815,14 @@ BookmarkNode *BookmarksManager::importHtmlBookmarks(const QByteArray &html,
     addBookmark(parent, folder);
     char *json = nullptr;
     if (folder->handle()) {
-        json = rc_bm_import_html(folder->handle(),
-                reinterpret_cast<const uint8_t *>(html.constData()),
-                size_t(html.size()),
-                importBookmarklets ? RC_BM_IMPORT_BOOKMARKLETS : 0);
+        const uint8_t *data =
+            reinterpret_cast<const uint8_t *>(html.constData());
+        const int flags = importBookmarklets ? RC_BM_IMPORT_BOOKMARKLETS : 0;
+        json = folder->store()
+            ? ac_bm_import_html(folder->store(), folder->handle(),
+                                data, size_t(html.size()), flags)
+            : rc_bm_import_html(folder->handle(),
+                                data, size_t(html.size()), flags);
     }
     QJsonObject summary;
     if (json) {
@@ -743,9 +852,13 @@ bool BookmarksManager::exportBookmarksTo(const QString &fileName)
     ensureBound();
     // .html is the BKIMP01 Netscape writer; anything else is the
     // canonical XBEL — both atomic on the rust side.
-    if (fileName.endsWith(QLatin1String(".html"), Qt::CaseInsensitive))
-        return rc_bm_export_html(fileName.toUtf8().constData()) == RC_OK;
-    return rc_bm_save(fileName.toUtf8().constData()) == RC_OK;
+    const QByteArray out = fileName.toUtf8();
+    if (fileName.endsWith(QLatin1String(".html"), Qt::CaseInsensitive)) {
+        return (m_bm ? ac_bm_export_html(m_bm, out.constData())
+                     : rc_bm_export_html(out.constData())) == RC_OK;
+    }
+    return (m_bm ? ac_bm_save(m_bm, out.constData())
+                 : rc_bm_save(out.constData())) == RC_OK;
 }
 #endif // ARKTOS_RUSTCORE
 
@@ -761,7 +874,11 @@ RemoveBookmarksCommand::RemoveBookmarksCommand(BookmarksManager *m_bookmarkManag
 
 RemoveBookmarksCommand::~RemoveBookmarksCommand()
 {
-    if (m_done && !m_node->parent()) {
+    // removeOwner is claimed in redo() after the emit and cleared by
+    // every detach — a node another command (or a paired insert)
+    // re-detached is not ours to delete.
+    if (m_done && !m_node->parent()
+            && m_node->removeOwner == this) {
         delete m_node;
     }
 }
@@ -777,6 +894,7 @@ void RemoveBookmarksCommand::redo()
 {
     m_parent->remove(m_node);
     emit m_bookmarkManagaer->entryRemoved(m_parent, m_row, m_node);
+    m_node->removeOwner = this;
     m_done = true;
 }
 

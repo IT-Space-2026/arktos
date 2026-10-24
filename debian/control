@@ -25,7 +25,7 @@ Description: experimental Qt 6 / QtWebEngine web browser
  .
  This package bundles the Qt 6.12 runtime and QtWebEngine process
  under /usr/lib/arktos (the upstream build targets a newer Qt than the
- distro series ships), and statically links the optional Rust
- components (arktos-rustdl download engine, arktos-rustcore when built)
- into the binary — there are no separate rust .so artifacts to ship.
+ distro series ships), and statically links the Rust components
+ (arktos-rustdl download engine, arktos-rustcore browser core) into the
+ binary — the dlopen'd Servo backend library is included when built.
  Arktos is experimental software provided as is.

@@ -116,6 +116,11 @@ struct Snapshot {
     /// Tor mode ignores it (uniform-constant doctrine, see
     /// evaluate_tor's "gpc" emit).
     gpc_signal: bool,
+    /// MD06: the bound persona's merged urlclean ruleset — parsed
+    /// once per snapshot push so the request path never re-reads
+    /// urlclean.json.  None inherits the process-global urlstrip
+    /// ruleset (the pre-MD06 behavior verbatim).
+    urlclean_rules: Option<urlstrip::RuleSet>,
 }
 
 impl Default for Snapshot {
@@ -132,6 +137,7 @@ impl Default for Snapshot {
             strip_tracking_params: true,
             domain_blocklist: true,
             gpc_signal: true,
+            urlclean_rules: None,
         }
     }
 }
@@ -930,7 +936,18 @@ fn strip_target(snap: &Snapshot, req: &Request) -> CleanTarget {
     // never does.  The exemption lookup locks the shared state per
     // call; callers must NOT hold policy().state() across this call.
     let navigation = req.resource_type == RT_MAIN_FRAME;
-    match urlstrip::strip_for_request(&req.url, navigation, &|host| {
+    // MD06: the snapshot's per-persona ruleset wins; the shared
+    // process set is the no-override fallback.  Same surgery either
+    // way — clean_url is what strip_for_request wraps.
+    let shared;
+    let rules = match snap.urlclean_rules.as_ref() {
+        Some(r) => r,
+        None => {
+            shared = urlstrip::active_rules();
+            &shared
+        }
+    };
+    match urlstrip::clean_url(rules, &req.url, navigation, &|host| {
         is_urlclean_exempt(&policy().state(), host)
     }) {
         Some(out) => CleanTarget {
@@ -1213,6 +1230,15 @@ pub fn load_snapshot_json(v: &Value) -> RcResult<()> {
     }
     if let Some(b) = v.get("gpc_signal").and_then(|x| x.as_bool()) {
         snap.gpc_signal = b;
+    }
+    // MD06: the profile's merged urlclean ruleset rides the snapshot —
+    // one parse per push, zero per-request store reads.  A doc the
+    // shared grammar rejects degrades to the global set, never to a
+    // disarmed strip.
+    if let Some(doc) = v.get("urlclean_ruleset") {
+        snap.urlclean_rules = serde_json::to_string(doc)
+            .ok()
+            .and_then(|t| urlstrip::parse_rules(&t).ok());
     }
     policy().set_snapshot(snap);
     let host_list = |key: &str| -> Option<HashSet<String>> {
