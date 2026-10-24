@@ -74,6 +74,11 @@
  *   chrome.sidebarAction— ER15: Firefox-shape sugar when the manifest
  *                         declares sidebar_action — panel/title/icon
  *                         bookkeeping; open/close typed unsupported
+ *   chrome.identity    — MD35: getRedirectURL alone answers
+ *                        (Chromium's own renderer-side derivation:
+ *                        https://<id>.chromiumapp.org/<path>,
+ *                        synchronous + ungated); every other member
+ *                        stays under the typed-unsupported wildcard
  *   other absent ns     — unsupportedNs(): calls answer typed errors,
  *                         on* event registration is recorded
  *
@@ -5490,7 +5495,7 @@
     // on* properties yield real shim events whose registrations are
     // noted.  Nothing claims to work that doesn't.
     var unsupportedNames = [
-        'windows', 'identity', 'gcm',
+        'windows', 'gcm',
         'nativeMessaging',
         'scripting', 'offscreen', 'omnibox', 'devtools',
         'declarativeContent',
@@ -5505,7 +5510,7 @@
         'platformKeys', 'printerProvider', 'signedInDevices',
         'systemIndicator', 'chromeOs'
     ];
-    function unsupportedNs(path) {
+    function unsupportedNs(path, served) {
         var noted = {};
         return new Proxy({}, {
             get: function (t, prop) {
@@ -5513,6 +5518,10 @@
                     return undefined;    // stay non-thenable
                 if (typeof prop !== 'string')
                     return undefined;
+                if (served
+                        && Object.prototype.hasOwnProperty
+                               .call(served, prop))
+                    return served[prop];
                 var p = path + '.' + prop;
                 if (prop.indexOf('on') === 0
                         && prop.length > 2
@@ -5559,6 +5568,32 @@
                               false);
             } catch (e) {}
         }
+        // MD35: chrome.identity — getRedirectURL is the one member
+        // honestly derivable, and Chromium itself serves it from a
+        // renderer-side custom binding rather than an extension
+        // function: the path normalized to a leading '/', appended
+        // to the https://<id>.chromiumapp.org origin — synchronous
+        // and ungated like Chrome.  Every other member and on* event
+        // stays under the same typed-unsupported wildcard (the
+        // Google-account family has no Arktos surface).  The backend
+        // mirrors the derivation for bridge-routed calls
+        // (invokeIdentity).
+        if (chrome.identity === undefined)
+            installNs('identity',
+                      unsupportedNs('chrome.identity', {
+                          getRedirectURL: function (path) {
+                              touch('chrome.identity.getRedirectURL');
+                              if (path === null || path === undefined)
+                                  path = '/';
+                              else
+                                  path = String(path);
+                              if (path[0] !== '/')
+                                  path = '/' + path;
+                              return 'https://' + cfg.id
+                                     + '.chromiumapp.org' + path;
+                          }
+                      }),
+                      false);
         // windows.* does have a real event source (the EXT16 hub
         // pushes onCreated/onRemoved/onFocusChanged): pre-create them
         // so the typed-error proxy hands out real events without the

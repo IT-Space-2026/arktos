@@ -68,7 +68,9 @@ chrome.fileSystemProvider.*: unsupported
 # fontSettings left the dead list with MD33 — see the served
 # vocabulary under "served namespaces" below.
 chrome.gcm.*: unsupported
-chrome.identity.*: unsupported
+# identity left the dead list with MD35 — getRedirectURL alone is
+# served (the derived chromiumapp origin); the Google-account family
+# keeps the wildcard under "served namespaces" below.
 chrome.input.*: unsupported
 chrome.loginState.*: unsupported
 chrome.mediaPerception.*: unsupported
@@ -338,6 +340,15 @@ chrome.declarativeNetRequest.*: ruleset-not-found
 chrome.declarativeNetRequest.*: quota-exceeded
 chrome.declarativeNetRequest.*: unsupported
 chrome.declarativeNetRequest.*: unimplemented
+# MD35: chrome.identity serves getRedirectURL alone — the derived
+# https://<id>.chromiumapp.org/<path> origin, ungated like Chrome's
+# own renderer-side custom binding (the path is String()-coerced and
+# normalized to a leading '/').  Every other published member is the
+# Google-account family — no Arktos surface — and stays typed
+# 'unsupported' under the shim's wildcard; an unreachable member is
+# the 'unimplemented' verdict.
+chrome.identity.*: unsupported
+chrome.identity.*: unimplemented
 chrome.action.setIcon: invalid-image-data
 chrome.action.setIcon: invalid-path
 chrome.browserAction.setIcon: invalid-image-data

@@ -136,6 +136,7 @@ private slots:
     void extensionUserScripts();
     void extensionFontSettings();
     void extensionDeclarativeNetRequest();
+    void extensionIdentity();
     void extensionNotifications();
     void extensionIdle();
     void extensionCommands();
@@ -18246,6 +18247,84 @@ void tst_ExtensionManager::extensionDeclarativeNetRequest()
         QStringLiteral("/dnr-block")));
 
     delete window;
+}
+
+// MD35: chrome.identity — getRedirectURL alone is served: the
+// derived https://<id>.chromiumapp.org/<path> origin, ungated like
+// Chrome (Chromium's own renderer-side binding normalizes the path
+// to a leading '/' before joining it).  The Google-account family
+// stays typed 'unsupported'; an unpublished member is the
+// unreachable-member verdict.
+void tst_ExtensionManager::extensionIdentity()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extident-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        // No 'identity' grant on purpose — getRedirectURL is
+        // ungated like Chrome, so a manifest without it must still
+        // answer.
+        f.write("{\"manifest_version\":3,\"name\":\"tst-ident\","
+                "\"version\":\"1.0\"}");
+        f.close();
+    }
+    ExtensionShimBackend backend(
+        QStringLiteral("tstmockextensionid0057"),
+        QStringLiteral("tst-ident"), dir);
+    const auto invoke = [&backend](const QString &method,
+                                   const QJsonObject &args
+                                       = QJsonObject()) {
+        return backend.invoke(QStringLiteral("identity"), method,
+                              args);
+    };
+    const QString prefix = QStringLiteral(
+        "https://tstmockextensionid0057.chromiumapp.org");
+
+    // The derived origin — missing path, a bare path, and a
+    // leading-slash path all land under the same host.
+    QJsonObject reply = invoke(QStringLiteral("getRedirectURL"));
+    QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+             qPrintable(reply.value(QLatin1String("error")).toString()));
+    QCOMPARE(reply.value(QLatin1String("result")).toString(),
+             prefix + QLatin1Char('/'));
+    QCOMPARE(invoke(QStringLiteral("getRedirectURL"),
+                    QJsonObject{{QStringLiteral("path"),
+                                 QStringLiteral("oauth2")}})
+                 .value(QLatin1String("result")).toString(),
+             prefix + QStringLiteral("/oauth2"));
+    QCOMPARE(invoke(QStringLiteral("getRedirectURL"),
+                    QJsonObject{{QStringLiteral("path"),
+                                 QStringLiteral("/cb")}})
+                 .value(QLatin1String("result")).toString(),
+             prefix + QStringLiteral("/cb"));
+    // String() coercion like the binding — a numeric path joins as
+    // its decimal spelling.
+    QCOMPARE(invoke(QStringLiteral("getRedirectURL"),
+                    QJsonObject{{QStringLiteral("path"), 42.0}})
+                 .value(QLatin1String("result")).toString(),
+             prefix + QStringLiteral("/42"));
+
+    // The Google-account family stays dead — typed 'unsupported';
+    // an unpublished member is the unreachable-member verdict.
+    for (const QString &m : {QStringLiteral("getAccounts"),
+             QStringLiteral("getAuthToken"),
+             QStringLiteral("clearAllCachedAuthTokens"),
+             QStringLiteral("getProfileUserInfo"),
+             QStringLiteral("launchWebAuthFlow"),
+             QStringLiteral("removeCachedAuthToken")})
+        QCOMPARE(invoke(m).value(QLatin1String("error")).toString(),
+                 QStringLiteral("unsupported"));
+    QCOMPARE(invoke(QStringLiteral("bogusMember"))
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    QDir(dir).removeRecursively();
 }
 
 // EXT20: the engine forgets isEnabled across restarts — installed

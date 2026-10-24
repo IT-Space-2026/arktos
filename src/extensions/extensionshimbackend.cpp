@@ -1412,6 +1412,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeTabGroups(method, args);
     if (ns == QLatin1String("declarativeNetRequest"))
         return invokeDeclarativeNetRequest(method, args);
+    if (ns == QLatin1String("identity"))
+        return invokeIdentity(method, args);
     if (ns == QLatin1String("extension"))
         return invokeExtension(method, args);
     if (ns == QLatin1String("sidebarAction"))
@@ -8665,6 +8667,52 @@ QJsonObject ExtensionShimBackend::invokeSessions(
 // false today — routed through invoke anyway so the day either grant
 // surface exists the answer flips here, not in a page-side stub.
 // -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+// chrome.identity — MD35.  getRedirectURL is the one member Chrome
+// serves without the 'identity' grant and without any account
+// surface: Chromium answers it in a renderer-side custom binding
+// (identity_custom_bindings.js) — the path normalized to a leading
+// '/', appended to the derived https://<id>.chromiumapp.org origin.
+// Ungated like Chrome.  The rest of the published vocabulary is the
+// Google-account family (getAccounts/getAuthToken/
+// clearAllCachedAuthTokens/getProfileUserInfo/launchWebAuthFlow/
+// removeCachedAuthToken) plus onSignInChanged — no Arktos surface
+// exists, so they stay typed 'unsupported'.
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::invokeIdentity(
+        const QString &method, const QJsonObject &args)
+{
+    if (method == QLatin1String("getRedirectURL")) {
+        // The custom binding's semantics: a missing/null path is
+        // '/', anything else String()-coerced and normalized to a
+        // leading slash before it joins the derived origin.
+        const QJsonValue pathArg = args.value(QStringLiteral("path"));
+        QString path;
+        if (pathArg.isString())
+            path = pathArg.toString();
+        else if (pathArg.isDouble())
+            path = QString::number(pathArg.toDouble());
+        else if (pathArg.isBool())
+            path = pathArg.toBool() ? QStringLiteral("true")
+                                    : QStringLiteral("false");
+        if (path.isEmpty())
+            path = QStringLiteral("/");
+        else if (!path.startsWith(QLatin1Char('/')))
+            path.prepend(QLatin1Char('/'));
+        return okReply(QStringLiteral("https://") + m_extensionId
+                       + QStringLiteral(".chromiumapp.org") + path);
+    }
+    if (method == QLatin1String("getAccounts")
+            || method == QLatin1String("getAuthToken")
+            || method == QLatin1String("clearAllCachedAuthTokens")
+            || method == QLatin1String("getProfileUserInfo")
+            || method == QLatin1String("launchWebAuthFlow")
+            || method == QLatin1String("removeCachedAuthToken"))
+        return errReply(QStringLiteral("unsupported"));
+    return errReply(QStringLiteral("unimplemented"));
+}
 
 QJsonObject ExtensionShimBackend::invokeExtension(
         const QString &method, const QJsonObject &args)

@@ -990,6 +990,12 @@ UI:
   unlocks getMatchedRules, testMatchOutcome and onRuleMatchedDebug.
   Response-side header ops and tab-bound conditions stay a typed
   unsupported rather than a fake no-op (MD34).
+- chrome.identity.getRedirectURL answers for every hosted extension:
+  the derived https://<id>.chromiumapp.org/<path> origin an OAuth
+  flow registers as its callback, synchronous and ungated like
+  Chrome's own renderer-side binding. The rest of the identity
+  namespace is Google-account machinery and stays a typed
+  unsupported (MD35).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

@@ -190,6 +190,11 @@ class QWebEngineProfile;
 //                  per-script fonts stay typed unsupported —
 //                  'fontSettings' gates the namespace and the
 //                  on*Changed fan-out (eventGate)
+//   identity.*   — MD35: getRedirectURL alone answers — the derived
+//                  https://<id>.chromiumapp.org/<path> origin,
+//                  ungated like Chrome (the rest of the namespace is
+//                  the Google-account family and stays typed
+//                  'unsupported' under the shim's wildcard)
 //   runtime.*    — context bookkeeping (getViews counts); MD18
 //                  lifecycle ops: reload rides ExtensionManager's
 //                  unload+load, requestUpdateCheck rides
@@ -542,6 +547,14 @@ private:
     // ruleset-not-found, quota-exceeded.
     QJsonObject invokeDeclarativeNetRequest(const QString &method,
                                             const QJsonObject &args);
+    // MD35: chrome.identity — getRedirectURL is the one member that
+    // honestly answers without a Google-account surface: the derived
+    // https://<id>.chromiumapp.org/<path> origin, ungated like
+    // Chrome (Chromium serves it from a renderer-side custom
+    // binding, not an extension function).  The rest of the
+    // published vocabulary stays typed 'unsupported'.
+    QJsonObject invokeIdentity(const QString &method,
+                               const QJsonObject &args);
     QJsonObject invokeExtension(const QString &method,
                                 const QJsonObject &args);
     QJsonObject invokeSidebarAction(const QString &method,
