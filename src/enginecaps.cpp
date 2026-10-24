@@ -19,6 +19,9 @@
 
 #include "enginecaps.h"
 
+#include <qcoreapplication.h>
+#include <qstringlist.h>
+
 #ifdef ARKTOS_RUSTCORE
 
 #include <qhash.h>
@@ -104,4 +107,50 @@ bool EngineCaps::featureUsable(const QString &engineId,
     if (state == State::Unknown)
         return fallback;
     return state != State::Unsupported;
+}
+
+QString EngineCaps::capabilitySummary(const QString &engineId)
+{
+    // The chrome-facing features, in display order — the engine
+    // primitives (script_injection & friends) stay out: nothing in
+    // the shell offers them as a user pick, so naming them in a
+    // tooltip would only decorate jargon.
+    struct Row { const char *feature; const char *label; };
+    static const Row rows[] = {
+        { "devtools",          QT_TR_NOOP("developer tools") },
+        { "extensions_mv3",    QT_TR_NOOP("extensions") },
+        { "reader_mode",       QT_TR_NOOP("reader mode") },
+        { "downloads",         QT_TR_NOOP("downloads") },
+        { "containers",        QT_TR_NOOP("container tabs") },
+        { "tor",               QT_TR_NOOP("Tor") },
+        { "autofill",          QT_TR_NOOP("autofill") },
+        { "pdf_viewer",        QT_TR_NOOP("PDF viewing") },
+        { "site_permissions",  QT_TR_NOOP("site permissions") },
+        { "sessions",          QT_TR_NOOP("session restore") },
+        { "favicons",          QT_TR_NOOP("favicons") },
+    };
+    QStringList unsupported;
+    QStringList partial;
+    for (const Row &row : rows) {
+        switch (featureState(engineId, QLatin1String(row.feature))) {
+        case State::Unsupported:
+            unsupported << QCoreApplication::translate(
+                "EngineCaps", row.label);
+            break;
+        case State::Partial:
+            partial << QCoreApplication::translate(
+                "EngineCaps", row.label);
+            break;
+        default:
+            break;
+        }
+    }
+    QStringList parts;
+    if (!unsupported.isEmpty())
+        parts << QCoreApplication::translate("EngineCaps",
+            "unsupported: %1").arg(unsupported.join(QLatin1String(", ")));
+    if (!partial.isEmpty())
+        parts << QCoreApplication::translate("EngineCaps",
+            "limited: %1").arg(partial.join(QLatin1String(", ")));
+    return parts.join(QLatin1String(" — "));
 }

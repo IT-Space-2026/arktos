@@ -64,7 +64,7 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 
 | Site | Verdict | Notes / Needs |
 |------|---------|---------------|
-| `refresh` :462 | thin | per-row enablement + state reads: cookie rule (ac_cookies/ac_sitedec), adblock whitelist (ac_policy), JS rule (ac_sitedec), popups (ac_sitedec/MD09), http allowance, url-clean exempt (MD06), fingerprint exempt (ac_sitedec).  Engine gating (`m_engineTab` greys) → caps (MS06, needs MB04). |
+| `refresh` :462 | thin | per-row enablement + state reads: cookie rule (ac_cookies/ac_sitedec), adblock whitelist (ac_policy), JS rule (ac_sitedec), popups (ac_sitedec/MD09), http allowance, url-clean exempt (MD06), fingerprint exempt (ac_sitedec).  MS06 resolved the `m_engineTab` greys as KEEP: they gate arktos's WebEngine-bound managers (CookieJar/ScriptControlManager/PopupBlocker/PrivacyRequestInterceptor), not engine capability — webkit's supported `request_interception`/`per_page_settings` caps rows would ungrey toggles nothing enforces (dishonest).  Needs an app-level "policy stack runs on this engine" verdict — no MD row, flagged. |
 | `applyCookieRule` :733 | thin | rule write → ac_cookies/ac_sitedec. |
 | `toggleContentBlocking`/`toggleGlobalBlocking` :749/:760 | thin | site whitelist + global enable → ac_policy. |
 | `applyJavaScriptRule` :768 | thin | per-host JS rule → ac_sitedec (+ reload stays Qt). |
@@ -81,13 +81,13 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 
 | Site | Verdict | Notes / Needs |
 |------|---------|---------------|
-| `ReaderButton::refresh` :226 | keep + thin | reads engine-side ReaderMode state (keep); "hidden on widget/engine tabs" presence gate → caps (MS06/MB04) — enforced in BrowserMainWindow::updateReaderState. |
+| `ReaderButton::refresh` :226 | keep + thin | reads engine-side ReaderMode state (keep); the presence gate is done — MS06 routes it through `EngineCaps::featureUsable(id,"reader_mode")` in BrowserMainWindow::updateReaderState. |
 | `PrivacyIndicator::setWebView` + click :62/:42 | keep | off-the-record read from the page's profile + chrome actions. |
 | `PopupBlockerButton::rebuildMenu`/`refresh` :128/:94 | keep | menu + count badge from engine state. |
 | `PopupBlockerButton::allowPopupsForSite` :192 | thin | allow-host write → ac_sitedec; OTR→session-only discipline via profile context; verdict → MD09. |
 | `PopupBlockerButton::openBlockedPopup` :174 | keep | chrome action (tab placement already routed). |
-| `EngineIndicator::refresh` :69 | thin | MS06 — visible/enabled from backend count + lock state → caps/availability (needs MB04). |
-| `EngineIndicator::rebuildMenu` :102 | thin | per-backend `pageUnavailableReason` → caps table (MS06/MB04); menu paint keeps. |
+| `EngineIndicator::refresh` :69 | keep | MS06 resolved: visibility/enabled keys off registered-backend count + the swap lock — backend PRESENCE and lock state are runtime questions the static caps registry explicitly refuses to grade (enginecaps.h).  No facade verdict exists; stays Qt. |
+| `EngineIndicator::rebuildMenu` :102 | done | MS06: `pageUnavailableReason` stays adapter-local (runtime presence, not caps-able by design); rows now append `EngineCaps::capabilitySummary` — the registry's unsupported/limited feature rollup rides every swap-row tooltip; unregistered ids/no-rust append nothing. |
 | `LocationBarSiteIcon::*` | keep | drag source, paint. |
 
 ## src/webview.cpp
@@ -129,14 +129,14 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 | `loadDefaultState`/`save` :853/:870 | thin | persisted window blob read/write → ac_settings (blob format can stay Qt). |
 | `saveState`/`restoreState` :884/:924 | thin | same store route; field layout + compat migration logic stays Qt (it's the blob's codec). |
 | `lastTabClosed` :1045 | thin | `quitAsLastTabClosed` via ac_settings. |
-| `setupMenu` :1064 | keep + thin | construction keeps; embedded decisions thin: tor-binary gate :1101 (caps), container-menu hide :1115 (mode/caps), `canRestoreSession` :1527 — MS08 done: per-persona existence verdict now `ac_session_exists` on bound handles, lock-store enable :1667 (rc_cred), BiDi tor gate :1719 (caps), updates tor gate :1793 (caps/mode). |
+| `setupMenu` :1064 | keep + thin | construction keeps; embedded decisions: tor-binary gate :1101 — KEEP (MS06: caps grades per-engine `tor` support, never binary/daemon presence — the env probe stays Qt); container-menu hide :1115 + BiDi :1719 + updates :1793 tor gates — mode verdicts (isTorMode), not per-engine caps → thin-blocked on a context facade, no MD row; `canRestoreSession` :1527 — MS08 done; lock-store enable :1667 → rc_cred (pending context leg). |
 | devtools rows refresh :1733 | done | MS05: verdict is `EngineCaps::featureUsable(id, "devtools", capabilities().devTools)` — ac_engine_caps first, adapter-local caps as Unknown/no-rust fallback; identical enable/tooltip outcomes (servo+webkit unsupported, qtwebengine supported).  Refresh also hooks tabsChanged now — an engine swap replaces the widget at the same index without a currentChanged. |
 | `aboutToShowViewMenu` :1830 | keep | label sync. |
-| `updateReaderState` :1839 | thin | reader/PiP availability per tab → caps (MS06); checked-state from engine objects keep. |
+| `updateReaderState` :1839 | done | MS06: reader presence/enable is `EngineCaps::featureUsable(tabEngineId,"reader_mode", fallback=view!=nullptr)` — identical outcomes (webengine supported; servo/webkit engine tabs unsupported→hidden; widget tabs/unknown→fallback).  PiP keeps `view!=nullptr` — no caps row covers it.  Checked-state from engine objects keep. |
 | `aboutToShowTextEncodingMenu`/`viewTextEncoding` :1882/:1910 | keep | menu + per-page engine setting writes. |
 | `retranslate`/`setupToolBar` :1930/:2065 | keep | chrome construction; embedded gates listed separately. |
 | `applySearchBoxVisibility` :2471 | thin | tor-mode + `MainWindow/showSearchBox` → ac_settings. |
-| `updateEngineIndicator` :2510 | thin | MS06 — swap-lock verdict (tor/private/container-strip/widget-tab). |
+| `updateEngineIndicator` :2510 | thin-blocked | MS06 resolved: the lock reasons are mode/context verdicts (tor mode, private tab, container-strip level), not engine caps — webkit's `otr_profile`=supported/`containers`=partial rows would wrongly UNLOCK swaps that still cannot bind an OTR/container profile (parity + honesty).  Needs a context-facade verdict — no MD row, flagged. |
 | `applySidebarSettings`/`applySidebarWidth`/`persistSidebarWidth`/`updateSidebarCloseButton` :2593/:2634/:2649/:2691 | thin | sidebar keys via ac_settings; layout mechanics keep. |
 | `eventFilter`/sidebar grip/dock handling :2704 | keep | input + geometry. |
 | `showNavigationBarContextMenu` :2734 | keep + thin | menu build keep; `navBarResetAction` enable :2749 = order-vs-default compare (state read thin). |
@@ -188,7 +188,7 @@ Legend for "Needs" column: which MSnn row / MDnn module the move waits on.
 | `getView` :4868 | keep + thin | construction keep; per-target profile pick (private/container) → ac_profiles/ac_containers. |
 | `newTabPage`/`loadNewTabPageUrl`/`newPrivateTab`/`makeNewTab`/`makeNewTabLike`/`makeNewPrivateTab`/`makeNewTabInContainer`/`makeNewTabOnProfile` :582-1141 | thin | home-url pick (ac_settings), private/container profile routing (ac_profiles/ac_containers); construction keep. |
 | `loadSettings` :4667 | thin | tab-strip prefs block → ac_settings. |
-| `addEngineTab`/`reloadTabInEngine`/`tabEngineId`/`engineTab` :1180-1566 | thin | MS06 — swap-availability verdict (tor/private/container-strip guards + backend resolve) → caps/context; engine-object work keeps. |
+| `addEngineTab`/`reloadTabInEngine`/`tabEngineId`/`engineTab` :1180-1566 | thin-blocked | MS06 resolved: the swap guards are the same mode/context verdicts as updateEngineIndicator's locks (tor/private/container-strip) — caps cannot honestly answer them (see :2510); needs a context facade, no MD row.  Backend resolve + engine-object work keeps. |
 | `reopenTabInContainer`/`loadUrlInContainer`/`manageContainers`/`manageContainersInteractive` :1567-1663 | thin | container moves + site-rule enforcement → ac_containers (+ MD02 for nav-time rule verdict). |
 | tab groups :1663-2191 (`assignTabGroup`/`createTabGroup`/`moveTabIntoGroupRun`/`addTabToGroup`/`removeTabFromGroup`/`groupTabWith`/`renameTabGroup`/`setTabGroupColor`/`inheritTabGroup`/`forgetTabGroupIfEmpty`/`detachGroupMember`/`expandTabGroup`/`setTabGroupCollapsed`/`ungroupTabs`/`closeTabGroup`/`normalizeTabGroupMove`) | keep + thin-blocked:MD08 | MS08 verified: group membership/name/color/collapsed already persist via the AcSession manifest (collectSessionSnapshot→ac_session_save); the live `m_tabGroups`/`m_tabGroupInfo` maps are per-run widget state with no facade surface — membership-op policy is MD08's. Strip reflow keep. |
 | container strip :2309-2700 (`twoLevelStrip`/`activeContainerHeader`/`containerTabCount`/`containerHeaders`/`containerStripActive`/`applyContainerFilter`/`detachTabIntoContainerStore`/`restoreHiddenContainerTabs`/`setActiveContainerHeader`/`moveContainerHeader`/`syncContainerStrip`/`closeHiddenTab`/`closeHiddenPage`/`closeTabsInContainer`/`setTwoLevelStrip`) | keep + thin-blocked:MD08 | MS08 verified: active level persists via the manifest's `activeContainer` (ac_session_routed); hidden stores are per-run widget state.  Restore-time level pick = MD08 restore policy; strip rebuild + painting keep. |
@@ -241,6 +241,7 @@ instances and manager-owned stores that haven't been facade-bound.
 | `updateEnergySaverStatus` :2330 | keep | live battery/saver state (system read). |
 | ScriptControlManager/PopupBlocker page wiring :578-590 | thin | rule lists via ac_sitedec. |
 | `filterPages`/`buildPageSearchIndex`/`pageTitle`/`openAtPage`/`showEvent`/`changeEvent`/`retranslate`/`sidebarPanelMove`/`updateSidebarPanelButtonStates` :924-2251 | keep | dialog UI. |
+| render-engine combo rows + `extensionsHintLabel` :379/:514/:958 | done | MS06: combo-row tooltips append `EngineCaps::capabilitySummary` (the spec's "WebKit extensions row marked unsupported with tooltip"); the extensions hint appends a caps-derived "Extensions run on %1 tabs only" when a registered backend grades extensions_mv3 unsupported — empty/unknown→.ui text verbatim, tor/build-unsupported paths unchanged. |
 
 ## src/history/ UI
 
@@ -306,9 +307,15 @@ instances and manager-owned stores that haven't been facade-bound.
   :1733, :3521-3581 — DONE via `EngineCaps` (ac_engine_caps read cache,
   rustcore ABI v7).  webview zoom :1062-1149 thin-blocked (no
   zoom-defaults facade surface); find has no check to replace.
-- **MS06 capability chrome** (~6 sites): browsermainwindow.cpp:2510,
-  :1115/:1719/:1793, engineindicator.cpp:69/102, updateReaderState:1839 —
-  `needs:task:MB04`.
+- **MS06 capability chrome** — DONE (MB04 landed in mw-bridge):
+  updateReaderState:1839 reader gate → caps `reader_mode`;
+  engineindicator.cpp:102 + settings.cpp renderEngineCombo rows +
+  extensionsHintLabel ride `EngineCaps::capabilitySummary`.
+  Resolved KEEP/thin-blocked: indicator availability (`pageUnavailableReason`
+  is runtime presence — static caps can't grade it), swap locks +
+  tor/menu gates (mode/context verdicts — caps rows like webkit
+  `otr_profile` would mis-answer), sitepanel engine greys (gate
+  WebEngine-bound managers, not engine capability).
 - **MS07 settings** (~12 section groups): settings.cpp whole + residual
   raw `QSettings` (found: tabwidget.cpp:2107) + manager stores not yet
   facade-bound (WebPermissionManager → MD03; extension registry → flag).

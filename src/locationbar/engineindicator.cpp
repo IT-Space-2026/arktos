@@ -19,11 +19,13 @@
 
 #include "engineindicator.h"
 
+#include "enginecaps.h"
 #include "engineinterface.h"
 #include "engineregistry.h"
 #include "safetext.h"
 
 #include <qmenu.h>
+#include <qstringlist.h>
 
 EngineIndicator::EngineIndicator(QWidget *parent)
     : QToolButton(parent)
@@ -120,20 +122,35 @@ void EngineIndicator::rebuildMenu()
         // ENG19: a backend that would refuse the page right now —
         // Servo's single-view slot claimed or spent — reads as a
         // disabled entry with the reason, never a click that dies
-        // silently.
+        // silently.  That verdict stays adapter-local: the caps
+        // registry is static by design and deliberately never answers
+        // whether a backend resolved this run.
         const QString unavailable = backend->pageUnavailableReason();
-        if (!unavailable.isEmpty()) {
-            action->setEnabled(false);
-            action->setToolTip(unavailable);
-            action->setStatusTip(unavailable);
-        } else if (const QString note = backend->engineNote();
-                   !note.isEmpty()) {
+        QStringList tips;
+        if (!unavailable.isEmpty())
+            tips << unavailable;
+        else if (const QString note = backend->engineNote();
+                 !note.isEmpty()) {
             // ENG29: a pickable backend with a caveat (Servo's
             // slower-than-Chromium baseline, escalated on a debug
             // artifact) explains itself on hover before the swap.
-            action->setToolTip(note);
-            action->setStatusTip(note);
+            tips << note;
         }
+        // MS06: the caps table's static rollup rides every row —
+        // "what this engine cannot do" (devtools, extensions, reader
+        // mode…) is registry truth the live availability answer never
+        // covered.  Unregistered ids and no-rust builds answer an
+        // empty line, leaving the tooltip exactly as before.
+        const QString caps = EngineCaps::capabilitySummary(backend->id());
+        if (!caps.isEmpty())
+            tips << caps;
+        if (!tips.isEmpty()) {
+            const QString tip = tips.join(QLatin1Char('\n'));
+            action->setToolTip(tip);
+            action->setStatusTip(tip);
+        }
+        if (!unavailable.isEmpty())
+            action->setEnabled(false);
         connect(action, &QAction::triggered,
                 this, [this, id = backend->id()]() {
             emit switchRequested(id);

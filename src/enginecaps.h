@@ -63,6 +63,16 @@ public:
     // the caller's `fallback` (its pre-MS05 adapter-local truth).
     static bool featureUsable(const QString &engineId,
                               const QString &feature, bool fallback);
+
+    // MS06: a one-line rollup of an engine's non-supported grades on
+    // the chrome-facing features — "unsupported: reader mode,
+    // extensions" / "limited: session restore" — for the surfaces
+    // that annotate a whole backend (settings engine combo, engine-
+    // indicator menu).  Empty when every listed feature grades usable
+    // AND when the registry cannot grade the id at all (no-rust,
+    // unregistered, FFI failure), so callers append nothing and keep
+    // their pre-MS06 tooltip verbatim.
+    static QString capabilitySummary(const QString &engineId);
 };
 
 #endif // ENGINECAPS_H

@@ -83,6 +83,7 @@
 #include "domainblocklist.h"
 #include "downloadmanager.h"
 #include "energysaver.h"
+#include "enginecaps.h"
 #include "engineinterface.h"
 #include "engineregistry.h"
 #include "extensionmanager.h"
@@ -149,6 +150,28 @@
 #include <qwebengineprofile.h>
 #include <qwebenginesettings.h>
 #include <qwebengineview.h>
+
+// MS06: which tabs the managed extension runtime actually reaches —
+// the caps table grades extensions_mv3 per engine, so the hint names
+// the hosts instead of letting the user discover "extensions never
+// run here" on a foreign tab.  Empty when the registry cannot grade
+// (no-rust build) or every registered backend hosts them — in both
+// cases the .ui text stands alone, exactly like before MS06.
+static QString extensionsEngineScope()
+{
+    QStringList hosts;
+    const QList<Engine::Backend *> backends = EngineRegistry::backends();
+    for (Engine::Backend *backend : backends) {
+        if (EngineCaps::featureUsable(backend->id(),
+                QStringLiteral("extensions_mv3"), false))
+            hosts << backend->displayName();
+    }
+    if (hosts.isEmpty() || hosts.count() == backends.count())
+        return QString();
+    return QCoreApplication::translate("SettingsDialog",
+        "Extensions run on %1 tabs only.")
+        .arg(hosts.join(QLatin1String(", ")));
+}
 
 SettingsDialog::SettingsDialog(QWidget *parent)
     : QWidget(parent)
@@ -385,10 +408,20 @@ SettingsDialog::SettingsDialog(QWidget *parent)
                                              renderEngineCombo->palette()));
         // ENG29: backend caveats (Servo's slower-than-Chromium
         // baseline, escalated on a debug artifact) show on hover in
-        // the selector itself.
+        // the selector itself.  MS06: the caps table's static rollup
+        // rides the same tooltip — "extensions unsupported", "reader
+        // mode unsupported" and friends — so the pick explains what a
+        // default engine would never light up.  No-rust builds and
+        // ids the registry cannot grade add nothing, keeping the
+        // pre-MS06 tooltip verbatim.
         const QString note = backend->engineNote();
-        if (!note.isEmpty())
-            renderEngineCombo->setItemData(row, note, Qt::ToolTipRole);
+        const QString caps = EngineCaps::capabilitySummary(backend->id());
+        QString tip = note;
+        if (!caps.isEmpty())
+            tip = tip.isEmpty() ? caps
+                                : tip + QLatin1Char('\n') + caps;
+        if (!tip.isEmpty())
+            renderEngineCombo->setItemData(row, tip, Qt::ToolTipRole);
     }
     renderEngineGroup->setVisible(EngineRegistry::backends().count() >= 2);
 
@@ -532,6 +565,13 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         extensionAutoUpdateCheck->setEnabled(false);
         extensionsHintLabel->setText(
             tr("This build of Qt WebEngine was compiled without extension support."));
+    } else if (const QString scope = extensionsEngineScope();
+               !scope.isEmpty()) {
+        // MS06: the caps rollup narrows the .ui promise to the tabs
+        // the runtime reaches — a registered servo/webkit backend
+        // means some tabs exist where extensions never run.
+        extensionsHintLabel->setText(
+            extensionsHintLabel->text() + QLatin1Char(' ') + scope);
     }
 
     // EXT10: header sizing.  Version/Status hug their short fixed
@@ -935,6 +975,12 @@ void SettingsDialog::retranslate()
         extensionsHintLabel->setText(
             tr("This build of Qt WebEngine was compiled without "
                "extension support."));
+    } else if (const QString scope = extensionsEngineScope();
+               !scope.isEmpty()) {
+        // MS06: same caps rollup as the ctor — retranslateUi just
+        // restored the .ui text, so the scope line re-appends.
+        extensionsHintLabel->setText(
+            extensionsHintLabel->text() + QLatin1Char(' ') + scope);
     }
 #ifndef ARKTOS_RUSTDL
     if (QStandardItemModel *engineModel =

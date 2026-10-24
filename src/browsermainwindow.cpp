@@ -1878,19 +1878,32 @@ void BrowserMainWindow::updateReaderState()
                     this, [this](bool) { updateReaderState(); });
         }
     }
-    m_viewReaderAction->setEnabled(view != nullptr);
+    // MS06: presence/enabled is a caps verdict now — reader_mode is
+    // graded per engine (the servo and webkit rows mark it
+    // unsupported with the note "engine tabs hide the control").  An
+    // Unknown grade — no-rust build, widget tab, an id the registry
+    // cannot resolve — falls back to "a WebView owns this tab", the
+    // pre-MS06 answer verbatim.
+    const QString readerEngineId = m_tabWidget->tabEngineId(
+        m_tabWidget->currentIndex());
+    const bool readerUsable = view
+        && EngineCaps::featureUsable(readerEngineId,
+                QStringLiteral("reader_mode"), true);
+    m_viewReaderAction->setEnabled(readerUsable);
     m_viewReaderAction->setChecked(view && view->readerMode()
                                    && view->readerMode()->isActive());
     // READ02/READ04: the nav-row button follows the same tab — it
     // manages its own checked/suggested state off the view's
-    // ReaderMode, and it stays visible on every engine tab.  The
-    // article heuristic no longer gates presence; it only drives the
-    // "suggested" accent.  Only tabs where reader mode can never
-    // apply (widget pages like History/Preferences, non-WebView
-    // engine tabs) hide the control.
+    // ReaderMode.  The article heuristic no longer gates presence; it
+    // only drives the "suggested" accent.  Only tabs where reader
+    // mode can never apply (widget pages like History/Preferences,
+    // engine tabs whose caps row says so) hide the control.
     m_readerModeButton->setWebView(view);
-    m_navReaderAction->setVisible(view != nullptr);
-    m_readerModeButton->setVisible(view != nullptr);
+    m_navReaderAction->setVisible(readerUsable);
+    m_readerModeButton->setVisible(readerUsable);
+    // PiP has no caps row — its only honest availability signal stays
+    // "this tab hosts a WebView" (the QWebChannel it rides is
+    // WebView-bound).
     m_viewPipAction->setEnabled(view != nullptr);
     m_viewPipAction->setChecked(view && view->pictureInPicture()
                                 && view->pictureInPicture()->isActive());

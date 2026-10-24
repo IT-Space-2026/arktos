@@ -1686,6 +1686,15 @@ Build, tests & tools:
   in place (the swap replaces the tab widget without a tab-change
   signal, so the rows could previously stay stale until switching
   tabs).
+- Capability-driven chrome annotations (MS06): the engine-switch
+  menu's "Reload in …" rows and the Preferences render-engine combo
+  now carry the capability registry's per-engine caveat rollup on
+  their tooltips (for example Servo and WebKit rows list their
+  unsupported extensions, reader mode and developer tools), and the
+  Extensions preferences page names which registered engines actually
+  host extensions when one cannot. Reader mode's nav button and menu
+  action now take their per-tab availability from the same registry —
+  they still hide exactly where they hid before.
 0.2 (unreleased) — Qt 6 port in progress
 Build system:
     The Rust components are now the default code path: a plain `qmake` auto-detects a cargo toolchain (PATH, then ~/.cargo/bin) and builds rustcore (credential/autofill/session/bookmark/history stores, the OpenSearch engine registry, per-site decisions, url-strip, blocklist, TLS probe), rustdl (accelerated downloads) and the adblock-rust engine as part of `make`. The C++ implementations remain as the no-toolchain fallback — opt out with `qmake CONFIG+=no-rust` or per crate with `CONFIG-=rustcore` / `CONFIG-=rustdl` / `CONFIG-=adblock_rust`. With no Rust toolchain at all qmake warns loudly and builds the Qt paths so the tree always configures.
