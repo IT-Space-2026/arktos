@@ -22,6 +22,7 @@
 #include "adblockmanager.h"
 #include "browserpaths.h"
 #include "networkaccessmanager.h"
+#include "profilesettings.h"
 
 #include <qcoreapplication.h>
 #include <qdebug.h>
@@ -31,7 +32,6 @@
 #include <qnetworkrequest.h>
 #include <qpointer.h>
 #include <qsavefile.h>
-#include <qsettings.h>
 
 #if defined(ARKTOS_RUSTCORE)
 #include "rustcorebridge.h"
@@ -84,7 +84,7 @@ QList<QUrl> DomainBlocklist::defaultSources()
 
 QDateTime DomainBlocklist::lastUpdate() const
 {
-    return QSettings()
+    return ProfileSettings()
         .value(QLatin1String("privacy/domainBlocklistUpdated"))
         .toDateTime();
 }
@@ -221,7 +221,7 @@ void DomainBlocklist::maybeCommit()
                 rc_set_data_dir(dir.constData());
                 rc_blocklist_reload();
             }
-            QSettings().setValue(
+            ProfileSettings().setValue(
                 QLatin1String("privacy/domainBlocklistUpdated"),
                 QDateTime::currentDateTime());
             emit updateFinished(true);

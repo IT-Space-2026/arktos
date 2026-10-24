@@ -108,6 +108,7 @@ HEADERS += \
     $$PWD/downloadgraph.h \
     $$PWD/downloadmanager.h \
     $$PWD/energysaver.h \
+    $$PWD/enginecaps.h \
     $$PWD/fingerprintprotector.h \
     $$PWD/modelmenu.h \
     $$PWD/modeltoolbar.h \
@@ -154,6 +155,7 @@ HEADERS += \
     $$PWD/statusbarwidgets.h \
     $$PWD/streamingutils.h \
     $$PWD/tabbar.h \
+    $$PWD/tabbarcontroller.h \
     $$PWD/tabpositionpicker.h \
     $$PWD/tabpreview.h \
     $$PWD/themepicker.h \
@@ -167,6 +169,7 @@ HEADERS += \
     $$PWD/webpage.h \
     $$PWD/webpermissionmanager.h \
     $$PWD/webview.h \
+    $$PWD/webviewcontroller.h \
     $$PWD/webviewsearch.h \
     $$PWD/utils/arktosicon.h \
     $$PWD/utils/crashreporter.h \
@@ -204,6 +207,7 @@ SOURCES += \
     $$PWD/downloadgraph.cpp \
     $$PWD/downloadmanager.cpp \
     $$PWD/energysaver.cpp \
+    $$PWD/enginecaps.cpp \
     $$PWD/fingerprintprotector.cpp \
     $$PWD/modelmenu.cpp \
     $$PWD/modeltoolbar.cpp \
@@ -247,6 +251,7 @@ SOURCES += \
     $$PWD/sourceviewer.cpp \
     $$PWD/statusbarwidgets.cpp \
     $$PWD/tabbar.cpp \
+    $$PWD/tabbarcontroller.cpp \
     $$PWD/tabpositionpicker.cpp \
     $$PWD/tabpreview.cpp \
     $$PWD/themepicker.cpp \
@@ -260,6 +265,7 @@ SOURCES += \
     $$PWD/webpage.cpp \
     $$PWD/webpermissionmanager.cpp \
     $$PWD/webview.cpp \
+    $$PWD/webviewcontroller.cpp \
     $$PWD/webviewsearch.cpp \
     $$PWD/utils/arktosicon.cpp \
     $$PWD/utils/crashreporter.cpp \

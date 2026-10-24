@@ -785,8 +785,10 @@ void BrowserApplication::postLaunch()
                 return;
             // VSEC01: when every manifest window sat on the sealed
             // persona, restore skipped them all — the just-unlocked
-            // profile still needs a window.
-            if (m_mainWindows.isEmpty())
+            // profile still needs a window.  Standalone runs get no
+            // fallback, same policy as the floor above: a smoke (or
+            // a second-instance forwarder) must not sprout windows.
+            if (m_mainWindows.isEmpty() && !isStandalone())
                 newMainWindow(active);
         });
     }
@@ -1018,8 +1020,13 @@ static QStringList sessionStoreProfileIds()
         const QString id = entry.fileName();
         if (!BrowserPaths::isProfileId(id))
             continue;
-        if (QFileInfo::exists(entry.absoluteFilePath()
-                              + QLatin1String("/session.dat")))
+        // MS08: the "does this persona hold a saved session" verdict
+        // is the facade's — ac_session_exists on the bound handle;
+        // the legacy spelling re-anchors the process-global store per
+        // candidate like every other rc_* consumer.
+        const SessionAccess access(id);
+        if (access.h ? ac_session_exists(access.h) != 0
+                     : rc_session_exists() != 0)
             ids.append(id);
     }
     if (ids.removeAll(QStringLiteral("default")))
@@ -1211,10 +1218,11 @@ void BrowserApplication::saveSession()
     // MPROF03: the session manifest is app-level state spanning every
     // persona's windows — pin it to the primary persona's store rather
     // than letting it follow the ambient (focused) window.
+    // MS08: the restore-in-flight guard lives on the session lifecycle
+    // file (profiles/default/session.state) — cleared in the same slot
+    // the settings write occupied once a save closes the cycle.
+    BrowserProfile::setSessionRestoring(false);
     ProfileSettings settings(ProfileSettings::defaultId());
-    settings.beginGroup(QLatin1String("MainWindow"));
-    settings.setValue(QLatin1String("restoring"), false);
-    settings.endGroup();
 
     if (isPrivate())
         return;
@@ -1415,34 +1423,33 @@ void BrowserApplication::clearPrivateDataOnExit()
 
 bool BrowserApplication::restoreLastSession()
 {
-    {
-        ProfileSettings settings;
-        settings.beginGroup(QLatin1String("MainWindow"));
-        if (settings.value(QLatin1String("restoring"), false).toBool()) {
-            // MD08: the crash-restore answer comes from the facade —
-            // "always" retries silently, "never" drops the crashed
-            // snapshot, "ask" (the default, and any failed consult)
-            // keeps the prompt.  Bound to the primary persona: the
-            // restore decision is app-level across all manifests.
-            QString crashPolicy = QLatin1String("ask");
+    // MS08: the crash-during-restore guard reads the session lifecycle
+    // file now; a flag left in the settings store by an older build
+    // still arms it once (upgrade parity).
+    if (BrowserProfile::sessionRestoring()) {
+        // MD08: the crash-restore answer comes from the facade —
+        // "always" retries silently, "never" drops the crashed
+        // snapshot, "ask" (the default, and any failed consult)
+        // keeps the prompt.  Bound to the primary persona: the
+        // restore decision is app-level across all manifests.
+        QString crashPolicy = QLatin1String("ask");
 #if defined(ARKTOS_RUSTCORE)
-            const QJsonObject restore = sessionPolicyCall(
-                QStringLiteral("default"),
-                QJsonObject{
-                    {QLatin1String("op"), QLatin1String("restore")}});
-            const QString r =
-                restore.value(QLatin1String("crash_restore")).toString();
-            if (!r.isEmpty())
-                crashPolicy = r;
+        const QJsonObject restore = sessionPolicyCall(
+            QStringLiteral("default"),
+            QJsonObject{
+                {QLatin1String("op"), QLatin1String("restore")}});
+        const QString r =
+            restore.value(QLatin1String("crash_restore")).toString();
+        if (!r.isEmpty())
+            crashPolicy = r;
 #endif
-            if (crashPolicy == QLatin1String("never"))
+        if (crashPolicy == QLatin1String("never"))
+            return false;
+        if (crashPolicy != QLatin1String("always")) {
+            QMessageBox::StandardButton result = QMessageBox::question(nullptr, tr("Restore failed"),
+                tr("Arktos crashed while trying to restore this session.  Should I try again?"), QMessageBox::Yes | QMessageBox::No);
+            if (result == QMessageBox::No)
                 return false;
-            if (crashPolicy != QLatin1String("always")) {
-                QMessageBox::StandardButton result = QMessageBox::question(nullptr, tr("Restore failed"),
-                    tr("Arktos crashed while trying to restore this session.  Should I try again?"), QMessageBox::Yes | QMessageBox::No);
-                if (result == QMessageBox::No)
-                    return false;
-            }
         }
     }
 #ifdef ARKTOS_RUSTCORE
@@ -1476,13 +1483,9 @@ bool BrowserApplication::restoreLastSession()
                 windows.append(win);
         }
         if (sawManifest) {
-            {
-                ProfileSettings settings;
-                settings.beginGroup(QLatin1String("MainWindow"));
-                // Armed only once the blob has validated — a corrupt
-                // session can never loop the crash prompt.
-                settings.setValue(QLatin1String("restoring"), true);
-            }
+            // Armed only once the blob has validated — a corrupt
+            // session can never loop the crash prompt.
+            BrowserProfile::setSessionRestoring(true);
             QSet<QString> declinedUnlock;
             for (int i = 0; i < windows.count(); ++i) {
                 const QJsonObject win = windows.at(i).toObject();
@@ -1573,15 +1576,11 @@ bool BrowserApplication::restoreLastSession()
         windowProfiles.append(profileId);
     }
     QSet<QString> declinedUnlock;
-    {
-        ProfileSettings settings;
-        settings.beginGroup(QLatin1String("MainWindow"));
-        // saveSession will be called by an AutoSaver timer from the set
-        // tabs and in saveSession we will reset this flag back to false —
-        // it is only set once the blob has validated, so a corrupt or
-        // stale session does not loop the crash prompt on every launch.
-        settings.setValue(QLatin1String("restoring"), true);
-    }
+    // saveSession will be called by an AutoSaver timer from the set
+    // tabs and in saveSession we will reset this flag back to false —
+    // it is only set once the blob has validated, so a corrupt or
+    // stale session does not loop the crash prompt on every launch.
+    BrowserProfile::setSessionRestoring(true);
     for (int i = 0; i < windows.count(); ++i) {
         // A v2 blob (or a truncated v3 tail) leaves the id empty —
         // restore on "default", never the ambient persona.

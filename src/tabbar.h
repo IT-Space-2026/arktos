@@ -69,9 +69,11 @@
 #include <qpointer.h>
 
 #include "containermanager.h"
+#include "tabbarcontroller.h"
 #include "tabwidget.h"
 
 class QLineEdit;
+class QMenu;
 class QMimeData;
 class QTimer;
 class QPainter;
@@ -252,6 +254,11 @@ private slots:
     void toggleIconOnlyMode();
 
 private:
+    // MS10: renders one row of the controller's context-menu model —
+    // see tabbarcontroller.h for the decision side.
+    void addContextMenuEntry(QMenu *menu,
+            const TabBarController::MenuEntry &entry,
+            TabWidget *tabWidget);
     void updateVisibility();
     // TABS12: one editor at a time — finishTabTitleEdit() commits or
     // drops it; m_editPage carries the tab's page widget so a mid-edit

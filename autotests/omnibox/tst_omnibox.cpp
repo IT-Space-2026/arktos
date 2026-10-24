@@ -62,6 +62,7 @@ private slots:
     void frecencyScore_data();
     void frecencyScore();
     void suggestMatchesLegacyPipeline();
+    void suggestProxyPreservesStoreOrder();
 
 private:
     void seedHistory();
@@ -329,6 +330,49 @@ void tst_Omnibox::suggestMatchesLegacyPipeline()
         QVERIFY(!expected.isEmpty());
 #endif
     }
+}
+
+// MS03: the production completer wires HistoryCompletionModel over
+// RustHistorySuggestModel — the proxy must not re-filter or re-rank:
+// match + ordering rules live behind rc_history_suggest, so the proxy
+// has to surface the store's row set in the store's order verbatim.
+void tst_Omnibox::suggestProxyPreservesStoreOrder()
+{
+#ifdef ARKTOS_RUSTCORE
+    seedHistory();
+
+    HistoryCompletionModel proxy;
+    proxy.setSourceModel(new RustHistorySuggestModel(&proxy));
+
+    // The source model is lazy like production: it only queries once
+    // setSearchString() pushes a changed term, so a non-empty term
+    // runs first to populate it before the empty-term pass.
+    for (const QString &term :
+         {QStringLiteral("example"), QString(),
+          QStringLiteral("needle"), QStringLiteral("b")}) {
+        proxy.setSearchString(term);
+        proxy.sort(0);
+
+        QStringList actual;
+        for (int i = 0; i < proxy.rowCount(); ++i)
+            actual << proxy.index(i, 0)
+                          .data(HistoryModel::UrlStringRole)
+                          .toString();
+
+        QStringList expected;
+        const QByteArray t = term.toUtf8();
+        char *json = rc_history_suggest(t.constData(), 500);
+        QVERIFY(json);
+        const QJsonArray rows =
+            QJsonDocument::fromJson(QByteArray(json)).array();
+        rc_string_free(json);
+        for (const QJsonValue &v : rows)
+            expected << v.toObject()
+                            .value(QStringLiteral("url")).toString();
+
+        QCOMPARE(actual, expected);
+    }
+#endif
 }
 
 QTEST_MAIN(tst_Omnibox)

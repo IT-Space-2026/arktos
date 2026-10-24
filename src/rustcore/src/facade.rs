@@ -648,7 +648,7 @@ pub extern "C" fn ac_events_topics() -> *mut c_char {
     util::to_c_string(notify::topics_json())
 }
 
-/// The static per-engine capability matrix as JSON (v9; MB04) —
+/// The static per-engine capability matrix as JSON (v15; MB04) —
 /// what each engine supports when its backend is present, graded
 /// supported|partial|unsupported with a note wherever the grade
 /// needs the caveat.  `engine_id` selects one row —

@@ -83,6 +83,7 @@
 #include "containermanager.h"
 #include "devtoolswindow.h"
 #include "downloadmanager.h"
+#include "enginecaps.h"
 #include "engineindicator.h"
 #include "engineinterface.h"
 #include "enginetab.h"
@@ -644,8 +645,12 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
             this, &BrowserMainWindow::updateWindowTitle);
     connect(m_tabWidget, &TabWidget::showStatusBarMessage,
             statusBar(), [this](const QString &message) { statusBar()->showMessage(message); });
+    // MS04: the engine-adapter hover feed shows the controller's
+    // status-text verdict — same policy as WebView's own hover path.
     connect(m_tabWidget, &TabWidget::linkHovered,
-            statusBar(), [this](const QString &link) { statusBar()->showMessage(link); });
+            statusBar(), [this](const QString &link) {
+        statusBar()->showMessage(WebViewController::hoverStatusText(link));
+    });
     connect(m_tabWidget, &TabWidget::loadProgress,
             this, &BrowserMainWindow::loadProgress);
     connect(m_tabWidget, &TabWidget::loadStarted,
@@ -1694,8 +1699,8 @@ void BrowserMainWindow::setupMenu()
             this, [this]() {
         if (!currentTab())
             return;
-        // DevTools is engine-bound (capabilities().devTools) — reach
-        // the wrapped page through the adapter's escape hatch.
+        // DevTools is engine-bound (the caps table's devtools row) —
+        // reach the wrapped page through the adapter's escape hatch.
         if (WebEnginePageAdapter *adapter =
                 WebEnginePageAdapter::of(currentTab()->enginePage()))
             DevToolsWindow::inspectElement(adapter->webEnginePage());
@@ -1732,19 +1737,25 @@ void BrowserMainWindow::setupMenu()
 #endif
 
     // ENG35: the devtools rows track the CURRENT tab's engine —
-    // capabilities().devTools is false on Servo (its devtools crate
-    // only serves the Firefox remote protocol, which the panel's CDP
-    // client cannot read), so both entries disable with the reason
-    // instead of opening a dead surface — the same honesty pattern
-    // as BidiPanel's domain probes.
+    // Servo's devtools crate only serves the Firefox remote
+    // protocol, which the panel's CDP client cannot read, so both
+    // entries disable with the reason instead of opening a dead
+    // surface — the same honesty pattern as BidiPanel's domain
+    // probes.  MS05: the verdict itself is the facade's caps table
+    // now (`devtools` per engine id); the adapter-local
+    // capabilities().devTools stays the fallback for a build or an
+    // engine id the registry cannot grade.
     const auto refreshDevToolsRows = [this]() {
         const EngineTab *eng =
             m_tabWidget->engineTab(m_tabWidget->currentIndex());
-        const bool dead = eng && eng->backend()
-            && !eng->backend()->capabilities().devTools;
+        const Engine::Backend *backend = eng ? eng->backend() : nullptr;
+        const bool dead = backend
+            && !EngineCaps::featureUsable(backend->id(),
+                    QStringLiteral("devtools"),
+                    backend->capabilities().devTools);
         const QString tip = dead
             ? tr("devtools unavailable on %1")
-                  .arg(eng->backend()->displayName())
+                  .arg(backend->displayName())
             : QString();
         m_toolsChromiumDevToolAction->setEnabled(!dead);
         m_toolsChromiumDevToolAction->setToolTip(tip);
@@ -1757,6 +1768,12 @@ void BrowserMainWindow::setupMenu()
     };
     connect(m_tabWidget, &QTabWidget::currentChanged,
             this, [refreshDevToolsRows](int) { refreshDevToolsRows(); });
+    // An engine swap replaces the tab's widget at the same index —
+    // currentChanged never fires for it, so the caps refresh hooks
+    // the strip's swap signal too (the same reason
+    // updateEngineIndicator does).
+    connect(m_tabWidget, &TabWidget::tabsChanged,
+            this, [refreshDevToolsRows]() { refreshDevToolsRows(); });
     refreshDevToolsRows();
 
     m_toolsUserAgentMenu = new UserAgentMenu(m_toolsMenu);
@@ -1868,19 +1885,32 @@ void BrowserMainWindow::updateReaderState()
                     this, [this](bool) { updateReaderState(); });
         }
     }
-    m_viewReaderAction->setEnabled(view != nullptr);
+    // MS06: presence/enabled is a caps verdict now — reader_mode is
+    // graded per engine (the servo and webkit rows mark it
+    // unsupported with the note "engine tabs hide the control").  An
+    // Unknown grade — no-rust build, widget tab, an id the registry
+    // cannot resolve — falls back to "a WebView owns this tab", the
+    // pre-MS06 answer verbatim.
+    const QString readerEngineId = m_tabWidget->tabEngineId(
+        m_tabWidget->currentIndex());
+    const bool readerUsable = view
+        && EngineCaps::featureUsable(readerEngineId,
+                QStringLiteral("reader_mode"), true);
+    m_viewReaderAction->setEnabled(readerUsable);
     m_viewReaderAction->setChecked(view && view->readerMode()
                                    && view->readerMode()->isActive());
     // READ02/READ04: the nav-row button follows the same tab — it
     // manages its own checked/suggested state off the view's
-    // ReaderMode, and it stays visible on every engine tab.  The
-    // article heuristic no longer gates presence; it only drives the
-    // "suggested" accent.  Only tabs where reader mode can never
-    // apply (widget pages like History/Preferences, non-WebView
-    // engine tabs) hide the control.
+    // ReaderMode.  The article heuristic no longer gates presence; it
+    // only drives the "suggested" accent.  Only tabs where reader
+    // mode can never apply (widget pages like History/Preferences,
+    // engine tabs whose caps row says so) hide the control.
     m_readerModeButton->setWebView(view);
-    m_navReaderAction->setVisible(view != nullptr);
-    m_readerModeButton->setVisible(view != nullptr);
+    m_navReaderAction->setVisible(readerUsable);
+    m_readerModeButton->setVisible(readerUsable);
+    // PiP has no caps row — its only honest availability signal stays
+    // "this tab hosts a WebView" (the QWebChannel it rides is
+    // WebView-bound).
     m_viewPipAction->setEnabled(view != nullptr);
     m_viewPipAction->setChecked(view && view->pictureInPicture()
                                 && view->pictureInPicture()->isActive());
@@ -3524,7 +3554,10 @@ void BrowserMainWindow::fileOpen()
 
 // PRINT01: a tab showing the shell document view previews/prints the
 // staged PDF itself; other engine tabs have no printToPdf so they get
-// the honest refusal instead of a silent dead menu entry.
+// the honest refusal instead of a silent dead menu entry.  MS05: the
+// verdict is a caps read now — pdf_viewer grades the document
+// pipeline a real print path would ride, and every backend an
+// EngineTab can host reports it unsupported.
 bool BrowserMainWindow::previewEngineTabDocument()
 {
     EngineTab *foreign =
@@ -3539,8 +3572,20 @@ bool BrowserMainWindow::previewEngineTabDocument()
         dialog.exec();
         return true;
     }
-    const QString engine = foreign->backend()
-        ? foreign->backend()->displayName()
+    const Engine::Backend *backend = foreign->backend();
+    if (backend
+            && EngineCaps::featureUsable(backend->id(),
+                    QStringLiteral("pdf_viewer"), false)) {
+        // Reachable only once an EngineTab-hostable backend grades
+        // the document pipeline usable — its print path hangs here
+        // the day one is wired; until then the honest answer below
+        // stays the refusal.
+        qInfo() << "print:" << backend->id()
+                << "grades pdf_viewer usable but EngineTab has no"
+                   "print pipeline yet";
+    }
+    const QString engine = backend
+        ? backend->displayName()
         : tr("This engine");
     QMessageBox::information(this, tr("Print"),
         tr("%1 cannot produce print output — there is nothing to "

@@ -103,10 +103,9 @@ void tst_ProfileWindow::cleanup()
     // process-global knobs every unscoped store resolves through.
     BrowserApplication::setPrivate(false);
     BrowserPaths::setActiveProfileId(kDefault);
-    // The restore crash-guard is a global key — a leg that left it
+    // The restore crash-guard is a global flag — a leg that left it
     // armed would make the next restore pop a modal question box.
-    ProfileSettings().setValue(QLatin1String("MainWindow/restoring"),
-                               false);
+    BrowserProfile::setSessionRestoring(false);
     closeAllWindows();
 }
 
@@ -348,8 +347,7 @@ void tst_ProfileWindow::privateWindowSharesOtrAndWritesNothing()
 void tst_ProfileWindow::sessionRoundTripKeepsBindings()
 {
     BrowserApplication *app = BrowserApplication::instance();
-    ProfileSettings().setValue(QLatin1String("MainWindow/restoring"),
-                             false);
+    BrowserProfile::setSessionRestoring(false);
 
     // Two persona-bound windows + one default window, each with a
     // navigated tab so the manifest has real content.
@@ -405,8 +403,7 @@ void tst_ProfileWindow::sessionRoundTripKeepsBindings()
 void tst_ProfileWindow::deletedProfileFallsBackOnRestore()
 {
     BrowserApplication *app = BrowserApplication::instance();
-    ProfileSettings().setValue(QLatin1String("MainWindow/restoring"),
-                             false);
+    BrowserProfile::setSessionRestoring(false);
 
     BrowserMainWindow *window = app->newMainWindow(kAlpha);
     QCOMPARE(window->profileId(), kAlpha);

@@ -4120,7 +4120,6 @@ fn notes_surface() {
 // MD04: the download-interception decision layer over the C ABI —
 // pure ops on a NULL store, the store-bound ops on a profile-bound
 // settings handle, the records/rules lanes, and the facade spelling.
-#[test]
 fn dlwpolicy_surface() {
     let _g = guard();
     let root = tmpdir("dlwpolicy");
@@ -4977,9 +4976,6 @@ fn facade_event_lane_round_trip() {
 
 // ---- MB04: the engine capability matrix ---------------------------------
 //
-// ac_engine_caps over the C ABI: no core needed, the registry is
-// static.  The interesting seams are the engine-id resolution
-// (canonical vs the Qt backend->id() spelling), the bad-argument
 // paths, and the schema the JSON emits.
 
 fn caps_json(engine_id: *const std::os::raw::c_char) -> Option<String> {

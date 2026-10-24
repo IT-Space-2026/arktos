@@ -86,14 +86,15 @@ private:
 };
 
 #ifdef ARKTOS_RUSTCORE
-// OMNI01: the rustcore history store serves the completer's rows —
+// OMNI01/MS03: the rustcore history store serves the completer's rows —
 // rc_history_suggest() returns them already filtered on the term and
-// ranked by the summed frecency + word-boundary score, so this is a
-// flat model behind the roles HistoryCompletionModel's filter/sort
-// pipeline consumes (it re-applies the same predicate/comparator, so
-// behavior is identical and the no-rust path is untouched).  The store
-// is the authority: a visit landing mid-completion refreshes through
-// the RustCoreBridge "history" change topic.
+// ranked by the summed frecency + word-boundary score, so this flat
+// model sits behind the roles HistoryCompletionModel consumes and the
+// proxy's filter/sort legs pass straight through (match + ordering
+// rules live behind the facade; the Qt predicate/comparator remains
+// the no-rust fallback).  The store is the authority: a visit landing
+// mid-completion refreshes through the RustCoreBridge "history"
+// change topic.
 class RustHistorySuggestModel : public QAbstractTableModel
 {
     Q_OBJECT

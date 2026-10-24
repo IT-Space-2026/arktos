@@ -63,6 +63,8 @@
 #include "domainblocklist.h"
 #include "downloadmanager.h"
 #include "energysaver.h"
+#include "enginecaps.h"
+#include "engineregistry.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
@@ -152,6 +154,7 @@ private slots:
     void privacyGroupAlignment();
     void gpcSignalToggle();
     void appearanceFieldBounds();
+    void capsAnnotations();
 };
 
 // Every re-arming modal driver below stamps itself with this counter
@@ -4775,6 +4778,57 @@ void tst_SettingsDialog::appearanceFieldBounds()
 
     dialog.close();
     settings.remove(QLatin1String("network/acceptLanguages"));
+}
+
+void tst_SettingsDialog::capsAnnotations()
+{
+    SettingsDialog dialog;
+
+#if defined(ARKTOS_RUSTCORE)
+    // MS06: every render-engine combo row carries the caps rollup on
+    // its tooltip — the webengine row grades everything usable but
+    // limited extensions; a servo/webkit row (when that backend is
+    // registered this build) names its missing chrome features.
+    bool sawChromiumTip = false;
+    for (int i = 0; i < dialog.renderEngineCombo->count(); ++i) {
+        const QString id =
+            dialog.renderEngineCombo->itemData(i).toString();
+        const QString tip = dialog.renderEngineCombo->itemData(
+            i, Qt::ToolTipRole).toString();
+        if (id == QLatin1String("webengine")) {
+            QVERIFY(tip.contains(QLatin1String("extensions")));
+            QVERIFY(!tip.contains(QLatin1String("unsupported")));
+            sawChromiumTip = true;
+        } else if (id == QLatin1String("servo")
+                   || id == QLatin1String("webkit")) {
+            QVERIFY(tip.contains(QLatin1String("extensions")));
+        }
+    }
+    QVERIFY(sawChromiumTip);
+#endif
+
+    // The extensions hint narrows its .ui promise only when a
+    // registered backend grades the runtime unsupported — a
+    // WebEngine-only registry (and every no-rust build, where caps
+    // answers Unknown) keeps the .ui text verbatim.
+    bool extlessBackend = false;
+    for (Engine::Backend *backend : EngineRegistry::backends()) {
+        if (EngineCaps::featureState(backend->id(),
+                QStringLiteral("extensions_mv3"))
+                == EngineCaps::State::Unsupported)
+            extlessBackend = true;
+    }
+    if (extlessBackend
+            && !BrowserApplication::isTorMode()
+            && ExtensionManager::isSupported()) {
+        QVERIFY(dialog.extensionsHintLabel->text().contains(
+            QLatin1String("tabs only")));
+    } else {
+        QVERIFY(!dialog.extensionsHintLabel->text().contains(
+            QLatin1String("tabs only")));
+    }
+
+    dialog.close();
 }
 
 QTEST_MAIN(tst_SettingsDialog)

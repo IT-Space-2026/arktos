@@ -72,8 +72,10 @@
 #include <functional>
 
 #include "tabwidget.h"
+#include "webviewcontroller.h"
 
 namespace Engine { class Page; class Profile; }
+class QMenu;
 class QWebEngineProfile;
 class QTimer;
 class BrowserMainWindow;
@@ -221,6 +223,12 @@ protected:
 private:
     int levelForZoom(int zoom);
     void init();
+    // MS04: renders one model row into the menu — ids map to the
+    // existing slots/lambdas, strings are produced here (paint);
+    // which rows exist and their enabled/tooltip state is the
+    // controller's model.
+    void addContextMenuEntry(QMenu *menu,
+            const WebViewController::MenuEntry &entry);
     void openUrlInTarget(const QUrl &linkUrl, TabWidget::OpenUrlIn target);
     // The load half of an open-in-target operation — shared by the
     // same-profile targets and the cross-profile private hand-offs so

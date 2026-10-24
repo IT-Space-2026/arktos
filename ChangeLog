@@ -58,6 +58,11 @@ Core / Qt 6 port:
   longer travel in one aggregate. Restored tabs also remember their
   scroll position, and private/off-the-record tabs are still
   excluded — a window that is private-only saves nothing at all.
+- Fixed a stray window opening on invocations that are not a real
+  browsing session (option-style runs such as smokes or a
+  second-instance forwarder): the profile-vault bring-up's
+  "unlocked profile needs a window" fallback no longer fires there
+  (MS08).
 - Command-line URL arguments treated as untrusted input (SEC09).
 - GPU crash safe mode: Qt 6.12's WebEngine can trap (SIGTRAP) on a
   display-compositor CHECK on some driver stacks, killing the whole
@@ -1916,6 +1921,24 @@ Build, tests & tools:
   really generates; every kept fixture — test.html, rules.txt,
   hostile_rules.txt, myhistory.txt, suggestions.txt, the xbel and
   opensearch testfile*.xml sets — has a live consumer proven by grep.
+- Engine-capability gating now consults the shared capability
+  registry (MS05): the Development Tools menu rows read the facade's
+  per-engine `devtools` grade instead of each backend's local flag,
+  and the engine-tab print refusal is sourced from the registry's
+  document-pipeline grade. Both answer identically to before; the
+  devtools rows additionally refresh when a tab's engine is swapped
+  in place (the swap replaces the tab widget without a tab-change
+  signal, so the rows could previously stay stale until switching
+  tabs).
+- Capability-driven chrome annotations (MS06): the engine-switch
+  menu's "Reload in …" rows and the Preferences render-engine combo
+  now carry the capability registry's per-engine caveat rollup on
+  their tooltips (for example Servo and WebKit rows list their
+  unsupported extensions, reader mode and developer tools), and the
+  Extensions preferences page names which registered engines actually
+  host extensions when one cannot. Reader mode's nav button and menu
+  action now take their per-tab availability from the same registry —
+  they still hide exactly where they hid before.
 0.2 (unreleased) — Qt 6 port in progress
 Build system:
     The Rust components are now the default code path: a plain `qmake` auto-detects a cargo toolchain (PATH, then ~/.cargo/bin) and builds rustcore (credential/autofill/session/bookmark/history stores, the OpenSearch engine registry, per-site decisions, url-strip, blocklist, TLS probe), rustdl (accelerated downloads) and the adblock-rust engine as part of `make`. The C++ implementations remain as the no-toolchain fallback — opt out with `qmake CONFIG+=no-rust` or per crate with `CONFIG-=rustcore` / `CONFIG-=rustdl` / `CONFIG-=adblock_rust`. With no Rust toolchain at all qmake warns loudly and builds the Qt paths so the tree always configures.

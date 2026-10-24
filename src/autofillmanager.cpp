@@ -834,14 +834,15 @@ void AutoFillManager::scheduleOnPage(Engine::Page *page,
 
     const bool capture = !source.isEmpty()
         && captureEnabledForPage(page);
+    // The shim source is constant, but insert() appends — remove first
+    // or every navigation grows the collection by another copy.
+    page->removeScript(QLatin1String("arktos:autofill-submit"));
     if (capture) {
         page->insertScript(Engine::Script{
             QLatin1String("arktos:autofill-submit"),
             QString::fromLatin1(s_submitShimSource),
             Engine::InjectionPoint::DocumentReady, 0 /* main world */,
             false });
-    } else {
-        page->removeScript(QLatin1String("arktos:autofill-submit"));
     }
 }
 

@@ -773,7 +773,7 @@ uint32_t ac_mw_version(void);
 AcStatus ac_mw_dispatch(AcCore *core, const uint8_t *req,
                       size_t req_len, AcBuffer *out);
 
-/* ---- engine capability matrix (v9; MB04) ----------------------------
+/* ---- engine capability matrix (v15; MB04) ------------------------
  *
  * The static per-engine feature registry the self-describing
  * bridge needs — the honest grade for each engine, filled from the

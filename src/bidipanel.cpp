@@ -1581,7 +1581,7 @@ class BidiWaterfallDelegate : public QStyledItemDelegate
 public:
     // DEVT09: sub-pixel durations still get a readable swatch — the
     // bar may honestly overlap its neighbors like Chrome's does.
-    static const int MinBarWidth = 5;
+    static constexpr int MinBarWidth = 5;
 
     explicit BidiWaterfallDelegate(BidiNetworkModel *model,
                                    QObject *parent = nullptr)

@@ -36,6 +36,7 @@
 #include <cstring>
 
 #include "adblockmanager.h"
+#include "profilesettings.h"
 #include "trancolist.h"
 #include "qtest_arktos.h"
 
@@ -143,7 +144,7 @@ private:
 void tst_TrancoList::initTestCase()
 {
     QCoreApplication::setApplicationName("tst_trancolist");
-    QSettings settings;
+    ProfileSettings settings;
     m_savedConsent =
         settings.value(QLatin1String("AdBlock/remoteListsConsent"));
     m_savedUpdated =
@@ -154,7 +155,7 @@ void tst_TrancoList::initTestCase()
 
 void tst_TrancoList::cleanupTestCase()
 {
-    QSettings settings;
+    ProfileSettings settings;
     const auto restore = [&settings](const QString &key,
                                      const QVariant &saved) {
         if (saved.isValid())
@@ -253,7 +254,7 @@ void tst_TrancoList::updateConsentGate()
 #if defined(ARKTOS_RUSTCORE)
     // Declined consent -> updateIfStale never fetches.
     AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsDeclined);
-    QSettings().remove(QLatin1String("privacy/trancoListUpdated"));
+    ProfileSettings().remove(QLatin1String("privacy/trancoListUpdated"));
     FixtureListServer server;
     server.body = "1,should-not-load.test\n";
     QVERIFY(server.start());
@@ -278,8 +279,8 @@ void tst_TrancoList::updateRoundTrip()
     // tries to re-rank a seed domain to a worse rank — the best-rank
     // merge keeps the vendored rank.
     AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsGranted);
-    QSettings().remove(QLatin1String("privacy/trancoListUpdated"));
-    QSettings().remove(QLatin1String("privacy/majesticListUpdated"));
+    ProfileSettings().remove(QLatin1String("privacy/trancoListUpdated"));
+    ProfileSettings().remove(QLatin1String("privacy/majesticListUpdated"));
     QFile::remove(TrancoList::listFilePath());
     QFile::remove(TrancoList::majesticFilePath());
     QCOMPARE(rc_tranco_reload(), RC_OK);
@@ -353,7 +354,7 @@ void tst_TrancoList::updateFailureKeepsSeed()
     // A fetched body that yields no usable entries reports failure —
     // the vendored seed keeps ranking either way.
     AdBlockManager::setRemoteListsConsent(AdBlockManager::RemoteListsGranted);
-    QSettings().remove(QLatin1String("privacy/trancoListUpdated"));
+    ProfileSettings().remove(QLatin1String("privacy/trancoListUpdated"));
     QFile::remove(TrancoList::listFilePath());
     QCOMPARE(rc_tranco_reload(), RC_OK);
 

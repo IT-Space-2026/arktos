@@ -36,6 +36,7 @@
 #include <browsermainwindow.h>
 #include <browserpaths.h>
 #include <containermanager.h>
+#include <enginecaps.h>
 #include <engineindicator.h>
 #include <engineinterface.h>
 #include <engineregistry.h>
@@ -207,6 +208,7 @@ private slots:
     void containerLevelLocksIndicator();
     void widgetTabHidesIndicator();
     void unavailableBackendMenuEntry();
+    void capsAnnotations();
     void missingArtifactHidesOption();
     void settingsRoundTrip();
     void swapKeepsStrip();
@@ -251,7 +253,7 @@ private:
 void tst_EngineSwitch::initTestCase()
 {
     QCoreApplication::setApplicationName("tst_engineswitch");
-    QSettings settings;
+    ProfileSettings settings;
     settings.clear();
     // Keep close() free of the multi-tab confirmation prompt — the
     // window legs open several tabs before closing.
@@ -636,6 +638,72 @@ void tst_EngineSwitch::unavailableBackendMenuEntry()
             live = action;
     }
     QVERIFY(live && live->isEnabled());
+    closeWindow(window);
+}
+
+void tst_EngineSwitch::capsAnnotations()
+{
+    // MS06: capabilitySummary renders the caps table's static
+    // grades — servo/webkit lose whole chrome features, webengine
+    // keeps everything but limited extensions, and an id the
+    // registry cannot grade answers an empty line so callers keep
+    // their pre-MS06 tooltip verbatim.  The verdict needs no
+    // registered backend: caps is static truth about the engine,
+    // never runtime presence.
+#if defined(ARKTOS_RUSTCORE)
+    const QString servo =
+        EngineCaps::capabilitySummary(QStringLiteral("servo"));
+    QVERIFY(servo.contains(QStringLiteral("unsupported")));
+    QVERIFY(servo.contains(QStringLiteral("developer tools")));
+    QVERIFY(servo.contains(QStringLiteral("extensions")));
+    QVERIFY(servo.contains(QStringLiteral("reader mode")));
+
+    const QString webkit =
+        EngineCaps::capabilitySummary(QStringLiteral("webkit"));
+    QVERIFY(webkit.contains(QStringLiteral("extensions")));
+    QVERIFY(webkit.contains(QStringLiteral("limited")));
+
+    const QString chromium =
+        EngineCaps::capabilitySummary(QStringLiteral("webengine"));
+    QVERIFY(!chromium.contains(QStringLiteral("unsupported")));
+    QVERIFY(chromium.contains(QStringLiteral("extensions")));
+#else
+    QVERIFY(EngineCaps::capabilitySummary(
+                QStringLiteral("servo")).isEmpty());
+    QVERIFY(EngineCaps::capabilitySummary(
+                QStringLiteral("webengine")).isEmpty());
+#endif
+    // Unregistered and empty ids answer empty in every build.
+    QVERIFY(EngineCaps::capabilitySummary(
+                QStringLiteral("fake")).isEmpty());
+    QVERIFY(EngineCaps::capabilitySummary(
+                QStringLiteral("bogus")).isEmpty());
+    QVERIFY(EngineCaps::capabilitySummary(QString()).isEmpty());
+
+    // The indicator menu rides the same rollup on each swap row —
+    // land on the fake tab so "Reload in Chromium" is offered.
+    BrowserMainWindow *window = new BrowserMainWindow;
+    TabWidget *tabs = window->tabWidget();
+    EngineIndicator *indicator = navIndicator(window);
+    QVERIFY(indicator);
+    QVERIFY(tabs->reloadTabInEngine(0, QStringLiteral("fake")));
+    QMenu *menu = indicator->menu();
+    QVERIFY(menu);
+    emit menu->aboutToShow();
+    QAction *chromiumRow = nullptr;
+    for (QAction *action : menu->actions()) {
+        if (action->text().contains(QStringLiteral("Chromium"))
+            || action->text().contains(QStringLiteral("QtWebEngine")))
+            chromiumRow = action;
+    }
+    QVERIFY(chromiumRow);
+#if defined(ARKTOS_RUSTCORE)
+    QVERIFY(chromiumRow->toolTip().contains(
+        QStringLiteral("extensions")));
+#else
+    QVERIFY(!chromiumRow->toolTip().contains(
+        QStringLiteral("unsupported")));
+#endif
     closeWindow(window);
 }
 

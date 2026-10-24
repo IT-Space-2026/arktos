@@ -30,6 +30,7 @@
 
 #include "browserapplication.h"
 #include "browsermainwindow.h"
+#include "browserprofile.h"
 #include "tabwidget.h"
 #include "webview.h"
 #include "historymanager.h"
@@ -65,6 +66,10 @@ void tst_BrowserApp::initTestCase()
     QCoreApplication::setApplicationName("tst_browserapp");
     QSettings settings;
     settings.clear();
+    // The restore crash-guard lives on the session lifecycle file —
+    // settings.clear() can't reach it, and a flag left armed by a
+    // previous run would pop a modal prompt inside restoreLastSession.
+    BrowserProfile::setSessionRestoring(false);
 }
 
 void tst_BrowserApp::cleanupTestCase()

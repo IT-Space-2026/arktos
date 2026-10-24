@@ -130,7 +130,6 @@
 #include <qpointer.h>
 #include <qquickwidget.h>
 #include <qregularexpression.h>
-#include <qsettings.h>
 #include <qstackedwidget.h>
 #include <qstyle.h>
 #include <qtimer.h>
@@ -2168,7 +2167,7 @@ void TabWidget::closeTabGroup(const QString &groupId)
     if (size > 1) {
         // The same multi-close confirm the window close path uses —
         // one prompt, one preference key.
-        QSettings settings;
+        ProfileSettings settings;
         settings.beginGroup(QLatin1String("tabs"));
         if (settings.value(QLatin1String("confirmClosingMultipleTabs"),
                            true).toBool()) {

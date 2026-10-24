@@ -5875,6 +5875,7 @@ int main(int argc, char **argv)
     bool xsleakOpen = false;
     bool parallelDownloadSmoke = false;
     bool parallelDownloadOffSmoke = false;
+    bool downloadSmoke = false;
     for (int i = 1; i < argc; ++i) {
         const QByteArray arg(argv[i]);
         if (arg.startsWith("--") && arg.endsWith("-smoke"))
@@ -5917,6 +5918,8 @@ int main(int argc, char **argv)
         // user's real profile.
         if (arg.startsWith("--sandbox-"))
             smokeRun = true;
+        if (arg == "--download-smoke")
+            downloadSmoke = true;
         if (arg == "--parallel-download-smoke")
             parallelDownloadSmoke = true;
         if (arg == "--parallel-download-off-smoke")
@@ -6240,12 +6243,20 @@ int main(int argc, char **argv)
     // reads it — the ParallelDownloading feature switch latches with
     // the engine flags, so each run deterministically exercises the
     // armed (or, for the -off control, disarmed) configuration.
-    // The pin lands in the per-run settings store.
-    if (parallelDownloadSmoke || parallelDownloadOffSmoke) {
+    // The pin lands in the per-run settings store.  --download-smoke
+    // shares it: DLACC06 made the rustdl engine the default claimer
+    // of http(s) downloads, which cancels the Chromium request before
+    // a downloadRequested observer can attach — the selector opt-out
+    // keeps all three legs on the built-in path they verify.
+    if (parallelDownloadSmoke || parallelDownloadOffSmoke
+            || downloadSmoke) {
         ProfileSettings settings;
         settings.setValue(
             QLatin1String("downloadmanager/parallelSegments"),
             parallelDownloadSmoke);
+        settings.setValue(
+            QLatin1String("downloadmanager/engine"),
+            QLatin1String("builtin"));
     }
 
     // PRIV02: the UTC-timezone normalization is process environment
@@ -9877,6 +9888,7 @@ int main(int argc, char **argv)
     // below capture it by reference and fire inside exec(), after the
     // smoke's if-block has already closed.
     int adblockSmokeStage = 0;
+    bool adblockSmokeRetried = false;
     if (args.contains(QLatin1String("--adblock-smoke"))) {
         AdBlockManager *manager = AdBlockManager::instance();
         AdBlockSubscription *custom = manager->customRules();
@@ -9934,7 +9946,8 @@ int main(int argc, char **argv)
             }
         });
         QObject::connect(view, &QWebEngineView::loadFinished, &application,
-                         [view, &application, &adblockSmokeStage](bool ok) {
+                         [view, &application, &adblockSmokeStage,
+                          &adblockSmokeRetried](bool ok) {
             if (adblockSmokeStage != 2 || !ok
                 || view->url() != QUrl(QLatin1String("about:blank")))
                 return;
@@ -9944,11 +9957,27 @@ int main(int argc, char **argv)
             // element must already exist by loadFinished.
             view->enginePage()->runJavaScript(
                 QLatin1String("!!document.getElementById('arktos-adblock')"),
-                [&application](const QVariant &result) {
-                    const bool pass = result.toBool();
-                    qInfo() << "adblock-smoke: cosmetic injection"
-                            << (pass ? "PASS" : "FAIL");
-                    application.exit(pass ? 0 : 1);
+                [view, &application, &adblockSmokeStage, &adblockSmokeRetried](const QVariant &result) {
+                    if (result.toBool()) {
+                        qInfo() << "adblock-smoke: cosmetic injection PASS";
+                        application.exit(0);
+                        return;
+                    }
+                    // about:blank commits are instant — the page-script
+                    // collection update can land after the renderer's
+                    // per-document snapshot, so a script armed during
+                    // acceptNavigationRequest may not run on that first
+                    // document.  The script stays armed; a second local
+                    // navigation checks a document committed with the
+                    // script already resident in the collection.
+                    if (!adblockSmokeRetried) {
+                        adblockSmokeRetried = true;
+                        adblockSmokeStage = 2;
+                        view->loadUrl(QUrl(QLatin1String("about:blank")));
+                        return;
+                    }
+                    qInfo() << "adblock-smoke: cosmetic injection FAIL";
+                    application.exit(1);
                 });
         });
         QTimer::singleShot(20000, &application, [&application]() {
@@ -16990,7 +17019,7 @@ int main(int argc, char **argv)
         ProfileSettings().setValue(
             QLatin1String("tabs/confirmClosingMultipleTabs"), false);
         // A leftover crash-loop flag would open a modal prompt.
-        ProfileSettings().setValue(QLatin1String("MainWindow/restoring"), false);
+        BrowserProfile::setSessionRestoring(false);
 
         QStringList fixtureUrls;
         for (int i = 1; i <= 3; ++i) {
@@ -17248,8 +17277,7 @@ int main(int argc, char **argv)
         window.hide();
         ProfileSettings().setValue(
             QLatin1String("tabs/confirmClosingMultipleTabs"), false);
-        ProfileSettings().setValue(
-            QLatin1String("MainWindow/restoring"), false);
+        BrowserProfile::setSessionRestoring(false);
         ProfileSettings().setValue(
             QLatin1String("MainWindow/startupBehavior"), 1);
 
@@ -17442,8 +17470,7 @@ int main(int argc, char **argv)
         window.hide();
         ProfileSettings().setValue(
             QLatin1String("tabs/confirmClosingMultipleTabs"), false);
-        ProfileSettings().setValue(QLatin1String("MainWindow/restoring"),
-                             false);
+        BrowserProfile::setSessionRestoring(false);
         // Pin startup to a no-navigation mode so the queued
         // postLaunch() never moves the fixture windows.
         ProfileSettings().setValue(QLatin1String("MainWindow/startupMode"),

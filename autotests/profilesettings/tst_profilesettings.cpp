@@ -217,10 +217,13 @@ void tst_ProfileSettings::groupRouting()
 void tst_ProfileSettings::writeShadowsFallback()
 {
     const QString id = QStringLiteral("fbB");
+    ProfileSettings settings(id);
+    // A stale copy from an earlier run (the test stores outlive the
+    // process) would shadow the seeded global — start blank.
+    settings.remove(QLatin1String("history/historyLimit"));
     QSettings().setValue(QLatin1String("history/historyLimit"), 30);
     QSettings().sync();
 
-    ProfileSettings settings(id);
     QCOMPARE(settings.value(QLatin1String("history/historyLimit"))
                  .toInt(), 30);
 
