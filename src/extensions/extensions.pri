@@ -2,6 +2,7 @@ INCLUDEPATH += $$PWD
 DEPENDPATH += $$PWD
 
 HEADERS += \
+    $$PWD/declarativenetrequest.h \
     $$PWD/extensionactionbar.h \
     $$PWD/extensionbackgroundhost.h \
     $$PWD/extensioncommands.h \
@@ -15,6 +16,7 @@ HEADERS += \
     $$PWD/extensionshimbackend.h
 
 SOURCES += \
+    $$PWD/declarativenetrequest.cpp \
     $$PWD/extensionactionbar.cpp \
     $$PWD/extensionbackgroundhost.cpp \
     $$PWD/extensioncommands.cpp \

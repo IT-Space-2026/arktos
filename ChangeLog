@@ -974,6 +974,22 @@ UI:
   release each member (clear restores the value held before the
   extension took over). Chrome's 'math' family and per-script fonts
   stay a typed unsupported rather than a fake mapping (MD33).
+- chrome.declarativeNetRequest is live for extensions that declare
+  the grant: session and dynamic rule updates (validated,
+  duplicate/missing-id and quota errors in Chrome's vocabulary, the
+  dynamic set persisted across restarts), manifest rule_resources
+  static rulesets with enable/disable overrides, and the block /
+  redirect / upgradeScheme / allow / allowAllRequests /
+  request-header modifyHeaders actions now act on real traffic
+  through the request interceptor. Conditions cover urlFilter and
+  regexFilter (RE2-incompatible constructs refused by
+  isRegexSupported), initiator/request domains and exclusions,
+  resource types, request methods and first/third-party scoping;
+  declarativeNetRequestWithHostAccess scopes matching to the
+  extension's host permissions, and declarativeNetRequestFeedback
+  unlocks getMatchedRules, testMatchOutcome and onRuleMatchedDebug.
+  Response-side header ops and tab-bound conditions stay a typed
+  unsupported rather than a fake no-op (MD34).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

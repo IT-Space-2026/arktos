@@ -23,6 +23,7 @@
 #include "adblockrequestinterceptor.h"
 #include "browserpaths.h"
 #include "browserprofile.h"
+#include "declarativenetrequest.h"
 #include "extensionrequestwatcher.h"
 #include "navigationpolicy.h"
 #include "scriptcontrolmanager.h"
@@ -262,12 +263,52 @@ void PrivacyRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     // with onErrorOccurred.
     if (m_reportToExtensions)
         ExtensionRequestWatcher::observeRequest(info);
-    if (applyVerdict(verdict, info)) {
+    // MD34: chrome.declarativeNetRequest — evaluated here on the IO
+    // thread over the lock-guarded rule snapshot, the same stage
+    // Chrome runs DNR before onBeforeSendHeaders.  A block or
+    // redirect short-circuits the policy/adblock tail; request-header
+    // ops apply only while the request survives.
+    bool dnrHandled = false;
+    if (m_reportToExtensions
+            && DeclarativeNetRequest::registeredRuleCount() > 0) {
+        DeclarativeNetRequest::EvalInput dnrIn;
+        dnrIn.url = info.requestUrl();
+        dnrIn.firstPartyUrl = info.firstPartyUrl();
+        dnrIn.resourceType = int(info.resourceType());
+        dnrIn.method = info.requestMethod();
+        const DeclarativeNetRequest::Verdict dnr =
+            DeclarativeNetRequest::evaluate(dnrIn);
+        if (dnr.blocked) {
+            info.block(true);
+            ExtensionRequestWatcher::observeBlocked(info);
+            dnrHandled = true;
+        } else if (!dnr.redirectUrl.isEmpty()) {
+            info.redirect(dnr.redirectUrl);
+            dnrHandled = true;
+        } else {
+            for (const DeclarativeNetRequest::RequestHeaderOp &op
+                 : dnr.headerOps) {
+                if (op.op == DeclarativeNetRequest::HeaderAppend) {
+                    const QByteArray current =
+                        info.httpHeaders().value(op.name);
+                    info.setHttpHeader(
+                        op.name,
+                        current.isEmpty()
+                            ? op.value : current + ", " + op.value);
+                } else {
+                    // 'set' overwrites; 'remove' clears the header —
+                    // the engine has no true header-delete verb.
+                    info.setHttpHeader(op.name, op.value);
+                }
+            }
+        }
+    }
+    if (!dnrHandled && applyVerdict(verdict, info)) {
         // "allow" — per-site UA spoof, then the adblock matcher as
         // the delegated tail stage.
         applyUserAgentSpoof(info);
         m_adBlock->interceptRequest(info);
-    } else if (m_reportToExtensions
+    } else if (!dnrHandled && m_reportToExtensions
                && verdict.action == PolicyVerdict::Action::Block) {
         ExtensionRequestWatcher::observeBlocked(info);
     }

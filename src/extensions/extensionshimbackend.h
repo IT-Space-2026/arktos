@@ -530,6 +530,18 @@ private:
     // events are tap-driven in the hub, like sessions/downloads.
     QJsonObject invokeTabGroups(const QString &method,
                                 const QJsonObject &args);
+    // MD34: chrome.declarativeNetRequest subset over
+    // DeclarativeNetRequest's registry — 'declarativeNetRequest' or
+    // 'declarativeNetRequestWithHostAccess' gates rule/lookup members
+    // (the WithHostAccess grant additionally scopes matching to
+    // host-permission coverage), 'declarativeNetRequestFeedback'
+    // gates getMatchedRules/onRuleMatchedDebug.  Typed verdicts:
+    // no-permission, unsupported (response-side header ops,
+    // responseHeaders/tabIds conditions, setExtensionActionOptions),
+    // invalid-argument, duplicate-rule-id, rule-not-found,
+    // ruleset-not-found, quota-exceeded.
+    QJsonObject invokeDeclarativeNetRequest(const QString &method,
+                                            const QJsonObject &args);
     QJsonObject invokeExtension(const QString &method,
                                 const QJsonObject &args);
     QJsonObject invokeSidebarAction(const QString &method,

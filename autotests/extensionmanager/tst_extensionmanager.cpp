@@ -44,6 +44,7 @@
 #include "browserpaths.h"
 #include "browserprofile.h"
 #include "cookiejar.h"
+#include "declarativenetrequest.h"
 #include "downloadmanager.h"
 #include "extensionactionbar.h"
 #include "extensionbackgroundhost.h"
@@ -134,6 +135,7 @@ private slots:
     void extensionContentScriptRegistration();
     void extensionUserScripts();
     void extensionFontSettings();
+    void extensionDeclarativeNetRequest();
     void extensionNotifications();
     void extensionIdle();
     void extensionCommands();
@@ -528,10 +530,10 @@ void tst_ExtensionManager::inspectManifest_data()
         << (QStringList() << QStringLiteral("scripting"))
         << QStringList()
         << QStringList() << QStringList();
-    // A required fatal-table permission the runtime does NOT serve
-    // still condemns the extension — the regrade subtracts only the
-    // served set.
-    QTest::newRow("unserved fatal api required")
+    // MD34: declarativeNetRequest joined the served set — requiring
+    // it no longer lands in fatalMissing, though the request-side
+    // surface keeps it honest at 'unverified'.
+    QTest::newRow("served fatal api required")
         << QByteArray("{\"manifest_version\":3,\"name\":\"dnr\","
                       "\"version\":\"1.0\","
                       "\"permissions\":[\"declarativeNetRequest\","
@@ -539,7 +541,7 @@ void tst_ExtensionManager::inspectManifest_data()
         << true << 3 << QStringLiteral("dnr") << false
         << QStringList()
         << (QStringList() << QStringLiteral("declarativeNetRequest"))
-        << (QStringList() << QStringLiteral("declarativeNetRequest"))
+        << QStringList()
         << QStringList() << QStringList();
     // ER19: runtime-served 'unsupported' members migrate to
     // 'unverified' — the honest tier is "partially supported", not
@@ -1296,11 +1298,10 @@ void tst_ExtensionManager::healthClassification()
 
 // ER19 — the health regrade the EXT21 fatal table was waiting for.
 // With the hosted runtime armed, a required permission the runtime
-// serves (scripting, webRequest, the event-stream namespaces) leaves
-// the fatal set and migrates out of 'unsupported' into 'unverified'
-// — "partially supported" is the honest tier, never "will not work".
-// What the runtime does NOT serve keeps the raw engine verdict: a
-// required declarativeNetRequest still condemns the extension, and
+// serves (scripting, webRequest, the event-stream namespaces and —
+// MD34 — the declarativeNetRequest grants) leaves the fatal set and
+// migrates out of 'unsupported' into 'unverified' — "partially
+// supported" is the honest tier, never "will not work".
 // ARKTOS_EXTHOST_OFF reverses the whole regrade — a fixture
 // requiring scripting without the runtime path still grades
 // NotSupported.
@@ -1351,21 +1352,24 @@ void tst_ExtensionManager::runtimeHealthRegrade()
                  PV::Dead),
              EH::NotSupported);
 
-    // A required fatal-table member the runtime does NOT serve still
-    // condemns the extension even with the runtime armed.
+    // MD34: declarativeNetRequest joined the served set — a required
+    // grant no longer condemns the extension either.  (The runtime's
+    // surface is request-side: response-header ops stay typed
+    // verdicts, so the permission grades 'unverified', not fully
+    // verified — but it stops being fatal.)
     const QString dnrDir = writeExtension(
         root, QStringLiteral("tst-regrade-dnr"), QStringLiteral("1.0.0"),
         QString(), {QStringLiteral("declarativeNetRequest"),
                     QStringLiteral("scripting")});
     const ExtensionManager::Manifest dnr =
         ExtensionManager::inspectManifest(dnrDir);
-    QVERIFY(!dnr.fatalMissing.contains(QLatin1String("scripting")));
-    QVERIFY(dnr.fatalMissing.contains(
+    QVERIFY(dnr.fatalMissing.isEmpty());
+    QVERIFY(dnr.unverified.contains(
                 QLatin1String("declarativeNetRequest")));
     QCOMPARE(ExtensionManager::classifyHealth(
                  true, dnr.unsupported, dnr.fatalMissing,
                  PV::Responsive),
-             EH::NotSupported);
+             EH::Healthy);
 
     // Without the runtime path the raw engine verdict stands —
     // scripting is fatal again and served surfaces stay "won't
@@ -1391,7 +1395,9 @@ void tst_ExtensionManager::runtimeHealthRegrade()
     const QStringList serves = ExtensionManager::runtimeServes();
     QVERIFY(serves.contains(QLatin1String("scripting")));
     QVERIFY(serves.contains(QLatin1String("webRequest")));
-    QVERIFY(!serves.contains(QLatin1String("declarativeNetRequest")));
+    // MD34 — the declarativeNetRequest grants are served now; the
+    // blocking webRequest grant still is not.
+    QVERIFY(serves.contains(QLatin1String("declarativeNetRequest")));
     QVERIFY(!serves.contains(QLatin1String("webRequestBlocking")));
 
     QDir(root).removeRecursively();
@@ -17558,6 +17564,688 @@ void tst_ExtensionManager::extensionIntrospection()
     manager->removeExtension(idA);
     manager->removeExtension(idB);
     QDir(root).removeRecursively();
+}
+
+// MD34: chrome.declarativeNetRequest — parity leg over the bare
+// backend + the real interception stage.  Session/dynamic/static
+// rules validate and persist through invoke(), the IO-thread
+// evaluator blocks/redirects/upgrades/modifies request headers with
+// the task's priority-then-source precedence, the grant gates answer
+// Chrome's typed vocabulary, and a loopback navigation proves the
+// interceptor actually drops and redirects live traffic.
+void tst_ExtensionManager::extensionDeclarativeNetRequest()
+{
+    const QString extId = QStringLiteral("tstdnrfixture000001");
+    const QString extNoPerm = QStringLiteral("tstdnrnoperm0000001");
+    const QString extNoFb = QStringLiteral("tstdnrnofeedback0001");
+    const QString extHost = QStringLiteral("tstdnrhostaccess0001");
+    DeclarativeNetRequest *dnr = DeclarativeNetRequest::instance();
+
+    // A dedicated temp persona — the backend's storageDir() (and the
+    // dnr.json persistence it feeds) resolves under it.
+    const QString prevId = BrowserPaths::activeProfileId();
+    const QString profileId = QStringLiteral("tstextdnr%1")
+            .arg(QCoreApplication::applicationPid());
+    BrowserPaths::setActiveProfileId(profileId);
+    auto unbind = qScopeGuard(
+        [prevId, profileId, extId, extNoPerm, extNoFb, extHost, dnr]() {
+        dnr->dropExtension(extId);
+        dnr->dropExtension(extNoPerm);
+        dnr->dropExtension(extNoFb);
+        dnr->dropExtension(extHost);
+        BrowserPaths::setActiveProfileId(prevId);
+        QDir(BrowserPaths::profileDataDir(profileId))
+            .removeRecursively();
+    });
+
+    const auto writeExt = [](const QString &root,
+                             const QByteArray &manifest) {
+        const QString dir = root + QLatin1String("/ext");
+        if (!QDir().mkpath(dir))
+            return QString();
+        QFile f(dir + QLatin1String("/manifest.json"));
+        if (!f.open(QIODevice::WriteOnly))
+            return QString();
+        f.write(manifest);
+        f.close();
+        return dir;
+    };
+    const QString root = QDir::temp().filePath(
+        QStringLiteral("tst-extdnr-%1")
+            .arg(QCoreApplication::applicationPid()));
+    auto rootCleanup =
+        qScopeGuard([root]() { QDir(root).removeRecursively(); });
+
+    // Fixture extension: DNR + feedback grants, two static rulesets.
+    const QString dir = writeExt(root + QLatin1String("/main"),
+        "{\"manifest_version\":3,\"name\":\"tst-dnr\","
+        "\"version\":\"1.0\",\"permissions\":["
+        "\"declarativeNetRequest\","
+        "\"declarativeNetRequestFeedback\"],"
+        "\"declarative_net_request\":{\"rule_resources\":["
+        "{\"id\":\"static_a\",\"enabled\":true,"
+        "\"path\":\"rules_a.json\"},"
+        "{\"id\":\"static_b\",\"enabled\":false,"
+        "\"path\":\"rules_b.json\"}]}}");
+    QVERIFY(!dir.isEmpty());
+    {
+        QFile ra(dir + QLatin1String("/rules_a.json"));
+        QVERIFY(ra.open(QIODevice::WriteOnly));
+        ra.write("[{\"id\":1,\"priority\":1,"
+                 "\"action\":{\"type\":\"block\"},"
+                 "\"condition\":{\"urlFilter\":"
+                 "\"||blocked-static.example/*\","
+                 "\"resourceTypes\":[\"main_frame\"]}}]");
+        ra.close();
+        QFile rb(dir + QLatin1String("/rules_b.json"));
+        QVERIFY(rb.open(QIODevice::WriteOnly));
+        rb.write("[{\"id\":7,\"priority\":1,"
+                 "\"action\":{\"type\":\"block\"},"
+                 "\"condition\":{\"urlFilter\":"
+                 "\"||enabled-later.example/*\"}}]");
+        rb.close();
+    }
+    // Gate fixtures: no grants at all; DNR without feedback; and a
+    // WithHostAccess grant whose host_permissions scope coverage.
+    const QString dirNp = writeExt(root + QLatin1String("/noperm"),
+        "{\"manifest_version\":3,\"name\":\"np\",\"version\":\"1.0\","
+        "\"permissions\":[\"storage\"]}");
+    const QString dirNf = writeExt(root + QLatin1String("/nofb"),
+        "{\"manifest_version\":3,\"name\":\"nf\",\"version\":\"1.0\","
+        "\"permissions\":[\"declarativeNetRequest\"]}");
+    const QString dirHa = writeExt(root + QLatin1String("/host"),
+        "{\"manifest_version\":3,\"name\":\"ha\",\"version\":\"1.0\","
+        "\"permissions\":["
+        "\"declarativeNetRequestWithHostAccess\"],"
+        "\"host_permissions\":[\"https://*.cov.example/*\"]}");
+    QVERIFY(!dirNp.isEmpty() && !dirNf.isEmpty() && !dirHa.isEmpty());
+
+    ExtensionShimBackend backend(extId, QStringLiteral("tst-dnr"), dir);
+    ExtensionShimBackend noPerm(extNoPerm, QStringLiteral("np"), dirNp);
+    ExtensionShimBackend noFb(extNoFb, QStringLiteral("nf"), dirNf);
+    ExtensionShimBackend hostExt(extHost, QStringLiteral("ha"), dirHa);
+
+    const QString ns = QStringLiteral("declarativeNetRequest");
+    const auto okOf = [](const QJsonObject &r) {
+        return r.value(QStringLiteral("ok")).toBool();
+    };
+    const auto errOf = [](const QJsonObject &r) {
+        return r.value(QStringLiteral("error")).toString();
+    };
+    const auto resultOf = [](const QJsonObject &r) {
+        return r.value(QStringLiteral("result"));
+    };
+    const auto eval = [](const QString &url, int type = 0,
+                         const QString &initiator = QString()) {
+        DeclarativeNetRequest::EvalInput in;
+        in.url = QUrl(url);
+        in.firstPartyUrl = QUrl(initiator);
+        in.resourceType = type;
+        in.method = "GET";
+        return DeclarativeNetRequest::evaluate(in);
+    };
+    const auto rule = [](int id, int priority, const QJsonObject &action,
+                         const QJsonObject &condition) {
+        return QJsonObject{{QStringLiteral("id"), id},
+                           {QStringLiteral("priority"), priority},
+                           {QStringLiteral("action"), action},
+                           {QStringLiteral("condition"), condition}};
+    };
+    const auto blockAction = []() {
+        return QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("block")}};
+    };
+    Q_UNUSED(blockAction);
+
+    // --- grant gates -------------------------------------------------
+    QCOMPARE(errOf(noPerm.invoke(ns, QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"), QJsonObject{}}})),
+        QStringLiteral("no-permission"));
+    QCOMPARE(errOf(noPerm.invoke(ns, QStringLiteral("getSessionRules"),
+        QJsonObject{})), QStringLiteral("no-permission"));
+    QCOMPARE(errOf(noPerm.invoke(ns, QStringLiteral("isRegexSupported"),
+        QJsonObject{{QStringLiteral("query"),
+                     QJsonObject{{QStringLiteral("regex"),
+                                  QStringLiteral("a")}}}})),
+        QStringLiteral("no-permission"));
+    // Feedback members gate on the feedback grant alone.
+    QCOMPARE(errOf(noFb.invoke(ns, QStringLiteral("getMatchedRules"),
+        QJsonObject{})), QStringLiteral("no-permission"));
+    // Unknown member stays unreachable, never a crash.
+    QCOMPARE(errOf(backend.invoke(ns, QStringLiteral("frobnicate"),
+        QJsonObject{})), QStringLiteral("unimplemented"));
+
+    // --- static rulesets ---------------------------------------------
+    QJsonObject reply = backend.invoke(
+        ns, QStringLiteral("getEnabledRulesets"), QJsonObject{});
+    QVERIFY(okOf(reply));
+    QCOMPARE(resultOf(reply).toArray().size(), 1);
+    QCOMPARE(resultOf(reply).toArray().first().toString(),
+             QStringLiteral("static_a"));
+    // The manifest-enabled ruleset participates in evaluation.
+    auto v = eval(QStringLiteral("https://blocked-static.example/page"));
+    QVERIFY(v.blocked);
+    // Undeclared ruleset id -> typed verdict.
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateEnabledRulesets"),
+        QJsonObject{{QStringLiteral("options"),
+                     QJsonObject{{QStringLiteral("enableRulesetIds"),
+                                  QJsonArray{QStringLiteral("ghost")}}}}})),
+        QStringLiteral("ruleset-not-found"));
+    // Swap enabled sets — static_b's rule joins, static_a's leaves.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateEnabledRulesets"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("enableRulesetIds"),
+                         QJsonArray{QStringLiteral("static_b")}},
+                        {QStringLiteral("disableRulesetIds"),
+                         QJsonArray{QStringLiteral("static_a")}}}}})));
+    reply = backend.invoke(ns, QStringLiteral("getEnabledRulesets"),
+                           QJsonObject{});
+    QCOMPARE(resultOf(reply).toArray().size(), 1);
+    QCOMPARE(resultOf(reply).toArray().first().toString(),
+             QStringLiteral("static_b"));
+    v = eval(QStringLiteral("https://blocked-static.example/page"));
+    QVERIFY(!v.blocked);
+    v = eval(QStringLiteral("https://enabled-later.example/page"));
+    QVERIFY(v.blocked);
+    // getAvailableStaticRuleCount reports the guaranteed remainder.
+    reply = backend.invoke(ns,
+        QStringLiteral("getAvailableStaticRuleCount"), QJsonObject{});
+    QVERIFY(okOf(reply));
+    QCOMPARE(resultOf(reply).toInt(), 30000 - 1);
+    // Re-enable static_a for the rest of the leg.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateEnabledRulesets"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("enableRulesetIds"),
+                         QJsonArray{QStringLiteral("static_a")}}}}})));
+
+    // --- session rules: add/get/remove + typed failures --------------
+    const QJsonObject sessBlock = rule(10, 1,
+        QJsonObject{{QStringLiteral("type"), QStringLiteral("block")}},
+        QJsonObject{{QStringLiteral("urlFilter"),
+                     QStringLiteral("||sess-block.example/*")}});
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                         QJsonArray{sessBlock}}}}})));
+    reply = backend.invoke(ns, QStringLiteral("getSessionRules"),
+                           QJsonObject{});
+    QVERIFY(okOf(reply));
+    QCOMPARE(resultOf(reply).toArray().size(), 1);
+    QCOMPARE(resultOf(reply).toArray().first().toObject()
+             .value(QStringLiteral("id")).toInt(), 10);
+    v = eval(QStringLiteral("https://sess-block.example/x"));
+    QVERIFY(v.blocked);
+    v = eval(QStringLiteral("https://unrelated.example/x"));
+    QVERIFY(!v.blocked && v.redirectUrl.isEmpty());
+    // duplicate-rule-id within the same ruleset.
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                         QJsonArray{sessBlock}}}}})),
+        QStringLiteral("duplicate-rule-id"));
+    // rule-not-found for a removal that names nothing live.
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("removeRuleIds"),
+                         QJsonArray{999}}}}})),
+        QStringLiteral("rule-not-found"));
+    // invalid-argument shapes: missing action, both filters, empty
+    // condition.
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{QJsonObject{
+                    {QStringLiteral("id"), 55},
+                    {QStringLiteral("condition"),
+                     QJsonObject{{QStringLiteral("urlFilter"),
+                                  QStringLiteral("*x*")}}}}}}}}})),
+        QStringLiteral("invalid-argument"));
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(56, 1,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("block")}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*a*")},
+                                {QStringLiteral("regexFilter"),
+                                 QStringLiteral("b")}})}}}}})),
+        QStringLiteral("invalid-argument"));
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(57, 1,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("block")}},
+                    QJsonObject{})}}}}})),
+        QStringLiteral("invalid-argument"));
+    // typed 'unsupported' — tabIds conditions and response-side
+    // header ops have no hook at this layer.
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(58, 1,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("block")}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*a*")},
+                                {QStringLiteral("tabIds"),
+                                 QJsonArray{1}}})}}}}})),
+        QStringLiteral("unsupported"));
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(59, 1,
+                    QJsonObject{{QStringLiteral("type"),
+                        QStringLiteral("modifyHeaders")},
+                        {QStringLiteral("responseHeaders"),
+                         QJsonArray{QJsonObject{
+                            {QStringLiteral("header"),
+                             QStringLiteral("x-a")},
+                            {QStringLiteral("operation"),
+                             QStringLiteral("remove")}}}}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*a*")}})}}}}})),
+        QStringLiteral("unsupported"));
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("setExtensionActionOptions"),
+        QJsonObject{})), QStringLiteral("unsupported"));
+    // Removal works and the evaluator stops matching.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("removeRuleIds"),
+                         QJsonArray{10}}}}})));
+    reply = backend.invoke(ns, QStringLiteral("getSessionRules"),
+                           QJsonObject{});
+    QCOMPARE(resultOf(reply).toArray().size(), 0);
+    v = eval(QStringLiteral("https://sess-block.example/x"));
+    QVERIFY(!v.blocked);
+
+    // --- dynamic rules: redirect, echo, persistence ------------------
+    const QJsonObject dynRedirect = rule(5, 2,
+        QJsonObject{{QStringLiteral("type"), QStringLiteral("redirect")},
+                    {QStringLiteral("redirect"),
+                     QJsonObject{{QStringLiteral("url"),
+                        QStringLiteral("https://landed.example/ok")}}}},
+        QJsonObject{{QStringLiteral("urlFilter"),
+                     QStringLiteral("||redirect-me.example/*")}});
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateDynamicRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                         QJsonArray{dynRedirect}}}}})));
+    reply = backend.invoke(ns, QStringLiteral("getDynamicRules"),
+                           QJsonObject{});
+    QCOMPARE(resultOf(reply).toArray().size(), 1);
+    v = eval(QStringLiteral("https://redirect-me.example/x"));
+    QVERIFY(!v.blocked);
+    QCOMPARE(v.redirectUrl,
+             QUrl(QStringLiteral("https://landed.example/ok")));
+    // Chrome parity — dynamic rules persist under extstorage; the
+    // file must exist in THIS persona's tree.
+    QVERIFY(QFile::exists(
+        BrowserPaths::dataFilePath(QStringLiteral("extstorage"))
+        + QLatin1Char('/') + extId + QLatin1String("/dnr.json")));
+
+    // --- precedence: priority first, then session > dynamic > static -
+    // allow outranks a lower-priority block within the extension.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{
+                    rule(20, 5,
+                        QJsonObject{{QStringLiteral("type"),
+                                     QStringLiteral("allow")}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                                     QStringLiteral("*prio-a*")}}),
+                    rule(21, 1,
+                        QJsonObject{{QStringLiteral("type"),
+                                     QStringLiteral("block")}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                                     QStringLiteral("*prio-a*")}})}}}}})));
+    v = eval(QStringLiteral("https://prio-a.example/x"));
+    QVERIFY(!v.blocked && v.redirectUrl.isEmpty());
+    // Same priority across sources: the session lane wins over a
+    // dynamic block — the redirect verdict proves the session rule
+    // answered, not the block.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateDynamicRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(22, 3,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("block")}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*prio-b*")}})}}}}})));
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(23, 3,
+                    QJsonObject{{QStringLiteral("type"),
+                        QStringLiteral("redirect")},
+                        {QStringLiteral("redirect"),
+                         QJsonObject{{QStringLiteral("url"),
+                            QStringLiteral("https://session-win.example/")}}}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*prio-b*")}})}}}}})));
+    v = eval(QStringLiteral("https://prio-b.example/x"));
+    QVERIFY(!v.blocked);
+    QCOMPARE(v.redirectUrl,
+             QUrl(QStringLiteral("https://session-win.example/")));
+    // Priority beats the source lanes: a dynamic block@9 outranks a
+    // session redirect@3.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateDynamicRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(24, 9,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("block")}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*prio-c*")}})}}}}})));
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(25, 3,
+                    QJsonObject{{QStringLiteral("type"),
+                        QStringLiteral("redirect")},
+                        {QStringLiteral("redirect"),
+                         QJsonObject{{QStringLiteral("url"),
+                            QStringLiteral("https://prio-c.example/d")}}}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*prio-c*")}})}}}}})));
+    v = eval(QStringLiteral("https://prio-c.example/x"));
+    QVERIFY(v.blocked);
+
+    // --- upgradeScheme + modifyHeaders -------------------------------
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{
+                    rule(26, 1,
+                        QJsonObject{{QStringLiteral("type"),
+                            QStringLiteral("upgradeScheme")}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                                     QStringLiteral("*upgrade-me*")}}),
+                    rule(27, 1,
+                        QJsonObject{{QStringLiteral("type"),
+                            QStringLiteral("modifyHeaders")},
+                            {QStringLiteral("requestHeaders"),
+                             QJsonArray{QJsonObject{
+                                {QStringLiteral("header"),
+                                 QStringLiteral("X-Dnr")},
+                                {QStringLiteral("operation"),
+                                 QStringLiteral("set")},
+                                {QStringLiteral("value"),
+                                 QStringLiteral("yes")}}}}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                                     QStringLiteral("*hdr-me*")}})}}}}})));
+    v = eval(QStringLiteral("http://upgrade-me.example/x"));
+    QVERIFY(!v.blocked);
+    QCOMPARE(v.redirectUrl,
+             QUrl(QStringLiteral("https://upgrade-me.example/x")));
+    v = eval(QStringLiteral("https://hdr-me.example/x"));
+    QVERIFY(!v.blocked && v.redirectUrl.isEmpty());
+    QVERIFY(v.headerOps.size() == 1);
+    QCOMPARE(v.headerOps.first().name, QByteArray("X-Dnr"));
+    QCOMPARE(int(v.headerOps.first().op),
+             int(DeclarativeNetRequest::HeaderSet));
+    QCOMPARE(v.headerOps.first().value, QByteArray("yes"));
+
+    // --- allowAllRequests frame exemption ----------------------------
+    // Without resourceTypes -> invalid; with non-frame types -> invalid.
+    QCOMPARE(errOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(30, 9,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("allowAllRequests")}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*a11y*")}})}}}}})),
+        QStringLiteral("invalid-argument"));
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{
+                    rule(30, 9,
+                        QJsonObject{{QStringLiteral("type"),
+                            QStringLiteral("allowAllRequests")}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                            QStringLiteral("*a11y.example*")},
+                            {QStringLiteral("resourceTypes"),
+                             QJsonArray{QStringLiteral("main_frame"),
+                                        QStringLiteral("sub_frame")}}}),
+                    rule(31, 5,
+                        QJsonObject{{QStringLiteral("type"),
+                                     QStringLiteral("block")}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                            QStringLiteral("*a11y-tracker*")}})}}}}})));
+    // The frame navigation itself records the exemption...
+    eval(QStringLiteral("https://a11y.example/"), /*type=*/0);
+    // ...so a later request issued under that frame's document url
+    // skips this ext's equal/lower-priority rules.
+    v = eval(QStringLiteral("https://a11y-tracker.example/x"), 13,
+             QStringLiteral("https://a11y.example/"));
+    QVERIFY(!v.blocked);
+
+    // --- isRegexSupported / testMatchOutcome -------------------------
+    reply = backend.invoke(ns, QStringLiteral("isRegexSupported"),
+        QJsonObject{{QStringLiteral("query"),
+            QJsonObject{{QStringLiteral("regex"),
+                QStringLiteral("^https://a\\.example\\.com/([0-9]+)")}}}});
+    QVERIFY(okOf(reply));
+    QVERIFY(resultOf(reply).toObject()
+            .value(QStringLiteral("isSupported")).toBool());
+    reply = backend.invoke(ns, QStringLiteral("isRegexSupported"),
+        QJsonObject{{QStringLiteral("query"),
+            QJsonObject{{QStringLiteral("regex"),
+                         QStringLiteral("x(?=y)")}}}});
+    QVERIFY(okOf(reply));
+    QVERIFY(!resultOf(reply).toObject()
+            .value(QStringLiteral("isSupported")).toBool());
+    QVERIFY(!resultOf(reply).toObject()
+            .value(QStringLiteral("reason")).toString().isEmpty());
+    reply = backend.invoke(ns, QStringLiteral("isRegexSupported"),
+        QJsonObject{{QStringLiteral("query"),
+            QJsonObject{{QStringLiteral("regex"),
+                         QStringLiteral("(a)\\1")}}}});
+    QVERIFY(!resultOf(reply).toObject()
+            .value(QStringLiteral("isSupported")).toBool());
+
+    reply = backend.invoke(ns, QStringLiteral("testMatchOutcome"),
+        QJsonObject{{QStringLiteral("request"),
+            QJsonObject{{QStringLiteral("url"),
+                QStringLiteral("https://blocked-static.example/x")},
+                        {QStringLiteral("type"),
+                         QStringLiteral("main_frame")}}}});
+    QVERIFY(okOf(reply));
+    {
+        const QJsonArray matched = resultOf(reply).toObject()
+            .value(QStringLiteral("matchedRules")).toArray();
+        bool saw = false;
+        for (const QJsonValue &mv : matched) {
+            const QJsonObject m = mv.toObject();
+            if (m.value(QStringLiteral("ruleId")).toInt() == 1
+                    && m.value(QStringLiteral("rulesetId")).toString()
+                        == QLatin1String("static_a")
+                    && m.value(QStringLiteral("extensionId")).toString()
+                        == extId)
+                saw = true;
+        }
+        QVERIFY(saw);
+    }
+    // Mistyped request answers typed, never silently empty.
+    QCOMPARE(errOf(backend.invoke(ns, QStringLiteral("testMatchOutcome"),
+        QJsonObject{{QStringLiteral("request"),
+            QJsonObject{{QStringLiteral("url"),
+                         QStringLiteral("https://x.example/")},
+                        {QStringLiteral("type"),
+                         QStringLiteral("bogus")}}}})),
+        QStringLiteral("invalid-argument"));
+
+    // --- getMatchedRules (feedback grant) ----------------------------
+    eval(QStringLiteral("https://blocked-static.example/m"));
+    reply = backend.invoke(ns, QStringLiteral("getMatchedRules"),
+                           QJsonObject{});
+    QVERIFY(okOf(reply));
+    {
+        const QJsonArray infos = resultOf(reply).toObject()
+            .value(QStringLiteral("rulesMatchedInfo")).toArray();
+        QVERIFY(!infos.isEmpty());
+        bool saw = false;
+        for (const QJsonValue &iv : infos) {
+            const QJsonObject r = iv.toObject()
+                .value(QStringLiteral("rule")).toObject();
+            if (r.value(QStringLiteral("ruleId")).toInt() == 1
+                    && r.value(QStringLiteral("rulesetId")).toString()
+                        == QLatin1String("static_a"))
+                saw = true;
+        }
+        QVERIFY(saw);
+    }
+    reply = backend.invoke(ns, QStringLiteral("getMatchedRules"),
+        QJsonObject{{QStringLiteral("filter"),
+            QJsonObject{{QStringLiteral("minTimeStamp"),
+                         9999999999999.0}}}});
+    QCOMPARE(resultOf(reply).toObject()
+             .value(QStringLiteral("rulesMatchedInfo"))
+             .toArray().size(), 0);
+
+    // --- WithHostAccess scoping ---------------------------------------
+    // The grant alone does not create host access: a rule fires only
+    // where the extension's host_permissions cover request or
+    // initiator.
+    QVERIFY(okOf(hostExt.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{rule(1, 1,
+                    QJsonObject{{QStringLiteral("type"),
+                                 QStringLiteral("block")}},
+                    QJsonObject{{QStringLiteral("urlFilter"),
+                                 QStringLiteral("*hblock*")}})}}}}})));
+    // Covered host -> the rule applies.
+    v = DeclarativeNetRequest::evaluate([&] {
+        DeclarativeNetRequest::EvalInput in;
+        in.url = QUrl(QStringLiteral("https://x.cov.example/hblock"));
+        in.resourceType = 0;
+        in.method = "GET";
+        return in;
+    }());
+    QVERIFY(v.blocked);
+    // Uncovered request host AND initiator -> the rule stays silent.
+    v = DeclarativeNetRequest::evaluate([&] {
+        DeclarativeNetRequest::EvalInput in;
+        in.url = QUrl(QStringLiteral("https://elsewhere.example/hblock"));
+        in.firstPartyUrl =
+            QUrl(QStringLiteral("https://elsewhere.example/"));
+        in.resourceType = 0;
+        in.method = "GET";
+        return in;
+    }());
+    QVERIFY(!v.blocked);
+
+    // --- real interception: the engine actually blocks + redirects ---
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString base = QStringLiteral("http://127.0.0.1:%1")
+        .arg(server.serverPort());
+    QStringList hits;
+    QObject::connect(&server, &QTcpServer::newConnection,
+                     &server, [&]() {
+        QTcpSocket *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QTcpSocket::readyRead, socket,
+                         [socket, &hits]() {
+            const QByteArray req = socket->readAll();
+            const int sp = req.indexOf(' ');
+            if (sp > 0)
+                hits.append(QString::fromLatin1(
+                    req.mid(sp + 1, req.indexOf(' ', sp + 1) - sp - 1)));
+            const QByteArray body = QByteArray("<html>ok</html>");
+            socket->write("HTTP/1.1 200\r\nContent-Length: "
+                + QByteArray::number(body.size())
+                + "\r\nConnection: close\r\n\r\n" + body);
+            socket->disconnectFromHost();
+        });
+    });
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("addRules"),
+                QJsonArray{
+                    rule(40, 1,
+                        QJsonObject{{QStringLiteral("type"),
+                                     QStringLiteral("block")}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                                     QStringLiteral("*/dnr-block*")}}),
+                    rule(41, 1,
+                        QJsonObject{{QStringLiteral("type"),
+                            QStringLiteral("redirect")},
+                            {QStringLiteral("redirect"),
+                             QJsonObject{{QStringLiteral("url"),
+                                          base + QStringLiteral(
+                                              "/dnr-landed")}}}},
+                        QJsonObject{{QStringLiteral("urlFilter"),
+                                     QStringLiteral("*/dnr-redirect*")}})}}}}})));
+
+    BrowserMainWindow *window = new BrowserMainWindow;
+    WebView *view = window->tabWidget()->webView(0);
+    QVERIFY(view);
+    QSignalSpy loadSpy(view->page(), &QWebEnginePage::loadFinished);
+    // The fresh tab's initial navigation can still be in flight —
+    // drain it so the spy only ever sees OUR loads.
+    QTRY_VERIFY_WITH_TIMEOUT(!view->isLoading(), 10000);
+    loadSpy.clear();
+
+    view->load(QUrl(base + QStringLiteral("/dnr-block")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 20000);
+    // Chromium commits an error document for a blocked main-frame
+    // navigation, so loadFinished(true/false) is engine-dependent —
+    // the honest block proof is that the request never reached the
+    // server.
+    QVERIFY(!hits.join(QLatin1Char(' ')).contains(
+        QStringLiteral("/dnr-block")));
+
+    loadSpy.clear();
+    view->load(QUrl(base + QStringLiteral("/dnr-redirect")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 20000);
+    QCOMPARE(loadSpy.takeLast().at(0).toBool(), true);
+    QVERIFY(hits.join(QLatin1Char(' ')).contains(
+        QStringLiteral("/dnr-landed")));
+
+    // Prove the verdicts were DNR's: remove the rules and the same
+    // navigation reaches the server.
+    QVERIFY(okOf(backend.invoke(ns,
+        QStringLiteral("updateSessionRules"),
+        QJsonObject{{QStringLiteral("options"),
+            QJsonObject{{QStringLiteral("removeRuleIds"),
+                         QJsonArray{40, 41}}}}})));
+    loadSpy.clear();
+    view->load(QUrl(base + QStringLiteral("/dnr-block")));
+    QTRY_VERIFY_WITH_TIMEOUT(loadSpy.count() >= 1, 20000);
+    QCOMPARE(loadSpy.takeLast().at(0).toBool(), true);
+    QVERIFY(hits.join(QLatin1Char(' ')).contains(
+        QStringLiteral("/dnr-block")));
+
+    delete window;
 }
 
 // EXT20: the engine forgets isEnabled across restarts — installed

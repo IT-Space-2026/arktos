@@ -5139,6 +5139,120 @@
     // namespace that exists as a real object, fill missing on*
     // events with shim events and missing methods with typed-error
     // functions — real members are never touched.
+    // --- chrome.declarativeNetRequest -------------------------------
+    // MD34: the functional subset — every member routes to the
+    // bridge and lands in DeclarativeNetRequest's registry; the
+    // backend applies Chrome's grant gates (declarativeNetRequest /
+    // declarativeNetRequestWithHostAccess / ...Feedback) and returns
+    // typed errors for what this layer cannot serve
+    // (response-side header ops, tabIds conditions,
+    // setExtensionActionOptions).  Constants ship the real Chrome
+    // values so feature-detection reads honest numbers.
+    function installDeclarativeNetRequest() {
+        if (typeof chrome === 'undefined')
+            return;
+        var have = null;
+        try { have = chrome.declarativeNetRequest; } catch (e) {}
+        if (have && have.__arktosShim)
+            return;
+        var dnr = {
+            __arktosShim: true,
+            DYNAMIC_RULESET_ID: '_dynamic',
+            SESSION_RULESET_ID: '_session',
+            GUARANTEED_MINIMUM_STATIC_RULES: 30000,
+            MAX_NUMBER_OF_STATIC_RULESETS: 100,
+            MAX_NUMBER_OF_ENABLED_STATIC_RULESETS: 50,
+            MAX_NUMBER_OF_STATIC_RULES: 30000,
+            MAX_NUMBER_OF_DYNAMIC_AND_SESSION_RULES: 5000,
+            MAX_NUMBER_OF_DYNAMIC_RULES: 30000,
+            MAX_NUMBER_OF_SESSION_RULES: 5000,
+            MAX_NUMBER_OF_REGEX_RULES: 1000,
+            MAX_NUMBER_OF_UNSAFE_DYNAMIC_RULES: 5000,
+            MAX_NUMBER_OF_UNSAFE_SESSION_RULES: 5000,
+            MAX_GETMATCHEDRULES_CALLS_PER_INTERVAL: 20,
+            GETMATCHEDRULES_QUOTA_INTERVAL: 600,
+            RuleActionType: {
+                BLOCK: 'block', REDIRECT: 'redirect',
+                ALLOW: 'allow',
+                ALLOW_ALL_REQUESTS: 'allowAllRequests',
+                UPGRADE_SCHEME: 'upgradeScheme',
+                MODIFY_HEADERS: 'modifyHeaders'
+            },
+            HeaderOperation: {
+                APPEND: 'append', SET: 'set', REMOVE: 'remove'
+            },
+            ResourceType: {
+                MAIN_FRAME: 'main_frame', SUB_FRAME: 'sub_frame',
+                STYLESHEET: 'stylesheet', SCRIPT: 'script',
+                IMAGE: 'image', FONT: 'font', OBJECT: 'object',
+                XMLHTTPREQUEST: 'xmlhttprequest', PING: 'ping',
+                CSP_REPORT: 'csp_report', MEDIA: 'media',
+                WEBSOCKET: 'websocket',
+                WEBTRANSPORT: 'webtransport',
+                WEBBUNDLE: 'webbundle', OTHER: 'other'
+            },
+            DomainType: {
+                FIRST_PARTY: 'firstParty', THIRD_PARTY: 'thirdParty'
+            },
+            UnsupportedRegexReason: {
+                SYNTAX_ERROR: 'syntaxError',
+                MEMORY_LIMIT_EXCEEDED: 'memoryLimitExceeded'
+            },
+            onRuleMatchedDebug:
+                makeEvent('declarativeNetRequest.onRuleMatchedDebug')
+        };
+        var mk = function (m, wrap) {
+            return function (arg, cb) {
+                var args = {};
+                if (wrap)
+                    args[wrap] = arg || {};
+                var p = call('declarativeNetRequest', m, args);
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined,
+                                        e && e.message || String(e));
+                           });
+                return p;
+            };
+        };
+        dnr.updateSessionRules = mk('updateSessionRules', 'options');
+        dnr.updateDynamicRules = mk('updateDynamicRules', 'options');
+        dnr.getSessionRules = mk('getSessionRules', 'filter');
+        dnr.getDynamicRules = mk('getDynamicRules', 'filter');
+        dnr.getEnabledRulesets = function (cb) {
+            var p = call('declarativeNetRequest', 'getEnabledRulesets',
+                         {});
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined,
+                                    e && e.message || String(e));
+                       });
+            return p;
+        };
+        dnr.updateEnabledRulesets =
+            mk('updateEnabledRulesets', 'options');
+        dnr.getAvailableStaticRuleCount = function (cb) {
+            var p = call('declarativeNetRequest',
+                         'getAvailableStaticRuleCount', {});
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined,
+                                    e && e.message || String(e));
+                       });
+            return p;
+        };
+        dnr.getMatchedRules = mk('getMatchedRules', 'filter');
+        dnr.isRegexSupported = mk('isRegexSupported', 'query');
+        dnr.testMatchOutcome = mk('testMatchOutcome', 'request');
+        dnr.setExtensionActionOptions =
+            mk('setExtensionActionOptions', 'options');
+        installNs('declarativeNetRequest', dnr);
+    }
+    installDeclarativeNetRequest();
+
     function fillNs(nsName, events, methods) {
         var ns = chrome[nsName];
         if (!ns || typeof ns !== 'object')
@@ -5281,14 +5395,6 @@
                 'getBadgeText', 'setBadgeBackgroundColor',
                 'getBadgeBackgroundColor', 'setPopup', 'getPopup',
                 'enable', 'disable']);
-        fillNs('declarativeNetRequest',
-               ['onRuleMatchedDebug'],
-               ['updateDynamicRules', 'updateSessionRules',
-                'getEnabledRulesets', 'updateEnabledRulesets',
-                'getDynamicRules', 'getSessionRules',
-                'setExtensionActionOptions',
-                'getMatchedRules', 'isRegexSupported',
-                'testMatchOutcome']);
         fillNs('declarativeContent', [],
                []);
         fillNs('sessions', ['onChanged'],
@@ -5387,7 +5493,7 @@
         'windows', 'identity', 'gcm',
         'nativeMessaging',
         'scripting', 'offscreen', 'omnibox', 'devtools',
-        'declarativeNetRequest', 'declarativeContent',
+        'declarativeContent',
         'management',
         'power', 'tts', 'enterprise', 'debugger',
         'processes', 'readingList', 'search', 'favicon', 'tabCapture',

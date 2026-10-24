@@ -22,6 +22,7 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserprofile.h"
+#include "declarativenetrequest.h"
 #include "extensioncommands.h"
 #include "extensioneventhub.h"
 #include "extensionmanager.h"
@@ -1219,6 +1220,10 @@ void ExtensionBackgroundRuntime::teardown(const QString &id)
     // registered — Chrome binds listeners to the extension, not to
     // a surviving context.
     ExtensionRequestWatcher::instance()->dropExtension(id);
+    // MD34: same sweep for the declarativeNetRequest registry —
+    // session rules die with the extension, persisted dynamic rules
+    // and ruleset overrides stay on disk for the next load.
+    DeclarativeNetRequest::instance()->dropExtension(id);
     // ER12: Chrome dismisses an extension's notifications when it
     // unloads — records drop (no onClosed: no context could hear it)
     // and presented banners are closed.
@@ -2183,6 +2188,11 @@ QString eventGate(const QString &name)
     // invokeFontSettings applies per call.
     if (ns == QLatin1String("fontSettings"))
         return QStringLiteral("fontSettings");
+    // MD34: declarativeNetRequest.onRuleMatchedDebug is Chrome's
+    // debug channel — the feedback grant gates it, same as
+    // getMatchedRules.
+    if (ns == QLatin1String("declarativeNetRequest"))
+        return QStringLiteral("declarativeNetRequestFeedback");
     return QString();
 }
 

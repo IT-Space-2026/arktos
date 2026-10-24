@@ -55,7 +55,8 @@ chrome.chromeOs.*: unsupported
 chrome.contentSettings.*: unsupported
 chrome.debugger.*: unsupported
 chrome.declarativeContent.*: unsupported
-chrome.declarativeNetRequest.*: unsupported
+# declarativeNetRequest left the dead list with MD34 — see the
+# served vocabulary under "served namespaces" below.
 chrome.desktopCapture.*: unsupported
 chrome.devtools.*: unsupported
 chrome.displaySource.*: unsupported
@@ -315,6 +316,28 @@ chrome.tabGroups.*: not-found
 chrome.tabGroups.*: unsupported
 chrome.tabGroups.*: move-refused
 chrome.tabGroups.*: unimplemented
+# MD34: chrome.declarativeNetRequest is served over
+# DeclarativeNetRequest's registry + the live interceptor's
+# block/redirect/setHttpHeader stage — 'declarativeNetRequest' or
+# 'declarativeNetRequestWithHostAccess' gates the rule surface
+# (WithHostAccess additionally scopes matching to host-permission
+# coverage), 'declarativeNetRequestFeedback' gates getMatchedRules
+# and onRuleMatchedDebug.  Response-side behavior the layer cannot
+# reach (responseHeaders conditions, response header ops), tabIds
+# conditions, RE2-incompatible regex constructs and
+# setExtensionActionOptions stay typed 'unsupported'; the rest are
+# the ops' correct verdicts (bad rule/options shapes, duplicate or
+# missing rule ids, undeclared ruleset ids, session/dynamic/static
+# quota caps, the 20-calls-per-10min getMatchedRules window,
+# unreachable members).
+chrome.declarativeNetRequest.*: no-permission
+chrome.declarativeNetRequest.*: invalid-argument
+chrome.declarativeNetRequest.*: duplicate-rule-id
+chrome.declarativeNetRequest.*: rule-not-found
+chrome.declarativeNetRequest.*: ruleset-not-found
+chrome.declarativeNetRequest.*: quota-exceeded
+chrome.declarativeNetRequest.*: unsupported
+chrome.declarativeNetRequest.*: unimplemented
 chrome.action.setIcon: invalid-image-data
 chrome.action.setIcon: invalid-path
 chrome.browserAction.setIcon: invalid-image-data

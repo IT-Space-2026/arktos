@@ -1304,9 +1304,8 @@ QStringList ExtensionManager::runtimeServes()
     // The fatal-table members it covers — scripting, webRequest —
     // stop condemning an extension; the rest move out of the flat
     // "will not work" tier into "partially supported".  Surfaces the
-    // runtime does NOT serve (declarativeNetRequest*, blocking
-    // webRequest, nativeMessaging, privacy, downloads, ...)
-    // stay absent on purpose — they keep the raw engine verdict.
+    // runtime does NOT serve (blocking webRequest, nativeMessaging,
+    // ...) stay absent on purpose — they keep the raw engine verdict.
     static const QStringList served = {
         // MD21: chrome.bookmarks rides the RC05 store through
         // BookmarksManager — the namespace is fully served.
@@ -1320,6 +1319,17 @@ QStringList ExtensionManager::runtimeServes()
         // MD23: chrome.cookies reads the RC15 persistent mirror and
         // writes the engine jar + mirror — the namespace is served.
         QStringLiteral("cookies"),
+        // MD34: chrome.declarativeNetRequest serves the
+        // update*/get*Rules, ruleset enable, isRegexSupported,
+        // testMatchOutcome, getMatchedRules and the static
+        // rule_resources lane over the live interception stage —
+        // response-header ops, tabIds conditions and
+        // setExtensionActionOptions keep typed verdicts.  The
+        // feedback grant is served too (getMatchedRules +
+        // onRuleMatchedDebug over the same evaluator).
+        QStringLiteral("declarativeNetRequest"),
+        QStringLiteral("declarativeNetRequestWithHostAccess"),
+        QStringLiteral("declarativeNetRequestFeedback"),
         // MD33: chrome.fontSettings serves getFontList, the six
         // servable generic families (standard/serif/sansserif/fixed/
         // cursive/fantasy) and the three font sizes over the real

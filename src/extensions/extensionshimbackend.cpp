@@ -29,6 +29,7 @@
 #include "clearprivatedata.h"
 #include "containermanager.h"
 #include "cookiejar.h"
+#include "declarativenetrequest.h"
 #include "downloadmanager.h"
 #include "engineinterface.h"
 #include "extensionbackgroundhost.h"
@@ -47,6 +48,8 @@
 #include "toolbarsearch.h"
 #include "webenginebackend.h"
 #include "webview.h"
+
+#include <cmath>
 
 #include <qapplication.h>
 #include <qbuffer.h>
@@ -1407,6 +1410,8 @@ QJsonObject ExtensionShimBackend::invoke(const QString &ns,
         return invokeSessions(method, args);
     if (ns == QLatin1String("tabGroups"))
         return invokeTabGroups(method, args);
+    if (ns == QLatin1String("declarativeNetRequest"))
+        return invokeDeclarativeNetRequest(method, args);
     if (ns == QLatin1String("extension"))
         return invokeExtension(method, args);
     if (ns == QLatin1String("sidebarAction"))
@@ -8310,6 +8315,175 @@ QJsonObject ExtensionShimBackend::invokeTabGroups(
         return okReply();
     }
 
+    return errReply(QStringLiteral("unimplemented"));
+}
+
+// -------------------------------------------------------------------
+// chrome.declarativeNetRequest — MD34.  The rule registry, validation
+// and IO-thread evaluation live in DeclarativeNetRequest; this
+// handler only shapes arguments and applies Chrome's grant gates:
+//   declarativeNetRequest               — whole rule surface
+//   declarativeNetRequestWithHostAccess — same, but rule evaluation
+//       additionally requires host-permission coverage of the
+//       request or initiator (DNR itself grants no host access)
+//   declarativeNetRequestFeedback       — getMatchedRules /
+//       onRuleMatchedDebug only
+// -------------------------------------------------------------------
+
+QJsonObject ExtensionShimBackend::invokeDeclarativeNetRequest(
+        const QString &method, const QJsonObject &args)
+{
+    const QStringList perms = manifestPermissions();
+    const bool hasDnr =
+        perms.contains(QLatin1String("declarativeNetRequest"));
+    const bool hasHostDnr = perms.contains(
+        QLatin1String("declarativeNetRequestWithHostAccess"));
+    const bool hasFeedback = perms.contains(
+        QLatin1String("declarativeNetRequestFeedback"));
+    const bool granted = hasDnr || hasHostDnr;
+
+    DeclarativeNetRequest *dnr = DeclarativeNetRequest::instance();
+    const QJsonObject manifest = manifestJson();
+    const QString dir = storageDir();
+
+    if (method == QLatin1String("updateSessionRules")
+            || method == QLatin1String("updateDynamicRules")) {
+        if (!granted)
+            return errReply(QStringLiteral("no-permission"));
+        const QJsonObject options =
+            args.value(QStringLiteral("options")).toObject();
+        const QJsonObject reply = dnr->updateRules(
+            m_extensionId, m_extensionPath, manifest, dir,
+            method == QLatin1String("updateSessionRules"),
+            hasHostDnr, hasFeedback,
+            options.value(QStringLiteral("addRules")).toArray(),
+            options.value(QStringLiteral("removeRuleIds")).toArray());
+        if (reply.value(QStringLiteral("ok")).toBool())
+            return okReply();
+        return errReply(
+            reply.value(QStringLiteral("error")).toString());
+    }
+    if (method == QLatin1String("getSessionRules")
+            || method == QLatin1String("getDynamicRules")) {
+        if (!granted)
+            return errReply(QStringLiteral("no-permission"));
+        const QJsonObject filter =
+            args.value(QStringLiteral("filter")).toObject();
+        QList<int> ids;
+        for (const QJsonValue &v :
+             filter.value(QStringLiteral("ruleIds")).toArray()) {
+            const double d = v.toDouble(-1);
+            if (!v.isDouble() || d != std::floor(d) || d < 1)
+                return errReply(QStringLiteral("invalid-argument"));
+            ids.append(int(d));
+        }
+        return okReply(dnr->rulesFor(
+            m_extensionId, m_extensionPath, manifest, dir,
+            method == QLatin1String("getSessionRules"),
+            hasHostDnr, hasFeedback, ids));
+    }
+    if (method == QLatin1String("getEnabledRulesets")) {
+        if (!granted)
+            return errReply(QStringLiteral("no-permission"));
+        QJsonArray sets;
+        for (const QString &id : dnr->enabledRulesets(
+                 m_extensionId, m_extensionPath, manifest, dir,
+                 hasHostDnr, hasFeedback))
+            sets.append(id);
+        return okReply(sets);
+    }
+    if (method == QLatin1String("updateEnabledRulesets")) {
+        if (!granted)
+            return errReply(QStringLiteral("no-permission"));
+        const QJsonObject options =
+            args.value(QStringLiteral("options")).toObject();
+        QStringList enable, disable;
+        for (const QJsonValue &v : options.value(
+                 QStringLiteral("enableRulesetIds")).toArray())
+            enable.append(v.toString());
+        for (const QJsonValue &v : options.value(
+                 QStringLiteral("disableRulesetIds")).toArray())
+            disable.append(v.toString());
+        const QJsonObject reply = dnr->updateEnabledRulesets(
+            m_extensionId, m_extensionPath, manifest, dir,
+            hasHostDnr, hasFeedback, enable, disable);
+        if (reply.value(QStringLiteral("ok")).toBool())
+            return okReply();
+        return errReply(
+            reply.value(QStringLiteral("error")).toString());
+    }
+    if (method == QLatin1String("getAvailableStaticRuleCount")) {
+        if (!granted)
+            return errReply(QStringLiteral("no-permission"));
+        return okReply(dnr->availableStaticRuleCount(
+            m_extensionId, m_extensionPath, manifest, dir,
+            hasHostDnr, hasFeedback));
+    }
+    if (method == QLatin1String("isRegexSupported")) {
+        if (!granted)
+            return errReply(QStringLiteral("no-permission"));
+        const QJsonObject query =
+            args.value(QStringLiteral("query")).toObject();
+        QString reason;
+        const bool supported = DeclarativeNetRequest::regexSupported(
+            query.value(QStringLiteral("regex")).toString(),
+            query.value(QStringLiteral("isCaseSensitive")).toBool(true),
+            query.value(QStringLiteral("requireCapturing")).toBool(false),
+            &reason);
+        QJsonObject result{{QStringLiteral("isSupported"), supported}};
+        if (!supported)
+            result.insert(QStringLiteral("reason"), reason);
+        return okReply(result);
+    }
+    if (method == QLatin1String("testMatchOutcome")) {
+        if (!granted && !hasFeedback)
+            return errReply(QStringLiteral("no-permission"));
+        const QJsonObject request =
+            args.value(QStringLiteral("request")).toObject();
+        const QString type =
+            request.value(QStringLiteral("type")).toString();
+        static const QSet<QString> knownTypes = {
+            QStringLiteral("main_frame"), QStringLiteral("sub_frame"),
+            QStringLiteral("stylesheet"), QStringLiteral("script"),
+            QStringLiteral("image"), QStringLiteral("font"),
+            QStringLiteral("object"), QStringLiteral("xmlhttprequest"),
+            QStringLiteral("ping"), QStringLiteral("csp_report"),
+            QStringLiteral("media"), QStringLiteral("websocket"),
+            QStringLiteral("webtransport"), QStringLiteral("webbundle"),
+            QStringLiteral("webidentity"), QStringLiteral("other")};
+        if (request.value(QStringLiteral("url")).toString().isEmpty()
+                || !knownTypes.contains(type))
+            return errReply(QStringLiteral("invalid-argument"));
+        return okReply(QJsonObject{
+            {QStringLiteral("matchedRules"),
+             dnr->testMatchOutcome(m_extensionId, m_extensionPath,
+                                   manifest, dir, hasHostDnr,
+                                   hasFeedback, request)}});
+    }
+    if (method == QLatin1String("getMatchedRules")) {
+        if (!hasFeedback)
+            return errReply(QStringLiteral("no-permission"));
+        if (!dnr->matchedRulesQuota(m_extensionId))
+            return errReply(QStringLiteral("quota-exceeded"));
+        const QJsonObject filter =
+            args.value(QStringLiteral("filter")).toObject();
+        return okReply(QJsonObject{
+            {QStringLiteral("rulesMatchedInfo"),
+             dnr->matchedRules(
+                 m_extensionId,
+                 filter.contains(QStringLiteral("tabId"))
+                     ? filter.value(QStringLiteral("tabId")).toInt(-1)
+                     : -1,
+                 filter.value(QStringLiteral("minTimeStamp"))
+                     .toDouble(0))}});
+    }
+    if (method == QLatin1String("setExtensionActionOptions")) {
+        if (!granted)
+            return errReply(QStringLiteral("no-permission"));
+        // Badge/icon action-options need the action-surface plumbing
+        // this layer does not own — typed unsupported, not a stub.
+        return errReply(QStringLiteral("unsupported"));
+    }
     return errReply(QStringLiteral("unimplemented"));
 }
 
