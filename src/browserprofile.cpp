@@ -1475,18 +1475,20 @@ static const char *terminationSignalName(int signalNumber)
 #if defined(ARKTOS_RUSTCORE)
 // RC13: mirror the app-level sentinel into rustcore's session.state
 // (profiles/default/ — the store the pre-RC13 manifest aggregate
-// used).  The facade handle binds the dir path-explicitly; the legacy
-// spelling re-anchors the process-global store, which any other rc_*
-// consumer can re-point mid-write.
-template<class F, class G>
-static void withDefaultSessionStore(F facadeOp, G legacyOp)
+// used).  MB07: one framed command per marker — the payload's
+// "profile" pins profiles/default/ inside the crate, so no AcSession
+// mints; the legacy spelling re-anchors the process-global store,
+// which any other rc_* consumer can re-point mid-write.
+template<class G>
+static void withDefaultSessionStore(int mwOp, const QJsonObject &fields,
+                                    G legacyOp)
 {
     if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
-        if (AcSession *s = bridge->session(QStringLiteral("default"))) {
-            facadeOp(s);
-            ac_session_close(s);
-            return;
-        }
+        QJsonObject payload = fields;
+        payload.insert(QLatin1String("profile"),
+                       QLatin1String("default"));
+        bridge->mwCommand(AcMw::Session, mwOp, payload);
+        return;
     }
     rustCoreEnsureDataDirFor(QStringLiteral("default"));
     legacyOp();
@@ -1523,9 +1525,8 @@ void markSessionStart()
     settings.sync();
 #if defined(ARKTOS_RUSTCORE)
     if (!BrowserApplication::isTorMode()) {
-        withDefaultSessionStore(
-            [](AcSession *s) { ac_session_mark_start(s); },
-            [] { rc_session_mark_start(); });
+        withDefaultSessionStore(AcMw::SessionMarkStart, QJsonObject(),
+                                [] { rc_session_mark_start(); });
     }
 #endif
 }
@@ -1547,7 +1548,8 @@ void markSessionCleanExit(int exitCode)
 #if defined(ARKTOS_RUSTCORE)
     if (!BrowserApplication::isTorMode()) {
         withDefaultSessionStore(
-            [exitCode](AcSession *s) { ac_session_mark_exit(s, exitCode); },
+            AcMw::SessionMarkExit,
+            QJsonObject{{QLatin1String("code"), exitCode}},
             [exitCode] { rc_session_mark_exit(exitCode); });
     }
 #endif
@@ -1570,8 +1572,8 @@ void markSessionTerminated(int signalNumber)
 #if defined(ARKTOS_RUSTCORE)
     if (!BrowserApplication::isTorMode()) {
         withDefaultSessionStore(
-            [signalNumber](AcSession *s) {
-                ac_session_mark_terminated(s, signalNumber); },
+            AcMw::SessionMarkTerminated,
+            QJsonObject{{QLatin1String("signal"), signalNumber}},
             [signalNumber] { rc_session_mark_terminated(signalNumber); });
     }
 #endif

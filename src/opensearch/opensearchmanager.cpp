@@ -104,6 +104,40 @@ QByteArray oseSource()
     return QCoreApplication::applicationName().toUtf8();
 }
 
+// MB07: the opensearch domain dispatches over the mw envelope when
+// the bridge serves — the ops are profile-bound like the other
+// persona stores, so every payload carries "profile" (the ambient
+// persona the flat lane anchors via rustCoreEnsureDataDir()).  A
+// null bridge keeps the rc_ose_* spelling over the same anchor.
+RustCoreBridge *oseBridge()
+{
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        return bridge;
+    rustCoreEnsureDataDir();
+    return nullptr;
+}
+
+QJsonObject oseScope()
+{
+    return QJsonObject{{QLatin1String("profile"),
+                        BrowserPaths::activeProfileId()}};
+}
+
+QJsonObject oseNamed(const QString &name)
+{
+    QJsonObject payload = oseScope();
+    payload.insert(QLatin1String("name"), name);
+    return payload;
+}
+
+QStringList oseStringListJson(const QJsonArray &array)
+{
+    QStringList out;
+    for (const QJsonValue &value : array)
+        out.append(value.toString());
+    return out;
+}
+
 } // namespace
 #endif // ARKTOS_RUSTCORE
 
@@ -371,27 +405,51 @@ bool OpenSearchManager::addEngine(OpenSearchEngine *engine)
 #if defined(ARKTOS_RUSTCORE)
     // OSE01: the registry is canonical — the record writes through
     // immediately (keyword bindings arrive via setKeywordsForEngine).
-    rustCoreEnsureDataDir();
     QByteArray json = oseEngineJson(engine);
     // SENG02: a descriptor's <Alias> keywords seed a FRESH record;
     // when the store already holds one its live bindings win — the
     // Qt-side "only bind free slots" rule, store-side.
-    if (!engine->defaultKeywords().isEmpty()) {
-        const QByteArray utf8 = engine->name().toUtf8();
-        char *record = rc_ose_get(utf8.constData());
-        const bool present = record != nullptr;
-        rc_string_free(record);
-        if (!present) {
-            QJsonObject doc = QJsonDocument::fromJson(json).object();
-            doc.insert(QLatin1String("keywords"),
-                       QJsonArray::fromStringList(
-                           engine->defaultKeywords()));
-            json = QJsonDocument(doc).toJson(QJsonDocument::Compact);
+    if (RustCoreBridge *bridge = oseBridge()) {
+        if (!engine->defaultKeywords().isEmpty()) {
+            const bool present = bridge
+                ->mwQuery(AcMw::OpenSearch, AcMw::OseGet,
+                          oseNamed(engine->name()))
+                .toObject()
+                .value(QLatin1String("engine"))
+                .isObject();
+            if (!present) {
+                QJsonObject doc = QJsonDocument::fromJson(json).object();
+                doc.insert(QLatin1String("keywords"),
+                           QJsonArray::fromStringList(
+                               engine->defaultKeywords()));
+                json = QJsonDocument(doc).toJson(QJsonDocument::Compact);
+            }
         }
+        QJsonObject payload = oseScope();
+        payload.insert(QLatin1String("engine"),
+                       QJsonDocument::fromJson(json).object());
+        if (!bridge
+                 ->mwCommand(AcMw::OpenSearch, AcMw::OsePut, payload)
+                 .isObject())
+            return false;
+    } else {
+        if (!engine->defaultKeywords().isEmpty()) {
+            const QByteArray utf8 = engine->name().toUtf8();
+            char *record = rc_ose_get(utf8.constData());
+            const bool present = record != nullptr;
+            rc_string_free(record);
+            if (!present) {
+                QJsonObject doc = QJsonDocument::fromJson(json).object();
+                doc.insert(QLatin1String("keywords"),
+                           QJsonArray::fromStringList(
+                               engine->defaultKeywords()));
+                json = QJsonDocument(doc).toJson(QJsonDocument::Compact);
+            }
+        }
+        if (rc_ose_put(reinterpret_cast<const uint8_t *>(json.constData()),
+                       size_t(json.size())) != RC_OK)
+            return false;
     }
-    if (rc_ose_put(reinterpret_cast<const uint8_t *>(json.constData()),
-                   size_t(json.size())) != RC_OK)
-        return false;
 #else
     // SENG02: installs pick up the descriptor's <Alias> defaults;
     // suppressed during load() so unbound keywords stay unbound.
@@ -454,10 +512,13 @@ void OpenSearchManager::removeEngine(const QString &name)
         m_fieldEngine.clear();
 
 #if defined(ARKTOS_RUSTCORE)
-    rustCoreEnsureDataDir();
-    const QByteArray utf8 = name.toUtf8();
     // The record drops its keyword bindings with it.
-    rc_ose_remove(utf8.constData());
+    if (RustCoreBridge *bridge = oseBridge()) {
+        bridge->mwCommand(AcMw::OpenSearch, AcMw::OseRemove,
+                          oseNamed(name));
+    } else {
+        rc_ose_remove(name.toUtf8().constData());
+    }
 #else
     QString file = QDir(enginesDirectory()).filePath(generateEngineFileName(name));
     QFile::remove(file);
@@ -469,7 +530,12 @@ void OpenSearchManager::removeEngine(const QString &name)
             && !m_removedBundled.contains(name)) {
         m_removedBundled.append(name);
 #if defined(ARKTOS_RUSTCORE)
-        rc_ose_block_bundled(utf8.constData());
+        if (RustCoreBridge *bridge = oseBridge()) {
+            bridge->mwCommand(AcMw::OpenSearch, AcMw::OseBlockBundled,
+                              oseNamed(name));
+        } else {
+            rc_ose_block_bundled(name.toUtf8().constData());
+        }
 #endif
     }
 
@@ -493,10 +559,16 @@ bool OpenSearchManager::moveEngine(const QString &name, int offset)
 
     m_engineOrder.move(from, to);
 #if defined(ARKTOS_RUSTCORE)
-    rustCoreEnsureDataDir();
-    const QByteArray json = oseJsonStringArray(m_engineOrder);
-    rc_ose_reorder(reinterpret_cast<const uint8_t *>(json.constData()),
-                   size_t(json.size()));
+    if (RustCoreBridge *bridge = oseBridge()) {
+        QJsonObject payload = oseScope();
+        payload.insert(QLatin1String("order"),
+                       QJsonArray::fromStringList(m_engineOrder));
+        bridge->mwCommand(AcMw::OpenSearch, AcMw::OseReorder, payload);
+    } else {
+        const QByteArray json = oseJsonStringArray(m_engineOrder);
+        rc_ose_reorder(reinterpret_cast<const uint8_t *>(json.constData()),
+                       size_t(json.size()));
+    }
 #endif
     emit changed();
     return true;
@@ -519,12 +591,20 @@ bool OpenSearchManager::renameEngine(const QString &oldName, const QString &newN
     // The store move keeps the record's keyword bindings and its
     // display-order slot — abort before touching any Qt state if it
     // fails.
-    rustCoreEnsureDataDir();
     const QByteArray oldUtf8 = oldName.toUtf8();
     const QByteArray newUtf8 = trimmed.toUtf8();
-    if (rc_ose_rename(oldUtf8.constData(), newUtf8.constData())
-            != RC_OK)
+    if (RustCoreBridge *bridge = oseBridge()) {
+        QJsonObject payload = oseScope();
+        payload.insert(QLatin1String("old"), oldName);
+        payload.insert(QLatin1String("new"), trimmed);
+        if (!bridge
+                 ->mwCommand(AcMw::OpenSearch, AcMw::OseRename, payload)
+                 .isObject())
+            return false;
+    } else if (rc_ose_rename(oldUtf8.constData(), newUtf8.constData())
+            != RC_OK) {
         return false;
+    }
 #endif
 
     OpenSearchEngine *engine = m_engines.take(oldName);
@@ -553,14 +633,27 @@ bool OpenSearchManager::renameEngine(const QString &oldName, const QString &newN
     // uses); naming an engine after a previously removed bundled one
     // unblocks it — the user's own engine with that name exists now.
 #if defined(ARKTOS_RUSTCORE)
-    if (QFile::exists(QLatin1String(":/searchengines/")
-                      + generateEngineFileName(oldName))
-            && !m_removedBundled.contains(oldName)) {
-        m_removedBundled.append(oldName);
-        rc_ose_block_bundled(oldUtf8.constData());
+    if (RustCoreBridge *bridge = oseBridge()) {
+        if (QFile::exists(QLatin1String(":/searchengines/")
+                          + generateEngineFileName(oldName))
+                && !m_removedBundled.contains(oldName)) {
+            m_removedBundled.append(oldName);
+            bridge->mwCommand(AcMw::OpenSearch, AcMw::OseBlockBundled,
+                              oseNamed(oldName));
+        }
+        m_removedBundled.removeAll(trimmed);
+        bridge->mwCommand(AcMw::OpenSearch, AcMw::OseUnblockBundled,
+                          oseNamed(trimmed));
+    } else {
+        if (QFile::exists(QLatin1String(":/searchengines/")
+                          + generateEngineFileName(oldName))
+                && !m_removedBundled.contains(oldName)) {
+            m_removedBundled.append(oldName);
+            rc_ose_block_bundled(oldUtf8.constData());
+        }
+        m_removedBundled.removeAll(trimmed);
+        rc_ose_unblock_bundled(newUtf8.constData());
     }
-    m_removedBundled.removeAll(trimmed);
-    rc_ose_unblock_bundled(newUtf8.constData());
 #else
     // The persisted descriptor keeps the old generated file name.
     QFile::remove(QDir(enginesDirectory())
@@ -586,10 +679,16 @@ void OpenSearchManager::engineEdited(OpenSearchEngine *engine)
 #if defined(ARKTOS_RUSTCORE)
     // OSE01: engine objects carry no change notification — the edit
     // notification pushes the record through immediately.
-    rustCoreEnsureDataDir();
-    const QByteArray json = oseEngineJson(engine);
-    rc_ose_put(reinterpret_cast<const uint8_t *>(json.constData()),
-               size_t(json.size()));
+    if (RustCoreBridge *bridge = oseBridge()) {
+        QJsonObject payload = oseScope();
+        payload.insert(QLatin1String("engine"),
+                       openSearchEngineToJson(engine));
+        bridge->mwCommand(AcMw::OpenSearch, AcMw::OsePut, payload);
+    } else {
+        const QByteArray json = oseEngineJson(engine);
+        rc_ose_put(reinterpret_cast<const uint8_t *>(json.constData()),
+                   size_t(json.size()));
+    }
 #endif
 
     emit changed();
@@ -645,15 +744,27 @@ void OpenSearchManager::save()
     // and the display order.  The descriptor dir plus the keyword,
     // engineOrder and removedBundledEngines keys are retired by
     // migration — only the preference keys are still persisted here.
-    rustCoreEnsureDataDir();
-    for (OpenSearchEngine *engine : m_engines.values()) {
-        const QByteArray json = oseEngineJson(engine);
-        rc_ose_put(reinterpret_cast<const uint8_t *>(json.constData()),
-                   size_t(json.size()));
+    if (RustCoreBridge *bridge = oseBridge()) {
+        for (OpenSearchEngine *engine : m_engines.values()) {
+            QJsonObject payload = oseScope();
+            payload.insert(QLatin1String("engine"),
+                           openSearchEngineToJson(engine));
+            bridge->mwCommand(AcMw::OpenSearch, AcMw::OsePut, payload);
+        }
+        QJsonObject order = oseScope();
+        order.insert(QLatin1String("order"),
+                     QJsonArray::fromStringList(m_engineOrder));
+        bridge->mwCommand(AcMw::OpenSearch, AcMw::OseReorder, order);
+    } else {
+        for (OpenSearchEngine *engine : m_engines.values()) {
+            const QByteArray json = oseEngineJson(engine);
+            rc_ose_put(reinterpret_cast<const uint8_t *>(json.constData()),
+                       size_t(json.size()));
+        }
+        const QByteArray order = oseJsonStringArray(m_engineOrder);
+        rc_ose_reorder(reinterpret_cast<const uint8_t *>(order.constData()),
+                       size_t(order.size()));
     }
-    const QByteArray order = oseJsonStringArray(m_engineOrder);
-    rc_ose_reorder(reinterpret_cast<const uint8_t *>(order.constData()),
-                   size_t(order.size()));
 
     ProfileSettings settings;
     settings.beginGroup(QLatin1String("openSearch"));
@@ -724,17 +835,25 @@ bool OpenSearchManager::loadDirectory(const QString &dirName)
 // legacy paths retire so a second run imports nothing.
 void OpenSearchManager::importLegacyRegistry(ProfileSettings &settings)
 {
+    RustCoreBridge *bridge = oseBridge();
+
     // The blocklist first — it gates the bundled seed below.
     const QStringList removed = settings.value(
         QLatin1String("removedBundledEngines")).toStringList();
     for (const QString &name : removed) {
-        const QByteArray utf8 = name.toUtf8();
-        rc_ose_block_bundled(utf8.constData());
+        if (bridge) {
+            bridge->mwCommand(AcMw::OpenSearch, AcMw::OseBlockBundled,
+                              oseNamed(name));
+        } else {
+            rc_ose_block_bundled(name.toUtf8().constData());
+        }
     }
 
     // The persisted descriptor dir imports filename-sorted so the
-    // migrated order is deterministic; rc_ose_import tolerates the
-    // same inputs addEngine(fileName) did.
+    // migrated order is deterministic; the store tolerates the same
+    // inputs addEngine(fileName) did.  The envelope lane sends the
+    // descriptor base64'd — the parser handles arbitrary encodings,
+    // so the bytes cross byte-exact.
     const QString dirName = enginesDirectory();
     const QDir dir(dirName);
     const QStringList files = dir.entryList(
@@ -744,11 +863,23 @@ void OpenSearchManager::importLegacyRegistry(ProfileSettings &settings)
         if (file.size() > 1024 * 1024 || !file.open(QIODevice::ReadOnly))
             continue;
         const QByteArray xml = file.readAll();
-        rc_ose_import(reinterpret_cast<const uint8_t *>(xml.constData()),
-                      size_t(xml.size()));
+        if (bridge) {
+            QJsonObject payload = oseScope();
+            payload.insert(QLatin1String("xml_b64"),
+                           QString::fromLatin1(xml.toBase64()));
+            bridge->mwCommand(AcMw::OpenSearch, AcMw::OseImport, payload);
+        } else {
+            rc_ose_import(reinterpret_cast<const uint8_t *>(xml.constData()),
+                          size_t(xml.size()));
+        }
     }
 
-    rc_ose_seed_bundled();
+    if (bridge) {
+        bridge->mwCommand(AcMw::OpenSearch, AcMw::OseSeedBundled,
+                          oseScope());
+    } else {
+        rc_ose_seed_bundled();
+    }
 
     // The keyword array flattens into per-engine bindings — last write
     // wins, same as the QHash the code used to fill.
@@ -768,17 +899,33 @@ void OpenSearchManager::importLegacyRegistry(ProfileSettings &settings)
     }
     settings.endArray();
     for (auto it = byEngine.constBegin(); it != byEngine.constEnd(); ++it) {
-        const QByteArray name = it.key().toUtf8();
-        const QByteArray json = oseJsonStringArray(it.value());
-        rc_ose_set_keywords(name.constData(),
-                            reinterpret_cast<const uint8_t *>(json.constData()),
-                            size_t(json.size()));
+        if (bridge) {
+            QJsonObject payload = oseNamed(it.key());
+            payload.insert(QLatin1String("keywords"),
+                           QJsonArray::fromStringList(it.value()));
+            bridge->mwCommand(AcMw::OpenSearch, AcMw::OseSetKeywords,
+                              payload);
+        } else {
+            const QByteArray name = it.key().toUtf8();
+            const QByteArray json = oseJsonStringArray(it.value());
+            rc_ose_set_keywords(name.constData(),
+                                reinterpret_cast<const uint8_t *>(json.constData()),
+                                size_t(json.size()));
+        }
     }
 
-    const QByteArray order = oseJsonStringArray(
-        settings.value(QLatin1String("engineOrder")).toStringList());
-    rc_ose_reorder(reinterpret_cast<const uint8_t *>(order.constData()),
-                   size_t(order.size()));
+    const QStringList order =
+        settings.value(QLatin1String("engineOrder")).toStringList();
+    if (bridge) {
+        QJsonObject payload = oseScope();
+        payload.insert(QLatin1String("order"),
+                       QJsonArray::fromStringList(order));
+        bridge->mwCommand(AcMw::OpenSearch, AcMw::OseReorder, payload);
+    } else {
+        const QByteArray json = oseJsonStringArray(order);
+        rc_ose_reorder(reinterpret_cast<const uint8_t *>(json.constData()),
+                       size_t(json.size()));
+    }
 
     // Retire the legacy paths — a leftover descriptor dir or stale
     // keys must never re-import over the canonical store.
@@ -797,30 +944,63 @@ void OpenSearchManager::load()
 #if defined(ARKTOS_RUSTCORE)
     // OSE01: searchengines.json is canonical; first access migrates
     // the legacy descriptor dir + QSettings openSearch keys.
-    rustCoreEnsureDataDir();
+    RustCoreBridge *bridge = oseBridge();
 
     ProfileSettings settings;
     settings.beginGroup(QLatin1String("openSearch"));
 
-    if (!rc_ose_store_present())
+    const bool present = bridge
+        ? bridge
+              ->mwQuery(AcMw::OpenSearch, AcMw::OseStorePresent,
+                        oseScope())
+              .toObject()
+              .value(QLatin1String("present"))
+              .toBool()
+        : rc_ose_store_present() != 0;
+    if (!present)
         importLegacyRegistry(settings);
 
     // The bundled merge survives in the Rust path too — upgrades
     // deliver new descriptors; removed_bundled keeps deleted ones
     // gone.  Idempotent: existing records always win.
-    rc_ose_seed_bundled();
-
-    m_removedBundled = oseStringList(rc_ose_removed_bundled());
+    if (bridge) {
+        bridge->mwCommand(AcMw::OpenSearch, AcMw::OseSeedBundled,
+                          oseScope());
+        m_removedBundled = oseStringListJson(
+            bridge
+                ->mwQuery(AcMw::OpenSearch, AcMw::OseRemovedBundled,
+                          oseScope())
+                .toObject()
+                .value(QLatin1String("names"))
+                .toArray());
+    } else {
+        rc_ose_seed_bundled();
+        m_removedBundled = oseStringList(rc_ose_removed_bundled());
+    }
 
     // Hydrate the engine objects from the canonical records — the
     // store's order IS the display order.
-    const QStringList names = oseStringList(rc_ose_list());
+    const QStringList names = bridge
+        ? oseStringListJson(
+              bridge
+                  ->mwQuery(AcMw::OpenSearch, AcMw::OseList, oseScope())
+                  .toObject()
+                  .value(QLatin1String("engines"))
+                  .toArray())
+        : oseStringList(rc_ose_list());
     for (const QString &name : names) {
-        const QByteArray utf8 = name.toUtf8();
-        const QByteArray json = oseTake(rc_ose_get(utf8.constData()));
+        const QJsonObject record = bridge
+            ? bridge
+                  ->mwQuery(AcMw::OpenSearch, AcMw::OseGet,
+                            oseNamed(name))
+                  .toObject()
+                  .value(QLatin1String("engine"))
+                  .toObject()
+            : QJsonDocument::fromJson(
+                  oseTake(rc_ose_get(name.toUtf8().constData())))
+                  .object();
         OpenSearchEngine *engine = new OpenSearchEngine();
-        openSearchEngineApplyJson(
-            engine, QJsonDocument::fromJson(json).object());
+        openSearchEngineApplyJson(engine, record);
         if (engine->isValid())
             m_engines[name] = engine;
         else
@@ -1020,15 +1200,34 @@ void OpenSearchManager::restoreDefaults()
     // OSE01: the store-side restore clears the blocklist and re-adds
     // every bundled record, preserving keyword bindings.  Existing
     // objects refresh in place so consumers' pointers stay valid.
-    rustCoreEnsureDataDir();
+    RustCoreBridge *bridge = oseBridge();
     m_removedBundled.clear();
-    rc_ose_restore_bundled();
-    const QStringList bundled = oseStringList(rc_ose_bundled_names());
+    if (bridge) {
+        bridge->mwCommand(AcMw::OpenSearch, AcMw::OseRestoreBundled,
+                          oseScope());
+    } else {
+        rc_ose_restore_bundled();
+    }
+    const QStringList bundled = bridge
+        ? oseStringListJson(
+              bridge
+                  ->mwQuery(AcMw::OpenSearch, AcMw::OseBundledNames,
+                            oseScope())
+                  .toObject()
+                  .value(QLatin1String("names"))
+                  .toArray())
+        : oseStringList(rc_ose_bundled_names());
     for (const QString &name : bundled) {
-        const QByteArray utf8 = name.toUtf8();
-        const QByteArray json = oseTake(rc_ose_get(utf8.constData()));
-        const QJsonObject record =
-            QJsonDocument::fromJson(json).object();
+        const QJsonObject record = bridge
+            ? bridge
+                  ->mwQuery(AcMw::OpenSearch, AcMw::OseGet,
+                            oseNamed(name))
+                  .toObject()
+                  .value(QLatin1String("engine"))
+                  .toObject()
+            : QJsonDocument::fromJson(
+                  oseTake(rc_ose_get(name.toUtf8().constData())))
+                  .object();
         OpenSearchEngine *engine = m_engines.value(name);
         if (!engine) {
             engine = new OpenSearchEngine();
@@ -1192,7 +1391,21 @@ QUrl OpenSearchManager::convertKeywordSearchToUrl(const QString &string)
 #if defined(ARKTOS_RUSTCORE)
     // OSE01: resolution + expansion run in Rust (same result as the
     // engineForKeyword + searchUrl calls below).
-    rustCoreEnsureDataDir();
+    if (RustCoreBridge *bridge = oseBridge()) {
+        QJsonObject payload = oseScope();
+        payload.insert(QLatin1String("keyword"), keyword);
+        payload.insert(QLatin1String("term"), terms);
+        payload.insert(QLatin1String("language"),
+                       QString::fromUtf8(oseLanguage()));
+        payload.insert(QLatin1String("source"),
+                       QString::fromUtf8(oseSource()));
+        const QString url = bridge
+            ->mwQuery(AcMw::OpenSearch, AcMw::OseKeywordUrl, payload)
+            .toObject()
+            .value(QLatin1String("url"))
+            .toString();
+        return url.isEmpty() ? QUrl() : QUrl::fromEncoded(url.toUtf8());
+    }
     const QByteArray keywordUtf8 = keyword.toUtf8();
     const QByteArray termsUtf8 = terms.toUtf8();
     const QByteArray language = oseLanguage();
@@ -1214,7 +1427,17 @@ OpenSearchEngine *OpenSearchManager::engineForKeyword(const QString &keyword) co
     if (keyword.isEmpty())
         return nullptr;
 #if defined(ARKTOS_RUSTCORE)
-    rustCoreEnsureDataDir();
+    if (RustCoreBridge *bridge = oseBridge()) {
+        QJsonObject payload = oseScope();
+        payload.insert(QLatin1String("keyword"), keyword);
+        const QString name = bridge
+            ->mwQuery(AcMw::OpenSearch, AcMw::OseEngineForKeyword,
+                      payload)
+            .toObject()
+            .value(QLatin1String("name"))
+            .toString();
+        return name.isEmpty() ? nullptr : m_engines.value(name);
+    }
     const QByteArray utf8 = keyword.toUtf8();
     const QString name = QString::fromUtf8(
         oseTake(rc_ose_engine_for_keyword(utf8.constData())));
@@ -1229,7 +1452,15 @@ OpenSearchEngine *OpenSearchManager::engineForKeyword(const QString &keyword) co
 QStringList OpenSearchManager::keywords() const
 {
 #if defined(ARKTOS_RUSTCORE)
-    rustCoreEnsureDataDir();
+    if (RustCoreBridge *bridge = oseBridge()) {
+        return oseStringListJson(
+            bridge
+                ->mwQuery(AcMw::OpenSearch, AcMw::OseKeywords,
+                          oseScope())
+                .toObject()
+                .value(QLatin1String("keywords"))
+                .toArray());
+    }
     return oseStringList(rc_ose_keywords());
 #else
     return m_keywords.keys();
@@ -1242,11 +1473,23 @@ void OpenSearchManager::setEngineForKeyword(const QString &keyword, OpenSearchEn
         return;
 
 #if defined(ARKTOS_RUSTCORE)
-    rustCoreEnsureDataDir();
-    const QByteArray utf8 = keyword.toUtf8();
+    RustCoreBridge *bridge = oseBridge();
     if (!engine) {
-        const QString owner = QString::fromUtf8(
-            oseTake(rc_ose_engine_for_keyword(utf8.constData())));
+        QString owner;
+        if (bridge) {
+            QJsonObject payload = oseScope();
+            payload.insert(QLatin1String("keyword"), keyword);
+            owner = bridge
+                ->mwQuery(AcMw::OpenSearch, AcMw::OseEngineForKeyword,
+                          payload)
+                .toObject()
+                .value(QLatin1String("name"))
+                .toString();
+        } else {
+            const QByteArray utf8 = keyword.toUtf8();
+            owner = QString::fromUtf8(
+                oseTake(rc_ose_engine_for_keyword(utf8.constData())));
+        }
         if (owner.isEmpty()) {
             emit changed();
             return;
@@ -1276,10 +1519,22 @@ QStringList OpenSearchManager::keywordsForEngine(OpenSearchEngine *engine) const
 #if defined(ARKTOS_RUSTCORE)
     if (!engine)
         return QStringList();
-    rustCoreEnsureDataDir();
+    QStringList out;
+    if (RustCoreBridge *bridge = oseBridge()) {
+        const QJsonArray keywords = bridge
+            ->mwQuery(AcMw::OpenSearch, AcMw::OseGet,
+                      oseNamed(engine->name()))
+            .toObject()
+            .value(QLatin1String("engine"))
+            .toObject()
+            .value(QLatin1String("keywords"))
+            .toArray();
+        for (const QJsonValue &value : keywords)
+            out.append(value.toString());
+        return out;
+    }
     const QByteArray utf8 = engine->name().toUtf8();
     const QByteArray json = oseTake(rc_ose_get(utf8.constData()));
-    QStringList out;
     const QJsonArray keywords =
         QJsonDocument::fromJson(json).object()
             .value(QLatin1String("keywords")).toArray();
@@ -1297,18 +1552,25 @@ void OpenSearchManager::setKeywordsForEngine(OpenSearchEngine *engine, const QSt
         return;
 
 #if defined(ARKTOS_RUSTCORE)
-    rustCoreEnsureDataDir();
     QStringList list;
     for (const QString &keyword : keywords) {
         if (!keyword.isEmpty())
             list.append(keyword);
     }
-    const QByteArray name = engine->name().toUtf8();
-    const QByteArray json = oseJsonStringArray(list);
     // The store strips the listed keywords off every other engine.
-    rc_ose_set_keywords(name.constData(),
-                        reinterpret_cast<const uint8_t *>(json.constData()),
-                        size_t(json.size()));
+    if (RustCoreBridge *bridge = oseBridge()) {
+        QJsonObject payload = oseNamed(engine->name());
+        payload.insert(QLatin1String("keywords"),
+                       QJsonArray::fromStringList(list));
+        bridge->mwCommand(AcMw::OpenSearch, AcMw::OseSetKeywords,
+                          payload);
+    } else {
+        const QByteArray name = engine->name().toUtf8();
+        const QByteArray json = oseJsonStringArray(list);
+        rc_ose_set_keywords(name.constData(),
+                            reinterpret_cast<const uint8_t *>(json.constData()),
+                            size_t(json.size()));
+    }
 #else
     for (const QString &keyword : keywordsForEngine(engine))
         m_keywords.remove(keyword);

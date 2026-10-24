@@ -23,6 +23,7 @@
 
 #include "autofillmanager.h"
 #include "browserapplication.h"
+#include "browserpaths.h"
 #include "browserprofile.h"
 #include "containermanager.h"
 #include "cookiejar.h"
@@ -432,8 +433,18 @@ void ClearPrivateData::executePlan(const QJsonArray &ops)
             settings.remove(QLatin1String("lastSession"));
             settings.endGroup();
 #if defined(ARKTOS_RUSTCORE)
-            rustCoreEnsureDataDir();
-            rc_session_clear();
+            // MB07: the session domain's clear command binds the
+            // ambient persona's dir inside the crate; the flat
+            // spelling anchors the same dir by hand.
+            if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+                bridge->mwCommand(
+                    AcMw::Session, AcMw::SessionClear,
+                    QJsonObject{{QLatin1String("profile"),
+                                 BrowserPaths::activeProfileId()}});
+            } else {
+                rustCoreEnsureDataDir();
+                rc_session_clear();
+            }
 #endif
         } else if (name == QLatin1String("storage.defer_full_wipe")) {
             // PRIV01 sentinel: additionally removes the Network/ tree

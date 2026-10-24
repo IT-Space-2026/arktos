@@ -22,6 +22,8 @@
 
 #include <profilecontext.h>
 
+#include <qjsonobject.h>
+#include <qjsonvalue.h>
 #include <qobject.h>
 #include <qstring.h>
 #include <qstringlist.h>
@@ -40,6 +42,112 @@ struct AcCookies;
 struct RcNotes;
 struct RcSettings;
 struct RcProfiles;
+
+// MB06: the mw envelope registry ids Qt callers dispatch — the wire
+// truth is mw.describe (MW-ARCH §7); these mirror the ids it reports
+// (append-only, never renumber).  The complete per-domain op tables
+// live in rustcore/src/mw/mod.rs.  MB07 added the policy, session,
+// icons and opensearch domains; cookies (7) and 9-11 stay flat for
+// now — no Qt caller dispatches them.
+namespace AcMw {
+enum Domain : quint8 {
+    Mw = 0,
+    Settings = 1,
+    Profiles = 2,
+    History = 3,
+    Bookmarks = 4,
+    Policy = 5,
+    Session = 6,
+    Icons = 8,
+    OpenSearch = 12,
+};
+enum SettingsOp : quint16 {
+    SettingsGet = 0x0001,
+    SettingsList = 0x0003,
+    SettingsSet = 0x0004,
+    SettingsRemove = 0x0005,
+    SettingsContains = 0x0006,
+    SettingsSync = 0x0007,
+    SettingsImportIni = 0x0008,
+};
+enum ProfilesOp : quint16 {
+    ProfilesList = 0x0001,
+    ProfilesReload = 0x0002,
+    ProfilesGet = 0x0003,
+    ProfilesCreate = 0x0004,
+    ProfilesRename = 0x0005,
+    ProfilesSetAvatar = 0x0006,
+    ProfilesDelete = 0x0007,
+};
+enum HistoryOp : quint16 {
+    HistoryCount = 0x0001,
+    HistoryAdd = 0x0002,
+    HistoryQuery = 0x0003,
+    HistorySuggest = 0x0004,
+    HistoryExists = 0x0005,
+    HistoryUpdateTitle = 0x0006,
+    HistoryRemove = 0x0007,
+    HistoryClear = 0x0008,
+    HistoryClearSince = 0x0009,
+    HistoryExpire = 0x000a,
+};
+enum PolicyOp : quint16 {
+    SitedecGet = 0x0001,
+    SitedecSet = 0x0002,
+    SitedecLookup = 0x0003,
+    SitedecRemove = 0x0004,
+    SitedecClear = 0x0005,
+    SitedecReplace = 0x0006,
+    SitedecList = 0x0007,
+    SitedecSnapshot = 0x0008,
+    SitedecStorePresent = 0x0009,
+    SitedecReload = 0x000a,
+    SitedecReset = 0x000b,
+    PolicyBlocklistReload = 0x000c,
+    PolicyTrancoFileEntries = 0x000d,
+    PolicyTrancoReload = 0x000e,
+    SiteTrustLookup = 0x000f,
+};
+enum SessionOp : quint16 {
+    SessionExists = 0x0001,
+    SessionLoad = 0x0002,
+    SessionSave = 0x0003,
+    SessionClear = 0x0004,
+    SessionMarkStart = 0x0005,
+    SessionMarkExit = 0x0006,
+    SessionMarkTerminated = 0x0007,
+};
+enum IconsOp : quint16 {
+    IconsCount = 0x0001,
+    IconsPut = 0x0002,
+    IconsGet = 0x0003,
+    IconsClear = 0x0004,
+    IconsSweep = 0x0005,
+};
+enum OpenSearchOp : quint16 {
+    OseList = 0x0001,
+    OsePut = 0x0002,
+    OseStorePresent = 0x0003,
+    OseGet = 0x0004,
+    OseRemove = 0x0005,
+    OseRename = 0x0006,
+    OseReorder = 0x0007,
+    OseSetKeywords = 0x0008,
+    OseImport = 0x0009,
+    OseEngineForKeyword = 0x000a,
+    OseKeywords = 0x000b,
+    OseRemovedBundled = 0x000c,
+    OseBlockBundled = 0x000d,
+    OseUnblockBundled = 0x000e,
+    OseBundledNames = 0x000f,
+    OseSeedBundled = 0x0010,
+    OseRestoreBundled = 0x0011,
+    OseExpand = 0x0012,
+    OseUrl = 0x0013,
+    OseKeywordUrl = 0x0014,
+    OseReset = 0x0015,
+};
+}
 
 // Qt side of the rustcore change-callback -> Qt-signal bridge
 // (RCORE01).  The crate invokes one C callback with a topic string;
@@ -87,13 +195,29 @@ public:
     // legacy lane re-anchors to the current one.
     static RustCoreBridge *serving();
     // True when dataRoot() no longer matches the root the core was
-    // minted against — holders of cached facade handles (m_hist,
-    // m_bm, the ProfileSettings store map) drop and remint on this.
+    // minted against — holders of cached facade handles (m_bm,
+    // m_iconStore, the RustCoreSettings/RustCoreProfiles lazy
+    // fallbacks) drop and remint on this.
     static bool rootDrifted();
 
     // RC07: the facade root — NULL only if ac_init itself failed (a
     // warning with ac_last_error() is logged at construction).
     AcCore *core() const { return m_core; }
+
+    // MB06: one envelope round trip through ac_mw_dispatch — the v1
+    // frame (20-byte header + JSON payload) in, the op's response
+    // payload out.  Both return an invalid (Undefined) QJsonValue on
+    // failure; errorOut, when given, receives the response's
+    // {"code","status","message"} object, or a synthesized
+    // {"code":"transport"} doc on a bare-status failure.  Profile-
+    // scoped ops bind through the payload's "profile" field — no
+    // handle is minted.  Synchronous on the caller's thread.
+    QJsonValue mwQuery(int domain, int op,
+                       const QJsonObject &payload = QJsonObject(),
+                       QJsonObject *errorOut = nullptr);
+    QJsonValue mwCommand(int domain, int op,
+                         const QJsonObject &payload = QJsonObject(),
+                         QJsonObject *errorOut = nullptr);
 
     // Profile-bound module handles over the shared core.  An empty
     // profileId binds the default profile (global scope for
@@ -161,13 +285,13 @@ void rustCoreEnsureDataDirFor(const QString &profileId);
 // auto-imports the legacy settings.ini on first open; an empty id
 // opens the global scope (<data root>/settings.json).
 //
-// RC08: the handle is minted through the shared AcCore (ac_settings)
-// whenever the bridge can serve — same rc_settings_open inside, but
-// tracked against the app-lifetime root so a facade-minted handle
-// stays bound when a test-mode root switch would strand an
-// rc_opened one.  The rc_settings_open spelling remains the fallback
-// for contexts the bridge cannot reach (no app instance yet, a
-// non-GUI first touch, ac_init failure).
+// MB06: every op is one envelope round trip through ac_mw_dispatch
+// when the bridge can serve — the payload's "profile" field carries
+// the scope, so no RcSettings handle is minted at all (the op opens
+// the bound store per call inside the crate).  The lazy
+// rc_settings_open fallback remains for contexts the bridge cannot
+// reach (no app instance yet, a non-GUI first touch, ac_init
+// failure).
 //
 // Mirrors the C ABI 1:1: value() reconstructs a QVariant from the
 // store's typed JSON (string/bool/int/double/bytes/string-list),
@@ -206,7 +330,10 @@ public:
     QString profileId() const;
 
 private:
-    RcSettings *m_h;
+    // MB06: the fallback lane — minted on first use, only when the
+    // bridge cannot serve (the envelope path needs no handle).
+    RcSettings *fallbackStore() const;
+    mutable RcSettings *m_h;
     QString m_profileId;
 };
 
@@ -219,11 +346,13 @@ struct RcProfiles;
 // QTemporaryDir); profiles.json under it stays byte-compatible with
 // the MPROF01 writer both ways.
 //
-// RC08: an empty dataRoot mints through the shared AcCore
-// (ac_profiles — same rc_profiles_open inside, tracked against the
-// app-lifetime root); an explicit root keeps the rc_profiles_open
-// spelling so test fixtures can bind a QTemporaryDir the core never
-// saw.
+// MB06: an empty dataRoot serves the registry ops through the
+// envelope (no handle minted); an explicit root keeps the lazy
+// rc_profiles_open spelling so test fixtures can bind a
+// QTemporaryDir the core never saw, and it is also the fallback
+// when the bridge cannot serve.  activeProfileId()/
+// setActiveProfileId() stay flat either way — the ambient persona
+// is per-handle process state the envelope cannot carry.
 //
 // Scope honesty: this is the STORE primitive layer.  The Qt-owned
 // half of ProfileStore::deleteProfile — BrowserProfile::releasePersona
@@ -286,7 +415,13 @@ public:
     static QString slugify(const QString &displayName);
 
 private:
-    RcProfiles *m_h;
+    // MB06: same lazy fallback as RustCoreSettings — minted only for
+    // the explicit-root spelling or when the bridge cannot serve.
+    // The envelope path (m_root empty + serving()) never mints.
+    RcProfiles *fallbackStore() const;
+    bool servingEnvelope() const;
+    mutable RcProfiles *m_h;
+    QString m_root;
 };
 
 #endif // RUSTCOREBRIDGE_H

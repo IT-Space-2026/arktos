@@ -942,24 +942,29 @@ static QJsonObject siteTrustVerdict(const QString &host, bool isHttps)
         probes |= RC_SITETRUST_PROBE_THREATLIST;
     if (BrowserApplication::siteTrustLookalikeEnabled())
         probes |= RC_SITETRUST_PROBE_LOOKALIKE;
-    // RC08: a facade handle binds the ambient persona's dir and
-    // history.db for this lookup — the composite's first-seen rollup
-    // can never read another profile's store.  The legacy spelling
-    // anchors the same dir by hand when the bridge cannot serve.
-    AcPolicy *policy = nullptr;
-    if (RustCoreBridge *bridge = RustCoreBridge::serving())
-        policy = bridge->policy(BrowserPaths::activeProfileId());
-    const QByteArray hostUtf8 = host.toUtf8();
-    char *json;
-    if (policy) {
-        json = ac_sitetrust_lookup_opts(policy, hostUtf8.constData(),
-                                        isHttps ? 1 : 0, probes);
-        ac_policy_close(policy);
-    } else {
-        rustCoreEnsureDataDir();
-        json = rc_sitetrust_lookup_opts(hostUtf8.constData(),
-                                        isHttps ? 1 : 0, probes);
+    // MB07: the sitetrust_lookup envelope op binds the ambient
+    // persona's dir and history.db inside the crate — the
+    // composite's first-seen rollup can never read another
+    // profile's store.  The response payload IS the verdict doc; an
+    // error frame (or a dead transport) reads as the un-evaluable
+    // verdict, same as the flat spelling's NULL.  The legacy
+    // spelling anchors the same dir by hand when the bridge cannot
+    // serve.
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        return bridge
+            ->mwQuery(AcMw::Policy, AcMw::SiteTrustLookup,
+                      QJsonObject{
+                          {QLatin1String("profile"),
+                           BrowserPaths::activeProfileId()},
+                          {QLatin1String("host"), host},
+                          {QLatin1String("https"), isHttps},
+                          {QLatin1String("probes"), int(probes)}})
+            .toObject();
     }
+    rustCoreEnsureDataDir();
+    const QByteArray hostUtf8 = host.toUtf8();
+    char *json = rc_sitetrust_lookup_opts(hostUtf8.constData(),
+                                          isHttps ? 1 : 0, probes);
     if (!json)
         return QJsonObject();
     const QJsonDocument doc = QJsonDocument::fromJson(QByteArray(json));

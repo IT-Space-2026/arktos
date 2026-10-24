@@ -2593,7 +2593,10 @@ fn facade_init_and_accessors() {
     let croot = cs(&root);
 
     // housekeeping
-    assert_eq!(crate::facade::ac_api_version(), 12);
+    assert_eq!(
+        crate::facade::ac_api_version(),
+        crate::facade::AC_API_VERSION
+    );
     assert_ne!(crate::facade::ac_capabilities(), 0);
 
     // rejected configs fail clean with a stashed error
@@ -4765,4 +4768,294 @@ fn navpolicy_surface() {
     .is_null());
     unsafe { crate::facade::ac_shutdown(core) };
     let _ = std::fs::remove_dir_all(&root);
+}
+// ---- MB03: the namespaced event lane ------------------------------------
+//
+// ac_events_* over the C ABI: per-core subscription with a topic
+// filter, a v1 JSON payload stamped with the bound profile, and the
+// registry.  The history mutation sites are the first real producer
+// ("history/changed" alongside the legacy "history" emit).
+
+#[test]
+fn facade_event_lane_round_trip() {
+    let _g = guard();
+    let root = tmpdir("ac-ev");
+    let croot = cs(&root);
+    let cfg = ac_cfg(&croot);
+    let core = unsafe { crate::facade::ac_init(&cfg) };
+    assert!(!core.is_null());
+
+    static HITS: AtomicUsize = AtomicUsize::new(0);
+    thread_local! {
+        static LAST: std::cell::RefCell<(String, String)> =
+            const { std::cell::RefCell::new((String::new(), String::new())) };
+    }
+    unsafe extern "C" fn ev_cb(
+        topic: *const std::os::raw::c_char,
+        payload: *const std::os::raw::c_char,
+        _ud: *mut c_void,
+    ) {
+        let t = unsafe { CStr::from_ptr(topic) }
+            .to_string_lossy()
+            .into_owned();
+        let p = unsafe { CStr::from_ptr(payload) }
+            .to_string_lossy()
+            .into_owned();
+        LAST.with(|l| *l.borrow_mut() = (t, p));
+        HITS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    // Registry: declared contract, readable without a core.
+    let json =
+        take_str(crate::facade::ac_events_topics()).expect("topics registry");
+    let doc: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let rows = doc.as_array().unwrap();
+    let hist = rows
+        .iter()
+        .find(|r| r["topic"] == "history/changed")
+        .expect("history/changed declared");
+    assert_eq!(hist["produced"], true);
+    assert!(rows
+        .iter()
+        .any(|r| r["topic"] == "policy/changed" && r["produced"] == false));
+
+    // Bad calls degrade, never crash.
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_events_subscribe(
+                ptr::null_mut(),
+                ptr::null(),
+                Some(ev_cb),
+                ptr::null_mut(),
+            )
+        },
+        0
+    );
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_events_subscribe(
+                core,
+                ptr::null(),
+                None,
+                ptr::null_mut(),
+            )
+        },
+        0
+    );
+
+    // A "history/" subscriber observes the facade write, stamped
+    // with the bound profile.
+    let hsub = unsafe {
+        crate::facade::ac_events_subscribe(
+            core,
+            cs("history/").as_ptr(),
+            Some(ev_cb),
+            ptr::null_mut(),
+        )
+    };
+    assert_ne!(hsub, 0);
+    // An exact-topic subscriber on an unrelated topic stays silent.
+    let ssub = unsafe {
+        crate::facade::ac_events_subscribe(
+            core,
+            cs("settings/changed").as_ptr(),
+            Some(ev_cb),
+            ptr::null_mut(),
+        )
+    };
+    assert_ne!(ssub, 0);
+
+    let h = unsafe { crate::facade::ac_history(core, cs("work").as_ptr()) };
+    assert!(!h.is_null());
+    let base = HITS.load(Ordering::SeqCst);
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                h,
+                cs("https://ev.example/").as_ptr(),
+                cs("EV").as_ptr(),
+                1,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(HITS.load(Ordering::SeqCst) - base, 1);
+    LAST.with(|l| {
+        let (t, p) = l.borrow().clone();
+        assert_eq!(t, "history/changed");
+        let doc: serde_json::Value = serde_json::from_str(&p).unwrap();
+        assert_eq!(doc["v"], 1);
+        assert_eq!(doc["topic"], "history/changed");
+        assert_eq!(doc["profile"], "work");
+        assert_eq!(doc["op"], "visit");
+    });
+
+    // seen flipped on the registry after a real emit.
+    let json = take_str(crate::facade::ac_events_topics()).unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        doc.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["topic"] == "history/changed")
+            .unwrap()["seen"],
+        true
+    );
+
+    // Unsubscribe is core-scoped: a second core cannot drop it.
+    let root2 = tmpdir("ac-ev2");
+    let croot2 = cs(&root2);
+    let cfg2 = ac_cfg(&croot2);
+    let core2 = unsafe { crate::facade::ac_init(&cfg2) };
+    assert!(!core2.is_null());
+    assert_eq!(
+        unsafe { crate::facade::ac_events_unsubscribe(core2, hsub) },
+        RcStatus::NotFound
+    );
+    unsafe { crate::facade::ac_shutdown(core2) };
+
+    // unsubscribe silences; shutdown-after-unsubscribe is safe.
+    assert_eq!(
+        unsafe { crate::facade::ac_events_unsubscribe(core, hsub) },
+        RcStatus::Ok
+    );
+    assert_eq!(
+        unsafe { crate::facade::ac_events_unsubscribe(core, hsub) },
+        RcStatus::NotFound
+    );
+    let n = HITS.load(Ordering::SeqCst);
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_hist_add(
+                h,
+                cs("https://ev2.example/").as_ptr(),
+                cs("EV2").as_ptr(),
+                2,
+            )
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(HITS.load(Ordering::SeqCst), n);
+    unsafe { crate::facade::ac_hist_close(h) };
+
+    // Shutdown clears silently — the wildcard sub never fires again.
+    let wsub = unsafe {
+        crate::facade::ac_events_subscribe(
+            core,
+            ptr::null(),
+            Some(ev_cb),
+            ptr::null_mut(),
+        )
+    };
+    assert_ne!(wsub, 0);
+    assert_eq!(
+        unsafe { crate::facade::ac_events_unsubscribe(core, ssub) },
+        RcStatus::Ok
+    );
+    unsafe { crate::facade::ac_shutdown(core) };
+    let n = HITS.load(Ordering::SeqCst);
+    init(&root);
+    let db = cs(&format!("{root}/profiles/work/history.db"));
+    assert_eq!(unsafe { crate::rc_hist_open(db.as_ptr()) }, RcStatus::Ok);
+    assert_eq!(
+        unsafe {
+            crate::rc_hist_add(
+                cs("https://post.example/").as_ptr(),
+                cs("P").as_ptr(),
+                3,
+            )
+        },
+        RcStatus::Ok
+    );
+    // The dead core's wildcard sub must not fire; any hit here would
+    // also prove emit_event still runs (it does — seen/legacy lanes
+    // are independent), so only the count matters.
+    assert_eq!(HITS.load(Ordering::SeqCst), n);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&root2);
+}
+
+// ---- MB04: the engine capability matrix ---------------------------------
+//
+// ac_engine_caps over the C ABI: no core needed, the registry is
+// static.  The interesting seams are the engine-id resolution
+// (canonical vs the Qt backend->id() spelling), the bad-argument
+// paths, and the schema the JSON emits.
+
+fn caps_json(engine_id: *const std::os::raw::c_char) -> Option<String> {
+    let mut out = out_buf();
+    let st = unsafe { crate::facade::ac_engine_caps(engine_id, &mut out) };
+    if st != RcStatus::Ok {
+        assert!(out.data.is_null(), "a failed caps call leaves no buffer");
+        return None;
+    }
+    let v = take_buf(&mut out);
+    Some(String::from_utf8(v).unwrap())
+}
+
+#[test]
+fn facade_engine_caps() {
+    // NULL emits the whole matrix — all three engines, v1 schema.
+    let all = caps_json(ptr::null()).expect("matrix");
+    let doc: serde_json::Value = serde_json::from_str(&all).unwrap();
+    assert_eq!(doc["v"], 1);
+    let engines = doc["engines"].as_array().unwrap();
+    assert_eq!(engines.len(), 3);
+    for e in engines {
+        let features = e["features"].as_object().unwrap();
+        for req in [
+            "devtools",
+            "pdf_viewer",
+            "extensions_mv2",
+            "extensions_mv3",
+            "webchannel",
+            "otr_profile",
+            "tor",
+            "containers",
+            "reader_mode",
+            "downloads",
+            "sessions",
+            "favicons",
+            "opensearch",
+            "site_permissions",
+            "autofill",
+        ] {
+            assert!(features.contains_key(req), "{} misses {}", e["engine"], req);
+        }
+    }
+
+    // Canonical id and the backend->id() spelling resolve the same row.
+    let qe = caps_json(cs("qtwebengine").as_ptr()).unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&qe).unwrap();
+    assert_eq!(doc["engine"], "qtwebengine");
+    assert_eq!(doc["features"]["devtools"]["state"], "supported");
+    assert_eq!(
+        caps_json(cs("webengine").as_ptr()).unwrap(),
+        qe
+    );
+
+    // Honesty pins: servo devtools and webkit MV3 stay off.
+    let servo: serde_json::Value = serde_json::from_str(
+        &caps_json(cs("servo").as_ptr()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(servo["features"]["devtools"]["state"], "unsupported");
+    let wk: serde_json::Value = serde_json::from_str(
+        &caps_json(cs("webkit").as_ptr()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(wk["features"]["extensions_mv3"]["state"], "unsupported");
+
+    // Unknown id fails clean with a stashed error; NULL out too.
+    assert!(caps_json(cs("gecko").as_ptr()).is_none());
+    assert!(!unsafe { crate::facade::ac_last_error() }.is_null());
+    assert_eq!(
+        unsafe {
+            crate::facade::ac_engine_caps(
+                cs("qtwebengine").as_ptr(),
+                ptr::null_mut(),
+            )
+        },
+        RcStatus::InvalidArgument
+    );
 }

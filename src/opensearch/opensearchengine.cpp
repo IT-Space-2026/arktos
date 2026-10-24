@@ -24,6 +24,9 @@
 
 #if defined(ARKTOS_RUSTCORE)
 #include "rustcore.h"
+#include "rustcorebridge.h"
+
+#include "browserpaths.h"
 
 #include <qjsonobject.h>
 #endif
@@ -316,6 +319,20 @@ QUrl OpenSearchEngine::buildUrl(const QString &searchTerm,
     spec.insert(QLatin1String("language"), language);
     spec.insert(QLatin1String("source"),
                 QCoreApplication::applicationName());
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        // MB07: the same spec doc crosses as the envelope payload —
+        // the response's "url" is the expanded string (or null, the
+        // flat spelling's NULL).
+        const QString url = bridge
+            ->mwQuery(AcMw::OpenSearch, AcMw::OseExpand,
+                      QJsonObject{{QLatin1String("profile"),
+                                   BrowserPaths::activeProfileId()},
+                                  {QLatin1String("spec"), spec}})
+            .toObject()
+            .value(QLatin1String("url"))
+            .toString();
+        return url.isEmpty() ? QUrl() : QUrl::fromEncoded(url.toUtf8());
+    }
     const QByteArray json =
         QJsonDocument(spec).toJson(QJsonDocument::Compact);
     char *url = rc_ose_expand(

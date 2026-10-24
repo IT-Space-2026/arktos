@@ -410,7 +410,7 @@ pub(crate) fn value_to_json(v: &Value) -> serde_json::Value {
     }
 }
 
-fn value_from_json(v: &serde_json::Value) -> Option<Value> {
+pub(crate) fn value_from_json(v: &serde_json::Value) -> Option<Value> {
     let t = v.get("t")?.as_str()?;
     let val = v.get("v")?;
     Some(match t {

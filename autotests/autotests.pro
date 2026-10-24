@@ -2,6 +2,7 @@ TEMPLATE = subdirs
 SUBDIRS  = \
     smoke \
     accessibility \
+    acprobe \
     adblock \
     addbookmarkdialog \
     arktosicon \
@@ -65,6 +66,7 @@ SUBDIRS  = \
     readersanitizer \
     rustcontainers \
     rustdownload \
+    rustevents \
     rustnotes \
     rustprofiles \
     safetext \

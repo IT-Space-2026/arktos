@@ -63,8 +63,11 @@ extern "C" {
  * v10 adds session policy queries to AcSession (MD08).
  * v11 adds the navpolicy endpoints on AcPolicy (MD02 surface;
  * MD09 popup gate).
- * v12 adds ac_hist_top_hosts (MD27 chrome.topSites). */
-#define AC_API_VERSION 12u
+ * v12 adds ac_hist_top_hosts (MD27 chrome.topSites).
+ * v13 adds the ac_mw_* envelope dispatch (MB02; mw-lane renumber).
+ * v14 adds the ac_events_* namespaced subscriber lane (MB03).
+ * v15 adds ac_engine_caps (MB04). */
+#define AC_API_VERSION 15u
 
 /* ac_capabilities() bits — one per module. */
 #define AC_CAP_SETTINGS   0x01ull
@@ -133,6 +136,19 @@ typedef void (*AcChangeCallback)(const char *module,
                                  const char *profile_id,
                                  void *userdata);
 
+/* Namespaced event lane (MB03; MW-ARCH §5) — the opt-in, typed
+ * sibling of AcChangeCallback.  `topic` is a "domain/verb" string
+ * from the ac_events_topics() registry ("history/changed", ...);
+ * `payload_json` is a v1 document
+ * {"v":1,"topic":<t>,"profile":<id-or-null>, ...domain fields}.
+ * Both pointers are borrowed — valid only for the duration of the
+ * call.  Fires synchronously on the mutating thread outside every
+ * store lock; consumers that need another thread must hop
+ * themselves. */
+typedef void (*AcEventCallback)(const char *topic,
+                                const char *payload_json,
+                                void *userdata);
+
 /* v1 configuration — append-only; always pass
  * struct_size = sizeof(AcConfig). */
 typedef struct AcConfig {
@@ -157,6 +173,22 @@ void         ac_buffer_free(AcBuffer buf);
 void         ac_set_change_callback(AcCore *core,
                                   AcChangeCallback cb,
                                   void *userdata);
+
+/* Namespaced event subscriptions (v8).  topic_filter grammar:
+ * NULL/""/"*" receives every event, a trailing '/' ("history/")
+ * receives the whole namespace, anything else is an exact topic.
+ * ac_events_subscribe returns the subscription id (0 on failure,
+ * error stashed for ac_last_error); ac_events_unsubscribe returns
+ * AC_ERR_NOT_FOUND when (core, id) names no live subscription.
+ * ac_shutdown drops the core's subscriptions.  ac_events_topics
+ * reports the registry — a JSON array of
+ * {topic,summary,fields,produced,seen}: `produced` means an emit
+ * site exists in-tree, `seen` means one actually fired this
+ * process. */
+uint64_t ac_events_subscribe(AcCore *core, const char *topic_filter,
+                             AcEventCallback cb, void *userdata);
+AcStatus ac_events_unsubscribe(AcCore *core, uint64_t subscription_id);
+char    *ac_events_topics(void); /* free with ac_string_free */
 
 /* ---- module accessors -------------------------------------------------
  *
@@ -696,6 +728,93 @@ int      ac_privacy_gpc(const AcPrivacy *h, int tor_mode);
  */
 char    *ac_urlclean_call(const AcUrlclean *h,
                           const uint8_t *json, size_t len);
+/* ---- mw: the versioned middleware envelope (MB02; MW-ARCH §2) ----
+ *
+ * THE typed command/query surface: one entry point frames every
+ * domain op in a 20-byte little-endian header plus a UTF-8 JSON
+ * payload:
+ *
+ *   off  size  field
+ *    0    2    magic "AM"             — cheap non-frame reject
+ *    2    1    envelope schema version (v1; ac_mw_version() reports
+ *              the max this library accepts)
+ *    3    1    msg_type — request: 1=query 2=command;
+ *                         response: 3=ok 4=error
+ *    4    8    corr_id — caller-chosen, echoed verbatim (the only
+ *              ordering/matching key)
+ *   12    1    domain — the mw.describe registry ids
+ *   13    1    flags — v1: 0 (reserved)
+ *   14    2    op — per-domain op id
+ *   16    4    payload_len — bytes following
+ *   20    N    payload — JSON; may be empty
+ *
+ * The AcStatus return is TRANSPORT-LEVEL ONLY: a NULL core/out or
+ * an unreadable req buffer fails bare with *out = {NULL,0}.
+ * Anything that reads as a frame attempt — truncated, bad magic,
+ * bad version, unknown domain/op — still yields AC_OK and a type=4
+ * response envelope carrying {"code","status","message"} (corr_id 0
+ * when the header itself did not parse).  code vocabulary:
+ * bad_version, malformed, unknown_domain, unknown_op, bad_payload,
+ * op_failed; status carries the underlying AcStatus for op_failed,
+ * 0 for pure envelope faults; message also lands in ac_last_error().
+ *
+ * Requests declare their class in msg_type and it must match the
+ * op's registered class — the byte is what a future read-only
+ * context gates on.  Handles never cross the frame: scoped payloads
+ * carry {"profile":"<id>"|null} and the dispatcher resolves the
+ * bound store per call.  Domain 0 "mw" carries the meta ops
+ * (describe/version/ping); mw.describe is the self-description
+ * consumers walk instead of hardcoding ops.  Events never flow
+ * through this lane — ac_set_change_callback is the notification
+ * side.  *out is caller-owned: free with ac_buffer_free.
+ */
+
+uint32_t ac_mw_version(void);
+AcStatus ac_mw_dispatch(AcCore *core, const uint8_t *req,
+                      size_t req_len, AcBuffer *out);
+
+/* ---- engine capability matrix (v9; MB04) ----------------------------
+ *
+ * The static per-engine feature registry the self-describing
+ * bridge needs — the honest grade for each engine, filled from the
+ * reporting code that already exists (Engine::Capabilities plus
+ * the feature plumbing: PDF01/PDF02, ExtensionManager's MV3-only
+ * rule + EXT-RUNTIME-GAPS, the SEC05 permission broker, ENG05's
+ * Tor/container stays-on-Chromium rule, the WK07/WK11/WK16/WK18/
+ * WK19/WK21 WebKit verifications).
+ *
+ * engine_id selects one row: "qtwebengine" | "servo" | "webkit",
+ * with the Qt backend->id() spelling "webengine" accepted as the
+ * qtwebengine alias.  NULL/"" emits the whole matrix.  Output is
+ * UTF-8 JSON, caller-freed with ac_buffer_free:
+ *
+ *   one row:   {"v":1,"engine","display","backend_ids",
+ *               "features":{"<name>":{"state":"supported"|
+ *                                     "partial"|"unsupported",
+ *                                     "note"?}}}
+ *   the matrix: {"v":1,"engines":[<row>...]}
+ *
+ * Feature keys (stable, append-only): devtools, pdf_viewer,
+ * extensions_mv2, extensions_mv3, webchannel, otr_profile, tor,
+ * containers, reader_mode, downloads, sessions, favicons,
+ * opensearch, site_permissions, autofill — plus the
+ * Engine::Capabilities primitives request_interception,
+ * declarative_blocking, script_injection, script_evaluation,
+ * cookie_filter, per_page_settings, lifecycle_discard,
+ * context_menu_info, certificate_override.  A "partial" always
+ * carries the note explaining the gap — a bare partial would be a
+ * lie of omission.
+ *
+ * The table is STATIC: it reports what each engine supports when
+ * its backend is present, never whether the backend resolved this
+ * run — presence stays a Qt-side runtime question (servo artifact
+ * probe, WPE linkage).
+ *
+ * Returns AC_ERR_INVALID on an unknown engine id or NULL out; the
+ * message is stashed for ac_last_error.  Needs no AcCore — the
+ * registry is static.
+ */
+AcStatus ac_engine_caps(const char *engine_id, AcBuffer *out);
 
 #ifdef __cplusplus
 }
