@@ -99,8 +99,15 @@ chrome.wallpaper.*: unsupported
 # print/toggleReaderMode) — sendMessage frameId!=0 is unsupported
 # (page agent lives in the main frame only).  Second-wave status:
 # webNavigation.onCreatedNavigationTarget landed in MD36 (the
-# createWindow opener tag -> hub correlation); still queued: action
-# getUserSettings honesty -> MD37.
+# createWindow opener tag -> hub correlation); action getUserSettings
+# honesty landed in MD37 — isOnToolbar answers the EXT08 strip's
+# membership truth, onUserSettingsChanged is an installed never-
+# firing event (no pin UI), and openPopup keeps the typed verdict
+# (the bubble only opens from its own strip button).
+# MD37: chrome.action.openPopup — no programmatic popup surface;
+# Chrome keeps it action-only, so browserAction gets no member at
+# all rather than a stub.
+chrome.action.openPopup: unsupported
 chrome.tabs.*: unsupported
 chrome.idle.getAutoLockDelay: unsupported
 chrome.notifications.*: unsupported
@@ -468,8 +475,9 @@ each surviving emit site in the dispatch was re-traced to a declared
 entry.  Second-wave queue: declarativeNetRequest subset -> MD34
 (blocking/redirect verdicts already execute in
 PrivacyRequestInterceptor), identity.getRedirectURL -> MD35,
-webNavigation.onCreatedNavigationTarget -> MD36 (all three landed),
-action getUserSettings/onUserSettingsChanged -> MD37.  Unchanged stays:
+webNavigation.onCreatedNavigationTarget -> MD36, action
+getUserSettings/onUserSettingsChanged -> MD37 (all four landed).
+Unchanged stays:
 runtime grant UI (permissions.request/remove, sidePanel/sidebarAction
 open) is MW-SHELL territory; ChromeOS/device namespaces; MV2-deprecated
 spellings (tabs.executeScript family, declarativeContent); surfaces

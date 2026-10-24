@@ -2552,12 +2552,37 @@
                            function () { cb(true); });
                 return p;
             },
+            // MD37: getUserSettings answers the real pin state —
+            // the EXT08 strip's membership truth, resolved host-side
+            // off the loaded extension list.  onUserSettingsChanged
+            // installs as an honest never-firing event: no pin UI
+            // exists, so the answer cannot change.  openPopup has no
+            // programmatic surface (the bubble only opens from its
+            // own strip button) — typed, not silent.  Chrome keeps
+            // all three action-only; the browserAction mirror below
+            // deliberately skips them.
+            getUserSettings: function (cb) {
+                var p = call('action', 'getUserSettings', {});
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, undefined, e.message); });
+                return p;
+            },
+            openPopup: function (options, cb) {
+                touch('chrome.action.openPopup');
+                return failCall('action.openPopup', 'unsupported', cb);
+            },
+            onUserSettingsChanged:
+                makeEvent('action.onUserSettingsChanged'),
             onClicked: actionOnClicked
         };
         installNs('action', actionApi);
         var b = {};
         for (var k in actionApi)
-            b[k] = actionApi[k];
+            if (k !== 'getUserSettings' && k !== 'openPopup'
+                    && k !== 'onUserSettingsChanged')
+                b[k] = actionApi[k];
         b.onClicked = actionOnClicked;
         installNs('browserAction', b);
     }

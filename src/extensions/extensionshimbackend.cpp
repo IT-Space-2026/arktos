@@ -3289,6 +3289,29 @@ QJsonObject ExtensionShimBackend::invokeAction(const QString &method,
         }
         return errReply(QStringLiteral("invalid-key"));
     }
+    if (method == QLatin1String("getUserSettings")) {
+        // MD37: isOnToolbar is the EXT08 strip's membership truth —
+        // the bar renders one button per enabled, loaded extension
+        // that declares an action popup
+        // (ExtensionActionBar::rebuild).  There is no pin toggle
+        // today; when one lands it joins this same predicate, so
+        // the answer surfaces it honestly instead of freezing true.
+        bool onToolbar = false;
+        for (const ExtensionManager::ExtensionInfo &info
+             : ExtensionManager::instance()->extensions()) {
+            if (info.id == m_extensionId) {
+                onToolbar = info.loaded && info.enabled
+                    && !info.actionPopupUrl.isEmpty();
+                break;
+            }
+        }
+        return okReply(QJsonObject{
+            {QStringLiteral("isOnToolbar"), onToolbar}});
+    }
+    // openPopup has no programmatic surface — the EXT08 bubble only
+    // opens from its own strip button.  Typed, not silent.
+    if (method == QLatin1String("openPopup"))
+        return errReply(QStringLiteral("unsupported"));
     return errReply(QStringLiteral("unimplemented"));
 }
 

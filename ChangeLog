@@ -1002,6 +1002,13 @@ UI:
   sourceTabId and sourceFrameId naming the opener, tabId and url for
   the navigation target — ahead of that tab's own onBeforeNavigate
   (MD36).
+- chrome.action.getUserSettings answers the real pin state for
+  hosted extensions: isOnToolbar is the action strip's membership
+  truth (one button per enabled extension declaring an action popup)
+  rather than a frozen true, so disabling an extension flips the
+  answer. onUserSettingsChanged installs as an honest never-firing
+  event while no pin toggle exists, and openPopup answers a typed
+  unsupported instead of a bare TypeError (MD37).
 - The Arora app-menu logo is now actually bigger: the previous bump
   only set a property Qt ignores for toolbar-hosted buttons, so the
   glyph still painted at the shared nav-icon size. The button now

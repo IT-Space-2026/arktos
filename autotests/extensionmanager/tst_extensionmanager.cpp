@@ -138,6 +138,7 @@ private slots:
     void extensionDeclarativeNetRequest();
     void extensionIdentity();
     void extensionNavTargetCreated();
+    void extensionActionUserSettings();
     void extensionNotifications();
     void extensionIdle();
     void extensionCommands();
@@ -18500,6 +18501,100 @@ void tst_ExtensionManager::extensionNavTargetCreated()
 
     delete window;
     hub->syncNow();
+    QDir(dir).removeRecursively();
+}
+
+// MD37 — chrome.action residual honesty.  getUserSettings answers
+// the real pin state: the EXT08 strip renders one button per
+// enabled, loaded extension declaring an action popup, so
+// isOnToolbar is that strip-membership truth, not a frozen true.
+// openPopup stays a typed 'unsupported' verdict (no programmatic
+// popup surface) instead of an unimplemented member; on
+// UserSettingsChanged installs as a never-firing event shim-side.
+void tst_ExtensionManager::extensionActionUserSettings()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extuset-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-uset\","
+                "\"version\":\"1.0\",\"action\":{\"default_popup\":"
+                "\"popup.html\"}}");
+        f.close();
+        QFile p(dir + QLatin1String("/popup.html"));
+        QVERIFY(p.open(QIODevice::WriteOnly));
+        p.write("<html><body>popup</body></html>");
+        p.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-uset")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QTRY_VERIFY_WITH_TIMEOUT(!loaded->isEmpty(), 30000);
+    const QString id = *loaded;
+    manager->setExtensionEnabled(id, true);
+
+    ExtensionShimBackend backend(id, QStringLiteral("tst-uset"), dir);
+    const auto onToolbar = [&backend]() {
+        return backend.invoke(
+            QStringLiteral("action"),
+            QStringLiteral("getUserSettings"), QJsonObject())
+            .value(QLatin1String("result")).toObject()
+            .value(QLatin1String("isOnToolbar")).toBool();
+    };
+
+    // Enabled + loaded + a manifest popup => strip membership.
+    QTRY_VERIFY_WITH_TIMEOUT(onToolbar(), 10000);
+
+    // Disabled drops the strip button — the pin answer follows.
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!onToolbar(), 10000);
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(onToolbar(), 10000);
+
+    // An id the manager never loaded answers the honest not-on-the-
+    // strip false rather than guessing.
+    ExtensionShimBackend stray(
+        QStringLiteral("tstmockextensionid0058"),
+        QStringLiteral("tst-stray"), dir);
+    const QJsonObject strayReply = stray.invoke(
+        QStringLiteral("action"),
+        QStringLiteral("getUserSettings"), QJsonObject());
+    QVERIFY(strayReply.value(QLatin1String("ok")).toBool());
+    QCOMPARE(strayReply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("isOnToolbar")).toBool(), false);
+
+    // openPopup stays typed under both spellings — no programmatic
+    // popup surface — while an unknown member stays the
+    // unreachable-member verdict.
+    for (const QString &ns : {QStringLiteral("action"),
+                              QStringLiteral("browserAction")})
+        QCOMPARE(backend.invoke(ns, QStringLiteral("openPopup"),
+                                QJsonObject())
+                     .value(QLatin1String("error")).toString(),
+                 QStringLiteral("unsupported"));
+    QCOMPARE(backend.invoke(QStringLiteral("action"),
+                            QStringLiteral("bogusMember"),
+                            QJsonObject())
+                 .value(QLatin1String("error")).toString(),
+             QStringLiteral("unimplemented"));
+
+    manager->setExtensionEnabled(id, false);
+    manager->removeExtension(id);
     QDir(dir).removeRecursively();
 }
 
