@@ -1969,11 +1969,18 @@ void DownloadManager::updateRow(DownloadItem *item)
     bool remove = false;
     bool haveVerdict = false;
 #if defined(ARKTOS_RUSTCORE)
+    // The member is authoritative — the persisted row lags the
+    // autosave, so the manifest carries the live policy like
+    // engine_claim's caller-reported tor state.
+    const QMetaEnum removePolicyEnum = staticMetaObject.enumerator(
+        staticMetaObject.indexOfEnumerator("RemovePolicy"));
     const QJsonObject r = dlwPolicyCall(m_profileId, {
         {QLatin1String("op"), QLatin1String("row_remove")},
         {QLatin1String("downloading"), item->downloading()},
         {QLatin1String("otr"), item->m_offTheRecord},
         {QLatin1String("downloaded_ok"), item->downloadedSuccessfully()},
+        {QLatin1String("remove_policy"),
+         QLatin1String(removePolicyEnum.valueToKey(m_removePolicy))},
     });
     if (r.contains(QLatin1String("remove"))) {
         remove = r.value(QLatin1String("remove")).toBool();
@@ -2126,10 +2133,21 @@ void DownloadManager::load()
                     item->fileNameLabel->setText(QFileInfo(item->m_outputFileName).fileName());
                     item->setAccessibleName(item->fileNameLabel->text());
                     item->m_url = url;
-                    item->m_startedTime = QDateTime::fromString(
-                        o.value(QLatin1String("started")).toString());
-                    item->m_finishedTime = QDateTime::fromString(
-                        o.value(QLatin1String("finished")).toString());
+                    // save() writes ISODateWithMs; legacy rows may
+                    // arrive in the TextDate shape the QSettings
+                    // value produced.
+                    const auto parseStamp = [](const QJsonObject &row,
+                                               const char *key) {
+                        const QString s =
+                            row.value(QLatin1String(key)).toString();
+                        QDateTime dt =
+                            QDateTime::fromString(s, Qt::ISODateWithMs);
+                        if (!dt.isValid())
+                            dt = QDateTime::fromString(s);
+                        return dt;
+                    };
+                    item->m_startedTime = parseStamp(o, "started");
+                    item->m_finishedTime = parseStamp(o, "finished");
                     item->m_restoredTotalBytes =
                         o.value(QLatin1String("size")).toInteger(-1);
                     item->stopButton->setVisible(false);

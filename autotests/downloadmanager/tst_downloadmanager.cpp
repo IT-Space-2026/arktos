@@ -32,10 +32,14 @@
 #include <qwebengineprofile.h>
 #include <qwebengineview.h>
 #include "browsertheme.h"
+#include "browserpaths.h"
 #include "downloadgraph.h"
 #include "downloadmanager.h"
 #include "squeezelabel.h"
 #include "profilesettings.h"
+#if defined(ARKTOS_RUSTCORE)
+#include <rustcore.h>
+#endif
 
 class tst_DownloadManager : public QObject
 {
@@ -197,6 +201,25 @@ void tst_DownloadManager::init()
     // rustdl builds (harmless no-op without the flag).
     settings.setValue(QLatin1String("downloadmanager/engine"),
                       QLatin1String("builtin"));
+#if defined(ARKTOS_RUSTCORE)
+    // MD04: the record list lives in the persona's downloads.json —
+    // a dlwpolicy-owned file the settings wipe above does not
+    // touch, so finished rows would resurrect into every later leg.
+    // Clear them through the module's own op, the same store the
+    // manager's save()/load() ride.
+    const QByteArray dataRoot = BrowserPaths::dataRoot().toUtf8();
+    if (RcSettings *store = rc_settings_open(dataRoot.constData(),
+                                             "default")) {
+        const QByteArray call =
+            QByteArrayLiteral("{\"op\":\"records_clear\"}");
+        if (char *r = rc_dlw_call(
+                store,
+                reinterpret_cast<const uint8_t *>(call.constData()),
+                size_t(call.size())))
+            rc_string_free(r);
+        rc_settings_close(store);
+    }
+#endif
 }
 
 // This will be called after every test function.
