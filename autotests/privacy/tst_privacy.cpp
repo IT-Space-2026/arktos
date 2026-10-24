@@ -39,6 +39,7 @@
 #include <acceptlanguagedialog.h>
 #include <adblocknetwork.h>
 #include <browserapplication.h>
+#include <browserpaths.h>
 #include <browserprofile.h>
 #include <cookiejar.h>
 #include <fingerprintprotector.h>
@@ -48,6 +49,7 @@
 #include <qcryptographichash.h>
 #include <qdir.h>
 #include <qhostaddress.h>
+#include <qjsonobject.h>
 #include <qnetworkcookie.h>
 #include <qsettings.h>
 #include <qtcpserver.h>
@@ -62,6 +64,7 @@
 
 #if defined(ARKTOS_RUSTCORE)
 #include <rustcore.h>
+#include <rustcorebridge.h>
 #endif
 
 #include <memory>
@@ -116,6 +119,8 @@ private slots:
     void fingerprintNormalization();
     void fingerprintDefaultOnMigration();
 
+    void privacyStoreFacade();
+
 private:
     QByteArray m_savedFlags;
     QVariant m_savedHttpsFirst;
@@ -135,6 +140,8 @@ private:
     QVariant m_savedBlockThirdPartyWs;
     QVariant m_savedStripTrackingParams;
     QVariant m_savedUrlCleaning;
+    QVariant m_savedGpcSignal;
+    QVariant m_savedAdBlockEnabled;
     QVariant m_savedAcceptLanguages;
     QVariant m_savedForceDarkMode;
     QVariant m_savedAutoscroll;
@@ -186,6 +193,10 @@ void tst_Privacy::initTestCase()
         settings.value(QLatin1String("privacy/stripTrackingParams"));
     m_savedUrlCleaning =
         settings.value(QLatin1String("privacy/urlCleaning"));
+    m_savedGpcSignal =
+        settings.value(QLatin1String("privacy/gpcSignal"));
+    m_savedAdBlockEnabled =
+        settings.value(QLatin1String("AdBlock/enabled"));
     m_savedTzSet = qEnvironmentVariableIsSet("TZ");
     m_savedTz = qgetenv("TZ");
 }
@@ -227,6 +238,8 @@ void tst_Privacy::cleanupTestCase()
     restoreSetting(settings, QLatin1String("privacy/blockThirdPartyWebSockets"), m_savedBlockThirdPartyWs);
     restoreSetting(settings, QLatin1String("privacy/stripTrackingParams"), m_savedStripTrackingParams);
     restoreSetting(settings, QLatin1String("privacy/urlCleaning"), m_savedUrlCleaning);
+    restoreSetting(settings, QLatin1String("privacy/gpcSignal"), m_savedGpcSignal);
+    restoreSetting(settings, QLatin1String("AdBlock/enabled"), m_savedAdBlockEnabled);
     PrivacyRequestInterceptor::loadSettings();
     if (m_savedTzSet)
         qputenv("TZ", m_savedTz);
@@ -251,6 +264,7 @@ void tst_Privacy::init()
     settings.setValue(QLatin1String("blockThirdPartyWebSockets"), false);
     settings.setValue(QLatin1String("stripTrackingParams"), true);
     settings.setValue(QLatin1String("urlCleaning"), true);
+    settings.setValue(QLatin1String("gpcSignal"), true);
     settings.endGroup();
     PrivacyRequestInterceptor::loadSettings();
     PrivacyRequestInterceptor::clearDowngradedHosts();
@@ -1813,6 +1827,118 @@ void tst_Privacy::fingerprintDefaultOnMigration()
     restoreSetting(settings, key, savedKey);
     restoreSetting(settings, flag, savedFlag);
     init();
+}
+
+// MD05: the rustcore privacy module's store view — the granular
+// privacyStoreCall endpoint (flags/flag/gpc/verdict/defaults), the
+// persona-resolved Sec-GPC seam installGpcSignal and the request-time
+// consult share, and the unified {gpc,strip,adblock} verdict the
+// tracker-strip and adblock reads fold into.  ProfileSettings writes
+// land in the bound persona's settings.json — the same store the
+// facade reads — so each toggle round-trips end to end.
+void tst_Privacy::privacyStoreFacade()
+{
+#if defined(ARKTOS_RUSTCORE)
+    // The bridge minted under the "Arktos" app name while
+    // BrowserApplication constructed, so serving() refuses while the
+    // harness's post-ctor rename has dataRoot() pointing at the
+    // test-named root.  Re-answering under the original name for the
+    // leg's duration makes the facade lane serve — ProfileSettings
+    // re-binds its stores on the same drift, so writes and facade
+    // reads share one settings.json again.  The guard restores the
+    // name even when an assert fails mid-leg.
+    struct AppNameRestore {
+        QString saved;
+        AppNameRestore() : saved(QCoreApplication::applicationName()) {}
+        ~AppNameRestore() {
+            QCoreApplication::setApplicationName(saved);
+        }
+    } nameGuard;
+    QCoreApplication::setApplicationName(QStringLiteral("Arktos"));
+    if (!RustCoreBridge::serving())
+        QSKIP("facade bridge does not serve under the moved root");
+
+    const QString pid = BrowserPaths::activeProfileId();
+
+    // flags: the typed set reads the bound persona's rows — write two
+    // non-default values so the assert proves a real read, not the
+    // fail-on defaults a pristine store answers.  The app profile's
+    // own rows decide the rest, so only key presence is asserted
+    // there.
+    ProfileSettings settings;
+    settings.setValue(QLatin1String("privacy/blockRemoteFonts"), true);
+    settings.setValue(QLatin1String("privacy/securityLevel"),
+                      int(PrivacyRequestInterceptor::Safest));
+    const QJsonObject flags = PrivacyRequestInterceptor::privacyStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("flags")}});
+    QVERIFY(!flags.isEmpty());
+    QCOMPARE(flags.value(QLatin1String("block_remote_fonts")).toBool(),
+             true);
+    QCOMPARE(flags.value(QLatin1String("security_level")).toInt(),
+             int(PrivacyRequestInterceptor::Safest));
+    for (const char *name : {"https_first", "https_only",
+                             "referer_policy", "block_pings",
+                             "block_prefetch", "block_third_party_ws",
+                             "strip_tracking_params", "domain_blocklist",
+                             "gpc_signal", "adblock_enabled"})
+        QVERIFY(flags.contains(QLatin1String(name)));
+    settings.remove(QLatin1String("privacy/blockRemoteFonts"));
+    settings.remove(QLatin1String("privacy/securityLevel"));
+
+    // gpc: the request-time Sec-GPC decision follows the bound
+    // persona's own row; tor_mode answers unconditionally.
+    settings.setValue(QLatin1String("privacy/gpcSignal"), false);
+    QJsonObject r = PrivacyRequestInterceptor::privacyStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("gpc")}});
+    QCOMPARE(r.value(QLatin1String("send")).toBool(), false);
+    r = PrivacyRequestInterceptor::privacyStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("gpc")},
+              {QLatin1String("tor_mode"), true}});
+    QCOMPARE(r.value(QLatin1String("send")).toBool(), true);
+    QVERIFY(!PrivacyRequestInterceptor::gpcSignalEnabledForProfile(pid));
+    settings.setValue(QLatin1String("privacy/gpcSignal"), true);
+    QVERIFY(PrivacyRequestInterceptor::gpcSignalEnabledForProfile(pid));
+
+    // A second persona's row decides for its own profile only.
+    ProfileSettings other(QStringLiteral("md05other"));
+    other.setValue(QLatin1String("privacy/gpcSignal"), false);
+    QVERIFY(PrivacyRequestInterceptor::gpcSignalEnabledForProfile(pid));
+    QVERIFY(!PrivacyRequestInterceptor::gpcSignalEnabledForProfile(
+        QStringLiteral("md05other")));
+    other.remove(QLatin1String("privacy/gpcSignal"));
+    QVERIFY(PrivacyRequestInterceptor::gpcSignalEnabledForProfile(
+        QStringLiteral("md05other")));
+
+    // verdict: the tracker-strip and adblock reads share the one
+    // helper — AdBlock/enabled folds in beside strip and gpc.
+    settings.setValue(QLatin1String("AdBlock/enabled"), false);
+    settings.setValue(QLatin1String("privacy/urlCleaning"), true);
+    const QJsonObject v = PrivacyRequestInterceptor::privacyStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("verdict")}});
+    QCOMPARE(v.value(QLatin1String("adblock")).toBool(), false);
+    QCOMPARE(v.value(QLatin1String("strip")).toBool(), true);
+    QCOMPARE(v.value(QLatin1String("gpc")).toBool(), true);
+    settings.remove(QLatin1String("AdBlock/enabled"));
+    settings.remove(QLatin1String("privacy/urlCleaning"));
+
+    // flag answers one leaf; defaults is the pure op; a refused op or
+    // unknown flag answers the empty object callers fall back on.
+    r = PrivacyRequestInterceptor::privacyStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("flag")},
+              {QLatin1String("name"), QLatin1String("gpc_signal")}});
+    QCOMPARE(r.value(QLatin1String("value")).toBool(), true);
+    QVERIFY(PrivacyRequestInterceptor::privacyStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("defaults")}})
+            .value(QLatin1String("gpc_signal")).toBool());
+    QVERIFY(PrivacyRequestInterceptor::privacyStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("bogus")}}).isEmpty());
+    QVERIFY(PrivacyRequestInterceptor::privacyStoreCall(
+        pid, {{QLatin1String("op"), QLatin1String("flag")},
+              {QLatin1String("name"), QLatin1String("bogus")}})
+            .isEmpty());
+#else
+    QSKIP("rustcore privacy module not built");
+#endif
 }
 
 QTEST_MAIN(tst_Privacy)
