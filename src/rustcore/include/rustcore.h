@@ -560,6 +560,14 @@ RcStatus rc_ext_verify_package(const uint8_t *pkg, size_t len,
                                RcBuffer *outJson);
 RcStatus rc_ext_manifest_check(const uint8_t *json, size_t len,
                                RcBuffer *outJson);
+/* BW02: extracts a verified package (.zip, or a CRX3 wrapper's zip
+ * payload) into outDirUtf8 — the same structural checks
+ * rc_ext_verify_package enforces apply (safe member names, size caps,
+ * no zip64/multi-disk).  Used to stage a doctored unpacked copy for
+ * hosted-only background routing.  RC_OK on success; the error text
+ * rides rc_last_error_message(). */
+RcStatus rc_ext_unpack_package(const uint8_t *pkg, size_t len,
+                               const char *outDirUtf8);
 
 /* --- bookmark store (RCORE02a) ---------------------------------------
  * The canonical bookmark tree.  Nodes are addressed by uint64

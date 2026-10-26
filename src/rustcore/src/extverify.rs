@@ -365,6 +365,139 @@ fn check_zip(zip: &[u8]) -> Result<ZipReport, String> {
 }
 
 // ------------------------------------------------------------------
+// package extraction — BW02 hosted-only background staging
+// ------------------------------------------------------------------
+
+/// The zip payload of a package: the bytes as-is for a plain zip, or
+/// the payload behind a CRX3 protobuf header (structure-checked — the
+/// signature block is skipped, not verified, exactly like
+/// verify_package's "structure-only" note reports).
+fn zip_payload(pkg: &[u8]) -> Result<&[u8], String> {
+    if pkg.starts_with(b"Cr24") {
+        if pkg.len() < 12 {
+            return Err("truncated CRX3 header".into());
+        }
+        let version = le32(pkg, 4);
+        if version != 3 {
+            return Err(format!("unsupported CRX version {version}"));
+        }
+        let hlen = le32(pkg, 8) as usize;
+        if hlen > MAX_CRX_HEADER || 12usize.saturating_add(hlen) > pkg.len() {
+            return Err("the CRX3 header is out of bounds".into());
+        }
+        Ok(&pkg[12 + hlen..])
+    } else if pkg.starts_with(b"PK\x03\x04") {
+        Ok(pkg)
+    } else {
+        Err("unrecognized package format (not a zip or CRX3)".into())
+    }
+}
+
+/// rc_ext_unpack_package body: writes every member of a package under
+/// `out_dir`.  Every bound the verifier applies holds here too — the
+/// central walk refuses unsafe member names, zip64/multi-disk, per-
+/// member and total inflation caps — so the extraction side never sees
+/// a member the check would not have passed.  Directory members are
+/// materialized; files are written verbatim.  Returns the file count.
+pub fn unpack_package(
+    pkg: &[u8],
+    out_dir: &std::path::Path,
+) -> RcResult<u64> {
+    if pkg.is_empty() || pkg.len() > MAX_PACKAGE {
+        return corrupt("the package is empty or exceeds the size cap");
+    }
+    let zip = zip_payload(pkg).map_err(|e| Fail {
+        status: RcStatus::Corrupt,
+        msg: e,
+    })?;
+
+    struct Member {
+        name: Vec<u8>,
+        method: u16,
+        comp_size: u32,
+        uncomp_size: u32,
+        local_off: u32,
+    }
+    let mut members: Vec<Member> = Vec::new();
+    let mut total: u64 = 0;
+    walk_central_dir(zip, |e| {
+        if e.uncomp_size as u64 > MAX_ENTRY_UNCOMPRESSED {
+            return Err("a member expands past the per-entry size cap"
+                .into());
+        }
+        total += e.uncomp_size as u64;
+        if total > MAX_UNCOMPRESSED_TOTAL {
+            return Err("archive expands past the total size cap".into());
+        }
+        members.push(Member {
+            name: e.name.to_vec(),
+            method: e.method,
+            comp_size: e.comp_size,
+            uncomp_size: e.uncomp_size,
+            local_off: e.local_off,
+        });
+        Ok(())
+    })
+    .map_err(|e| Fail {
+        status: RcStatus::Corrupt,
+        msg: format!("zip check failed: {e}"),
+    })?;
+
+    let io_fail = |e: std::io::Error| Fail {
+        status: RcStatus::Io,
+        msg: format!("unpack target: {e}"),
+    };
+    std::fs::create_dir_all(out_dir).map_err(io_fail)?;
+    let mut written = 0u64;
+    for m in &members {
+        // Member names are validated by the central walk — relative,
+        // no '..', no drive prefix — so joining can never leave
+        // out_dir.  Non-UTF8 names degrade to lossy text; they stay
+        // contained either way.
+        let name = String::from_utf8_lossy(&m.name);
+        let target = out_dir.join(name.as_ref());
+        if m.name.last() == Some(&b'/') {
+            std::fs::create_dir_all(&target).map_err(io_fail)?;
+            continue;
+        }
+        let data = member_data(zip, m.local_off, m.comp_size)
+            .map_err(|e| Fail {
+                status: RcStatus::Corrupt,
+                msg: e,
+            })?;
+        let raw = match m.method {
+            0 => data.to_vec(),
+            8 => miniz_oxide::inflate::decompress_to_vec_with_limit(
+                data,
+                MAX_ENTRY_UNCOMPRESSED as usize,
+            )
+            .map_err(|_| Fail {
+                status: RcStatus::Corrupt,
+                msg: "member does not inflate".into(),
+            })?,
+            m => {
+                return Err(Fail {
+                    status: RcStatus::Corrupt,
+                    msg: format!("member uses unsupported method {m}"),
+                })
+            }
+        };
+        if raw.len() != m.uncomp_size as usize {
+            return Err(Fail {
+                status: RcStatus::Corrupt,
+                msg: format!("member {name} size mismatch"),
+            });
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(io_fail)?;
+        }
+        std::fs::write(&target, &raw).map_err(io_fail)?;
+        written += 1;
+    }
+    Ok(written)
+}
+
+// ------------------------------------------------------------------
 // CRX3 header (protobuf wire format, structural verification)
 // ------------------------------------------------------------------
 

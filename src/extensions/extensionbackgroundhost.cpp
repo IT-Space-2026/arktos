@@ -1355,7 +1355,7 @@ void ExtensionBackgroundRuntime::syncNow()
         // read the review path uses (rc_ext_manifest_check under
         // rustcore) — never a raw JSON parse here.
         const ExtensionManager::Manifest manifest =
-            ExtensionManager::inspectManifest(want.path);
+            ExtensionManager::inspectDeclaredManifest(want.path);
         if (!manifest.valid || manifest.backgroundScripts.isEmpty()) {
             m_noBackground.insert(id);
             continue;

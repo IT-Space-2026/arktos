@@ -341,6 +341,34 @@ public:
     // inspected — Qt's installer handles them).
     static Manifest inspectManifest(const QString &path);
 
+    // BW02 hosted-only background routing: an extension the hosted
+    // runtime will own reaches the engine with its `background` key
+    // stripped — otherwise Chromium registers a native MV3 service
+    // worker that can only crash-loop on the chrome.* namespaces Qt
+    // lacks while the hosted host runs the real background.  The
+    // engine-visible manifest lives next to a marker file naming a
+    // sidecar (with its sha256) that carries the DECLARED manifest;
+    // the readers below consult the sidecar only inside managed dirs
+    // (a profile's installPath / our staging root), so a shipped file
+    // pair can never spoof the review or health surfaces.
+    //
+    // inspectDeclaredManifest answers what the extension actually
+    // declared (background block intact) for doctored trees and falls
+    // back to inspectManifest otherwise.  declaredManifestJson is the
+    // same channel for consumers that want the raw object (the shim
+    // backend's getManifest surface).
+    static Manifest inspectDeclaredManifest(const QString &path);
+    static QJsonObject declaredManifestJson(const QString &dirPath);
+    // True when dirPath is an extension tree we doctored for
+    // hosted-only routing (engine-side manifest carries no
+    // `background`; the hosted host is its only background context).
+    static bool isHostedOnlyBackground(const QString &dirPath);
+    // The shared manifest classifier — raw manifest.json bytes in,
+    // the classified Manifest out (rc_ext_manifest_check under
+    // rustcore, the Qt parse otherwise).  Used for both on-disk
+    // manifests and the recorded declared-manifest sidecars.
+    static Manifest manifestFromBytes(const QByteArray &raw);
+
     // EXT03 update checks.  checkForUpdates() GETs every extension's
     // update_url through the application-side network manager,
     // compares dotted-quad versions and downloads the package into the
@@ -507,6 +535,13 @@ private:
     // removeExtension() dispatched — the pending marker is what
     // keeps a reload-unload from opening the uninstall page.
     void maybeOpenUninstallPage(const QString &id);
+    // BW02: hosted-only background routing — see the block comment in
+    // extensionmanager.cpp.  hostedEnginePath maps a consent-approved
+    // source path to the doctored tree the engine actually loads.
+    QString hostedEnginePath(const QString &path);
+    static bool managedExtensionDir(const QString &dirPath);
+    static QByteArray declaredManifestBytes(const QString &dirPath);
+
     void reapplyEnabledFlags(QWebEngineProfile *profile);
     void reloadUserScripts(QWebEngineProfile *profile);
     void scheduleAutoUpdateCheck();

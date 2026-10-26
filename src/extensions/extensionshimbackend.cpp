@@ -3326,12 +3326,11 @@ QJsonObject ExtensionShimBackend::manifestJson() const
         ExtensionShimBackend *self =
             const_cast<ExtensionShimBackend *>(this);
         self->m_manifestLoaded = true;
-        QFile file(m_extensionPath
-                   + QLatin1String("/manifest.json"));
-        if (file.size() <= 1024 * 1024
-                && file.open(QIODevice::ReadOnly))
-            self->m_manifest =
-                QJsonDocument::fromJson(file.readAll()).object();
+        // BW02: hosted-only routing strips `background` from the
+        // engine-visible manifest — getManifest() must still answer
+        // what the extension actually declared.
+        self->m_manifest =
+            ExtensionManager::declaredManifestJson(m_extensionPath);
     }
     return m_manifest;
 }
@@ -3765,10 +3764,9 @@ static QJsonObject manifestForExtensionPath(const QString &extensionPath)
 {
     if (extensionPath.isEmpty())
         return QJsonObject();
-    QFile file(extensionPath + QLatin1String("/manifest.json"));
-    if (file.size() > 1024 * 1024 || !file.open(QIODevice::ReadOnly))
-        return QJsonObject();
-    return QJsonDocument::fromJson(file.readAll()).object();
+    // BW02: same declared-manifest read as manifestJson() — a
+    // hosted-only tree's engine manifest lacks `background`.
+    return ExtensionManager::declaredManifestJson(extensionPath);
 }
 
 // MD17: a record the engine keeps only as an unload tombstone — a
