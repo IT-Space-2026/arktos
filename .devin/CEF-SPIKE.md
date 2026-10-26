@@ -3,7 +3,7 @@
 Date: 2026-10-22 · Status: spike, **no code** · Lane: rust-core (RC11) ·
 Companion docs: `.devin/ENGINE.md` (live coupling map + backend matrix),
 `.devin/RUSTCORE-ARCH.md`, `.devin/RUSTCORE-ABI.md`,
-`.devin/GECKO-STUDY.md`, `.devin/SERVO-SPIKE.md`, `.devin/WEBKIT-STUDY.md`.
+`.devin/SERVO-SPIKE.md`, `.devin/WEBKIT-STUDY.md`.
 
 **Scope rule, stated once and repeated throughout: CEF replaces the
 QtWebEngine/Chromium embed only. It does not serve the Servo or WPE
