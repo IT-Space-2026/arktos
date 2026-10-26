@@ -30,14 +30,17 @@ Prior art — read before starting:
 |----|------|--------|----------|-------|
 | BW01 | Namespace stub pass — details below | done | 2 | every chrome.* ns/member bitwarden bg+popup+cs touch resolves: added chrome.dom (shim+agent, open roots only) + tabs.TAB_ID_NONE; ARKTOS_EXTSHIM_NSTRACE get-trap instrument measures zero undefined accesses; verify: --extension-host-smoke ARKTOS_EXTHOST_SMOKE_DIR=bw-2026.9.3 host Ready, zero unshimmed-API errors, audit 121/121 (popup-gate/cs legs fail = BW03/BW05, pre-existing); fixture variant 31/0 PASS |
 | BW02 | Hosted-only background routing — details below | done | 0 | hosted-only background routing: engine-visible manifest stripped of background via staged/doctored trees (dir, zip via rc_ext_unpack_package, legacy installs doctored at sweep+reload); declared manifest kept in verified sidecar honored only in managed dirs; probes skip hosted-only exts, host state is the verdict; detail reports background=hosted. Verify: --extension-health-smoke PASS, zero native sw registrations in log, Bitwarden host Ready/Limited |
-| BW03 | Popup round-trip — details below | pending | 0 | needs:tool:xvfb-run; action popup (ExtensionActionBar host) opens → runtime.sendMessage reaches hosted sw → response returns. Bitwarden popup must reach its unlock/vault UI, not a blank page. Verify: xvfb screenshot or DOM probe of popup shows BW UI; message round-trip logged |
-| BW04 | storage correctness — details below | pending | 0 | storage.local in hosted context: vault-shaped writes persist across app restart, onChanged delivers to listeners, storage.session is per-run, managed/sync return correct empty/disabled semantics. Verify: fixture round-trip over a restart + onChanged observed |
-| BW05 | cs<->sw messaging bridge — details below | pending | 0 | runtime.connect/onMessage/tabs.sendMessage between declared content scripts and hosted background on real loaded pages (not just eval probes): long-lived ports deliver both directions, disconnect propagates. Verify: echo fixture content script <-> background |
+| BW03 | Popup round-trip — details below | done | 2 | popup round-trip real: permissions.contains/getAll stopped claiming optional_permissions as granted (Chrome: ungranted until request()) — the lie sent Bitwardens guarded privacy.* probe into a typed error whose callback threw inside the shim, hanging browserAutofillSettingsOverridden so the router never resolved. Fix unblocks the chain: popup opens, session/new_popup ports + runtime.sendMessage round-trip, router reaches the unlock/login gate. Smoke clicker learned the default-password-manager-prompt onboarding screen. Verify: xvfb ARKTOS_DEBUG_POPUP screenshot shows real BW onboarding UI; --extension-host-smoke on bw-2026.9.3 — real popup presents its unlock/login gate PASS (pw+email inputs at /login), sendMessage-resolved PASS, only pre-existing cs leg FAIL (BW05); --extension-health-smoke PASS 0 failures, verdict Limited honest |
+| BW04 | storage.local persistence + quota — details below | pending | 0 | storage.local in hosted context: vault-shaped kilobyte JSON blobs under many keys persist across app restart, concurrent read/write sane, quota behavior honest (unlimitedStorage declared). Verify: fixture round-trip over a restart |
+| BW11 | storage events + session/managed semantics — details below | pending | 0 | needs:task:BW04; storage.onChanged delivers to sw AND content listeners (changes dict + area name shape correct), storage.session is per-run (cleared on restart), managed/sync return correct empty/disabled semantics. Verify: onChanged observed + session-cleared leg |
+| BW05 | port messaging (connect/onMessage) — details below | pending | 0 | runtime.connect long-lived Port between declared content scripts and hosted background on real loaded pages (not just eval probes): postMessage both directions, onDisconnect on tab close + sw restart propagates. Verify: echo fixture content script <-> background |
+| BW12 | tabs.sendMessage frame routing — details below | pending | 0 | needs:task:BW05; tabs.sendMessage one-shot messaging reaches the right frame's declared content script (frameId semantics where declared), response path returns. Verify: per-frame delivery fixture |
 | BW06 | Autofill E2E — details below | pending | 0 | needs:task:BW05; on a fixture login form Bitwarden's declared content scripts inject, sw receives their messages, scripted fill lands in fields (or honest partial verdict documenting exactly where the chain breaks). Verify: fixture field values observed post-fill |
-| BW07 | Clipboard + offscreen path — details below | pending | 0 | offscreen document creates in hosted runtime; clipboardWrite/Read path works for the copy-password flow. Verify: copied value observed on the real clipboard |
+| BW07 | offscreen document hosting — details below | pending | 0 | chrome.offscreen document creates in hosted runtime (reasons param honored), its DOM/messaging reachable, document closes cleanly. Verify: offscreen doc created + message round-trip |
+| BW13 | clipboard copy path — details below | pending | 0 | needs:task:BW07; clipboardWrite/clipboardRead path works for the copy-password flow — Bitwarden uses both the clipboard API and execCommand('copy') fallback; no grant = typed error, never silent. Verify: copied value observed on the real clipboard |
 | BW08 | nativeMessaging real implementation — details below | pending | 0 | implement chrome.runtime.connectNative/sendNativeMessage for real: resolve native messaging host manifests (standard per-user + system dirs, Chrome layout), spawn via QProcess, 4-byte-LE length-prefixed JSON stdio both directions, disconnect semantics. Absent host = correct typed error (the honest answer when no BW desktop installed). Verify: fixture native host echo round-trip + absent-host typed error |
 | BW09 | permissions API + optional-permission flow — details below | pending | 0 | chrome.permissions.contains/request/onAdded/onRemoved for Bitwarden's optional set (nativeMessaging, privacy): contains answers honestly, request drives the real consent surface, grants feed the runtime. Verify: contains(nativeMessaging)=false→request→true round-trip |
-| BW10 | Integration verification + honest docs — details below | pending | 0 | needs:task:BW01,BW02,BW03,BW06; --extension-health-smoke green; Bitwarden health verdict reflects REAL measured state (Healthy only if actually healthy — never gamed); update .devin/EXT-RUNTIME-GAPS.md + EXT-RUNTIME-E2E.md with the new served surface + what stays dead (FIDO2/passkeys, anything unverifiable) |
+| BW10 | Integration verification + honest docs — details below | pending | 0 | needs:task:BW01,BW02,BW03,BW06,BW11,BW12,BW13; --extension-health-smoke green; Bitwarden health verdict reflects REAL measured state (Healthy only if actually healthy — never gamed); update .devin/EXT-RUNTIME-GAPS.md + EXT-RUNTIME-E2E.md with the new served surface + what stays dead (FIDO2/passkeys, anything unverifiable) |
 
 ## Task details
 
@@ -69,19 +72,38 @@ with a live sw is a FAIL to investigate, not a pass to report.
 
 ### BW04
 Vault-shaped = kilobyte JSON blobs under many keys, concurrent
-read/write, quota behavior (unlimitedStorage declared). onChanged
-must fire in the sw AND any content listeners.
+read/write, quota behavior (unlimitedStorage declared). Persistence
+across restart is the leg; event/session semantics are BW11.
+
+### BW11
+onChanged payload shape matters (changes dict + area name); it must
+fire in the sw AND any content listeners. storage.session stays
+memory-only — never touches disk across restarts. managed/sync
+answer honest empty/disabled — no managed-policy infra exists.
 
 ### BW05
 Long-lived Port semantics: Port.postMessage both directions,
-onDisconnect on tab close + sw restart. tabs.sendMessage routing must
-hit the right frame's content script (frameId semantics where
-declared).
+onDisconnect on tab close + sw restart.
+
+### BW12
+One-shot messaging: tabs.sendMessage(tabId, msg, {frameId}) routes
+to the declared frame's content script; callback/promise response
+path returns. Active-tab resolution must reflect the real tab.
 
 ### BW06
 Fixture: local login-form page + scripted expectation. If the chain
 breaks at a specific hop (e.g., scripting.ExecutionWorld unsupported),
 document it precisely — honest partial beats fake pass.
+
+### BW07
+offscreen.createDocument with honest reasons; the hosted runtime owns
+the document lifecycle (no Chrome fallback). Bitwarden's vault-lock
+and crypto flows run here — messaging to sw must round-trip.
+
+### BW13
+Bitwarden copies via the clipboard API and an execCommand('copy')
+fallback — cover both paths end to end. A denied clipboard
+permission must surface as a typed error, never silent success.
 
 ### BW08
 Chrome protocol: host manifest JSON at

@@ -3926,8 +3926,15 @@
     if (typeof chrome !== 'undefined') {
         var permSet = function () {
             var m = manifest();
-            var perms = (m.permissions || []).concat(
-                m.optional_permissions || []);
+            // Chrome's granted set is required permissions only —
+            // optional_permissions sit ungranted until
+            // permissions.request() consents to them (typed
+            // 'unsupported' here, so they never land).  Listing
+            // them anyway lies about the extension's own grants
+            // and sends guarded optional-permission call paths
+            // (Bitwarden's privacy.* probe) into typed errors the
+            // guard exists to prevent.
+            var perms = (m.permissions || []).slice();
             var origins = (m.host_permissions || []);
             return { permissions: perms, origins: origins };
         };

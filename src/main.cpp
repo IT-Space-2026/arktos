@@ -14385,7 +14385,10 @@ int main(int argc, char **argv)
                             && (href.contains(
                                      QLatin1String("intro-carousel"))
                                 || href.contains(
-                                     QLatin1String("registration")))) {
+                                     QLatin1String("registration"))
+                                || href.contains(QLatin1String(
+                                       "default-password-manager-"
+                                       "prompt")))) {
                             ++*gateClicks;
                             // NOTE: innerText is empty for every
                             // button in the hidden popup view (no

@@ -58,25 +58,43 @@ flock -n 9 || { echo "[$(ts)] another taskloop is already running (lock: $LOCK)"
 # e.g. `needs:tool:xvfb-run` or `needs:macos`/`needs:windows`/`needs:freebsd`.
 # Rows whose requirements are not met on this host are SKIPPED (not blocked —
 # they may run elsewhere); the loop picks the next runnable task instead.
+# 0 = runnable, 1 = unmet needs: (wait/skip), 2 = a needs:task: dep is
+# blocked (caller cascade-blocks this row)
 task_runnable() {
-	local notes="$1" req
+	local notes="$1" req deps dep ds
+	TR_DEP=""
 	while read -r req; do
 		[ -n "$req" ] || continue
+		req="${req%,}"
 		case "$req" in
 			tool:*) command -v "${req#tool:}" >/dev/null 2>&1 || return 1 ;;
+			task:*)
+				deps="${req#task:}"
+				for dep in ${deps//,/ }; do
+					ds="$(status_of "$dep")"
+					case "$ds" in
+						done) ;;
+						blocked) TR_DEP="$dep"; return 2 ;;
+						*) TR_DEP="$dep"; return 1 ;;
+					esac
+				done ;;
 			macos)   [ "$(uname -s)" = Darwin ] || return 1 ;;
 			windows) case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*|Windows*) ;; *) return 1 ;; esac ;;
 			freebsd) [ "$(uname -s)" = FreeBSD ] || return 1 ;;
 			linux)   [ "$(uname -s)" = Linux ] || return 1 ;;
 		esac
-	done < <(echo "$notes" | grep -oE 'needs:[a-zA-Z0-9:_-]+' | sed 's/^needs://')
+	done < <(echo "$notes" | grep -oE 'needs:[a-zA-Z0-9:_,-]+' | sed 's/^needs://')
 	return 0
 }
 
 # id of first task row with status pending|in_progress whose needs: tags
 # are satisfiable on this host ("" when none)
 next_task() {
-	local id status notes
+	local id status notes rc rows
+	# buffer rows first — mark_blocked may rewrite $TASKS mid-scan
+	rows="$(awk -F'|' '/^\|[[:space:]]*[A-Z]+[0-9]+[[:space:]]*\|/ {
+		print $2 "\x1f" $4 "\x1f" $6
+	}' "$TASKS")"
 	while IFS=$'\x1f' read -r id status notes; do
 		id="${id//[[:space:]]/}"
 		status="${status//[[:space:]]/}"
@@ -87,12 +105,15 @@ next_task() {
 		if task_runnable "$notes"; then
 			echo "$id"
 			return 0
-		else
-			echo "[$(ts)] skipping $id — needs: requirement not met on this host" >>"$LOG"
 		fi
-	done < <(awk -F'|' '/^\|[[:space:]]*[A-Z]+[0-9]+[[:space:]]*\|/ {
-		print $2 "\x1f" $4 "\x1f" $6
-	}' "$TASKS")
+		rc=$?
+		if [ "$rc" -eq 2 ]; then
+			echo "[$(ts)] $id auto-blocked — dep ${TR_DEP:-?} is blocked" >>"$LOG"
+			mark_blocked "$id" "dep ${TR_DEP:-?} blocked"
+		else
+			echo "[$(ts)] skipping $id — needs: requirement not met on this host (dep ${TR_DEP:-none})" >>"$LOG"
+		fi
+	done <<< "$rows"
 	return 0
 }
 
@@ -102,6 +123,77 @@ attempts_of() {
 		$0 ~ ("^\\|[[:space:]]*" id "[[:space:]]*\\|") {
 			a=$5; gsub(/[^0-9]/,"",a); print a+0; exit
 		}' "$TASKS"
+}
+
+# Status column of a task row (pending|in_progress|done|blocked, "" if absent)
+status_of() {
+	awk -v id="$1" 'BEGIN{FS="|"}
+		$0 ~ ("^\\|[[:space:]]*" id "[[:space:]]*\\|") {
+			s=$4; gsub(/[^a-z_]/,"",s); print s; exit
+		}' "$TASKS"
+}
+
+# Notes column of a task row
+notes_of() {
+	awk -v id="$1" 'BEGIN{FS="|"}
+		$0 ~ ("^\\|[[:space:]]*" id "[[:space:]]*\\|") {
+			n=$6; sub(/^[[:space:]]*/,"",n); sub(/[[:space:]]*$/,"",n); print n; exit
+		}' "$TASKS"
+}
+
+# 0 = all needs:task: deps done, 1 = some dep not done
+deps_done() {
+	local notes="$1" req deps dep ds seen=0
+	while read -r req; do
+		[ -n "$req" ] || continue
+		req="${req%,}"
+		case "$req" in
+			task:*)
+				seen=1
+				deps="${req#task:}"
+				for dep in ${deps//,/ }; do
+					[ "$(status_of "$dep")" = done ] || return 1
+				done ;;
+		esac
+	done < <(echo "$notes" | grep -oE 'needs:[a-zA-Z0-9:_,-]+' | sed 's/^needs://')
+	[ "$seen" = 1 ]   # no needs:task: tags => cascade reason unverifiable
+}
+
+# rows blocked ONLY by dep-cascade ("blocked:dep X blocked ;; ...") are
+# mechanical holds, not real failures — auto-resume to pending once every
+# task dep is done. Rows blocked by attempts/verdict stay blocked.
+unblock_cascades() {
+	local id status notes
+	while IFS=$'\x1f' read -r id status notes; do
+		id="${id//[[:space:]]/}"; status="${status//[[:space:]]/}"
+		notes="${notes#"${notes%%[![:space:]]*}"}"; notes="${notes%"${notes##*[![:space:]]}"}"
+		[ "$status" = blocked ] || continue
+		case "$notes" in
+			blocked:dep\ *) ;;
+			*) continue ;;
+		esac
+		# if a genuine blocked: reason sits behind the cascade prefix,
+		# this row needs human/agent eyes — don't resurrect it
+		rest="${notes#*;; }"
+		if [ "$rest" != "$notes" ]; then
+			case "$rest" in
+				blocked:*) continue ;;
+			esac
+		fi
+		if deps_done "$notes"; then
+			"$TASKFILE_SH" "$TASKS" set "$id" status=pending "notes=unblocked:auto deps done ;; $notes"
+			echo "[$(ts)] $id auto-unblocked — task deps now done" >>"$LOG"
+		fi
+	done < <(awk -F'|' '/^\|[[:space:]]*[A-Z]+[0-9]+[[:space:]]*\|/ {
+		print $2 "\x1f" $4 "\x1f" $6
+	}' "$TASKS")
+}
+
+# hash of HEAD + dirty files — a run that leaves the repo identical made
+# no verifiable progress; only those runs should count as attempts.
+repo_state() {
+	( cd "$REPO" 2>/dev/null && git rev-parse HEAD 2>/dev/null && git status --porcelain=v1 2>/dev/null ) \
+		| sha256sum | cut -d' ' -f1
 }
 
 # All task-file writes go through taskfile.sh, which serialises on
@@ -114,9 +206,13 @@ bump_attempts() {
 	"$TASKFILE_SH" "$TASKS" set "$1" attempts=+1
 }
 
-# mark row $id blocked with a reason in Notes
+# mark row $id blocked; reason is prepended, existing notes preserved
 mark_blocked() {
-	"$TASKFILE_SH" "$TASKS" set "$1" status=blocked "notes=blocked:$2"
+	local old; old="$(notes_of "$1")"
+	case "$old" in
+		blocked:*) "$TASKFILE_SH" "$TASKS" set "$1" status=blocked "notes=$old" ;;
+		*) "$TASKFILE_SH" "$TASKS" set "$1" status=blocked "notes=blocked:$2 ;; $old" ;;
+	esac
 }
 
 [ -x "$DEVIN" ] || { log "FATAL: devin CLI not found ($DEVIN)"; exit 1; }
@@ -132,6 +228,7 @@ while :; do
 		exit 0
 	fi
 
+	unblock_cascades
 	tid="$(next_task)"
 	if [ -z "$tid" ]; then
 		log "no pending/in_progress tasks remain — all done"
@@ -152,6 +249,7 @@ while :; do
 		continue
 	fi
 
+	state_before="$(repo_state)"
 	log ">>> starting run for task $tid (attempt $((att+1)), tree mem cap ${MEM_LIMIT_MB}MB, timeout ${RUN_TIMEOUT}s)"
 	(
 		cd "$REPO" || exit 1
@@ -198,8 +296,12 @@ while :; do
 
 	cur="$(next_task)"
 	if [ "$cur" = "$tid" ]; then
-		bump_attempts "$tid"
-		log "task $tid still unfinished (rc=$rc) — attempt bumped, restarting in ${COOLDOWN}s"
+		if [ "$(repo_state)" != "$state_before" ]; then
+			log "task $tid still selected but repo changed — checkpoint run, attempt NOT bumped (rc=$rc)"
+		else
+			bump_attempts "$tid"
+			log "task $tid still unfinished with no repo change (rc=$rc) — attempt bumped"
+		fi
 		sleep "$COOLDOWN"
 	else
 		log "task $tid finished (next: ${cur:-none})"
