@@ -79,6 +79,10 @@
  *                        https://<id>.chromiumapp.org/<path>,
  *                        synchronous + ungated); every other member
  *                        stays under the typed-unsupported wildcard
+ *   chrome.dom         — BW01: openOrClosedShadowRoot answers the
+ *                        element's reachable shadow root (open
+ *                        roots only — a JS realm cannot see closed
+ *                        ones); the rest typed unsupported
  *   other absent ns     — unsupportedNs(): calls answer typed errors,
  *                         on* event registration is recorded
  *
@@ -2594,6 +2598,10 @@
     if (typeof chrome !== 'undefined') {
         var realTabs = chrome.tabs || {};
         var tabsNs = { __arktosShim: true };
+        // BW01: Chrome's tabs.TAB_ID_NONE sentinel — Bitwarden's
+        // background compares sender tab ids against it; undefined
+        // would silently answer 'not TAB_ID_NONE' for dead ids.
+        tabsNs.TAB_ID_NONE = -1;
         for (var te = 0; te < tabsEvents.length; ++te) {
             // Shim events replace inert/absent event objects — EXT16
             // pushes real browser signals into them via hostEvent.
@@ -5619,6 +5627,42 @@
                           }
                       }),
                       false);
+        // BW01: chrome.dom — Chromium binds this namespace for
+        // extension contexts (its only published member is
+        // openOrClosedShadowRoot, which Bitwarden's autofill scripts
+        // call to walk shadow DOM).  A JS realm can only reach OPEN
+        // shadow roots — closed ones are unreachable by any script —
+        // so the member answers element.shadowRoot: the real value
+        // for open roots, null where the root is closed or absent
+        // (the same answer the page's own traversal would get).  A
+        // first-call note keeps the closed-root limitation visible;
+        // every other member stays under the typed-unsupported
+        // wildcard.
+        if (chrome.dom === undefined) {
+            var domNoted = false;
+            installNs('dom',
+                      unsupportedNs('chrome.dom', {
+                          openOrClosedShadowRoot: function (el) {
+                              touch('chrome.dom'
+                                    + '.openOrClosedShadowRoot');
+                              if (!domNoted) {
+                                  domNoted = true;
+                                  note('chrome.dom'
+                                       + '.openOrClosedShadowRoot: '
+                                       + 'open shadow roots only — '
+                                       + 'closed roots are '
+                                       + 'unreachable from script');
+                              }
+                              try {
+                                  return (el && el.shadowRoot)
+                                         || null;
+                              } catch (e) {
+                                  return null;
+                              }
+                          }
+                      }),
+                      false);
+        }
         // windows.* does have a real event source (the EXT16 hub
         // pushes onCreated/onRemoved/onFocusChanged): pre-create them
         // so the typed-error proxy hands out real events without the
@@ -5732,7 +5776,11 @@
         'chrome.gcm.register', 'chrome.tts.getVoices',
         'chrome.tabGroups.onCreated.addListener',
         'chrome.privacy', 'chrome.devtools', 'chrome.fontSettings',
-        'chrome.enterprise'
+        'chrome.enterprise',
+        // BW01: the measured Bitwarden surface — chrome.dom is a
+        // content-script namespace Chromium also binds on extension
+        // pages; the shim serves it (open roots only).
+        'chrome.dom', 'chrome.dom.openOrClosedShadowRoot'
     ];
     shim.audit = function () {
         var missing = [];
@@ -5775,6 +5823,121 @@
         }, 250);
         if (typeof window.addEventListener === 'function')
             window.addEventListener('load', repairInstalls);
+    }
+
+    // --- BW01 opt-in instrumentation -----------------------------------
+    // cfg.nsTrace (ARKTOS_EXTSHIM_NSTRACE): wrap window.chrome in a
+    // get-trap proxy that NOTEs every lookup resolving to undefined —
+    // 'chrome.<ns>' for a missing namespace and, through cached
+    // second-level proxies, 'chrome.<ns>.<member>' for a missing member
+    // on a present one.  This is the measured-boot instrument the lane
+    // iterates with: a failing top-level access that extension code
+    // swallows would otherwise leave no trace.  Never armed in normal
+    // runs.  Member proxies are cached by identity so
+    // `chrome.x === chrome.x` still holds while armed, and a mid-boot
+    // native rewrite (the swap repairInstalls guards) just mints a
+    // fresh trace proxy on the next access — the namespaces the shim
+    // re-asserts BY identity (tabs/management/offscreen/runtime/
+    // extension/storage) keep their raw objects so the asserts do not
+    // fight the proxy.
+    var traceProxied = null;
+    function armNsTrace() {
+        if (window.chrome === traceProxied)
+            return;
+        try {
+            var real = chrome;
+            var managed = { tabs: 1, management: 1, offscreen: 1,
+                            runtime: 1, extension: 1, storage: 1 };
+            var nsCache = {};
+            var seen = {};
+            var getTrap = function (t, prop, prefix, deepen) {
+                var v;
+                try { v = t[prop]; } catch (e) { v = undefined; }
+                if (typeof prop === 'string' && v === undefined
+                        && prop !== 'then'
+                        && !seen[prefix + '.' + prop]) {
+                    seen[prefix + '.' + prop] = 1;
+                    note('ns-trace: ' + prefix + '.' + prop
+                         + ' -> undefined');
+                }
+                if (deepen && v
+                        && (typeof v === 'object'
+                            || typeof v === 'function')
+                        && typeof prop === 'string'
+                        && !managed[prop]) {
+                    var cached = nsCache[prop];
+                    if (cached && cached.val === v)
+                        return cached.proxy;
+                    // A traced member CALL would carry the proxy as
+                    // receiver — harmless for shim closures but an
+                    // 'Illegal invocation' for native bindings that
+                    // check |this|.  Function members go back bound
+                    // to the real namespace so the instrument stays
+                    // transparent to the code it measures.
+                    var fnBound = {};
+                    var sub = new Proxy(v, {
+                        get: function (tt, pp) {
+                            var r = getTrap(tt, pp,
+                                            'chrome.' + prop, false);
+                            if (typeof r === 'function'
+                                    && typeof pp === 'string') {
+                                var fb = fnBound[pp];
+                                if (!fb || fb.orig !== r) {
+                                    fb = { orig: r,
+                                           bound: r.bind(tt) };
+                                    fnBound[pp] = fb;
+                                }
+                                return fb.bound;
+                            }
+                            return r;
+                        }
+                    });
+                    nsCache[prop] = { val: v, proxy: sub };
+                    return sub;
+                }
+                return v;
+            };
+            Object.defineProperty(window, 'chrome', {
+                configurable: true,
+                enumerable: true,
+                writable: true,
+                value: new Proxy(real, {
+                    get: function (t, prop) {
+                        return getTrap(t, prop, 'chrome', true);
+                    },
+                    has: function (t, prop) { return prop in t; },
+                    set: function (t, prop, v) {
+                        t[prop] = v;
+                        return true;
+                    }
+                })
+            });
+            traceProxied = window.chrome;
+            if (traceProxied === real) {
+                // The defineProperty quietly failed — a read-only
+                // accessor kept the native object.  Honest report,
+                // no fake success.
+                note('ns-trace: proxy refused — native chrome '
+                     + 'binding is non-configurable');
+            } else {
+                note('ns-trace: armed — chrome proxy logging '
+                     + 'undefined accesses');
+            }
+        } catch (e) {
+            note('ns-trace: refused — ' + String(e));
+        }
+    }
+    if (cfg.nsTrace) {
+        armNsTrace();
+        // The engine's lazy binding pass can swap window.chrome whole —
+        // repairInstalls already re-runs on a bootstrap interval; the
+        // re-arm rides along and is a no-op while the proxy holds.
+        var traceArms = 0;
+        var traceTimer = window.setInterval(function () {
+            armNsTrace();
+            if (++traceArms >= 40)
+                window.clearInterval(traceTimer);
+        }, 250);
     }
 
     // Diagnostics surface for tests/smokes.

@@ -108,6 +108,14 @@ chrome.wallpaper.*: unsupported
 # Chrome keeps it action-only, so browserAction gets no member at
 # all rather than a stub.
 chrome.action.openPopup: unsupported
+# BW01: chrome.dom is bound for the Bitwarden surface — its single
+# published member, openOrClosedShadowRoot, answers the element's
+# REACHABLE shadow root: the real value for open roots, null where
+# the root is closed or absent (no JS realm can reach a closed
+# root — Chromium's binding uses internal V8 access; a one-time
+# shim note records the limitation).  Any other member stays under
+# the typed-unsupported wildcard.
+chrome.dom.*: unsupported
 chrome.tabs.*: unsupported
 chrome.idle.getAutoLockDelay: unsupported
 chrome.notifications.*: unsupported

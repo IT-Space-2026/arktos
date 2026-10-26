@@ -22,6 +22,10 @@
  *       observe disconnects)
  *   chrome.extension.getURL, chrome.i18n.getMessage — the two
  *       aliases content scripts commonly touch
+ *   chrome.dom.openOrClosedShadowRoot — BW01: the content-script
+ *       namespace Chromium binds natively; answers the element's
+ *       reachable shadow root (open roots only — closed roots are
+ *       unreachable from any JS realm)
  *
  * Per-host scoping: the agent installs chrome.* only when the
  * extension's host_permissions or declared content-script matches
@@ -685,6 +689,31 @@
         inIncognitoContext: false
     };
 
+    // BW01: chrome.dom — the one content-script namespace the agent
+    // surface was missing (Bitwarden's injected autofill payloads call
+    // openOrClosedShadowRoot to walk shadow DOM).  Chromium's native
+    // binding returns closed roots too; no JS realm can reach those,
+    // so the member answers element.shadowRoot — the real value for
+    // open roots, null where the root is closed or absent.  The
+    // limitation is noted once rather than silently believed.
+    var domNoted = false;
+    var dom = {
+        openOrClosedShadowRoot: function (el) {
+            touch('chrome.dom.openOrClosedShadowRoot');
+            if (!domNoted) {
+                domNoted = true;
+                note('chrome.dom.openOrClosedShadowRoot: open '
+                     + 'shadow roots only — closed roots are '
+                     + 'unreachable from script');
+            }
+            try {
+                return (el && el.shadowRoot) || null;
+            } catch (e) {
+                return null;
+            }
+        }
+    };
+
     // chrome.storage — the full content-script surface, proxied to
     // the extension's own backend store over the 'storage' op
     // (gated C++-side on the manifest's 'storage' permission).
@@ -766,7 +795,8 @@
         runtime: runtime,
         extension: extension,
         i18n: i18n,
-        storage: storage
+        storage: storage,
+        dom: dom
     };
     // The page-facing alias content scripts also probe: code gated on
     // `typeof chrome !== 'undefined'` inside the wrapper resolves the

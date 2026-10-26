@@ -468,6 +468,10 @@ QString injectionSource(const QString &extensionId,
     config.insert(QStringLiteral("id"), extensionId);
     config.insert(QStringLiteral("name"), extensionName);
     config.insert(QStringLiteral("inlineCode"), inlineCode);
+    // BW01: opt-in instrument — the shim wraps window.chrome in a
+    // get-trap proxy noting every undefined namespace/member access.
+    config.insert(QStringLiteral("nsTrace"),
+                  qEnvironmentVariableIsSet("ARKTOS_EXTSHIM_NSTRACE"));
     // EXT17: the extension's _locales map rides the config so the
     // shim's getMessage resolves synchronously — the native binding
     // answers '' for every key on this engine (blank popup chrome),
@@ -510,6 +514,8 @@ QString pageInjectionSource(const QString &extensionId,
     config.insert(QStringLiteral("name"), extensionName);
     config.insert(QStringLiteral("kind"), QStringLiteral("page"));
     config.insert(QStringLiteral("scripts"), QJsonArray());
+    config.insert(QStringLiteral("nsTrace"),
+                  qEnvironmentVariableIsSet("ARKTOS_EXTSHIM_NSTRACE"));
     config.insert(QStringLiteral("i18n"),
                   ExtensionShimBackend::i18nMessages(extensionPath));
 
