@@ -277,6 +277,68 @@ bool ExtensionReviewDialog::review(const ExtensionManager::Manifest &manifest,
     return true;
 }
 
+// BW09: the runtime optional-permission prompt.  Same consent rules
+// as the install review — plain-text rendering for manifest-derived
+// strings, Deny as the default — but a single all-or-nothing choice
+// like Chrome's own request() bubble (the extension asked for this
+// exact set; partial consent is not an outcome the API can carry).
+bool ExtensionReviewDialog::requestPermissions(
+        const QString &extensionName,
+        const QStringList &permissions,
+        const QStringList &origins,
+        QWidget *parent)
+{
+    QDialog dialog(parent);
+    dialog.setWindowTitle(tr("Extension Permissions"));
+    QVBoxLayout *layout = new QVBoxLayout(&dialog);
+
+    QString heading = extensionName;
+    if (heading.isEmpty())
+        heading = tr("This extension");
+    layout->addWidget(plainLabel(
+        tr("%1 wants additional access:").arg(heading), &dialog));
+
+    QListWidget *list = new QListWidget(&dialog);
+    list->setObjectName(QLatin1String("requestedPermissionsList"));
+    list->setAccessibleName(tr("Requested permissions"));
+    list->setSelectionMode(QAbstractItemView::NoSelection);
+    list->setFocusPolicy(Qt::NoFocus);
+    list->setMaximumHeight(140);
+    const QIcon warningIcon =
+        dialog.style()->standardIcon(QStyle::SP_MessageBoxWarning);
+    for (const QString &permission : permissions) {
+        QListWidgetItem *item = new QListWidgetItem(
+            describePermission(permission), list);
+        item->setToolTip(permission);
+    }
+    for (const QString &pattern : origins) {
+        QListWidgetItem *item = new QListWidgetItem(
+            describeHostPermission(pattern), list);
+        item->setToolTip(pattern);
+        // Same escalation the review dialog applies: whole-scheme
+        // host access must not read like any other grant.
+        if (ExtensionManager::isBroadHostPattern(pattern))
+            item->setIcon(warningIcon);
+    }
+    layout->addWidget(list);
+
+    QDialogButtonBox *buttons =
+        new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
+    QPushButton *allowButton = buttons->addButton(
+        tr("Allow"), QDialogButtonBox::AcceptRole);
+    allowButton->setObjectName(QLatin1String("allowButton"));
+    // Consent must be deliberate — Deny (Cancel) is the default.
+    buttons->button(QDialogButtonBox::Cancel)->setText(tr("Deny"));
+    buttons->button(QDialogButtonBox::Cancel)->setDefault(true);
+    QObject::connect(buttons, &QDialogButtonBox::accepted,
+                     &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected,
+                     &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    return dialog.exec() == QDialog::Accepted;
+}
+
 QString ExtensionReviewDialog::describePermission(const QString &permission)
 {
     // Chrome-web-store-style wording for the chrome.* permissions Qt

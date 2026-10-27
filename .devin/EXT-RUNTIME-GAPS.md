@@ -12,10 +12,10 @@ matching every member of the namespace (or a dotted sub-path such as
 ## What the categories mean
 
 - **Dead namespace** — Qt WebEngine never registers the binding and
-  Arktos has no surface for it (no OS credential store, no native
-  messaging host, no cookie jar we expose, no ChromeOS services).
-  The shim's typed-error proxy answers every member `unsupported` —
-  the honest reply, never a fake value.
+  Arktos has no surface for it (no OS credential store, no cookie
+  jar we expose, no ChromeOS services).  The shim's typed-error
+  proxy answers every member `unsupported` — the honest reply,
+  never a fake value.
 - **Served namespace, unserved member** — the namespace works but the
   member needs infrastructure that does not exist (store update
   channel, runtime grant UI, icon pipeline, subframe addressing,
@@ -25,8 +25,8 @@ matching every member of the namespace (or a dotted sub-path such as
   origin, vault-locked window factory, duplicate menu id, managed
   storage write). These are listed so an emission is *attributed*,
   not hidden — if one fires where it shouldn't, that is still a bug.
-- **Notes, not gaps** — `chrome.runtime.connectNative`,
-  `chrome.offscreen`/`storage.onChanged` native-binding replacements,
+- **Notes, not gaps** — `chrome.offscreen`/`storage.onChanged`/
+  `storage.managed` native-binding replacements,
   `chrome.extension.getBackgroundPage` (MV3 null), `chrome.privacy`,
   `chrome.idle` scope approximations are `shim.note` diagnostics; they
   are intentionally absent from the block.
@@ -74,7 +74,10 @@ chrome.gcm.*: unsupported
 chrome.input.*: unsupported
 chrome.loginState.*: unsupported
 chrome.mediaPerception.*: unsupported
-chrome.nativeMessaging.*: unsupported
+# nativeMessaging left the dead list with BW08 — connectNative/
+# sendNativeMessage spawn real native-messaging hosts (Chrome-layout
+# manifests, uint32-LE stdio); its typed verdicts live under the
+# domain refusals below.
 chrome.omnibox.*: unsupported
 chrome.platformKeys.*: unsupported
 chrome.power.*: unsupported
@@ -96,8 +99,7 @@ chrome.wallpaper.*: unsupported
 # setAccessLevel/sync-persistence/quota MD19.  What remains typed:
 # tabs members beyond the implemented set (deprecated MV2 spellings
 # executeScript/insertCSS/removeCSS/sendRequest, detectLanguage,
-# print/toggleReaderMode) — sendMessage frameId!=0 is unsupported
-# (page agent lives in the main frame only).  Second-wave status:
+# print/toggleReaderMode).  Second-wave status:
 # webNavigation.onCreatedNavigationTarget landed in MD36 (the
 # createWindow opener tag -> hub correlation); action getUserSettings
 # honesty landed in MD37 — isOnToolbar answers the EXT08 strip's
@@ -108,14 +110,28 @@ chrome.wallpaper.*: unsupported
 # Chrome keeps it action-only, so browserAction gets no member at
 # all rather than a stub.
 chrome.action.openPopup: unsupported
+# BW01: chrome.dom is bound for the Bitwarden surface — its single
+# published member, openOrClosedShadowRoot, answers the element's
+# REACHABLE shadow root: the real value for open roots, null where
+# the root is closed or absent (no JS realm can reach a closed
+# root — Chromium's binding uses internal V8 access; a one-time
+# shim note records the limitation).  Any other member stays under
+# the typed-unsupported wildcard.
+chrome.dom.*: unsupported
+# BW12: tabs.sendMessage {frameId} is routed for real — the
+# delivered-to-frame verdicts are domain refusals below; the
+# wildcard stays for members that never got a surface.
 chrome.tabs.*: unsupported
 chrome.idle.getAutoLockDelay: unsupported
 chrome.notifications.*: unsupported
-chrome.permissions.remove: unsupported
-chrome.permissions.request: unsupported
+# BW09: chrome.permissions is the real optional-grant surface —
+# contains/getAll/request/remove ride the persisted grant record;
+# request's typed 'not-optional' refusal lives with the domain
+# refusals below.
 chrome.runtime.getPackageDirectoryEntry: unsupported
 chrome.runtime.restartAfterDelay: unsupported
-chrome.runtime.sendNativeMessage: unsupported
+# BW08: runtime.sendNativeMessage is served — see its typed
+# verdicts under the domain refusals below.
 chrome.sidePanel.open: unsupported
 chrome.sidebarAction.close: unsupported
 chrome.sidebarAction.open: unsupported
@@ -384,6 +400,42 @@ chrome.offscreen.createDocument: invalid-argument
 chrome.offscreen.createDocument: single-document
 chrome.runtime.openOptionsPage: no-options-page
 chrome.runtime.sendMessage: native-failed
+# BW08: runtime.sendNativeMessage is a one-shot native port —
+# spawn, post, first reply resolves.  Its failures are the
+# connect-time and post-time verdicts of the real session layer:
+# the grant is missing (no-permission), no host manifest resolved
+# (bad-name/not-found/invalid-manifest/unsupported-type), the
+# origin is not in allowed_origins (forbidden), the spawn died
+# (spawn-failed), the host exited mid-conversation (host-exited/
+# disconnected) or the frame itself was malformed (bad-message).
+chrome.runtime.sendNativeMessage: no-permission
+chrome.runtime.sendNativeMessage: bad-name
+chrome.runtime.sendNativeMessage: not-found
+chrome.runtime.sendNativeMessage: invalid-manifest
+chrome.runtime.sendNativeMessage: unsupported-type
+chrome.runtime.sendNativeMessage: forbidden
+chrome.runtime.sendNativeMessage: spawn-failed
+chrome.runtime.sendNativeMessage: host-exited
+chrome.runtime.sendNativeMessage: disconnected
+chrome.runtime.sendNativeMessage: bad-message
+# connectNative's failures surface through lastError+onDisconnect
+# rather than a rejected call, but the underlying bridge op still
+# records the typed verdict under its internal op names.
+chrome.native.connect: no-permission
+chrome.native.connect: invalid-argument
+chrome.native.connect: bad-name
+chrome.native.connect: not-found
+chrome.native.connect: invalid-manifest
+chrome.native.connect: unsupported-type
+chrome.native.connect: forbidden
+chrome.native.connect: spawn-failed
+chrome.native.post: disconnected
+chrome.native.post: no-permission
+chrome.native.disconnect: no-permission
+# BW09: permissions.request refuses what the manifest never
+# declared as optional — Chrome's own verdict for an undeclared
+# ask.
+chrome.permissions.request: not-optional
 chrome.scripting.*: bad-path
 chrome.scripting.*: invalid-argument
 chrome.scripting.*: no-frame
@@ -478,17 +530,16 @@ PrivacyRequestInterceptor), identity.getRedirectURL -> MD35,
 webNavigation.onCreatedNavigationTarget -> MD36, action
 getUserSettings/onUserSettingsChanged -> MD37 (all four landed).
 Unchanged stays:
-runtime grant UI (permissions.request/remove, sidePanel/sidebarAction
-open) is MW-SHELL territory; ChromeOS/device namespaces; MV2-deprecated
+runtime grant UI for the remaining surfaces (sidePanel/sidebarAction
+open — permissions.request/remove landed with BW09) is MW-SHELL
+territory; ChromeOS/device namespaces; MV2-deprecated
 spellings (tabs.executeScript family, declarativeContent); surfaces
 with no engine hook (webRequest response-side + blocking-family
-events, subframe addressing, i18n/tabs detectLanguage).
+events, i18n/tabs detectLanguage — subframe addressing landed with
+BW12).
 
 ## Out of scope by design
 
-- **chrome.runtime.connectNative** — returns a dead port with a
-  `no-native-messaging` note, not a gap entry; there is no native
-  messaging host to bridge to.
 - **chrome.extension.getBackgroundPage / getViews Window objects** —
   MV3 semantics answer null/context-counts; a Window cannot cross
   the channel, and faking one is worse than the honest null.
@@ -498,3 +549,34 @@ events, subframe addressing, i18n/tabs detectLanguage).
 - **chrome.webRequest blocking** — Qt WebEngine's interceptor is
   observe-only at our layer; blocking subscriptions fail typed at
   `subscribe`, covered by the wildcard above.
+
+## What stays dead for Bitwarden (BW10 close-out)
+
+Measured 2026-10-27 on `bitwarden-2026.9.3` — the health verdict is
+`Limited` and honest: the hosted background boots (native service
+worker skipped by design), and the ONLY declared-but-unserved API
+left is `webRequestAuthProvider` (blocking auth challenges — no
+engine hook).  Everything else Bitwarden touches is served or
+answers a typed verdict.  Also dead by design and unreachable in
+practice: FIDO2/passkey flows (`webAuthenticationProxy` — no
+platform authenticator surface), the blocking/response-side
+webRequest family, ChromeOS namespaces, `tabs.detectLanguage` and
+the MV2 spellings, `idle.getAutoLockDelay` (ChromeOS-only), and
+OS-level/`locked` idle state.  `chrome.permissions` consent beyond
+the env-driven headless answer is a real-dialog path that headless
+runs cannot click — recorded, not faked.
+
+## Environment caveats
+
+- `--extension-health-smoke` cannot settle on a polluted shared
+  `~/.qttest` profile: the bundled-consumed marker outlives an
+  engine-cleaned broken Bitwarden install dir, so the bundle never
+  reinstalls and `bwSeen` stays false.  Profile state, not a code
+  regression — run the smoke under an isolated `HOME` for a clean
+  verdict.
+- `bitwardenHandshakeGate`'s four handshake legs measure PASS and
+  print their verdict, then the leg's teardown (window/host
+  teardown on a heavily-driven profile) can outlast QtTest's 300 s
+  watchdog — the verdict is real, the tail is a test-harness
+  timeout, and it leaves the leg's install on the profile (run
+  doc-generating legs under a fresh `HOME`).

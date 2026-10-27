@@ -44,7 +44,9 @@
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
+#include <qprocess.h>
 #include <qregularexpression.h>
+#include <qstandardpaths.h>
 #include <qtimer.h>
 #include <qwidget.h>
 
@@ -145,6 +147,11 @@ QJsonObject ChromeBridge::invoke(const QString &ns,
                 << ns << method << args;
     if (ns == QLatin1String("relay"))
         return invokeRelay(method, args);
+    // BW08: chrome.runtime.connectNative/sendNativeMessage — the
+    // spawned host's lifetime binds to THIS context like a relay
+    // port does, so the dispatch lives at this level too.
+    if (ns == QLatin1String("native"))
+        return invokeNative(method, args);
     // EXT17: getCurrent is context-local — the bridge knows which
     // page asked (a popup hosted inside a real tab resolves to that
     // tab; the hidden background page is never a tab).
@@ -341,8 +348,402 @@ QJsonObject ChromeBridge::invokeRelay(const QString &method,
 }
 
 // ------------------------------------------------------------------
+// BW08 — Chrome native messaging
+// ------------------------------------------------------------------
+// connectNative/sendNativeMessage on the hosted runtime: resolve the
+// host manifest under the Chrome directory layout (our dirs first,
+// then the Chromium/Chrome dirs a real desktop app registers under),
+// spawn argv[0] + the extension origin, and speak uint32-LE
+// length-prefixed JSON on stdio in both directions.  The session's
+// lifetime binds to the calling bridge, so the port dies with its
+// context like Chrome's does.  sendNativeMessage needs no op of its
+// own — the shim builds it on the real port (spawn, post, first
+// reply, close), matching what Chrome does internally.
+//
+// The frame cap is deliberately larger than Chrome's documented 1MB
+// — real vault payloads (Bitwarden desktop IPC) legitimately exceed
+// that.  The bound exists only to keep a corrupt or hostile length
+// header from growing the inbox without limit.
+static constexpr quint32 kMaxNativeHostMessage = 64u * 1024u * 1024u;
+
+QString NativeMessagingSession::userHostsDir()
+{
+    return QStandardPaths::writableLocation(
+               QStandardPaths::GenericConfigLocation)
+        + QLatin1String("/arktos/NativeMessagingHosts");
+}
+
+QStringList NativeMessagingSession::searchDirs()
+{
+    const QString config = QStandardPaths::writableLocation(
+        QStandardPaths::GenericConfigLocation);
+    return {
+        // Ours first — an arktos-registered host outranks the compat
+        // dirs a Chrome/Chromium-targeted desktop app installs into.
+        config + QLatin1String("/arktos/NativeMessagingHosts"),
+        config + QLatin1String("/chromium/NativeMessagingHosts"),
+        config + QLatin1String("/google-chrome/NativeMessagingHosts"),
+        QStringLiteral("/etc/arktos/native-messaging-hosts"),
+        QStringLiteral("/etc/chromium/native-messaging-hosts"),
+        QStringLiteral("/etc/opt/chrome/native-messaging-hosts"),
+    };
+}
+
+bool NativeMessagingSession::resolve(const QString &appName,
+                                     const QString &extensionId,
+                                     QString *program, QString *error)
+{
+    // Chrome's host-name rule: lowercase alnum, '.', '_', '-'; no
+    // leading/trailing dot, no empty components.  '/' can never
+    // appear, so the manifest lookup can never leave the search
+    // dirs.
+    static const QRegularExpression nameRe(
+        QStringLiteral("[a-z0-9_-]+(\\.[a-z0-9_-]+)*"));
+    if (appName.isEmpty() || appName.size() > 128
+            || !nameRe.match(appName).hasMatch()
+            || appName.contains(QLatin1String(".."))) {
+        *error = QStringLiteral("bad-name");
+        return false;
+    }
+    const QString fileName = appName + QLatin1String(".json");
+    QString manifestPath;
+    for (const QString &dir : searchDirs()) {
+        const QString candidate = QDir(dir).filePath(fileName);
+        if (QFileInfo::exists(candidate)) {
+            manifestPath = candidate;
+            break;
+        }
+    }
+    if (manifestPath.isEmpty()) {
+        *error = QStringLiteral("not-found");
+        return false;
+    }
+    QFile file(manifestPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        *error = QStringLiteral("invalid-manifest");
+        return false;
+    }
+    const QJsonObject manifest =
+        QJsonDocument::fromJson(file.readAll()).object();
+    // Chrome requires the manifest's own 'name' to equal the
+    // requested host — a mismatch means the file belongs to
+    // another registration.
+    if (manifest.isEmpty()
+            || manifest.value(QLatin1String("name")).toString()
+                   != appName) {
+        *error = QStringLiteral("invalid-manifest");
+        return false;
+    }
+    const QString type =
+        manifest.value(QLatin1String("type")).toString();
+    if (!type.isEmpty() && type != QLatin1String("stdio")) {
+        *error = QStringLiteral("unsupported-type");
+        return false;
+    }
+    QString path = manifest.value(QLatin1String("path")).toString();
+    if (path.isEmpty()) {
+        *error = QStringLiteral("invalid-manifest");
+        return false;
+    }
+    if (QDir::isRelativePath(path))
+        path = QDir(QFileInfo(manifestPath).absolutePath())
+            .absoluteFilePath(path);
+    const QFileInfo exe(path);
+    if (!exe.exists() || !exe.isFile() || !exe.isExecutable()) {
+        // A manifest pointing at nothing runnable answers like an
+        // absent host — Chrome reports it the same way.
+        *error = QStringLiteral("not-found");
+        return false;
+    }
+    const QString origin = QStringLiteral("chrome-extension://")
+        + extensionId + QLatin1Char('/');
+    const QJsonArray allowed =
+        manifest.value(QLatin1String("allowed_origins")).toArray();
+    if (!allowed.contains(QJsonValue(origin))) {
+        *error = QStringLiteral("forbidden");
+        return false;
+    }
+    *program = exe.absoluteFilePath();
+    return true;
+}
+
+NativeMessagingSession::NativeMessagingSession(
+        const QString &extensionId, const QString &appName,
+        QObject *parent)
+    : QObject(parent)
+    , m_extensionId(extensionId)
+    , m_appName(appName)
+{
+}
+
+NativeMessagingSession::~NativeMessagingSession()
+{
+    stop();
+}
+
+void NativeMessagingSession::start(const QString &program)
+{
+    m_process = new QProcess(this);
+    m_process->setProgram(program);
+    // Chrome's spawn contract: argv[1] is the calling extension's
+    // origin (the --parent-window flag is Windows-only there).
+    m_process->setArguments(
+        {QStringLiteral("chrome-extension://") + m_extensionId
+         + QLatin1Char('/')});
+    m_process->setProcessChannelMode(QProcess::SeparateChannels);
+    connect(m_process, &QProcess::readyReadStandardOutput, this,
+            &NativeMessagingSession::drainStdout);
+    connect(m_process, &QProcess::started, this, [this]() {
+        // Frames posted while the spawn was still in flight flush
+        // here — the shim posts immediately after connect, so this
+        // race is the common case, not an edge.
+        if (!m_outbox.isEmpty()
+                && m_process->state() == QProcess::Running) {
+            m_process->write(m_outbox);
+            m_outbox.clear();
+        }
+    });
+    connect(m_process, &QProcess::errorOccurred, this,
+            [this](QProcess::ProcessError error) {
+        if (m_dead)
+            return;
+        fail(error == QProcess::FailedToStart
+                 ? QStringLiteral("spawn-failed")
+                 : QStringLiteral("host-exited"), -1);
+    });
+    connect(m_process,
+            qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+            this, [this](int code, QProcess::ExitStatus) {
+        if (m_dead)
+            return;
+        // A clean exit disconnects the port exactly like a crash —
+        // 'host-exited' is the honest answer either way.  Frames the
+        // host flushed before EOF still deliver first.
+        drainStdout();
+        if (!m_dead)
+            fail(QStringLiteral("host-exited"), code);
+    });
+    m_process->start();
+}
+
+void NativeMessagingSession::post(const QJsonValue &message)
+{
+    if (m_dead || !m_process
+            || m_process->state() == QProcess::NotRunning)
+        return;
+    QByteArray body;
+    if (message.isObject()) {
+        body = QJsonDocument(message.toObject())
+            .toJson(QJsonDocument::Compact);
+    } else if (message.isArray()) {
+        body = QJsonDocument(message.toArray())
+            .toJson(QJsonDocument::Compact);
+    } else {
+        // Scalars serialize through a one-element array peel —
+        // Chrome accepts any JSON-serializable message value.
+        const QByteArray wrapped = QJsonDocument(QJsonArray{message})
+            .toJson(QJsonDocument::Compact);
+        body = wrapped.mid(1, wrapped.size() - 2);
+    }
+    QByteArray frame(4, Qt::Uninitialized);
+    qToLittleEndian(quint32(body.size()),
+                    reinterpret_cast<uchar *>(frame.data()));
+    frame.append(body);
+    if (m_process->state() == QProcess::Running) {
+        m_process->write(frame);
+    } else {
+        // Still Starting — queue, never drop (see m_outbox).
+        if (m_outbox.size() + frame.size()
+                < qint64(kMaxNativeHostMessage))
+            m_outbox.append(frame);
+    }
+}
+
+void NativeMessagingSession::stop()
+{
+    if (m_dead)
+        return;
+    m_dead = true;
+    if (!m_process)
+        return;
+    m_process->disconnect(this);
+    m_process->closeWriteChannel();
+    if (m_process->state() != QProcess::NotRunning) {
+        m_process->terminate();
+        if (!m_process->waitForFinished(2000))
+            m_process->kill();
+    }
+}
+
+void NativeMessagingSession::drainStdout()
+{
+    if (!m_process)
+        return;
+    m_inbox.append(m_process->readAllStandardOutput());
+    while (!m_dead) {
+        if (m_inbox.size() < 4)
+            return;
+        const quint32 len = qFromLittleEndian<quint32>(
+            reinterpret_cast<const uchar *>(m_inbox.constData()));
+        if (len > kMaxNativeHostMessage) {
+            fail(QStringLiteral("bad-message"), -1);
+            return;
+        }
+        if (m_inbox.size() < qint64(4) + qint64(len))
+            return;
+        const QByteArray body = m_inbox.mid(4, qsizetype(len));
+        m_inbox.remove(0, qsizetype(4) + qsizetype(len));
+        // Chrome's protocol expects a JSON object per frame — a
+        // scalar or malformed payload is a protocol error, not a
+        // message.
+        const QJsonDocument doc = QJsonDocument::fromJson(body);
+        if (doc.isObject())
+            emit message(doc.object());
+        else if (doc.isArray())
+            emit message(doc.array());
+        else {
+            fail(QStringLiteral("bad-message"), -1);
+            return;
+        }
+    }
+}
+
+void NativeMessagingSession::fail(const QString &code, int exitCode)
+{
+    if (m_dead)
+        return;
+    m_dead = true;
+    if (m_process && m_process->state() != QProcess::NotRunning) {
+        m_process->disconnect(this);
+        m_process->kill();
+        m_process->waitForFinished(500);
+    }
+    emit disconnected(code, exitCode);
+}
+
+// BW08: 'native' — the extension's 'nativeMessaging' grant is
+// permission gated (an optional grant stays inert until
+// chrome.permissions.request consents it — BW09 wires the real
+// consent), so an ungranted call fails 'no-permission' and
+// never silently works.  Resolution failures return their typed
+// code synchronously — the shim turns them into an immediate
+// onDisconnect with Chrome-worded lastError, the same shape a
+// late host exit produces asynchronously.
+QJsonObject ChromeBridge::invokeNative(const QString &method,
+                                       const QJsonObject &args)
+{
+    auto ok = [](const QJsonValue &v = QJsonValue()) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), true);
+        if (!v.isUndefined())
+            o.insert(QStringLiteral("result"), v);
+        return o;
+    };
+    auto err = [](const QString &code) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"), code);
+        return o;
+    };
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    if (!runtime
+            || !runtime->hasExtensionPermission(
+                m_extensionId, QStringLiteral("nativeMessaging")))
+        return err(QStringLiteral("no-permission"));
+    const QString portId =
+        args.value(QStringLiteral("portId")).toString();
+    if (method == QLatin1String("connect")) {
+        const QString app =
+            args.value(QStringLiteral("app")).toString();
+        if (app.isEmpty() || portId.isEmpty()
+                || m_nativePorts.contains(portId))
+            return err(QStringLiteral("invalid-argument"));
+        QString program, error;
+        if (!NativeMessagingSession::resolve(app, m_extensionId,
+                                             &program, &error))
+            return err(error);
+        auto *session =
+            new NativeMessagingSession(m_extensionId, app, this);
+        connect(session, &NativeMessagingSession::message, this,
+                [this, portId](const QJsonValue &msg) {
+            emit hostEvent(QStringLiteral("__arktos.nativeMessage"),
+                QJsonObject{{QStringLiteral("portId"), portId},
+                            {QStringLiteral("msg"), msg}});
+        });
+        connect(session, &NativeMessagingSession::disconnected, this,
+                [this, portId](const QString &error, int exitCode) {
+            if (NativeMessagingSession *s =
+                    m_nativePorts.take(portId))
+                s->deleteLater();
+            emit hostEvent(
+                QStringLiteral("__arktos.nativeDisconnect"),
+                QJsonObject{{QStringLiteral("portId"), portId},
+                            {QStringLiteral("error"), error},
+                            {QStringLiteral("exit"), exitCode}});
+        });
+        m_nativePorts.insert(portId, session);
+        session->start(program);
+        return ok();
+    }
+    if (method == QLatin1String("post")) {
+        NativeMessagingSession *session = m_nativePorts.value(portId);
+        if (!session)
+            return err(QStringLiteral("disconnected"));
+        session->post(args.value(QStringLiteral("msg")));
+        return ok();
+    }
+    if (method == QLatin1String("disconnect")) {
+        if (NativeMessagingSession *session =
+                m_nativePorts.take(portId)) {
+            session->stop();
+            session->deleteLater();
+        }
+        return ok();
+    }
+    return err(QStringLiteral("unimplemented"));
+}
+
+// ------------------------------------------------------------------
 // ExtensionBackgroundHost
 // ------------------------------------------------------------------
+
+// BW13 — the shared clipboard-grant predicate (the header carries
+// the contract).  Required permissions plus BW09's consented
+// optional grants: an unconsented optional declaration stays inert.
+bool extensionChromeClipboardGranted(const QString &extensionId)
+{
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    return runtime->hasExtensionPermission(
+                extensionId, QLatin1String("clipboardRead"))
+        || runtime->hasExtensionPermission(
+                extensionId, QLatin1String("clipboardWrite"));
+}
+
+// BW13 — extension chrome's permission verdict (the header carries
+// the contract).  The hosted background, its offscreen documents,
+// the action popup and the probe pages all route permissionRequested
+// here: extension chrome is not a WebPage, so SEC05's broker never
+// sees these requests and an unanswered one would hang.
+void resolveExtensionChromePermission(
+        const QString &extensionId,
+        const QWebEnginePermission &permission)
+{
+    if (!permission.isValid())
+        return;
+    const bool grant =
+        permission.permissionType()
+            == QWebEnginePermission::PermissionType::ClipboardReadWrite
+        && permission.origin().scheme()
+               == QLatin1String("chrome-extension")
+        && permission.origin().host() == extensionId
+        && extensionChromeClipboardGranted(extensionId);
+    if (grant)
+        permission.grant();
+    else
+        permission.deny();
+}
 
 namespace {
 
@@ -369,6 +770,25 @@ public:
         // PRIV07 bookkeeping — same no-op-today rule as
         // ExtensionChromePage (extensions refuse OTR loads).
         BrowserProfile::trackPrivateProfilePage(this);
+        // BW13: same verdict the popup/probe pages get — clipboard
+        // is granted iff the manifest declared it; every other
+        // feature denies typed instead of hanging unanswered.
+        connect(this, &QWebEnginePage::permissionRequested, this,
+                [this](const QWebEnginePermission &permission) {
+            resolveExtensionChromePermission(m_extensionId,
+                                             permission);
+        });
+        // BW13: Chrome wires an extension's declared clipboardRead/
+        // clipboardWrite to the renderer's AllowReadFromClipboard/
+        // AllowWriteToClipboard content-settings hooks; Qt's per-page
+        // attribute is the same switch.  execCommand('copy') — the
+        // offscreen-document path Bitwarden actually uses — reaches
+        // the real clipboard for grant-holders; navigator.clipboard
+        // in a hidden context still hits Blink's focus gate (Chrome
+        // parity, crbug.com/1404835), never silently faked.
+        settings()->setAttribute(
+            QWebEngineSettings::JavascriptCanAccessClipboard,
+            extensionChromeClipboardGranted(m_extensionId));
         // ER20: extension chrome is not web content — the profile's
         // JavascriptEnabled preference governs pages, never extension
         // contexts (Chrome parity; devtoolswindow.cpp does the same
@@ -468,6 +888,10 @@ QString injectionSource(const QString &extensionId,
     config.insert(QStringLiteral("id"), extensionId);
     config.insert(QStringLiteral("name"), extensionName);
     config.insert(QStringLiteral("inlineCode"), inlineCode);
+    // BW01: opt-in instrument — the shim wraps window.chrome in a
+    // get-trap proxy noting every undefined namespace/member access.
+    config.insert(QStringLiteral("nsTrace"),
+                  qEnvironmentVariableIsSet("ARKTOS_EXTSHIM_NSTRACE"));
     // EXT17: the extension's _locales map rides the config so the
     // shim's getMessage resolves synchronously — the native binding
     // answers '' for every key on this engine (blank popup chrome),
@@ -510,6 +934,8 @@ QString pageInjectionSource(const QString &extensionId,
     config.insert(QStringLiteral("name"), extensionName);
     config.insert(QStringLiteral("kind"), QStringLiteral("page"));
     config.insert(QStringLiteral("scripts"), QJsonArray());
+    config.insert(QStringLiteral("nsTrace"),
+                  qEnvironmentVariableIsSet("ARKTOS_EXTSHIM_NSTRACE"));
     config.insert(QStringLiteral("i18n"),
                   ExtensionShimBackend::i18nMessages(extensionPath));
 
@@ -1302,6 +1728,12 @@ void ExtensionBackgroundRuntime::syncNow()
         if (!desired.contains(id)) {
             m_extPermissions.remove(id);
             m_extHostPermissions.remove(id);
+            // BW09: the in-memory grant set goes with the context —
+            // the persisted record survives a disable (Chrome
+            // parity) and only uninstall's dropExtensionGrants erases
+            // it.
+            m_extGrantedPerms.remove(id);
+            m_extGrantedOrigins.remove(id);
         }
     }
 
@@ -1349,8 +1781,8 @@ void ExtensionBackgroundRuntime::syncNow()
         // read the review path uses (rc_ext_manifest_check under
         // rustcore) — never a raw JSON parse here.
         const ExtensionManager::Manifest manifest =
-            ExtensionManager::inspectManifest(want.path);
-        if (!manifest.valid || manifest.backgroundScripts.isEmpty()) {
+            ExtensionManager::inspectDeclaredManifest(want.path);
+        if (!manifest.valid) {
             m_noBackground.insert(id);
             continue;
         }
@@ -1358,10 +1790,53 @@ void ExtensionBackgroundRuntime::syncNow()
         // manifest's declared permissions.  ER16: REQUIRED only —
         // manifest.permissions merges optional_permissions in, and an
         // optional grant is inert until chrome.permissions.request
-        // consents it (typed unsupported in this runtime), so it must
-        // never unlock a gated call or event family.
+        // consents it, so it must never unlock a gated call or event
+        // family on its own.  BW13: snapshot the whole desired set,
+        // not just background carriers — a background-less
+        // extension's chrome pages (its action popup) resolve
+        // permission requests off the same map.
         m_extPermissions.insert(id, manifest.requiredPermissions);
         m_extHostPermissions.insert(id, manifest.hostPermissions);
+        // BW09: consented optional grants re-arm with the extension —
+        // Chrome persists permissions.request() outcomes across
+        // sessions.  The record is persona-scoped like the regscripts
+        // one and intersected with what the manifest still declares
+        // optional, so an update dropping a declaration drops the
+        // grant too.
+        {
+            QStringList optionalDeclared = manifest.permissions;
+            for (const QString &required : manifest.requiredPermissions)
+                optionalDeclared.removeAll(required);
+            QStringList optionalOrigins;
+            for (const QJsonValue &v : ExtensionManager
+                     ::declaredManifestJson(want.path)
+                     .value(QStringLiteral("optional_host_permissions"))
+                     .toArray())
+                optionalOrigins.append(v.toString());
+            ProfileSettings grants(BrowserProfile::profileIdFor(
+                want.profile));
+            QStringList keptPerms, keptOrigins;
+            for (const QString &grant : grants.value(
+                     QStringLiteral("extensions/optperms/") + id)
+                     .toStringList()) {
+                if (optionalDeclared.contains(grant)
+                        && !keptPerms.contains(grant))
+                    keptPerms.append(grant);
+            }
+            for (const QString &grant : grants.value(
+                     QStringLiteral("extensions/opthosts/") + id)
+                     .toStringList()) {
+                if (optionalOrigins.contains(grant)
+                        && !keptOrigins.contains(grant))
+                    keptOrigins.append(grant);
+            }
+            m_extGrantedPerms.insert(id, keptPerms);
+            m_extGrantedOrigins.insert(id, keptOrigins);
+        }
+        if (manifest.backgroundScripts.isEmpty()) {
+            m_noBackground.insert(id);
+            continue;
+        }
         if (!want.profile)
             continue;
         auto *host = new ExtensionBackgroundHost(
@@ -1853,7 +2328,19 @@ void ExtensionBackgroundRuntime::unregisterRelayContext(
             continue;
         if (ends.isEmpty()) {
             m_portEnds.remove(chan);
+            m_parkedPortMsgs.remove(chan);
             continue;
+        }
+        auto pit = m_parkedPortMsgs.find(chan);
+        if (pit != m_parkedPortMsgs.end()) {
+            QList<ParkedPortMsg> &parked = pit.value();
+            for (int i = parked.size() - 1; i >= 0; --i) {
+                if (!parked.at(i).sender
+                        || parked.at(i).sender == bridge)
+                    parked.removeAt(i);
+            }
+            if (parked.isEmpty())
+                m_parkedPortMsgs.erase(pit);
         }
         for (const PortEnd &end : std::as_const(ends)) {
             if (end.target) {
@@ -1885,6 +2372,10 @@ bool ExtensionBackgroundRuntime::hasRelayContext(
 constexpr int kMaxRelayPending = 512;
 constexpr int kMaxPortEndsPerChan = 64;
 constexpr int kMaxPortChans = 1024;
+// BW10: parked connect-time posts — Chrome's port transport queues
+// messages the caller posts before the remote end has accepted, so
+// the cap exists only to bound a chan that is never accepted.
+constexpr int kMaxParkedPortMsgsPerChan = 64;
 
 int ExtensionBackgroundRuntime::relaySend(ChromeBridge *from,
                                           const QString &mid,
@@ -2000,6 +2491,7 @@ int ExtensionBackgroundRuntime::relayPortConnect(
         return 0;
     }
     ends.append(PortEnd{from, portId});
+    drainParkedPortMsgs(chan, from, portId);
     // A complete MessageSender — extension handlers gate on
     // sender.origin == chrome.runtime.getURL('') (Bitwarden's
     // senderIsInternal drops the session port otherwise).  The id is
@@ -2052,6 +2544,61 @@ void ExtensionBackgroundRuntime::relayPortAccept(
         return;
     }
     ends.append(PortEnd{accepter, portId});
+    drainParkedPortMsgs(chan, accepter, portId);
+}
+
+void ExtensionBackgroundRuntime::parkPortMessage(
+        QObject *from, const QString &chan, const QString &portId,
+        const QJsonValue &msg)
+{
+    QList<ParkedPortMsg> &parked = m_parkedPortMsgs[chan];
+    if (parked.size() >= kMaxParkedPortMsgsPerChan)
+        return;
+    parked.append(ParkedPortMsg{from, portId, msg});
+}
+
+void ExtensionBackgroundRuntime::drainParkedPortMsgs(
+        const QString &chan, QObject *target, const QString &portId)
+{
+    auto it = m_parkedPortMsgs.find(chan);
+    if (it == m_parkedPortMsgs.end() || !target)
+        return;
+    // A connect is one port pair: the first remote end to register
+    // consumes the posts parked since the connect went out — a later
+    // accepter is a different pair and sees none of them.  The new
+    // end never receives its own posts back either way.
+    QList<ParkedPortMsg> keep;
+    for (const ParkedPortMsg &p : std::as_const(it.value())) {
+        if (p.sender == target && p.senderPortId == portId) {
+            keep.append(p);
+            continue;
+        }
+        emitToEnd(target, QStringLiteral("__arktos.portMessage"),
+                  QJsonObject{{QStringLiteral("portId"), portId},
+                              {QStringLiteral("msg"), p.msg}});
+        if (auto *cb = qobject_cast<ChromeBridge *>(target))
+            nudgeBridge(cb);
+    }
+    if (keep.isEmpty())
+        m_parkedPortMsgs.erase(it);
+    else
+        it.value() = keep;
+}
+
+void ExtensionBackgroundRuntime::dropParkedPortMsgs(
+        const QString &chan, QObject *sender, const QString &portId)
+{
+    auto it = m_parkedPortMsgs.find(chan);
+    if (it == m_parkedPortMsgs.end())
+        return;
+    QList<ParkedPortMsg> &parked = it.value();
+    for (int i = parked.size() - 1; i >= 0; --i) {
+        const ParkedPortMsg &p = parked.at(i);
+        if (p.sender == sender && p.senderPortId == portId)
+            parked.removeAt(i);
+    }
+    if (parked.isEmpty())
+        m_parkedPortMsgs.erase(it);
 }
 
 int ExtensionBackgroundRuntime::relayPortMessage(
@@ -2079,6 +2626,11 @@ int ExtensionBackgroundRuntime::relayPortMessage(
         if (auto *cb = qobject_cast<ChromeBridge *>(end.target))
             nudgeBridge(cb);
     }
+    // BW10: posted before the remote end registered (the
+    // connect()->postMessage() same-tick race) — park it like
+    // Chrome's transport queue; the end's registration drains it.
+    if (delivered == 0 && !ends.isEmpty())
+        parkPortMessage(from, chan, portId, msg);
     return delivered;
 }
 
@@ -2097,8 +2649,10 @@ void ExtensionBackgroundRuntime::relayPortDisconnect(
                 && ends.at(i).localPortId == portId)
             ends.removeAt(i);
     }
+    dropParkedPortMsgs(chan, from, portId);
     if (ends.isEmpty()) {
         m_portEnds.erase(it);
+        m_parkedPortMsgs.remove(chan);
         return;
     }
     for (const PortEnd &end : std::as_const(ends)) {
@@ -2287,21 +2841,108 @@ void scrubObject(QJsonObject &object)
 
 } // namespace
 
+// BW09: a consented optional grant unlocks exactly what the same
+// REQUIRED declaration would — required ∪ granted is the gate set
+// every permission-scoped call/event checks.
 bool ExtensionBackgroundRuntime::hasExtensionPermission(
         const QString &extensionId, const QString &permission) const
 {
-    return m_extPermissions.value(extensionId)
-        .contains(permission);
+    return m_extPermissions.value(extensionId).contains(permission)
+        || m_extGrantedPerms.value(extensionId).contains(permission);
+}
+
+QStringList ExtensionBackgroundRuntime::grantedOptionalPermissions(
+        const QString &extensionId) const
+{
+    return m_extGrantedPerms.value(extensionId);
+}
+
+QStringList ExtensionBackgroundRuntime::grantedOptionalOrigins(
+        const QString &extensionId) const
+{
+    return m_extGrantedOrigins.value(extensionId);
+}
+
+QStringList ExtensionBackgroundRuntime::hostPermissionsFor(
+        const QString &extensionId) const
+{
+    QStringList out = m_extHostPermissions.value(extensionId);
+    for (const QString &granted : m_extGrantedOrigins.value(extensionId)) {
+        if (!out.contains(granted))
+            out.append(granted);
+    }
+    return out;
+}
+
+void ExtensionBackgroundRuntime::persistOptionalGrants(
+        const QString &extensionId)
+{
+    ProfileSettings settings(regProfileId(extensionId));
+    const QString permKey = QStringLiteral("extensions/optperms/")
+        + extensionId;
+    const QString hostKey = QStringLiteral("extensions/opthosts/")
+        + extensionId;
+    const QStringList perms = m_extGrantedPerms.value(extensionId);
+    const QStringList origins = m_extGrantedOrigins.value(extensionId);
+    if (perms.isEmpty())
+        settings.remove(permKey);
+    else
+        settings.setValue(permKey, perms);
+    if (origins.isEmpty())
+        settings.remove(hostKey);
+    else
+        settings.setValue(hostKey, origins);
+}
+
+void ExtensionBackgroundRuntime::grantOptionalPermissions(
+        const QString &extensionId, const QStringList &permissions,
+        const QStringList &origins)
+{
+    QStringList &perms = m_extGrantedPerms[extensionId];
+    for (const QString &grant : permissions) {
+        if (!perms.contains(grant))
+            perms.append(grant);
+    }
+    QStringList &orig = m_extGrantedOrigins[extensionId];
+    for (const QString &grant : origins) {
+        if (!orig.contains(grant))
+            orig.append(grant);
+    }
+    persistOptionalGrants(extensionId);
+}
+
+void ExtensionBackgroundRuntime::revokeOptionalPermissions(
+        const QString &extensionId, const QStringList &permissions,
+        const QStringList &origins)
+{
+    QStringList &perms = m_extGrantedPerms[extensionId];
+    for (const QString &grant : permissions)
+        perms.removeAll(grant);
+    QStringList &orig = m_extGrantedOrigins[extensionId];
+    for (const QString &grant : origins)
+        orig.removeAll(grant);
+    persistOptionalGrants(extensionId);
+}
+
+void ExtensionBackgroundRuntime::dropExtensionGrants(
+        const QString &extensionId)
+{
+    m_extGrantedPerms.remove(extensionId);
+    m_extGrantedOrigins.remove(extensionId);
+    ProfileSettings settings(regProfileId(extensionId));
+    settings.remove(QStringLiteral("extensions/optperms/")
+                    + extensionId);
+    settings.remove(QStringLiteral("extensions/opthosts/")
+                    + extensionId);
 }
 
 bool ExtensionBackgroundRuntime::seesUrls(const QString &extensionId,
                                           const QString &url) const
 {
-    if (m_extPermissions.value(extensionId)
-            .contains(QLatin1String("tabs")))
+    if (hasExtensionPermission(extensionId, QLatin1String("tabs")))
         return true;
     const QUrl qurl(QString::fromUtf8(url.toUtf8()));
-    for (const QString &pattern : m_extHostPermissions.value(extensionId)) {
+    for (const QString &pattern : hostPermissionsFor(extensionId)) {
         if (hostCovers(pattern, qurl))
             return true;
     }
@@ -2315,8 +2956,7 @@ bool ExtensionBackgroundRuntime::seesUrls(const QString &extensionId,
 bool ExtensionBackgroundRuntime::requestVisibleTo(
         const QString &extensionId, const QUrl &url) const
 {
-    for (const QString &pattern :
-             m_extHostPermissions.value(extensionId)) {
+    for (const QString &pattern : hostPermissionsFor(extensionId)) {
         if (hostCovers(pattern, url))
             return true;
     }
@@ -2444,7 +3084,7 @@ int ExtensionBackgroundRuntime::fanOut(
         if (!onlyExtensionId.isEmpty() && extId != onlyExtensionId)
             continue;
         if (!gate.isEmpty()
-                && !m_extPermissions.value(extId).contains(gate))
+                && !hasExtensionPermission(extId, gate))
             continue;
         const QJsonObject shaped = shapedPayload(extId, name, payload);
         // MD23: an empty shaped answer is a withhold — coverage
@@ -2476,7 +3116,8 @@ int ExtensionBackgroundRuntime::deliverEvent(
 
 void ExtensionBackgroundRuntime::fanOutStorageChanged(
         const QString &extensionId, const QString &area,
-        const QJsonObject &changes, ChromeBridge *exclude)
+        const QJsonObject &changes, ChromeBridge *exclude,
+        ExtensionPageBridge *excludePage)
 {
     const QJsonObject payload{
         {QStringLiteral("__args"), QJsonArray{changes, area}}};
@@ -2486,6 +3127,31 @@ void ExtensionBackgroundRuntime::fanOutStorageChanged(
                  QStringLiteral("storage.") + area
                      + QStringLiteral(".onChanged"),
                  payload, exclude);
+    // BW11: Chrome fires chrome.storage.onChanged in the content
+    // scripts too — the same change record reaches every live page
+    // agent of this extension through '__arktos.storageChanged'.
+    // Coverage is re-proved at emit: the registry is a hello-time
+    // hint, so a page that navigated off the extension's grants is
+    // skipped here, and 'ext' in the payload scopes the repost to
+    // this extension's agent on multi-extension documents.
+    const QList<QPointer<ExtensionPageBridge>> agents =
+        m_pageAgents.value(extensionId);
+    if (agents.isEmpty())
+        return;
+    const QJsonObject pagePayload{
+        {QStringLiteral("ext"), extensionId},
+        {QStringLiteral("changes"), changes},
+        {QStringLiteral("areaName"), area}};
+    for (const QPointer<ExtensionPageBridge> &agent : agents) {
+        ExtensionPageBridge *page = agent.data();
+        if (!page || page == excludePage)
+            continue;
+        if (!agentCovers(extensionId,
+                         page->page() ? page->page()->url() : QUrl()))
+            continue;
+        emit page->extEvent(
+            QStringLiteral("__arktos.storageChanged"), pagePayload);
+    }
 }
 
 // -------------------------------------------------------------------
@@ -2512,7 +3178,7 @@ bool ExtensionBackgroundRuntime::agentCovers(
     const QString scheme = pageUrl.scheme();
     if (scheme.isEmpty())
         return false;
-    QStringList patterns = m_extHostPermissions.value(extensionId);
+    QStringList patterns = hostPermissionsFor(extensionId);
     if (ExtensionBackgroundHost *host =
             m_hosts.value(extensionId))
         patterns += host->contentScriptMatches();
@@ -2585,27 +3251,31 @@ QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
     if (mid.isEmpty() || msg.isUndefined()
             || !ownsRelayKey(m_extensionId, mid))
         return err(QStringLiteral("invalid-argument"));
-    // options.frameId: the page's channel forwarder lives in the
-    // main frame only — subframe addressing is a documented gap,
-    // answered typed rather than silently mis-delivered to frame 0.
+    // options.frameId: BW12 — a nonzero id addresses exactly one
+    // subframe (frame ids are the DFS positions chrome.scripting
+    // exposes).  The subframe path lives in
+    // deliverTabMessageToFrame — the extEvent push below only
+    // exists on the main frame, so a subframe agent must be
+    // invoked inside its own world directly.  options.documentId
+    // stays typed-unsupported: this runtime never mints Chrome's
+    // per-document handles.
     const QJsonObject opts =
         args.value(QStringLiteral("opts")).toObject();
-    if (opts.contains(QStringLiteral("frameId"))
-            && int(opts.value(QStringLiteral("frameId"))
-                       .toDouble(-1)) != 0)
+    if (opts.contains(QStringLiteral("documentId")))
         return err(QStringLiteral("unsupported"));
+    const int frameId =
+        opts.contains(QStringLiteral("frameId"))
+            ? int(opts.value(QStringLiteral("frameId"))
+                      .toDouble(-1))
+            : 0;
+    if (frameId < 0)
+        return err(QStringLiteral("invalid-argument"));
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
     WebView *view = ExtensionShimBackend::viewForTabId(
         int(args.value(QStringLiteral("id")).toDouble(-1)));
     if (!view || !view->page())
         return err(QStringLiteral("not-found"));
-    if (!runtime->agentCovers(m_extensionId, view->page()->url()))
-        return err(QStringLiteral("no-host-access"));
-    ExtensionPageBridge *page =
-        view->page()->findChild<ExtensionPageBridge *>();
-    if (!page)
-        return err(QStringLiteral("no-receiver"));
     // A Chrome-shaped MessageSender for an extension context: the
     // id is trusted from the bridge; url is the calling document's
     // real url minus our internal marker fragment; no .tab field.
@@ -2620,6 +3290,15 @@ QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
         {QStringLiteral("url"), senderUrl},
         {QStringLiteral("origin"),
          QStringLiteral("chrome-extension://") + m_extensionId}};
+    if (frameId != 0)
+        return deliverTabMessageToFrame(mid, msg, sender,
+                                        view->page(), frameId);
+    if (!runtime->agentCovers(m_extensionId, view->page()->url()))
+        return err(QStringLiteral("no-host-access"));
+    ExtensionPageBridge *page =
+        view->page()->findChild<ExtensionPageBridge *>();
+    if (!page)
+        return err(QStringLiteral("no-receiver"));
     if (!runtime->pageDeliver(page, m_extensionId, mid, msg,
                               sender, this))
         // SEC26-3: a duplicate in-flight mid or a full delivery map
@@ -2651,8 +3330,11 @@ QJsonObject ChromeBridge::invokeTabConnect(const QJsonObject &args)
     if (chan.isEmpty() || portId.isEmpty()
             || !ownsRelayKey(m_extensionId, chan))
         return err(QStringLiteral("invalid-argument"));
-    // connectInfo.frameId/documentId: the page agent lives in the
-    // main frame only — the same documented gap sendMessage answers.
+    // connectInfo.frameId/documentId: a connect's channel rides the
+    // SEC24 postMessage forwarder, which lives on the main frame
+    // only — unlike sendMessage's one-shot BW12 delivery there is
+    // no per-frame invoke path for a long-lived port, so a nonzero
+    // frameId stays typed-unsupported here.
     const QJsonObject opts =
         args.value(QStringLiteral("opts")).toObject();
     if ((opts.contains(QStringLiteral("frameId"))
@@ -3230,6 +3912,164 @@ void ChromeBridge::pollExecResult(const QString &execId, int slot,
                                    worldId, key, triesLeft - 1);
             });
         });
+}
+
+// -------------------------------------------------------------------
+// BW12 — the frame-addressed half of tabs.sendMessage.  The page
+// agent's transport (the SEC24 whitelisted postMessage forwarder)
+// exists on the main frame only, so the '__arktos.deliver' push a
+// frame-0 delivery rides can never reach a subframe agent — the
+// message is generated straight into the addressed frame's
+// AgentWorldId instead: agent.__deliverOneShot fires THAT frame's
+// runtime.onMessage listeners and either settles synchronously on
+// the call's return envelope or parks the answer on
+// window.__arktosDeliverResults[mid] for pollTabDeliver to collect.
+// Both shapes leave as the same '__arktos.deliverResponse' push the
+// channel-routed 'respond' op produces on the main path — the shim
+// cannot tell the two transports apart, which is the point.
+//
+// Frame ids are the DFS positions chrome.scripting exposes (the
+// collectFrames ordering — 0 is the main frame); a position outside
+// the live tree is 'not-found'.  The ER16 per-frame coverage check
+// runs BEFORE any source is generated into the frame's document —
+// a covered top-level page does not smuggle messaging into an
+// uncovered subframe.
+// -------------------------------------------------------------------
+
+void ChromeBridge::finishTabDeliver(const QString &mid,
+                                    const QJsonValue &response,
+                                    bool hadListeners)
+{
+    emit hostEvent(QStringLiteral("__arktos.deliverResponse"),
+                   QJsonObject{{QStringLiteral("mid"), mid},
+                               {QStringLiteral("response"), response},
+                               {QStringLiteral("hadListeners"),
+                                hadListeners}});
+}
+
+void ChromeBridge::pollTabDeliver(const QString &mid,
+                                  QWebEngineFrame frame,
+                                  bool hadListeners, int triesLeft)
+{
+    if (!frame.isValid() || triesLeft <= 0) {
+        // The listener held the channel open past the window — the
+        // honest 'port closed' shape (hadListeners true when the
+        // frame's agent reported a listener set).
+        finishTabDeliver(mid, QJsonValue(QJsonValue::Null),
+                         hadListeners);
+        return;
+    }
+    const QPointer<ChromeBridge> self(this);
+    frame.runJavaScript(
+        QStringLiteral(
+            "(window.__arktosDeliverResults||{})[%1]||null")
+            .arg(jsLiteral(mid)),
+        ExtensionBackgroundRuntime::AgentWorldId,
+        [self, this, mid, frame, hadListeners,
+         triesLeft](const QVariant &value) mutable {
+            if (!self)
+                return;
+            const QJsonObject entry = value.toJsonObject();
+            if (!entry.isEmpty()) {
+                frame.runJavaScript(
+                    QStringLiteral(
+                        "delete (window.__arktosDeliverResults||{})"
+                        "[%1]")
+                        .arg(jsLiteral(mid)),
+                    ExtensionBackgroundRuntime::AgentWorldId);
+                finishTabDeliver(
+                    mid, entry.value(QStringLiteral("response")),
+                    entry.value(QStringLiteral("hadListeners"))
+                        .toBool());
+                return;
+            }
+            QTimer::singleShot(150, this, [self, this, mid, frame,
+                                           hadListeners,
+                                           triesLeft]() {
+                if (self)
+                    pollTabDeliver(mid, frame, hadListeners,
+                                   triesLeft - 1);
+            });
+        });
+}
+
+QJsonObject ChromeBridge::deliverTabMessageToFrame(
+        const QString &mid, const QJsonValue &msg,
+        const QJsonObject &sender, QWebEnginePage *page,
+        int frameId)
+{
+    auto ok = [](const QJsonValue &v = QJsonValue()) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), true);
+        if (!v.isUndefined())
+            o.insert(QStringLiteral("result"), v);
+        return o;
+    };
+    auto err = [](const QString &code) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"), code);
+        return o;
+    };
+    if (!page)
+        return err(QStringLiteral("not-found"));
+    QList<QWebEngineFrame> frames;
+    QList<QUrl> coverUrls;
+    const QWebEngineFrame mainFrame = page->mainFrame();
+    if (mainFrame.isValid())
+        collectFrames(mainFrame, page->url(), &frames, &coverUrls);
+    if (frameId < 0 || frameId >= frames.size())
+        return err(QStringLiteral("not-found"));
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    if (!runtime->agentCovers(m_extensionId, coverUrls.at(frameId)))
+        return err(QStringLiteral("no-host-access"));
+    QWebEngineFrame frame = frames.at(frameId);
+    // The delivery source: invoke the addressed frame's agent entry
+    // point.  A frame whose world never ran the agent (no profile
+    // injection — e.g. an originless document) answers null, which
+    // lands as 'receiving end does not exist' — Chrome's own shape
+    // for a frame with no live listener realm.
+    QJsonObject payload{
+        {QStringLiteral("mid"), mid},
+        {QStringLiteral("msg"), msg},
+        {QStringLiteral("sender"), sender}};
+    QString payloadJson = QString::fromUtf8(
+        QJsonDocument(payload).toJson(QJsonDocument::Compact));
+    // JSON permits raw U+2028/2029 — JS source does not.
+    payloadJson.replace(QChar(0x2028), QStringLiteral("\\u2028"))
+        .replace(QChar(0x2029), QStringLiteral("\\u2029"));
+    const QString source = QStringLiteral(
+        "(function(){var __a=null;"
+        "try{__a=(window.__arktosExtAgents||{})[%1]||null;}"
+        "catch(e){}"
+        "if(__a&&typeof __a.__deliverOneShot==='function')"
+        "return __a.__deliverOneShot(%2);"
+        "return null;})()")
+        .arg(jsLiteral(m_extensionId), payloadJson);
+    const QPointer<ChromeBridge> self(this);
+    frame.runJavaScript(
+        source, ExtensionBackgroundRuntime::AgentWorldId,
+        [self, this, mid, frame](const QVariant &value) {
+            if (!self)
+                return;
+            const QJsonObject envelope = value.toJsonObject();
+            const bool hadListeners =
+                envelope.value(QStringLiteral("hadListeners"))
+                    .toBool();
+            if (envelope.value(QStringLiteral("pending")).toBool()) {
+                // A responder holds the channel — collect the parked
+                // answer (80 * 150ms sits inside the shim's own 15s
+                // safety net).
+                pollTabDeliver(mid, frame, hadListeners, 80);
+                return;
+            }
+            finishTabDeliver(
+                mid,
+                envelope.value(QStringLiteral("response")),
+                hadListeners);
+        });
+    return ok(QJsonObject{{QStringLiteral("delivered"), true}});
 }
 
 // -------------------------------------------------------------------
@@ -3915,7 +4755,7 @@ QJsonObject ExtensionBackgroundRuntime::registerContentScripts(
     // The coverage union agentCovers consults — declared
     // content-script matches count as host access for registration
     // exactly like Chrome treats them.
-    QStringList coverage = m_extHostPermissions.value(extensionId);
+    QStringList coverage = hostPermissionsFor(extensionId);
     if (ExtensionBackgroundHost *host = m_hosts.value(extensionId))
         coverage += host->contentScriptMatches();
 
@@ -4086,7 +4926,7 @@ QJsonObject ExtensionBackgroundRuntime::updateContentScripts(
         merged.append(spec);
     }
 
-    QStringList coverage = m_extHostPermissions.value(extensionId);
+    QStringList coverage = hostPermissionsFor(extensionId);
     if (ExtensionBackgroundHost *host = m_hosts.value(extensionId))
         coverage += host->contentScriptMatches();
     QList<QJsonObject> normalized;
@@ -4544,6 +5384,7 @@ QJsonObject ExtensionBackgroundRuntime::pagePortConnect(
         return pageErr(QStringLiteral("too-many-ends"));
     }
     ends.append(PortEnd{page, portId});
+    drainParkedPortMsgs(chan, page, portId);
     int peers = 0;
     const QJsonObject payload{
         {QStringLiteral("chan"), chan},
@@ -4581,6 +5422,7 @@ QJsonObject ExtensionBackgroundRuntime::pagePortAccept(
         return pageErr(QStringLiteral("too-many-ends"));
     }
     ends.append(PortEnd{page, portId});
+    drainParkedPortMsgs(chan, page, portId);
     return pageOk();
 }
 
@@ -4606,6 +5448,10 @@ QJsonObject ExtensionBackgroundRuntime::pagePortMessage(
         if (auto *cb = qobject_cast<ChromeBridge *>(end.target))
             nudgeBridge(cb);
     }
+    // BW10: posted before the remote end registered — park it like
+    // Chrome's transport queue (see relayPortMessage).
+    if (delivered == 0 && !ends.isEmpty())
+        parkPortMessage(page, chan, portId, msg);
     return pageOk(QJsonObject{{QStringLiteral("delivered"),
                                delivered}});
 }
@@ -4625,8 +5471,10 @@ QJsonObject ExtensionBackgroundRuntime::pagePortDisconnect(
                 && ends.at(i).localPortId == portId)
             ends.removeAt(i);
     }
+    dropParkedPortMsgs(chan, page, portId);
     if (ends.isEmpty()) {
         m_portEnds.erase(it);
+        m_parkedPortMsgs.remove(chan);
         return pageOk();
     }
     for (const PortEnd &end : std::as_const(ends)) {
@@ -4671,6 +5519,7 @@ QJsonObject ExtensionBackgroundRuntime::tabPortConnect(
         return pageErr(QStringLiteral("too-many-ends"));
     }
     ends.append(PortEnd{from, portId});
+    drainParkedPortMsgs(chan, from, portId);
     // The extension-context MessageSender — same construction
     // relayPortConnect stamps: id trusted from the bridge, url the
     // connecting document's real url when a context page exists.
@@ -4697,11 +5546,37 @@ QJsonObject ExtensionBackgroundRuntime::tabPortConnect(
         page->page() ? page->page()->url().toString() : QString()));
 }
 
+void ExtensionBackgroundRuntime::registerPageAgent(
+        const QString &extensionId, ExtensionPageBridge *page)
+{
+    if (extensionId.isEmpty() || !page)
+        return;
+    QList<QPointer<ExtensionPageBridge>> &agents =
+        m_pageAgents[extensionId];
+    for (const QPointer<ExtensionPageBridge> &agent : agents) {
+        if (agent.data() == page)
+            return;
+    }
+    agents.append(QPointer<ExtensionPageBridge>(page));
+}
+
 void ExtensionBackgroundRuntime::unregisterPageContext(
         ExtensionPageBridge *page)
 {
     if (!page)
         return;
+    // Drop the BW11 storage-event registration wherever it sits.
+    for (auto it = m_pageAgents.begin(); it != m_pageAgents.end();) {
+        QList<QPointer<ExtensionPageBridge>> &agents = it.value();
+        for (int i = agents.size() - 1; i >= 0; --i) {
+            if (agents.at(i).data() == page)
+                agents.removeAt(i);
+        }
+        if (agents.isEmpty())
+            it = m_pageAgents.erase(it);
+        else
+            ++it;
+    }
     // Pending sends this page originated die with it — the hosted
     // replies that arrive later find no slot (the page side is gone
     // anyway).
@@ -4739,7 +5614,19 @@ void ExtensionBackgroundRuntime::unregisterPageContext(
             continue;
         if (ends.isEmpty()) {
             m_portEnds.remove(chan);
+            m_parkedPortMsgs.remove(chan);
             continue;
+        }
+        auto pit = m_parkedPortMsgs.find(chan);
+        if (pit != m_parkedPortMsgs.end()) {
+            QList<ParkedPortMsg> &parked = pit.value();
+            for (int i = parked.size() - 1; i >= 0; --i) {
+                if (!parked.at(i).sender
+                        || parked.at(i).sender == page)
+                    parked.removeAt(i);
+            }
+            if (parked.isEmpty())
+                m_parkedPortMsgs.erase(pit);
         }
         for (const PortEnd &end : std::as_const(ends)) {
             if (end.target) {

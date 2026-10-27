@@ -319,10 +319,11 @@ public:
     // implementation comment (page->download auto-accept quirk).
     static void downloadsFileFixup(class DownloadItem *item);
 
-    // ER16: the manifest's REQUIRED permissions — the gate source
-    // for every permission-scoped namespace.  optional_permissions
-    // are inert here: chrome.permissions.request answers typed
-    // unsupported, so an optional grant must never unlock a call.
+    // ER16: the manifest's REQUIRED permissions plus any consented
+    // optional grants (BW09 — chrome.permissions.request() lands
+    // them in the runtime's grant set) — the gate source for every
+    // permission-scoped namespace.  An unconsented optional
+    // declaration stays inert and never unlocks a call.
     QStringList manifestPermissions() const;
     // ER16: a url an extension may put a real tab on — Chrome
     // refuses file:/chrome:/qrc:/foreign-extension documents from

@@ -3165,7 +3165,7 @@ void SettingsDialog::extensionUpdateCheckFinished(
         const ExtensionManager::Manifest installed =
             installedPath.isEmpty()
                 ? ExtensionManager::Manifest()
-                : ExtensionManager::inspectManifest(installedPath);
+                : ExtensionManager::inspectDeclaredManifest(installedPath);
         if (!ExtensionReviewDialog::review(
                 ExtensionManager::inspectManifest(result.savedTo),
                 result.savedTo,

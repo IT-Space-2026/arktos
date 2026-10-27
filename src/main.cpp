@@ -50,6 +50,7 @@
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
 #include "extensionmanager.h"
+#include "extensionshimbackend.h"
 #include "fingerprintprotector.h"
 #include "history.h"
 #include "historymanager.h"
@@ -147,6 +148,7 @@
 #include <QtCore/QProcessEnvironment>
 #include <QtCore/QScopeGuard>
 #include <QtGui/QAbstractTextDocumentLayout>
+#include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QIcon>
 #include <QtGui/QImage>
@@ -177,6 +179,7 @@
 #include <QtWebEngineCore/QWebEngineExtensionInfo>
 #include <QtWebEngineCore/QWebEngineExtensionManager>
 #include <QtWebEngineCore/QWebEngineFindTextResult>
+#include <QtWebEngineCore/QWebEngineFrame>
 #include <QtWebEngineCore/QWebEngineLoadingInfo>
 #include <QtWebEngineCore/QWebEngineProfile>
 #include <QtWebEngineCore/QWebEngineUrlRequestInfo>
@@ -6356,6 +6359,8 @@ int main(int argc, char **argv)
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "extension-otr-smoke",
         "extension-update-smoke", "extension-host-smoke",
+        "extension-storage-smoke", "extension-storage-seed-smoke",
+        "extension-storage-verify-smoke",
         "bitwarden-smoke",
         "mv3-health-smoke", "extension-health-smoke",
         "ua-smoke", "perf-smoke",
@@ -13245,7 +13250,7 @@ int main(int argc, char **argv)
                 "\"name\":\"arktos-smoke-ext\","
                 "\"version\":\"0.1\","
                 "\"description\":\"EXT01 smoke fixture\","
-                "\"permissions\":[\"storage\",\"tabs\",\"nativeMessaging\"],"
+                "\"permissions\":[\"storage\",\"tabs\",\"debugger\"],"
                 "\"host_permissions\":[\"https://*.example.com/*\"],"
                 "\"action\":{\"default_title\":\"smoke\"},"
                 "\"background\":{\"service_worker\":\"sw.js\"}}");
@@ -13269,8 +13274,10 @@ int main(int argc, char **argv)
               "manifest parsed");
         // ER19: permissions the hosted runtime serves leave
         // 'unsupported' for 'unverified' ("partially supported") —
-        // nativeMessaging stays unserved and keeps the raw verdict.
-        check(manifest.unsupported.contains(QLatin1String("nativeMessaging"))
+        // debugger stays unserved (BW08 served nativeMessaging, so
+        // the genuinely-unserved probe moved to it) and keeps the
+        // raw verdict.
+        check(manifest.unsupported.contains(QLatin1String("debugger"))
               && !manifest.unsupported.contains(QLatin1String("tabs"))
               && manifest.unverified.contains(QLatin1String("tabs"))
               && !manifest.unsupported.contains(QLatin1String("storage")),
@@ -13446,11 +13453,76 @@ int main(int argc, char **argv)
                 "\"version\":\"0.1\","
                 "\"description\":\"EXT14 hosted-runtime fixture\","
                 "\"permissions\":[\"storage\",\"tabs\",\"alarms\","
-                "\"webNavigation\",\"contextMenus\","
-                "\"notifications\"],"
+                "\"webNavigation\",\"contextMenus\",\"offscreen\","
+                "\"notifications\",\"nativeMessaging\"],"
+                // BW09: 'privacy' is the fixture's optional grant —
+                // the permissions leg drives
+                // contains=false -> request -> contains=true on it
+                // and its gated get() proves the consent fed the
+                // runtime's grant set.
+                "\"optional_permissions\":[\"privacy\"],"
+                "\"host_permissions\":[\"http://127.0.0.1/*\","
+                "\"http://localhost/*\"],"
+                "\"content_scripts\":[{\"matches\":"
+                "[\"http://127.0.0.1/*\",\"http://localhost/*\"],"
+                "\"js\":[\"cs.js\"],\"run_at\":\"document_start\","
+                "\"all_frames\":false},{\"matches\":"
+                "[\"http://127.0.0.1/*\",\"http://localhost/*\"],"
+                "\"js\":[\"cs_frame.js\"],"
+                "\"run_at\":\"document_start\","
+                "\"all_frames\":true}],"
                 "\"action\":{\"default_popup\":\"popup.html\","
                 "\"default_title\":\"Smoke\"},"
                 "\"background\":{\"service_worker\":\"sw.js\"}}");
+            // BW05: the declared content script — opens an
+            // 'echo-port' long-lived Port at document_start, posts a
+            // ping the background echoes, answers bg->cs posts, and
+            // records its own onDisconnect so the hosted-teardown leg
+            // can read the flag straight out of the agent world.
+            QFile csJs(extDir + QLatin1String("/cs.js"));
+            if (!csJs.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-host-smoke: FAIL"
+                           " (cannot write cs.js)";
+                return 1;
+            }
+            csJs.write(
+                "window.__csLog=[];window.__csDisc=false;\n"
+                "var port=chrome.runtime.connect({name:'echo-port'});\n"
+                "window.__csPort=port;\n"
+                "port.onMessage.addListener(function(m){\n"
+                " window.__csLog.push(m);\n"
+                " if(m&&m.echo)chrome.runtime.sendMessage("
+                "{csSawEcho:m.echo});\n"
+                " if(m&&m.bgPing)port.postMessage({csPong:m.bgPing});\n"
+                "});\n"
+                "port.onDisconnect.addListener(function(){\n"
+                " window.__csDisc=true;});\n"
+                "port.postMessage({ping:'hello-cs'});\n");
+            csJs.close();
+            // BW12: the all_frames content script — answers a
+            // 'frameEcho' one-shot with WHICH frame's listener fired,
+            // so the smoke can prove tabs.sendMessage's frameId
+            // routing reached (only) the addressed frame.
+            // __csFrameReady is the readiness marker the leg polls
+            // inside the subframe's agent world.
+            QFile csFrameJs(extDir + QLatin1String("/cs_frame.js"));
+            if (!csFrameJs.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-host-smoke: FAIL"
+                           " (cannot write cs_frame.js)";
+                return 1;
+            }
+            csFrameJs.write(
+                "window.__csFrameReady=false;\n"
+                "chrome.runtime.onMessage.addListener("
+                "function(m,s,r){\n"
+                " if(m&&m.cmd==='frameEcho'){\n"
+                "  r({from:window===window.top?'main':'sub',\n"
+                "     href:String(location.href)});\n"
+                " }\n"
+                " return false;\n"
+                "});\n"
+                "window.__csFrameReady=true;\n");
+            csFrameJs.close();
             // EXT17: the action popup document — the sibling-page
             // injection must land on it, and its sendMessage must
             // reach the hosted background over the relay.
@@ -13474,6 +13546,37 @@ int main(int argc, char **argv)
             popupJs.write(
                 "self.__popupBootRan = (typeof chrome !== 'undefined'"
                 " && chrome.runtime) ? 'ok' : 'no';\n");
+            // BW07: the offscreen document — createDocument loads it
+            // inside the extension's origin; the same sibling shim
+            // must land there so its own script sees chrome.runtime
+            // and its onMessage listener can answer the hosted
+            // background over the relay.
+            QFile offHtml(extDir + QLatin1String("/off.html"));
+            if (!offHtml.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-host-smoke: FAIL"
+                           " (cannot write off.html)";
+                return 1;
+            }
+            offHtml.write(
+                "<!doctype html><html><body>"
+                "<div id=\"off\">smoke offscreen</div>"
+                "<script src=\"off.js\"></script>"
+                "</body></html>");
+            offHtml.close();
+            QFile offJs(extDir + QLatin1String("/off.js"));
+            if (!offJs.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-host-smoke: FAIL"
+                           " (cannot write off.js)";
+                return 1;
+            }
+            offJs.write(
+                "self.__offBootRan = (typeof chrome !== 'undefined'"
+                " && chrome.runtime) ? 'ok' : 'no';\n"
+                "chrome.runtime.onMessage.addListener("
+                "function(m,s,r){ if(m&&m.offPing){"
+                " r({offPong:true,from:'offscreen-doc'});"
+                " return true; } return false; });\n");
+            offJs.close();
             QFile worker(extDir + QLatin1String("/sw.js"));
             if (!worker.open(QIODevice::WriteOnly)) {
                 qInfo() << "extension-host-smoke: FAIL"
@@ -13514,7 +13617,34 @@ int main(int argc, char **argv)
                 "self.__sawPingHosted=false;\n"
                 "chrome.runtime.onMessage.addListener("
                 "function(m,s,r){ if(m&&m.ping&&m.via==='popup')"
-                "{ self.__sawPingHosted=true; } return false; });\n");
+                "{ self.__sawPingHosted=true; } return false; });\n"
+                // BW05: the echo-port server end.  Records the
+                // accepted connect (sender.tab must ride along),
+                // echoes cs->bg posts, pushes a bg->cs post on
+                // accept, counts disconnects for the tab-close and
+                // teardown legs, and logs the cs's one-shot confirm.
+                "self.__accepted=0;self.__portLog=[];\n"
+                "self.__echoDone=null;self.__csPong=null;\n"
+                "self.__discCount=0;\n"
+                "chrome.runtime.onConnect.addListener("
+                "function(port){ if(port.name!=='echo-port')return;"
+                " ++self.__accepted;"
+                " self.__portLog.push({hasTab:!!(port.sender"
+                "&&port.sender.tab),senderUrl:port.sender"
+                "&&port.sender.url,frameId:port.sender"
+                "&&port.sender.frameId});"
+                " port.onMessage.addListener(function(m,p){"
+                " if(m&&m.ping)p.postMessage({echo:m.ping});"
+                " if(m&&m.csPong)self.__csPong=m.csPong;});"
+                " port.onDisconnect.addListener(function(){"
+                " ++self.__discCount;});"
+                " try{port.postMessage({bgPing:'bg-'+self.__accepted});"
+                " }catch(e){self.__bgPingErr=String(e);}});\n"
+                "chrome.runtime.onMessage.addListener("
+                "function(m,s,r){ if(m&&m.csSawEcho){"
+                " self.__echoDone={echo:m.csSawEcho,"
+                "senderHasTab:!!(s&&s.tab),senderUrl:s&&s.url};}"
+                " return false; });\n");
         }
 
         // Manifest inspector must hand the runtime the script list.
@@ -13534,7 +13664,14 @@ int main(int argc, char **argv)
         // its own bridge; 7 = the popup probe runs; 8 = fixture-only
         // hosted-side ping verification; 9 = the real extension's
         // popup gate inspection; 10 = the autofill attempt against a
-        // loopback login form; 1 = waiting for teardown after
+        // loopback login form; 15 = the BW12 per-frame sendMessage
+        // legs between the BW05 port legs and the reconnect leg;
+        // 17 = the BW13 clipboard legs (both flavors, after
+        // offscreen); 18 = the BW08 native-messaging legs (fixture:
+        // echo/absent/forbidden/host-exit; real: the honest verdict);
+        // 19 = the BW09 permissions legs (consent grant -> gated
+        // call -> revoke -> refused consent);
+        // 1 = waiting for teardown after
         // disable; 2 = the re-enable respawn must reach Ready again.
         auto phase = std::make_shared<int>(0);
         auto hostTicks = std::make_shared<int>(0);
@@ -13545,6 +13682,21 @@ int main(int argc, char **argv)
         auto smokeDrove = std::make_shared<bool>(false);
         auto afDrove = std::make_shared<bool>(false);
         auto afStep = std::make_shared<int>(0);
+        auto afStable = std::make_shared<int>(0);
+        // BW07: the offscreen leg's sub-step + the resolved
+        // bundle-relative document url (fixture 'off.html'; a real
+        // extension's declared document).
+        auto offStep = std::make_shared<int>(0);
+        auto offRel = std::make_shared<QString>();
+        // BW13: the clipboard leg's sub-step (see phase 17).
+        auto clipStep = std::make_shared<int>(0);
+        // BW08: the native-messaging leg's sub-step (see phase 18)
+        // plus the fixture manifests it installs (removed at finish
+        // so the run never pollutes a real user config dir).
+        auto natStep = std::make_shared<int>(0);
+        auto natManifests = std::make_shared<QStringList>();
+        // BW09: the permissions leg's sub-step (see phase 19).
+        auto permStep = std::make_shared<int>(0);
         BrowserMainWindow *smokeWindow = nullptr;
         // Never destruct a WebEngine page/view inside a runJavaScript
         // result callback — the IPC teardown can deadlock the channel
@@ -13570,12 +13722,81 @@ int main(int argc, char **argv)
         QPointer<QWebEnginePage> popupPage;
         QTcpServer *afServer = nullptr;
         QTimer *hostPoll = new QTimer(&application);
+        // Phase-10 leg teardown — defined once at this scope so the
+        // async runJavaScript callbacks (which outlive the tick that
+        // issued them) never call a dead stack lambda.
+        const auto afFinish = [&]() {
+            closeSmokeWindow();
+            // BW07: only the real extension still owes the
+            // offscreen leg at this point — it runs next with the
+            // host still up, and its completion performs the
+            // disable + teardown handoff phase 1 expects.  The
+            // fixture already ran that leg between the popup legs
+            // and the BW05 port legs, so an afFinish here is a
+            // port-leg wrap-up — disable and hand to phase 1
+            // directly (routing it back to phase 16 loops the leg).
+            if (realExt) {
+                *phase = 16;
+                *offStep = 0;
+                *probeTicks = 0;
+            } else {
+                *phase = 1;
+                *hostTicks = 0;
+                extensions->setExtensionEnabled(extensionId, false);
+            }
+            hostPoll->start();
+        };
+        // BW07: the offscreen leg's exit — hoisted out of the
+        // phase-16 block for the same reason afFinish lives here:
+        // the leg's runJavaScript callbacks call it after the tick
+        // that created it has returned, so a block-local lambda is
+        // a dead stack object the moment its result callback fires
+        // (observed: dangling captures took the realExt branch and
+        // segfaulted inside setExtensionEnabled).
+        const auto offDone = [&]() {
+            // BW13: the clipboard legs run next for both flavors —
+            // they need the extension still enabled; phase 17's own
+            // exit (clipDone) performs the disable/teardown or the
+            // port-leg handoff this used to do directly.
+            *phase = 17;
+            *clipStep = 0;
+            *probeTicks = 0;
+            hostPoll->start();
+        };
+        // BW13: the clipboard legs' exit — see the phase-17 comment
+        // for why this mirror of offDone exists (dead-stack-lambda
+        // rule: runJavaScript result callbacks outlive the tick).
+        const auto clipDone = [&]() {
+            if (realExt) {
+                // BW08: the real extension still owes the
+                // native-messaging verdict leg — it runs with the
+                // extension still enabled and performs the disable
+                // itself.
+                *phase = 18;
+                *natStep = 0;
+                *probeTicks = 0;
+            } else {
+                // Fixture: the BW08 native legs follow — they run
+                // BEFORE the BW05 port legs so the pre-existing
+                // cs echo-port failure (a real defect native
+                // injection used to mask, recorded under BW06)
+                // cannot starve them.
+                *phase = 18;
+                *natStep = 0;
+                *probeTicks = 0;
+            }
+            hostPoll->start();
+        };
         hostPoll->setInterval(250);
 
         const auto finish = [&]() {
             qInfo() << "extension-host-smoke:"
                     << (failures == 0 ? "PASS" : "FAIL")
                     << "failures:" << failures;
+            // BW08: drop the fixture's native-host manifests so a
+            // run never leaves registrations in a real config dir.
+            for (const QString &p : *natManifests)
+                QFile::remove(p);
             if (!realExt)
                 QDir(extDir).removeRecursively();
             std::quick_exit(failures == 0 ? 0 : 1);
@@ -14032,10 +14253,18 @@ int main(int argc, char **argv)
                             || !liveHost->page()->profile()) {
                         check(realExt,
                               "popup leg skipped — no action popup");
-                        *phase = 1;
-                        *hostTicks = 0;
-                        extensions->setExtensionEnabled(
-                            extensionId, false);
+                        // BW07: a live host still runs the offscreen
+                        // leg before the disable.
+                        if (liveHost) {
+                            *phase = 16;
+                            *offStep = 0;
+                            *probeTicks = 0;
+                        } else {
+                            *phase = 1;
+                            *hostTicks = 0;
+                            extensions->setExtensionEnabled(
+                                extensionId, false);
+                        }
                         hostPoll->start();
                         return;
                     }
@@ -14385,7 +14614,10 @@ int main(int argc, char **argv)
                             && (href.contains(
                                      QLatin1String("intro-carousel"))
                                 || href.contains(
-                                     QLatin1String("registration")))) {
+                                     QLatin1String("registration"))
+                                || href.contains(QLatin1String(
+                                       "default-password-manager-"
+                                       "prompt")))) {
                             ++*gateClicks;
                             // NOTE: innerText is empty for every
                             // button in the hidden popup view (no
@@ -14563,11 +14795,12 @@ int main(int argc, char **argv)
                     *probeTicks = 0;
                     hostPoll->start();
                 });
-            } else if (*phase == 10) {  // autofill attempt leg
+            } else if (*phase == 10) {  // autofill E2E leg (BW06)
                 if (!host)
                     return;
                 if (!*afDrove) {
                     *afDrove = true;
+                    *afStep = -1;
                     // A login form over loopback — content scripts
                     // cannot run on data: pages, so serve real http.
                     afServer = new QTcpServer(&application);
@@ -14632,31 +14865,159 @@ int main(int argc, char **argv)
                             "===null)window.__afHs=false;},5000);"),
                             [](const QVariant &) {});
                     });
-                    view->load(QUrl(QStringLiteral(
-                        "http://127.0.0.1:%1/")
-                        .arg(afServer->serverPort())));
+                    // BW06: seed a synthetic account through the
+                    // extension's own chrome.storage.local so its
+                    // auth stream leaves LoggedOut — Bitwarden only
+                    // starts autofill monitors (and therefore answers
+                    // collectPageDetails/fillForm) for an account
+                    // that exists.  The page loads AFTER the seed so
+                    // the declared trigger script's
+                    // triggerAutofillScriptInjection lands on a
+                    // signed-in background.  Fixture strings only —
+                    // the public SDK test account shape, never real
+                    // credentials.
+                    host->page()->runJavaScript(QStringLiteral(
+                        "(function(){"
+                        "var uid='060000fb-0922-4dd3-b170-6e15cb5df8c8'"
+                        ",email='test@bitwarden.com';"
+                        "var wrap=function(v){return{__json__:true,"
+                        "value:JSON.stringify(v)};};"
+                        "var b64=function(s){return btoa(s)"
+                        ".replace(/\\+/g,'-').replace(/\\//g,'_')"
+                        ".replace(/=+$/,'');};"
+                        "var jwt=b64('{\"alg\":\"none\",\"typ\":\"JWT\"}')"
+                        "+'.'+b64(JSON.stringify({exp:4102444800,"
+                        "sub:uid,email:email,name:'Arktos Smoke'}))"
+                        "+'.e30';"
+                        "var items={},acc={};"
+                        "acc[uid]={email:email,name:'Arktos Smoke',"
+                        "emailVerified:true};"
+                        "items['global_account_accounts']=wrap(acc);"
+                        "items['user_'+uid+'_token_accessToken']="
+                        "wrap(jwt);"
+                        "items['global_account_activeAccountId']="
+                        "wrap(uid);"
+                        "self.__afSeed={done:false};"
+                        "self.__afArmT=0;"
+                        "var keys=Object.keys(items),i=0;"
+                        "function next(){if(i>=keys.length){"
+                        "self.__afSeed={done:true,err:null};return;}"
+                        "var o={};o[keys[i]]=items[keys[i]];i++;"
+                        "chrome.storage.local.set(o,function(){"
+                        "var e=chrome.runtime.lastError;"
+                        "if(e){self.__afSeed={done:true,"
+                        "err:e.message||String(e)};return;}next();});}"
+                        "next();"
+                        // Observe the real auth stream: >=1 (Locked)
+                        // means the seeded account registered.  Arm
+                        // alongside the writes — bitwardenMain is
+                        // already up in phase 10, but retry anyway so
+                        // a service-init hiccup can't stall the leg.
+                        "var arm=function(){var m=self.bitwardenMain;"
+                        "if(m&&m.authService"
+                        "&&m.authService.activeAccountStatus$){"
+                        "if(self.__afStatusSub)return true;"
+                        "self.__afStatusSub=1;self.__afStatus=-1;"
+                        "self.__afStatusHist=[];"
+                        "m.authService.activeAccountStatus$.subscribe("
+                        "function(v){self.__afStatus=v;"
+                        "if(self.__afStatusHist.length<40)"
+                        "self.__afStatusHist.push(v);});"
+                        "return true;}return false;};"
+                        "if(!arm()){var iv=setInterval(function(){"
+                        "if(arm()||++self.__afArmT>200)"
+                        "clearInterval(iv);},250);}"
+                        "return 0;})()"),
+                        [](const QVariant &) {});
                     return;
                 }
                 if (!smokeWindow || !smokeWindow->tabWidget()
                         || !smokeWindow->tabWidget()->webView(0)) {
                     hostPoll->stop();
                     check(false, "autofill page survives the leg");
-                    *phase = 1;
-                    *hostTicks = 0;
-                    extensions->setExtensionEnabled(extensionId, false);
-                    hostPoll->start();
+                    afFinish();
                     return;
                 }
                 ++*probeTicks;
                 WebView *afView =
                     smokeWindow->tabWidget()->webView(0);
-                if (*afStep == 0) {
+                if (*afStep == -1) {   // seed + auth-status gate
+                    host->page()->runJavaScript(QStringLiteral(
+                        "JSON.stringify({seed:self.__afSeed||null,"
+                        "status:(self.__afStatus===undefined"
+                        "?'pending':self.__afStatus),"
+                        "hist:self.__afStatusHist||[]})"),
+                        [&, afView](const QVariant &v) {
+                        const QJsonObject o = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        const QJsonObject seed =
+                            o.value(QLatin1String("seed")).toObject();
+                        if (!seed.value(QLatin1String("done")).toBool()) {
+                            if (*probeTicks > 80) {
+                                hostPoll->stop();
+                                check(false, "account seed writes "
+                                             "settled");
+                                qInfo() << "extension-host-smoke:"
+                                           " autofill seed:" << v;
+                                afFinish();
+                            }
+                            return;
+                        }
+                        check(seed.value(QLatin1String("err"))
+                                  .toVariant().isNull(),
+                              "account seed accepted by "
+                              "chrome.storage.local");
+                        const QVariant status =
+                            o.value(QLatin1String("status")).toVariant();
+                        // The status must SETTLE non-LoggedOut — the
+                        // background's own startMonitoringFrame takes
+                        // the stream's first emission, and an early
+                        // LoggedOut (pre-hydration or a mid-seed
+                        // re-grade) silently retires the whole leg.
+                        // Four consecutive non-LoggedOut reads (~1s)
+                        // prove it held.
+                        if (status.toString() == QLatin1String("pending")
+                                || status.toInt() < 1) {
+                            *afStable = 0;
+                            if (*probeTicks > 120) {
+                                hostPoll->stop();
+                                check(false, "seeded account reached "
+                                             "non-LoggedOut on "
+                                             "activeAccountStatus$");
+                                qInfo() << "extension-host-smoke:"
+                                           " autofill auth status:"
+                                        << v;
+                                afFinish();
+                            }
+                            return;
+                        }
+                        if (++*afStable < 4)
+                            return;
+                        qInfo() << "extension-host-smoke: autofill"
+                                   " auth status settled:"
+                                << status
+                                << "hist:"
+                                << o.value(QLatin1String("hist"));
+                        // A signed-in background — now the fixture
+                        // page's declared trigger script injects the
+                        // autofill world for real.
+                        afView->load(QUrl(QStringLiteral(
+                            "http://127.0.0.1:%1/")
+                            .arg(afServer->serverPort())));
+                        *afStep = 0;
+                        *probeTicks = 0;
+                    });
+                } else if (*afStep == 0) {   // cs handshake wait
+                    // Re-post every tick — the agent-world content
+                    // script's window-message listener attaches when
+                    // its DocumentCreation wrapper's agent wait
+                    // resolves, which can outlive the page's own
+                    // loadFinished.  The listener stays armed; a late
+                    // reply flips __afHs true whenever it lands.
                     afView->page()->runJavaScript(QStringLiteral(
-                        "JSON.stringify({hs:window.__afHs,"
-                        "user:(document.querySelector("
-                        " 'input[name=username]')||{}).value||'',"
-                        "pass:(document.querySelector("
-                        " 'input[name=password]')||{}).value||''})"),
+                        "window.postMessage({command:"
+                        "'checkIfBWExtensionInstalled'},'*');"
+                        "JSON.stringify({hs:window.__afHs})"),
                         [&, host](const QVariant &v) {
                         const QJsonObject o = QJsonDocument::fromJson(
                             v.toString().toUtf8()).object();
@@ -14665,70 +15026,129 @@ int main(int argc, char **argv)
                                 hostPoll->stop();
                                 check(false, "content-script "
                                              "handshake resolved");
-                                closeSmokeWindow();
-                                *phase = 1;
-                                *hostTicks = 0;
-                                extensions->setExtensionEnabled(
-                                    extensionId, false);
-                                hostPoll->start();
+                                afFinish();
                             }
                             return;
                         }
-                        check(o.value(QLatin1String("hs")).toBool(),
-                              "content script answered "
+                        if (!o.value(QLatin1String("hs")).toBool()) {
+                            if (*probeTicks > 120) {
+                                hostPoll->stop();
+                                check(false, "declared content script "
+                                             "answered hasBwInstalled "
+                                             "on the login page");
+                                afFinish();
+                            }
+                            return;
+                        }
+                        check(true,
+                              "declared content script answered "
                               "hasBwInstalled on the login page");
-                        // The autofill attempt: route the command a
-                        // real Bitwarden background would send to the
-                        // tab — through OUR hosted background's tabs
-                        // API, recording whatever comes back.
-                        host->page()->runJavaScript(QStringLiteral(
-                            "self.__af={sent:false};"
-                            "chrome.tabs.query({active:true},"
-                            "function(tabs){var t=tabs&&tabs[0];"
-                            "self.__af={sent:true,tab:t&&t.id};"
-                            "if(t){try{chrome.tabs.sendMessage(t.id,"
-                            "{command:'autofillPage',"
-                            "fillScript:{script:[]},"
-                            "pageDetailsUuid:'arktos-smoke'},"
-                            "function(r){self.__af.resp=(r===undefined)"
-                            "?null:String(r);self.__af.le="
-                            "(chrome.runtime.lastError?String("
-                            "chrome.runtime.lastError.message):null);}"
-                            ");}catch(e){self.__af.le='threw:'"
-                            "+String(e);}}});"),
-                            [](const QVariant &) {});
-                        *afStep = 1;
+                        *afStep = 2;
                         *probeTicks = 0;
                     });
-                } else {    // afStep == 1: collect the outcome
+                } else if (*afStep == 2) {   // monitors-armed wait
+                    // The agent world owns bitwardenAutofillInit:
+                    // isMonitoring flips when the background's
+                    // startMonitoringFrame -> 'startAutofillMonitors'
+                    // one-shot lands — proof the trigger message
+                    // carried sender.tab, injectAutofillScripts ran
+                    // chrome.scripting.executeScript for real, and
+                    // the injected bootstrap answered.
+                    afView->page()->runJavaScript(QStringLiteral(
+                        "JSON.stringify({has:!!window"
+                        ".bitwardenAutofillInit,mon:!!(window"
+                        ".bitwardenAutofillInit&&window"
+                        ".bitwardenAutofillInit.isMonitoring===true)})"),
+                        ExtensionBackgroundRuntime::AgentWorldId,
+                        [&, host](const QVariant &v) {
+                        const QJsonObject o = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!o.value(QLatin1String("mon")).toBool()) {
+                            if (*probeTicks > 120) {
+                                hostPoll->stop();
+                                check(false, "sw injected "
+                                             "bootstrap-autofill and "
+                                             "armed its monitors");
+                                qInfo() << "extension-host-smoke:"
+                                           " autofill init probe:"
+                                        << v;
+                                afFinish();
+                            }
+                            return;
+                        }
+                        check(true, "sw received the trigger, injected "
+                                    "bootstrap-autofill via "
+                                    "chrome.scripting, and armed "
+                                    "monitors");
+                        // The scripted fill: collect real page details
+                        // (the cs answers with viewable fields +
+                        // opids), build Bitwarden's own op triplets,
+                        // then fillForm — the exact message contract
+                        // the background uses, issued through OUR
+                        // tabs.sendMessage.
+                        host->page()->runJavaScript(QStringLiteral(
+                            "(function(){self.__afFill={step:'q'};"
+                            "chrome.tabs.query({},function(tabs){"
+                            "var t=(tabs||[]).filter(function(x){"
+                            "return x.url&&x.url.indexOf("
+                            "'http://127.0.0.1:%1/')===0;})[0];"
+                            "if(!t){self.__afFill={done:true,"
+                            "err:'no-fixture-tab',"
+                            "n:tabs&&tabs.length};return;}"
+                            "self.__afFill={step:'collect',tab:t.id,"
+                            "url:t.url};"
+                            "chrome.tabs.sendMessage(t.id,{command:"
+                            "'collectPageDetailsImmediately',"
+                            "sender:'arktos-smoke'},function(d){"
+                            "self.__afFill.le1=chrome.runtime"
+                            ".lastError?String(chrome.runtime.lastError"
+                            ".message):null;"
+                            "var fs=(d&&d.fields)||[];"
+                            "self.__afFill.fields=fs.map(function(f){"
+                            "return{ty:f.type,op:f.opid,"
+                            "nm:f.htmlName,vw:f.viewable};});"
+                            "var ops=[];"
+                            "fs.forEach(function(f){"
+                            "if(!f||!f.opid)return;var v="
+                            "(f.type==='password')?'Sm0ke-Pass!x9':"
+                            "(f.type==='text'||f.type==='email'"
+                            "?'smoke-user@arktos.test':null);"
+                            "if(!v)return;"
+                            "ops.push(['click_on_opid',f.opid],"
+                            "['focus_by_opid',f.opid],"
+                            "['fill_by_opid',f.opid,v]);});"
+                            "self.__afFill.ops=ops.length;"
+                            "self.__afFill.step='fill';"
+                            "chrome.tabs.sendMessage(t.id,{command:"
+                            "'fillForm',fillScript:{script:ops},"
+                            "pageDetailsUrl:String((d&&d.url)||t.url)},"
+                            "function(r){self.__afFill.le2=chrome"
+                            ".runtime.lastError?String(chrome.runtime"
+                            ".lastError.message):null;"
+                            "self.__afFill.resp=(r===undefined?null:r);"
+                            "self.__afFill.done=true;});});});"
+                            "return 0;})()")
+                            .arg(afServer->serverPort()),
+                            [](const QVariant &) {});
+                        *afStep = 3;
+                        *probeTicks = 0;
+                    });
+                } else {    // afStep == 3: collect the fill outcome
                     host->page()->runJavaScript(QStringLiteral(
-                        "self.__af?JSON.stringify(self.__af):'null'"),
+                        "JSON.stringify(self.__afFill||null)"),
                         [&, afView](const QVariant &v) {
                         const QJsonObject af =
                             QJsonDocument::fromJson(
                                 v.toString().toUtf8()).object();
-                        const bool resolved =
-                            af.value(QLatin1String("sent")).toBool()
-                            && (af.contains(QLatin1String("resp"))
-                                || af.contains(QLatin1String("le"))
-                                || af.value(QLatin1String("tab"))
-                                       .isNull());
-                        if (!resolved) {
-                            if (*probeTicks > 80) {
-                                // Never hang the harness — record
-                                // and fall through to teardown.
+                        if (!af.value(QLatin1String("done")).toBool()) {
+                            if (*probeTicks > 120) {
                                 hostPoll->stop();
-                                check(false, "autofill command "
-                                             "resolved");
+                                check(false, "collect+fill commands "
+                                             "settled");
                                 qInfo() << "extension-host-smoke:"
-                                           " autofill unresolved:"
-                                        << v.toString();
-                                closeSmokeWindow();
-                                *phase = 1;
-                                *hostTicks = 0;
-                                extensions->setExtensionEnabled(
-                                    extensionId, false);
-                                hostPoll->start();
+                                           " autofill chain state:"
+                                        << v;
+                                afFinish();
                             }
                             return;
                         }
@@ -14743,37 +15163,28 @@ int main(int argc, char **argv)
                             const QJsonObject f =
                                 QJsonDocument::fromJson(
                                     fv.toString().toUtf8()).object();
-                            const bool filled =
-                                !f.value(QLatin1String("pass"))
-                                     .toString().isEmpty();
-                            // Honest accounting: a fill is a real
-                            // form fill; anything else (typed
-                            // lastError, silent no-op, locked vault)
-                            // is recorded verbatim — autofill is
-                            // unreachable without unlock regardless.
-                            if (filled)
-                                check(true, "autofill wrote the "
-                                            "password field");
-                            else
-                                check(true, "autofill attempt "
-                                            "recorded (no fill)");
                             qInfo() << "extension-host-smoke:"
-                                       " autofill outcome: fill="
-                                    << filled
-                                    << "resp=" << af.value(
-                                           QLatin1String("resp"))
-                                           .toVariant()
-                                    << "lastError=" << af.value(
-                                           QLatin1String("le"))
+                                       " autofill chain:"
+                                    << QString::fromUtf8(QJsonDocument(
+                                           af).toJson(
+                                           QJsonDocument::Compact))
+                                    << "fields: user="
+                                    << f.value(QLatin1String("user"))
                                            .toString()
-                                    << "(clipboard fill not"
-                                       " observed; vault locked)";
-                            closeSmokeWindow();
-                            *phase = 1;
-                            *hostTicks = 0;
-                            extensions->setExtensionEnabled(
-                                extensionId, false);
-                            hostPoll->start();
+                                    << "pass="
+                                    << f.value(QLatin1String("pass"))
+                                           .toString();
+                            check(f.value(QLatin1String("user"))
+                                          .toString()
+                                      == QLatin1String(
+                                          "smoke-user@arktos.test")
+                                  && f.value(QLatin1String("pass"))
+                                             .toString()
+                                         == QLatin1String(
+                                             "Sm0ke-Pass!x9"),
+                                  "scripted fillForm wrote the "
+                                  "fixture fields");
+                            afFinish();
                         });
                     });
                 }
@@ -14793,10 +15204,13 @@ int main(int argc, char **argv)
                             popupView.clear();
                             popupPage.clear();
                         }
-                        *phase = 1;
-                        *hostTicks = 0;
-                        extensions->setExtensionEnabled(
-                            extensionId, false);
+                        // BW07: the offscreen leg runs before the
+                        // BW05 port legs — its document must be
+                        // closed again before the disable/teardown
+                        // phases measure the port disconnect.
+                        *phase = 16;
+                        *offStep = 0;
+                        *probeTicks = 0;
                         hostPoll->start();
                         return;
                     }
@@ -14805,6 +15219,2065 @@ int main(int argc, char **argv)
                             "hosted context never saw the popup "
                             "ping"));
                 });
+            } else if (*phase == 11) {  // BW05: cs echo-port legs
+                if (!host)
+                    return;
+                if (!*afDrove) {
+                    *afDrove = true;
+                    // A real loopback page — content scripts run on
+                    // committed http documents only, never data:.
+                    afServer = new QTcpServer(&application);
+                    if (!afServer->listen(QHostAddress::LocalHost)) {
+                        die(QStringLiteral("port fixture cannot "
+                                           "listen"));
+                        return;
+                    }
+                    QObject::connect(afServer,
+                                     &QTcpServer::newConnection,
+                                     &application, [afServer]() {
+                        QTcpSocket *socket =
+                            afServer->nextPendingConnection();
+                        QObject::connect(socket,
+                            &QTcpSocket::readyRead, socket,
+                            [socket]() {
+                            const QByteArray req = socket->readAll();
+                            // BW12: /frames serves a document with a
+                            // covered subframe (/framesub) and an
+                            // uncovered data: subframe — everything
+                            // else gets the plain port-fixture page.
+                            QByteArray body;
+                            if (req.contains("/framesub"))
+                                body = "<html><body><h1>frame "
+                                       "sub</h1></body></html>";
+                            else if (req.contains("/frames"))
+                                body = "<html><body>"
+                                    "<iframe src=\"/framesub\">"
+                                    "</iframe>"
+                                    "<iframe src=\"data:text/html,"
+                                    "%3Cb%3Ed%3C/b%3E\"></iframe>"
+                                    "</body></html>";
+                            else
+                                body = "<html><body><h1>port "
+                                       "fixture</h1></body></html>";
+                            socket->write("HTTP/1.1 200 OK\r\n"
+                                "Content-Type: text/html\r\n"
+                                "Content-Length: "
+                                + QByteArray::number(body.size())
+                                + "\r\nConnection: close\r\n\r\n"
+                                + body);
+                            socket->disconnectFromHost();
+                            });
+                    });
+                    smokeWindow = application.newMainWindow();
+                    if (!smokeWindow || !smokeWindow->tabWidget()) {
+                        die(QStringLiteral("no port-leg window"));
+                        return;
+                    }
+                    TabWidget *tw = smokeWindow->tabWidget();
+                    tw->newTab();
+                    WebView *view = tw->webView(0);
+                    if (!view) {
+                        die(QStringLiteral("no port-leg tab"));
+                        return;
+                    }
+                    view->load(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/")
+                        .arg(afServer->serverPort())));
+                    return;
+                }
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify({acc:self.__accepted,"
+                    "echo:self.__echoDone,pong:self.__csPong,"
+                    "log:self.__portLog})"),
+                    [&](const QVariant &v) {
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (o.value(QLatin1String("acc")).toInt() < 1
+                            || o.value(QLatin1String("echo")).isNull()
+                            || o.value(QLatin1String("pong")).isNull()) {
+                        if (*probeTicks > 120) {
+                            hostPoll->stop();
+                            check(false, "cs echo-port round trip "
+                                        "settled");
+                            afFinish();
+                        }
+                        return;
+                    }
+                    hostPoll->stop();
+                    check(true, "declared content script's "
+                                "runtime.connect reached the hosted "
+                                "background");
+                    // Chrome fans a connect offer out to every
+                    // context listening for it — a second accept is
+                    // legitimate; what the contract needs is that
+                    // the page-originated offer carries sender.tab.
+                    const QJsonArray log =
+                        o.value(QLatin1String("log")).toArray();
+                    bool anyTab = false;
+                    for (const QJsonValue &e : log) {
+                        if (e.toObject()
+                                .value(QLatin1String("hasTab"))
+                                .toBool())
+                            anyTab = true;
+                    }
+                    check(anyTab,
+                          "cs connect carried port.sender.tab");
+                    const QJsonObject echo =
+                        o.value(QLatin1String("echo")).toObject();
+                    check(echo.value(QLatin1String("echo")).toString()
+                              == QLatin1String("hello-cs"),
+                          "cs->bg port.postMessage echoed back "
+                          "to the cs");
+                    // One-shot sendMessage delivers — but the
+                    // sender reaching the background is the relay
+                    // fallback ({id,url,origin}) rather than the
+                    // full tab-stamped sender the port offer
+                    // carries.  Record the measured shape honestly
+                    // — sender.tab on the one-shot path is a known
+                    // remaining gap, not a fake pass.
+                    qInfo().noquote()
+                        << "extension-host-smoke: csSawEcho sender"
+                        << QString::fromUtf8(QJsonDocument(echo)
+                               .toJson(QJsonDocument::Compact));
+                    check(echo.value(QLatin1String("echo")).toString()
+                              == QLatin1String("hello-cs"),
+                          "cs one-shot sendMessage delivered "
+                          "(sender.tab gap recorded)");
+                    check(o.value(QLatin1String("pong")).toString()
+                              .startsWith(QLatin1String("bg-")),
+                          "bg->cs port.postMessage delivered");
+                    closeSmokeWindow();
+                    *phase = 12;
+                    *probeTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 12) {  // BW05: tab-close disconnect
+                if (!host)
+                    return;
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify({disc:self.__discCount})"),
+                    [&](const QVariant &v) {
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (o.value(QLatin1String("disc")).toInt() < 1) {
+                        if (*probeTicks > 80) {
+                            hostPoll->stop();
+                            check(false, "tab close propagated "
+                                        "onDisconnect to the hosted "
+                                        "port end");
+                            *phase = 1;
+                            *hostTicks = 0;
+                            extensions->setExtensionEnabled(
+                                extensionId, false);
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    check(true, "tab close propagates onDisconnect "
+                                "to the hosted port end");
+                    // BW12's per-frame sendMessage legs run next —
+                    // phase 13's reconnect window follows them.
+                    *phase = 15;
+                    *afDrove = false;
+                    *afStep = 0;
+                    *probeTicks = 0;
+                });
+            } else if (*phase == 15) {  // BW12: per-frame sendMessage
+                if (!host)
+                    return;
+                if (!*afDrove) {
+                    *afDrove = true;
+                    smokeWindow = application.newMainWindow();
+                    if (!smokeWindow || !smokeWindow->tabWidget()) {
+                        die(QStringLiteral("no frame-leg window"));
+                        return;
+                    }
+                    TabWidget *tw = smokeWindow->tabWidget();
+                    tw->newTab();
+                    // The strip's CURRENT tab — newTab() makes the
+                    // fresh tab current, so index 0 is the window's
+                    // pre-existing blank and an active-tab query
+                    // would never land there.
+                    WebView *view = tw->webView(tw->currentIndex());
+                    if (!view) {
+                        die(QStringLiteral("no frame-leg tab"));
+                        return;
+                    }
+                    view->load(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/frames")
+                        .arg(afServer->serverPort())));
+                    return;
+                }
+                ++*probeTicks;
+                TabWidget *frameTw = smokeWindow
+                        && smokeWindow->tabWidget()
+                    ? smokeWindow->tabWidget() : nullptr;
+                WebView *view = frameTw
+                    ? frameTw->webView(frameTw->currentIndex())
+                    : nullptr;
+                if (!view || !view->page()) {
+                    hostPoll->stop();
+                    check(false, "frame-leg tab survives");
+                    *phase = 13;
+                    *afDrove = false;
+                    *afStep = 0;
+                    *probeTicks = 0;
+                    hostPoll->start();
+                    return;
+                }
+                // Frame positions here are the DFS children order —
+                // the same numbering deliverTabMessageToFrame's
+                // collectFrames answers for.
+                const QWebEngineFrame mainFrame =
+                    view->page()->mainFrame();
+                const QList<QWebEngineFrame> kids =
+                    mainFrame.isValid()
+                        ? mainFrame.children()
+                        : QList<QWebEngineFrame>();
+                int subIdx = -1;
+                int dataIdx = -1;
+                for (int i = 0; i < kids.size(); ++i) {
+                    const QUrl u = kids.at(i).url();
+                    if (u.scheme() == QLatin1String("data"))
+                        dataIdx = i + 1;
+                    else if (u.path().contains(
+                                 QLatin1String("framesub")))
+                        subIdx = i + 1;
+                }
+                if (subIdx < 0) {
+                    if (*probeTicks > 80) {
+                        hostPoll->stop();
+                        check(false, "covered subframe committed");
+                        closeSmokeWindow();
+                        *phase = 13;
+                        *afDrove = false;
+                        *afStep = 0;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    }
+                    return;
+                }
+                if (*afStep == 0) {
+                    // Gate the send batch on the addressed frame's
+                    // declared content script having armed its
+                    // listener — the fixture stamps __csFrameReady
+                    // after addListener inside its agent world.
+                    QWebEngineFrame subFrame = kids.at(subIdx - 1);
+                    WebView *frameView = view;
+                    subFrame.runJavaScript(
+                        QStringLiteral(
+                            "window.__csFrameReady===true"
+                            "?'yes':'no'"),
+                        ExtensionBackgroundRuntime::AgentWorldId,
+                        [&, host, subIdx, dataIdx,
+                         frameView](const QVariant &v) {
+                        if (v.toString()
+                                != QLatin1String("yes")) {
+                            if (*probeTicks > 120) {
+                                hostPoll->stop();
+                                check(false, "subframe content "
+                                             "script armed");
+                                closeSmokeWindow();
+                                *phase = 13;
+                                *afDrove = false;
+                                *afStep = 0;
+                                *probeTicks = 0;
+                                hostPoll->start();
+                            }
+                            return;
+                        }
+                        *afStep = 1;
+                        *probeTicks = 0;
+                        // Legs through the hosted background's real
+                        // chrome.tabs.sendMessage, resolved the way
+                        // a real extension resolves "the" tab:
+                        // {active:true,lastFocusedWindow:true}.  The
+                        // leg records the resolved id vs the host-
+                        // known tab id — active-tab resolution must
+                        // reflect the real tab.  Sends: unaddressed
+                        // (main-frame path), frameId-addressed into
+                        // the covered subframe, and two typed-error
+                        // legs — an out-of-tree frameId, plus the
+                        // uncovered data: frame when it
+                        // materialized.
+                        const QString dataLeg =
+                            dataIdx >= 0
+                                ? QStringLiteral(",['data',%1]")
+                                      .arg(dataIdx)
+                                : QString();
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__frames={done:false};"
+                            "chrome.tabs.query({active:true,"
+                            "lastFocusedWindow:true},"
+                            "function(foc){"
+                            "var t=foc&&foc[0];"
+                            "var o={done:false,"
+                            "want:%3,"
+                            "foc:(foc||[]).map(function(x){return{id:x.id,"
+                            "u:String(x.url),w:x.windowId};})};"
+                            "self.__frames=o;"
+                            "if(!t){o.done=true;return;}"
+                            "var legs=[['main',-1],['sub',%1],"
+                            "['far',42]%2];"
+                            "var i=0;"
+                            "function next(){"
+                            " if(i>=legs.length){o.done=true;return;}"
+                            " var L=legs[i++];"
+                            " var opts=L[1]<0?{}:{frameId:L[1]};"
+                            " chrome.tabs.sendMessage(t.id,"
+                            " {cmd:'frameEcho'},opts,function(r){"
+                            "  o[L[0]]={r:r===undefined?null:r,"
+                            "   le:chrome.runtime.lastError"
+                            "    ?String(chrome.runtime.lastError"
+                            "      .message):null};"
+                            "  next();});}"
+                            "next();});")
+                            .arg(subIdx).arg(dataLeg)
+                            .arg(ExtensionShimBackend::tabIdFor(
+                                     frameView)),
+                            [](const QVariant &) {});
+                    });
+                    return;
+                }
+                host->page()->runJavaScript(QStringLiteral(
+                    "self.__frames?JSON.stringify(self.__frames)"
+                    ":'null'"),
+                    [&](const QVariant &v) {
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (!o.value(QLatin1String("done")).toBool()) {
+                        if (*probeTicks > 120) {
+                            hostPoll->stop();
+                            check(false, "frame-routing batch "
+                                         "settled");
+                            closeSmokeWindow();
+                            *phase = 13;
+                            *afDrove = false;
+                            *afStep = 0;
+                            *probeTicks = 0;
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    hostPoll->stop();
+                    qInfo().noquote()
+                        << "extension-host-smoke: frame legs"
+                        << QString::fromUtf8(QJsonDocument(o)
+                               .toJson(QJsonDocument::Compact));
+                    const QJsonArray focTabs =
+                        o.value(QLatin1String("foc")).toArray();
+                    check(focTabs.size() == 1
+                          && focTabs.at(0).toObject()
+                                     .value(QLatin1String("id"))
+                                     .toInt()
+                              == o.value(QLatin1String("want"))
+                                     .toInt(),
+                          "active-tab query resolves the real "
+                          "frame-fixture tab");
+                    const QJsonObject main =
+                        o.value(QLatin1String("main")).toObject();
+                    const QJsonObject mainR =
+                        main.value(QLatin1String("r")).toObject();
+                    check(mainR.value(QLatin1String("from"))
+                                  .toString()
+                              == QLatin1String("main"),
+                          "unaddressed sendMessage lands on the "
+                          "main frame");
+                    const QJsonObject sub =
+                        o.value(QLatin1String("sub")).toObject();
+                    const QJsonObject subR =
+                        sub.value(QLatin1String("r")).toObject();
+                    check(subR.value(QLatin1String("from"))
+                                  .toString()
+                              == QLatin1String("sub")
+                          && subR.value(QLatin1String("href"))
+                                 .toString().contains(
+                                     QLatin1String("framesub")),
+                          "frameId sendMessage reaches the "
+                          "addressed subframe's content script");
+                    check(sub.value(QLatin1String("le")).isNull(),
+                          "frameId sendMessage response path "
+                          "returns without lastError");
+                    const QJsonObject far =
+                        o.value(QLatin1String("far")).toObject();
+                    check(!far.value(QLatin1String("le"))
+                              .toString().isEmpty(),
+                          "out-of-tree frameId answers a typed "
+                          "error");
+                    if (o.contains(QLatin1String("data"))) {
+                        const QJsonObject data =
+                            o.value(QLatin1String("data")).toObject();
+                        check(data.value(QLatin1String("le"))
+                                  .toString().contains(
+                                      QLatin1String("no-host-access")),
+                              "uncovered subframe answers a typed "
+                              "error (no-host-access)");
+                    } else {
+                        qInfo() << "extension-host-smoke: data:"
+                                   " iframe never materialized —"
+                                   " uncovered-frame leg skipped";
+                    }
+                    closeSmokeWindow();
+                    *phase = 13;
+                    *afDrove = false;
+                    *afStep = 0;
+                    *probeTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 13) {  // BW05: reconnect + teardown
+                if (!host)
+                    return;
+                if (!*afDrove) {
+                    *afDrove = true;
+                    smokeWindow = application.newMainWindow();
+                    if (!smokeWindow || !smokeWindow->tabWidget()) {
+                        die(QStringLiteral("no reconnect window"));
+                        return;
+                    }
+                    TabWidget *tw = smokeWindow->tabWidget();
+                    tw->newTab();
+                    WebView *view = tw->webView(0);
+                    if (!view) {
+                        die(QStringLiteral("no reconnect tab"));
+                        return;
+                    }
+                    view->load(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/")
+                        .arg(afServer->serverPort())));
+                    return;
+                }
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify({acc:self.__accepted})"),
+                    [&](const QVariant &v) {
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (o.value(QLatin1String("acc")).toInt() < 2) {
+                        if (*probeTicks > 120) {
+                            hostPoll->stop();
+                            check(false, "second tab's content "
+                                        "script reconnected");
+                            closeSmokeWindow();
+                            *phase = 1;
+                            *hostTicks = 0;
+                            extensions->setExtensionEnabled(
+                                extensionId, false);
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    hostPoll->stop();
+                    check(true, "second tab's content script "
+                                "reconnected");
+                    // The hosted teardown must push onDisconnect to
+                    // the live cs port — the sw-restart leg.
+                    extensions->setExtensionEnabled(
+                        extensionId, false);
+                    *phase = 14;
+                    *probeTicks = 0;
+                    *hostTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 14) {  // BW05: sw-restart disconnect
+                if (host) {
+                    if (++*hostTicks > 160)
+                        die(QStringLiteral("host never tore down"));
+                    return;
+                }
+                WebView *view = smokeWindow
+                        && smokeWindow->tabWidget()
+                    ? smokeWindow->tabWidget()->webView(0) : nullptr;
+                if (!view) {
+                    hostPoll->stop();
+                    check(false, "port-leg tab survives host "
+                                 "teardown");
+                    closeSmokeWindow();
+                    *phase = 1;
+                    *hostTicks = 0;
+                    hostPoll->start();
+                    return;
+                }
+                ++*probeTicks;
+                view->page()->runJavaScript(QStringLiteral(
+                    "window.__csDisc===true?'yes':'no'"),
+                    ExtensionBackgroundRuntime::AgentWorldId,
+                    [&](const QVariant &v) {
+                    if (v.toString() != QLatin1String("yes")
+                            && *probeTicks <= 120)
+                        return;
+                    hostPoll->stop();
+                    check(v.toString() == QLatin1String("yes"),
+                          "hosted teardown propagates onDisconnect "
+                          "to the cs port");
+                    closeSmokeWindow();
+                    *phase = 1;
+                    *hostTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 18) {  // BW08: nativeMessaging
+                // The fixture leg installs real Chrome-layout host
+                // manifests (echo + a wrong-origin 'deny' twin plus
+                // a read-one-then-exit host for the disconnect
+                // semantics) under the same resolver the runtime
+                // uses, then drives the shim's connectNative/
+                // sendNativeMessage from the hosted page.  The real
+                // extension just records the honest verdict of one
+                // sendNativeMessage — Bitwarden declares the grant
+                // optional and never consents it, so a typed
+                // 'no-permission' IS the working answer here.
+                if (!host)
+                    return;
+                if (*natStep == 0) {
+                    *natStep = 1;
+                    if (!realExt) {
+                        // Echo host + exit-after-one host —
+                        // python3 speaks the uint32-LE framing in a
+                        // dozen lines; absent python answers an
+                        // honest fixture failure.
+                        const QString hostsDir =
+                            NativeMessagingSession::userHostsDir();
+                        if (!QDir().mkpath(hostsDir)) {
+                            die(QStringLiteral(
+                                "cannot create NativeMessagingHosts "
+                                "dir"));
+                            return;
+                        }
+                        const QString echoPy =
+                            extDir + QLatin1String("/native_echo.py");
+                        const QString exitPy =
+                            extDir + QLatin1String("/native_exit.py");
+                        const auto putHost = [](const QString &p,
+                                                const QByteArray &src) {
+                            QFile f(p);
+                            if (!f.open(QIODevice::WriteOnly))
+                                return false;
+                            f.write(src);
+                            f.close();
+                            f.setPermissions(
+                                QFileDevice::ReadOwner
+                                | QFileDevice::WriteOwner
+                                | QFileDevice::ExeOwner
+                                | QFileDevice::ReadGroup
+                                | QFileDevice::ExeGroup
+                                | QFileDevice::ReadOther
+                                | QFileDevice::ExeOther);
+                            return true;
+                        };
+                        if (!putHost(echoPy,
+                                "#!/usr/bin/env python3\n"
+                                "import struct,sys,json\n"
+                                "while True:\n"
+                                " h=sys.stdin.buffer.read(4)\n"
+                                " if len(h)<4: break\n"
+                                " (n,)=struct.unpack('<I',h)\n"
+                                " b=sys.stdin.buffer.read(n)\n"
+                                " if len(b)<n: break\n"
+                                " m=json.loads(b)\n"
+                                " o=json.dumps({'echo':m}).encode()\n"
+                                " sys.stdout.buffer.write(\n"
+                                "  struct.pack('<I',len(o))+o)\n"
+                                " sys.stdout.buffer.flush()\n")
+                            || !putHost(exitPy,
+                                "#!/usr/bin/env python3\n"
+                                "import struct,sys,json\n"
+                                "h=sys.stdin.buffer.read(4)\n"
+                                "if len(h)>=4:\n"
+                                " (n,)=struct.unpack('<I',h)\n"
+                                " b=sys.stdin.buffer.read(n)\n"
+                                " o=json.dumps({'bye':True}).encode()\n"
+                                " sys.stdout.buffer.write(\n"
+                                "  struct.pack('<I',len(o))+o)\n"
+                                " sys.stdout.buffer.flush()\n")) {
+                            die(QStringLiteral(
+                                "cannot write native host fixture"));
+                            return;
+                        }
+                        const QString origin =
+                            QStringLiteral("chrome-extension://")
+                            + extensionId + QLatin1Char('/');
+                        const auto putManifest =
+                            [&](const QString &app,
+                                const QString &path,
+                                const QString &allowed) {
+                            const QString p = hostsDir
+                                + QLatin1Char('/') + app
+                                + QLatin1String(".json");
+                            QFile f(p);
+                            if (!f.open(QIODevice::WriteOnly))
+                                return false;
+                            f.write(QByteArray(
+                                "{\"name\":\"") + app.toUtf8()
+                                + "\",\"description\":\"BW08 smoke "
+                                  "host\",\"path\":\"" + path.toUtf8()
+                                + "\",\"type\":\"stdio\",\"allowed_"
+                                  "origins\":[\"" + allowed.toUtf8()
+                                + "\"]}");
+                            f.close();
+                            natManifests->append(p);
+                            return true;
+                        };
+                        if (!putManifest(
+                                QStringLiteral("org.arktos.test.echo"),
+                                echoPy, origin)
+                            || !putManifest(
+                                QStringLiteral("org.arktos.test.exiter"),
+                                exitPy, origin)
+                            || !putManifest(
+                                QStringLiteral("org.arktos.test.deny"),
+                                echoPy,
+                                QStringLiteral(
+                                    "chrome-extension://"
+                                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                                    "aa/"))) {
+                            die(QStringLiteral(
+                                "cannot write native host manifest"));
+                            return;
+                        }
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__nat={};"
+                            "(function(){var o=self.__nat;"
+                            // echo port round-trip + caller
+                            // disconnect (no own onDisconnect)
+                            "var p=chrome.runtime.connectNative("
+                            "'org.arktos.test.echo');"
+                            "p.onMessage.addListener(function(m){"
+                            " o.echo=m;p.disconnect();"
+                            " o.echoDone=true;});"
+                            "p.onDisconnect.addListener(function(){"
+                            " o.echoDisc=(chrome.runtime.lastError"
+                            "  &&chrome.runtime.lastError.message)"
+                            "  ||null;o.echoDone=true;});"
+                            "p.postMessage({ping:'native-hello'});"
+                            // one-shot round trip
+                            "chrome.runtime.sendNativeMessage("
+                            "'org.arktos.test.echo',{one:1},"
+                            "function(r){o.one={r:r===undefined?null:r,"
+                            "e:(chrome.runtime.lastError"
+                            "  &&chrome.runtime.lastError.message)"
+                            "  ||null};o.oneDone=true;});"
+                            // absent host -> typed not-found
+                            "chrome.runtime.sendNativeMessage("
+                            "'org.arktos.test.missing',{probe:1},"
+                            "function(r){o.miss={r:r===undefined?null:r,"
+                            "e:(chrome.runtime.lastError"
+                            "  &&chrome.runtime.lastError.message)"
+                            "  ||'none'};o.missDone=true;});"
+                            // denied origin -> typed forbidden
+                            "var d=chrome.runtime.connectNative("
+                            "'org.arktos.test.deny');"
+                            "d.onDisconnect.addListener(function(){"
+                            " o.deny={e:(chrome.runtime.lastError"
+                            "  &&chrome.runtime.lastError.message)"
+                            "  ||'none'};o.denyDone=true;});"
+                            // host exit -> typed disconnect
+                            "var x=chrome.runtime.connectNative("
+                            "'org.arktos.test.exiter');"
+                            "x.onMessage.addListener(function(m){"
+                            " o.xLast=m;});"
+                            "x.onDisconnect.addListener(function(){"
+                            " o.xit={last:o.xLast||null,"
+                            " e:(chrome.runtime.lastError"
+                            "  &&chrome.runtime.lastError.message)"
+                            "  ||'none'};o.xitDone=true;});"
+                            "x.postMessage({go:1});"
+                            "})();"),
+                            [](const QVariant &) {});
+                    } else {
+                        // Real extension: one sendNativeMessage to
+                        // Bitwarden's desktop host name — the grant
+                        // is optional+ungranted so the typed
+                        // 'no-permission' is the honest working
+                        // answer; a hang here is the failure.
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__nat={};"
+                            "chrome.runtime.sendNativeMessage("
+                            "'com.8bit.bitwarden',{command:'bw-test'},"
+                            "function(r){self.__nat={r:r===undefined"
+                            "?null:r,"
+                            "e:(chrome.runtime.lastError"
+                            "  &&chrome.runtime.lastError.message)"
+                            "  ||'none',done:true};});"),
+                            [](const QVariant &) {});
+                    }
+                    return;
+                }
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify(self.__nat||null)"),
+                    [&](const QVariant &v) {
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (realExt) {
+                        if (!o.value(QLatin1String("done")).toBool()) {
+                            if (*probeTicks > 120) {
+                                hostPoll->stop();
+                                check(false, "real sendNativeMessage "
+                                            "settled (typed verdict)");
+                                *phase = 19;
+                                *permStep = 0;
+                            }
+                            return;
+                        }
+                        hostPoll->stop();
+                        const QString err =
+                            o.value(QLatin1String("e")).toString();
+                        qInfo() << "extension-host-smoke: real"
+                                   " sendNativeMessage verdict:"
+                                << err;
+                        check(!err.isEmpty()
+                                  && err != QLatin1String("none"),
+                              "real sendNativeMessage answers a "
+                              "Chrome-typed error, not a hang");
+                        // BW09: the permissions leg runs next while
+                        // the extension is still enabled — its exit
+                        // performs the disable phase 1 waits on.
+                        *phase = 19;
+                        *permStep = 0;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                        return;
+                    }
+                    const bool allDone =
+                        o.value(QLatin1String("echoDone")).toBool()
+                        && o.value(QLatin1String("oneDone")).toBool()
+                        && o.value(QLatin1String("missDone")).toBool()
+                        && o.value(QLatin1String("denyDone")).toBool()
+                        && o.value(QLatin1String("xitDone")).toBool();
+                    if (!allDone) {
+                        if (*probeTicks > 160) {
+                            hostPoll->stop();
+                            check(false, "native messaging legs all "
+                                        "settled");
+                            qInfo() << "extension-host-smoke: nat:"
+                                    << v.toString();
+                            *phase = 19;
+                            *permStep = 0;
+                            *probeTicks = 0;
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    hostPoll->stop();
+                    qInfo() << "extension-host-smoke: nat:"
+                            << v.toString();
+                    check(o.value(QLatin1String("echo")).toObject()
+                              .value(QLatin1String("echo")).toObject()
+                              .value(QLatin1String("ping")).toString()
+                              == QLatin1String("native-hello"),
+                          "connectNative echo round-trip over real "
+                          "stdio framing");
+                    check(o.value(QLatin1String("one")).toObject()
+                              .value(QLatin1String("r")).toObject()
+                              .value(QLatin1String("echo")).toObject()
+                              .value(QLatin1String("one")).toInt() == 1,
+                          "sendNativeMessage one-shot round-trip");
+                    check(o.value(QLatin1String("miss")).toObject()
+                              .value(QLatin1String("e")).toString()
+                              .contains(QLatin1String("not found")),
+                          "absent host answers typed 'not found'");
+                    check(o.value(QLatin1String("deny")).toObject()
+                              .value(QLatin1String("e")).toString()
+                              .contains(QLatin1String("forbidden")),
+                          "wrong-origin host answers typed "
+                          "'forbidden'");
+                    const QJsonObject xit =
+                        o.value(QLatin1String("xit")).toObject();
+                    check(xit.value(QLatin1String("last")).toObject()
+                              .value(QLatin1String("bye")).toBool()
+                              && xit.value(QLatin1String("e"))
+                                     .toString()
+                                     .contains(QLatin1String("exited")),
+                          "host exit disconnects with 'host has "
+                          "exited'");
+                    // Fixture: the BW09 permissions leg runs next —
+                    // it hands the BW05 port legs its fresh drive
+                    // flag itself.
+                    *phase = 19;
+                    *permStep = 0;
+                    *probeTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 19) {  // BW09: chrome.permissions
+                // The optional-permission round trip measured end to
+                // end: contains() answers the honest false, request()
+                // drives the consent surface (the
+                // ARKTOS_EXT_PERMISSION_ANSWER env stands in for the
+                // user's click — a headless leg cannot click) and
+                // lands a REAL runtime grant, contains()+getAll()
+                // report it, the gated API it names unlocks,
+                // remove() revokes it with onRemoved, and a refused
+                // consent answers false while granting nothing.
+                // The fixture asks for 'privacy' (its declared
+                // optional grant); the real extension asks for
+                // 'nativeMessaging' — Bitwarden's own optional
+                // grant, whose gated call phase 18 just measured
+                // answering 'no-permission'.
+                if (!host)
+                    return;
+                const QString wanted = realExt
+                    ? QStringLiteral("nativeMessaging")
+                    : QStringLiteral("privacy");
+                if (*permStep == 0) {
+                    *permStep = 1;
+                    *probeTicks = 0;
+                    qputenv("ARKTOS_EXT_PERMISSION_ANSWER", "grant");
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__perm={done:false};"
+                        "(async function(){var o={};"
+                        "var added=[];"
+                        "chrome.permissions.onAdded.addListener("
+                        "function(p){added.push(p);});"
+                        "var W='%1';"
+                        // Reset the baseline: a grant survives across
+                        // sessions by design, so a previous leg (or a
+                        // real user consent) must be revoked before
+                        // the honest false is measured.
+                        "await chrome.permissions.remove("
+                        "{permissions:[W]});"
+                        "o.required=await chrome.permissions.contains("
+                        "{permissions:['storage']});"
+                        "o.pre=await chrome.permissions.contains("
+                        "{permissions:[W]});"
+                        "%2"
+                        "o.allPre=(await chrome.permissions.getAll())"
+                        ".permissions.indexOf(W)>=0;"
+                        "o.req=await chrome.permissions.request("
+                        "{permissions:[W]});"
+                        "o.post=await chrome.permissions.contains("
+                        "{permissions:[W]});"
+                        "o.allPost=(await chrome.permissions.getAll())"
+                        ".permissions.indexOf(W)>=0;"
+                        "o.sawAdded=added.some(function(p){"
+                        "return (p.permissions||[]).indexOf(W)>=0;});"
+                        "%3"
+                        "self.__perm={out:o,done:true};"
+                        "})().catch(function(e){"
+                        "self.__perm={err:String(e&&e.stack||e),"
+                        "done:true};});")
+                        .arg(wanted,
+                             realExt
+                                 ? QString()
+                                 : QStringLiteral(
+                                     "try{await chrome.privacy.services"
+                                     ".passwordSavingEnabled.get({});"
+                                     "o.preGate='served';}catch(e){"
+                                     "o.preGate=e.code||String(e);}"),
+                             realExt
+                                 ? QStringLiteral(
+                                     "await new Promise(function(r){"
+                                     "chrome.runtime.sendNativeMessage("
+                                     "'com.8bit.bitwarden',{probe:1},"
+                                     "function(rr){o.postGate="
+                                     "(chrome.runtime.lastError&&"
+                                     "chrome.runtime.lastError.message)"
+                                     "||('answered:'+JSON.stringify(rr));"
+                                     "r();});});")
+                                 : QStringLiteral(
+                                     "try{var gv=await chrome.privacy"
+                                     ".services.passwordSavingEnabled"
+                                     ".get({});o.postGate=(gv&&typeof "
+                                     "gv==='object'&&'value' in gv);}"
+                                     "catch(e){o.postGate='err:'+"
+                                     "(e.code||String(e));}")),
+                        [](const QVariant &) {});
+                    return;
+                }
+                if (*permStep == 1) {
+                    ++*probeTicks;
+                    host->page()->runJavaScript(QStringLiteral(
+                        "JSON.stringify(self.__perm||null)"),
+                        [&, host, wanted](const QVariant &v) {
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool()) {
+                            if (*probeTicks > 160) {
+                                hostPoll->stop();
+                                check(false, "permissions grant leg "
+                                            "settled");
+                                qInfo() << "extension-host-smoke:"
+                                           " perm:" << v.toString();
+                                *permStep = 2;
+                                *probeTicks = 0;
+                                qputenv("ARKTOS_EXT_PERMISSION_ANSWER",
+                                        "deny");
+                                host->page()->runJavaScript(
+                                    QStringLiteral(
+                                        "self.__perm2={done:true,"
+                                        "out:{skipped:true}};"),
+                                    [](const QVariant &) {});
+                                hostPoll->start();
+                            }
+                            return;
+                        }
+                        hostPoll->stop();
+                        check(r.value(QLatin1String("err")).toString()
+                                  .isEmpty(),
+                              "permissions grant leg ran clean");
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        qInfo() << "extension-host-smoke: perm:"
+                                << v.toString();
+                        check(o.value(QLatin1String("required")).toBool(),
+                              "contains() answers the required grant "
+                              "true");
+                        check(!o.value(QLatin1String("pre")).toBool(),
+                              "contains(<optional>) is false before "
+                              "consent");
+                        check(!o.value(QLatin1String("allPre")).toBool(),
+                              "getAll() omits the ungranted optional");
+                        check(o.value(QLatin1String("req")).toBool(),
+                              "request(<optional>) resolved true "
+                              "after consent");
+                        check(o.value(QLatin1String("post")).toBool(),
+                              "contains(<optional>) true after "
+                              "consent");
+                        check(o.value(QLatin1String("allPost")).toBool(),
+                              "getAll() lists the consented grant");
+                        check(o.value(QLatin1String("sawAdded")).toBool(),
+                              "permissions.onAdded fired with the "
+                              "grant");
+                        // The grant's record persists per persona —
+                        // Chrome keeps request() outcomes across
+                        // sessions.
+                        const QStringList persisted = ProfileSettings(
+                            BrowserProfile::profileIdFor(
+                                host->page()->profile()))
+                            .value(QStringLiteral("extensions/optperms/")
+                                   + extensionId)
+                            .toStringList();
+                        check(persisted.contains(wanted),
+                              "the consented grant persisted for the "
+                              "persona");
+                        if (!realExt) {
+                            check(o.value(QLatin1String("preGate"))
+                                      .toString()
+                                      == QLatin1String("no-permission"),
+                                  "gated privacy call answered typed "
+                                  "no-permission before consent");
+                            check(o.value(QLatin1String("postGate"))
+                                      .toBool(),
+                                  "gated privacy call answers real "
+                                  "after the grant");
+                        } else {
+                            const QString postGate =
+                                o.value(QLatin1String("postGate"))
+                                    .toString();
+                            check(postGate.contains(
+                                      QLatin1String("not found")),
+                                  "granted nativeMessaging gate "
+                                  "answers 'not found', not "
+                                  "'no-permission'");
+                        }
+                        // Deny + revoke leg: the env answer flips to
+                        // deny so request()'s refusal path is
+                        // measured on the same grant.
+                        *permStep = 2;
+                        *probeTicks = 0;
+                        qputenv("ARKTOS_EXT_PERMISSION_ANSWER", "deny");
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__perm2={done:false};"
+                            "(async function(){var o={};"
+                            "var removed=[];"
+                            "chrome.permissions.onRemoved.addListener("
+                            "function(p){removed.push(p);});"
+                            "var W='%1';"
+                            "o.removed=await chrome.permissions.remove("
+                            "{permissions:[W]});"
+                            "o.afterRemove=await chrome.permissions"
+                            ".contains({permissions:[W]});"
+                            "o.sawRemoved=removed.some(function(p){"
+                            "return (p.permissions||[]).indexOf(W)>=0;"
+                            "});"
+                            "o.denyReq=await chrome.permissions.request("
+                            "{permissions:[W]});"
+                            "o.afterDeny=await chrome.permissions"
+                            ".contains({permissions:[W]});"
+                            "o.undeclared=null;"
+                            "try{await chrome.permissions.request("
+                            "{permissions:['bookmarks']});"
+                            "o.undeclared='resolved';}"
+                            "catch(e){o.undeclared=e.code||String(e);}"
+                            "self.__perm2={out:o,done:true};"
+                            "})().catch(function(e){"
+                            "self.__perm2={err:String(e&&e.stack||e),"
+                            "done:true};});")
+                            .arg(wanted),
+                            [](const QVariant &) {});
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                // permStep == 2 — the deny/revoke poll.
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify(self.__perm2||null)"),
+                    [&, host, wanted](const QVariant &v) {
+                    const QJsonObject r = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (!r.value(QLatin1String("done")).toBool()) {
+                        if (*probeTicks > 160) {
+                            hostPoll->stop();
+                            check(false, "permissions deny/revoke leg "
+                                        "settled");
+                            qInfo() << "extension-host-smoke: perm2:"
+                                    << v.toString();
+                            qunsetenv("ARKTOS_EXT_PERMISSION_ANSWER");
+                            if (realExt) {
+                                extensions->setExtensionEnabled(
+                                    extensionId, false);
+                                *phase = 1;
+                                *hostTicks = 0;
+                            } else {
+                                *phase = 11;
+                                *afDrove = false;
+                            }
+                            *probeTicks = 0;
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    hostPoll->stop();
+                    qunsetenv("ARKTOS_EXT_PERMISSION_ANSWER");
+                    check(r.value(QLatin1String("err")).toString()
+                              .isEmpty(),
+                          "permissions deny/revoke leg ran clean");
+                    const QJsonObject o =
+                        r.value(QLatin1String("out")).toObject();
+                    qInfo() << "extension-host-smoke: perm2:"
+                            << v.toString();
+                    check(o.value(QLatin1String("removed")).toBool(),
+                          "remove(<held optional>) resolved");
+                    check(!o.value(QLatin1String("afterRemove")).toBool(),
+                          "contains() false again after remove()");
+                    check(o.value(QLatin1String("sawRemoved")).toBool(),
+                          "permissions.onRemoved fired with the "
+                          "revoked set");
+                    check(!o.value(QLatin1String("denyReq")).toBool(),
+                          "request() answers false when consent is "
+                          "refused");
+                    check(!o.value(QLatin1String("afterDeny")).toBool(),
+                          "a refused request granted nothing");
+                    check(o.value(QLatin1String("undeclared")).toString()
+                              == QLatin1String("not-optional"),
+                          "request() of an undeclared permission "
+                          "fails typed 'not-optional'");
+                    const QStringList persisted = ProfileSettings(
+                        BrowserProfile::profileIdFor(
+                            host->page()->profile()))
+                        .value(QStringLiteral("extensions/optperms/")
+                               + extensionId)
+                        .toStringList();
+                    check(!persisted.contains(wanted),
+                          "the revoked grant left the persisted "
+                          "record");
+                    if (realExt) {
+                        extensions->setExtensionEnabled(
+                            extensionId, false);
+                        *phase = 1;
+                        *hostTicks = 0;
+                    } else {
+                        // Fixture: the BW05 port legs follow — they
+                        // need the extension still enabled and a
+                        // fresh drive flag.
+                        *phase = 11;
+                        *afDrove = false;
+                    }
+                    *probeTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 16) {  // BW07: chrome.offscreen
+                // The leg's steps are driven sequentially because
+                // each polls a different page's globals: 0 = kick
+                // off hasDocument + createDocument in the sw; 1 =
+                // poll the create outcome + probe the document page
+                // and fire its ->sw sendMessage; 2 = poll the
+                // document's answer and send sw->doc; 3 = poll the
+                // sw->doc response and launch the typed-error +
+                // closeDocument sweep; 4 = poll the sweep outcome.
+                if (!host) {
+                    // The host died between phases — the fixture
+                    // never loses it here; a real extension's host
+                    // can die on its own shutdown path.
+                    check(realExt,
+                          "offscreen leg skipped — host gone");
+                    offDone();
+                    return;
+                }
+                if (*offStep == 0) {
+                    *offStep = 1;
+                    *probeTicks = 0;
+                    if (!realExt) {
+                        *offRel = QStringLiteral("off.html");
+                    } else {
+                        // A real extension: its declared offscreen
+                        // document when the bundle ships one under a
+                        // known name, else its action popup (any
+                        // same-origin document is a legal url).
+                        const QStringList cands{
+                            QStringLiteral(
+                                "offscreen-document/index.html"),
+                            QStringLiteral("offscreen.html"),
+                            QStringLiteral("offscreen/index.html")};
+                        for (const QString &cand : cands) {
+                            if (QFileInfo(extDir + QLatin1Char('/')
+                                          + cand).isFile()) {
+                                *offRel = cand;
+                                break;
+                            }
+                        }
+                        if (offRel->isEmpty()) {
+                            for (const ExtensionManager::ExtensionInfo
+                                     &ei : extensions->extensions()) {
+                                if (ei.id != extensionId)
+                                    continue;
+                                if (ei.actionPopupUrl.scheme()
+                                        == QLatin1String(
+                                            "chrome-extension")) {
+                                    const QString p =
+                                        ei.actionPopupUrl.path();
+                                    if (p.size() > 1)
+                                        *offRel = p.mid(1);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    const bool declared = !realExt
+                        || manifest.permissions.contains(
+                               QLatin1String("offscreen"));
+                    if (!declared || offRel->isEmpty()) {
+                        qInfo() << "extension-host-smoke: offscreen"
+                                   " leg skipped —"
+                                << (declared
+                                        ? QLatin1String(
+                                              "no document candidate")
+                                        : QLatin1String(
+                                              "no offscreen "
+                                              "permission"));
+                        offDone();
+                        return;
+                    }
+                    // The sw-side half: a probe listener answering
+                    // the document's {offToSw} (sender.url recorded
+                    // for the log), then the real createDocument.
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__offA={done:false};"
+                        "self.__offSwSeen=[];"
+                        "chrome.runtime.onMessage.addListener("
+                        "function(m,s,r){ if(m&&m.offToSw){"
+                        " self.__offSwSeen.push({v:m.offToSw,"
+                        " url:(s&&s.url)||null});"
+                        " r({pong:true,from:'sw'}); return true; }"
+                        " return false; });"
+                        "(async function(){var o={};"
+                        " o.had0=await chrome.offscreen.hasDocument();"
+                        " await chrome.offscreen.createDocument({"
+                        "  url:'%1',reasons:['TESTING'],"
+                        "  justification:'arktos smoke'});"
+                        " o.had1=await chrome.offscreen.hasDocument();"
+                        " var c=await chrome.runtime.getContexts();"
+                        " o.offCtx=c.filter(function(x){return "
+                        "  x.contextType==='OFFSCREEN_DOCUMENT';})"
+                        "  .length;"
+                        " self.__offA.out=o;self.__offA.done=true;})()"
+                        ".catch(function(e){self.__offA.err="
+                        " String(e&&e.stack||e);self.__offA.done=true;"
+                        "});").arg(*offRel),
+                        [](const QVariant &) {});
+                    return;
+                }
+                if (*offStep == 1) {   // createDocument outcome
+                    ++*probeTicks;
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__offA?JSON.stringify(self.__offA)"
+                        ":'missing'"),
+                        [&, host](const QVariant &v) {
+                        if (*probeTicks > 240) {
+                            die(QStringLiteral(
+                                "offscreen createDocument timed "
+                                "out: %1").arg(v.toString()));
+                            return;
+                        }
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool())
+                            return;
+                        hostPoll->stop();
+                        const QString err =
+                            r.value(QLatin1String("err")).toString();
+                        check(err.isEmpty(),
+                              "offscreen.createDocument resolved");
+                        if (!err.isEmpty()) {
+                            qInfo() << "extension-host-smoke:"
+                                       " offscreen create error:"
+                                    << err;
+                            offDone();
+                            return;
+                        }
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        check(o.value(QLatin1String("had0")).toBool()
+                                  == false,
+                              "hasDocument false before create");
+                        check(o.value(QLatin1String("had1")).toBool(),
+                              "hasDocument true after create");
+                        check(o.value(QLatin1String("offCtx")).toInt()
+                                  >= 1,
+                              "getContexts lists OFFSCREEN_DOCUMENT");
+                        // Host-side honesty: the recorded create
+                        // parameters echo the call, and the page is
+                        // really there.
+                        const QJsonObject info =
+                            runtime->offscreenInfo(extensionId);
+                        check(info.value(QLatin1String("url"))
+                                  .toString().endsWith(*offRel),
+                              "offscreenInfo records the declared "
+                              "url");
+                        check(info.value(QLatin1String("reasons"))
+                                  .toArray().contains(
+                                      QLatin1String("TESTING"))
+                                  && info.value(QLatin1String(
+                                                "justification"))
+                                         .toString()
+                                         == QLatin1String(
+                                                "arktos smoke"),
+                              "offscreenInfo records reasons + "
+                              "justification");
+                        QWebEnginePage *docPage =
+                            runtime->offscreenPage(extensionId);
+                        if (!docPage) {
+                            check(false, "offscreen page object "
+                                         "exists host-side");
+                            offDone();
+                            return;
+                        }
+                        // Probe the document page: shim + bridge up,
+                        // own script ran, right url — then install
+                        // the echo listener a real extension's
+                        // document does not carry and fire the
+                        // document->sw sendMessage.
+                        docPage->runJavaScript(QStringLiteral(
+                            "(function(){var o={shim:"
+                            "!!window.__arktosShim,"
+                            "up:!!(window.__arktosHost&&"
+                            "__arktosHost.bridgeUp),"
+                            "href:String(location.href),"
+                            "ran:self.__offBootRan||null};"
+                            "chrome.runtime.onMessage.addListener("
+                            "function(m,s,r){ if(m&&m.offPing){"
+                            " r({offPong:true,"
+                            "  from:'offscreen-injected'});"
+                            " return true; } return false; });"
+                            "self.__offResp='pending';"
+                            "chrome.runtime.sendMessage({offToSw:"
+                            "'doc-to-sw'},function(resp){"
+                            " self.__offResp=chrome.runtime.lastError"
+                            "  ?('err:'+chrome.runtime.lastError"
+                            "       .message):resp;});"
+                            "return JSON.stringify(o);})()"),
+                            [&, host](const QVariant &v) {
+                            const QJsonObject o =
+                                QJsonDocument::fromJson(
+                                    v.toString().toUtf8()).object();
+                            check(o.value(QLatin1String("shim"))
+                                      .toBool(),
+                                  "offscreen document carries the "
+                                  "shim");
+                            check(o.value(QLatin1String("up"))
+                                      .toBool(),
+                                  "offscreen chromeBridge handshake "
+                                  "completed");
+                            check(o.value(QLatin1String("href"))
+                                      .toString().endsWith(*offRel),
+                                  "offscreen document loaded the "
+                                  "declared url");
+                            if (!realExt)
+                                check(o.value(QLatin1String("ran"))
+                                          .toString()
+                                          == QLatin1String("ok"),
+                                      "offscreen document's own "
+                                      "script ran with "
+                                      "chrome.runtime");
+                            else
+                                qInfo() << "extension-host-smoke:"
+                                           " offscreen doc:"
+                                        << v.toString();
+                            *offStep = 2;
+                            *probeTicks = 0;
+                            hostPoll->start();
+                        });
+                    });
+                    return;
+                }
+                if (*offStep == 2) {   // doc->sw answer + sw->doc send
+                    ++*probeTicks;
+                    QWebEnginePage *docPage =
+                        runtime->offscreenPage(extensionId);
+                    if (!docPage) {
+                        hostPoll->stop();
+                        check(false, "offscreen page survives the "
+                                     "messaging legs");
+                        offDone();
+                        return;
+                    }
+                    docPage->runJavaScript(QStringLiteral(
+                        "JSON.stringify({resp:self.__offResp})"),
+                        [&, host, docPage](const QVariant &v) {
+                        const QJsonObject o = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        const QJsonValue resp =
+                            o.value(QLatin1String("resp"));
+                        if (resp.isNull()
+                                || resp.toString()
+                                       == QLatin1String("pending")) {
+                            if (*probeTicks > 160) {
+                                hostPoll->stop();
+                                check(false, "offscreen->sw "
+                                             "sendMessage answered");
+                                offDone();
+                            }
+                            return;
+                        }
+                        const QJsonObject rr = resp.toObject();
+                        check(rr.value(QLatin1String("pong")).toBool()
+                                  && rr.value(QLatin1String("from"))
+                                         .toString()
+                                         == QLatin1String("sw"),
+                              "offscreen->sw sendMessage round "
+                              "trip");
+                        // sw->doc: send the {offPing} the document's
+                        // listener answers.
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__offSwResp='pending';"
+                            "chrome.runtime.sendMessage({offPing:"
+                            "true},function(r){ self.__offSwResp="
+                            " chrome.runtime.lastError?('err:'+"
+                            "  chrome.runtime.lastError.message):r;"
+                            "});"),
+                            [](const QVariant &) {});
+                        *offStep = 3;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                if (*offStep == 3) {   // sw->doc answer, then close
+                    ++*probeTicks;
+                    host->page()->runJavaScript(QStringLiteral(
+                        "JSON.stringify({resp:self.__offSwResp,"
+                        "seen:self.__offSwSeen})"),
+                        [&, host](const QVariant &v) {
+                        const QJsonObject o = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        const QJsonValue resp =
+                            o.value(QLatin1String("resp"));
+                        if (resp.isNull()
+                                || resp.toString()
+                                       == QLatin1String("pending")) {
+                            if (*probeTicks > 160) {
+                                hostPoll->stop();
+                                check(false, "sw->offscreen "
+                                             "sendMessage answered");
+                                offDone();
+                            }
+                            return;
+                        }
+                        const QJsonObject rr = resp.toObject();
+                        check(rr.value(QLatin1String("offPong"))
+                                  .toBool(),
+                              "sw->offscreen sendMessage round "
+                              "trip");
+                        bool sawDoc = false;
+                        int docSends = 0;
+                        const QJsonArray seen =
+                            o.value(QLatin1String("seen")).toArray();
+                        for (const QJsonValue &e : seen) {
+                            if (e.toObject()
+                                    .value(QLatin1String("v"))
+                                    .toString()
+                                    == QLatin1String("doc-to-sw")) {
+                                sawDoc = true;
+                                ++docSends;
+                            }
+                        }
+                        check(sawDoc,
+                              "sw onMessage saw the offscreen "
+                              "document's send");
+                        // BW07: one sendMessage = one onMessage
+                        // firing — the send rides the native binding
+                        // AND the relay (both reach real
+                        // chrome-extension:// contexts), so the
+                        // shim's per-transport content dedupe is
+                        // what keeps this at 1.
+                        check(docSends == 1,
+                              "offscreen sendMessage fired sw "
+                              "onMessage exactly once "
+                              "(native+relay dedupe)");
+                        qInfo() << "extension-host-smoke: offscreen"
+                                   " answer from:"
+                                << rr.value(QLatin1String("from"))
+                                       .toString()
+                                << "doc->sw senders:"
+                                << QString::fromUtf8(QJsonDocument(
+                                       seen)
+                                       .toJson(QJsonDocument::Compact));
+                        // Negative + teardown sweep: Chrome's
+                        // single-document rule verbatim, a bogus
+                        // reason, a foreign url — then close and
+                        // confirm the context is gone.
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__offB={done:false};"
+                            "(async function(){var o={};"
+                            " try{await chrome.offscreen"
+                            "  .createDocument({url:'%1',"
+                            "   reasons:['BLOBS'],justification:"
+                            "   'x'});o.second='resolved';}"
+                            " catch(e){o.second=String(e.message||e);}"
+                            " try{await chrome.offscreen"
+                            "  .createDocument({url:'%1',"
+                            "   reasons:['BOGUS'],justification:"
+                            "   'x'});o.badReason='resolved';}"
+                            " catch(e){o.badReason=String(e.code"
+                            "   ||e.message||e);}"
+                            " try{await chrome.offscreen"
+                            "  .createDocument({url:'https://evil"
+                            "   .invalid/x.html',reasons:['BLOBS'],"
+                            "   justification:'x'});"
+                            "  o.badUrl='resolved';}"
+                            " catch(e){o.badUrl=String(e.code"
+                            "   ||e.message||e);}"
+                            " await chrome.offscreen.closeDocument();"
+                            " o.hadAfter=await chrome.offscreen"
+                            "  .hasDocument();"
+                            " var c=await chrome.runtime.getContexts();"
+                            " o.offCtxAfter=c.filter(function(x){"
+                            "  return x.contextType==="
+                            "  'OFFSCREEN_DOCUMENT';}).length;"
+                            " self.__offB.out=o;self.__offB.done=true;"
+                            "})().catch(function(e){self.__offB.err="
+                            " String(e&&e.stack||e);"
+                            " self.__offB.done=true;});")
+                            .arg(*offRel),
+                            [](const QVariant &) {});
+                        *offStep = 4;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                // offStep == 4: teardown outcome
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "self.__offB?JSON.stringify(self.__offB)"
+                    ":'missing'"),
+                    [&, host](const QVariant &v) {
+                    if (*probeTicks > 240) {
+                        die(QStringLiteral(
+                            "offscreen close sweep timed out: %1")
+                                .arg(v.toString()));
+                        return;
+                    }
+                    const QJsonObject r = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (!r.value(QLatin1String("done")).toBool())
+                        return;
+                    hostPoll->stop();
+                    check(r.value(QLatin1String("err")).toString()
+                              .isEmpty(),
+                          "offscreen close sweep ran clean");
+                    const QJsonObject o =
+                        r.value(QLatin1String("out")).toObject();
+                    check(o.value(QLatin1String("second")).toString()
+                              == QLatin1String(
+                                  "Only a single offscreen document "
+                                  "may be created."),
+                          "second createDocument rejected with "
+                          "Chrome's verbatim message");
+                    qInfo() << "extension-host-smoke: offscreen"
+                               " typed errors:"
+                            << o.value(QLatin1String("badReason"))
+                                   .toString()
+                            << "|"
+                            << o.value(QLatin1String("badUrl"))
+                                   .toString();
+                    check(o.value(QLatin1String("badReason")).toString()
+                              .contains(QLatin1String(
+                                            "invalid-argument")),
+                          "unknown reason rejected typed");
+                    check(o.value(QLatin1String("badUrl")).toString()
+                              .contains(QLatin1String("bad-path")),
+                          "foreign url rejected typed");
+                    check(o.value(QLatin1String("hadAfter")).toBool()
+                              == false,
+                          "closeDocument dropped the document");
+                    check(o.value(QLatin1String("offCtxAfter")).toInt()
+                              == 0,
+                          "getContexts no longer lists the "
+                          "document");
+                    check(runtime->offscreenPage(extensionId)
+                              == nullptr,
+                          "offscreen page torn down host-side");
+                    offDone();
+                });
+            } else if (*phase == 17) {  // BW13: clipboard legs
+                // Bitwarden's copy-password flow runs
+                // navigator.clipboard in the (focused) popup and the
+                // execCommand('copy') textarea in hidden
+                // background/offscreen contexts — both measured on
+                // the extension's own chrome with Chrome parity:
+                // Blink rejects navigator.clipboard in an unfocused
+                // document BEFORE consulting permissions
+                // ("Document is not focused" — real Chrome does the
+                // same in offscreen documents, crbug.com/1404835),
+                // so the hidden-host async legs assert the typed
+                // parity rejection while execCommand — the offscreen
+                // path — must reach the real QClipboard iff the
+                // manifest declared the grant.  The shown popup
+                // measures the focused path: resolves+observed for
+                // the grant-holder, typed denial for the fixture.
+                // The verify is the OBSERVED text, never the API's
+                // self-report.
+                //
+                // Platform guard: a QPA without a usable clipboard
+                // (offscreen) makes the leg unmeasurable — a probe
+                // write/read pair decides; no store, an honest skip.
+                if (*clipStep == 0) {
+                    QClipboard *cb = QGuiApplication::clipboard();
+                    const QString probe =
+                        QStringLiteral("__arktos_clip_cap__");
+                    cb->setText(probe);
+                    if (cb->text() != probe) {
+                        qInfo() << "extension-host-smoke: clipboard"
+                                   " legs skipped — platform has no"
+                                   " usable clipboard";
+                        clipDone();
+                        return;
+                    }
+                    cb->setText(QString());
+                    if (!host) {
+                        check(realExt,
+                              "clipboard legs skipped — host gone");
+                        clipDone();
+                        return;
+                    }
+                    *clipStep = 1;
+                    *probeTicks = 0;
+                    return;
+                }
+                if (!host) {
+                    check(realExt,
+                          "clipboard legs skipped — host gone");
+                    clipDone();
+                    return;
+                }
+                if (*clipStep == 1) {   // navigator.clipboard.writeText
+                    *clipStep = 2;
+                    *probeTicks = 0;
+                    const QString sentinel = realExt
+                        ? QStringLiteral("arktos-clip-bw13-nav")
+                        : QStringLiteral("arktos-clip-bw13-neg");
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__clipW={done:false};"
+                        "(async function(){var o={};"
+                        " o.has=('clipboard' in navigator"
+                        "  &&'writeText' in (navigator.clipboard||{}));"
+                        " try{await navigator.clipboard.writeText('%1');"
+                        "  o.ok=true;}"
+                        " catch(e){o.err=String(e&&e.name||e)"
+                        "  +'|'+String(e&&e.message||e);}"
+                        " self.__clipW.out=o;self.__clipW.done=true;"
+                        "})().catch(function(e){self.__clipW.err="
+                        " String(e);self.__clipW.done=true;});")
+                        .arg(sentinel),
+                        [](const QVariant &) {});
+                    return;
+                }
+                if (*clipStep == 2) {   // write outcome — parity deny
+                    ++*probeTicks;
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__clipW?JSON.stringify(self.__clipW)"
+                        ":'missing'"),
+                        [&, host](const QVariant &v) {
+                        if (*probeTicks > 240) {
+                            die(QStringLiteral(
+                                "clipboard writeText leg timed out: %1")
+                                    .arg(v.toString()));
+                            return;
+                        }
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool())
+                            return;
+                        hostPoll->stop();
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        const QString clip =
+                            QGuiApplication::clipboard()->text();
+                        const QString sentinel = realExt
+                            ? QStringLiteral("arktos-clip-bw13-nav")
+                            : QStringLiteral("arktos-clip-bw13-neg");
+                        // Both flavors reject typed here: the hidden
+                        // host is an unfocused document, and Blink's
+                        // focus gate fires before permissions are
+                        // even consulted — real Chrome answers the
+                        // same NotAllowedError in offscreen documents
+                        // (crbug.com/1404835).  Honest parity, never
+                        // a silent success: the clipboard must stay
+                        // untouched either way.
+                        check(!o.value(QLatin1String("ok")).toBool()
+                              && !o.value(QLatin1String("err"))
+                                     .toString().isEmpty(),
+                              realExt
+                                  ? "hidden writeText rejects typed "
+                                    "— Chrome parity (unfocused)"
+                                  : "clipboard.writeText rejects "
+                                    "typed without the grant");
+                        qInfo() << "extension-host-smoke: hidden"
+                                   " write rejection:"
+                                << o.value(QLatin1String("err"))
+                                       .toString();
+                        check(clip != sentinel,
+                              "rejected writeText never reached the "
+                              "clipboard");
+                        // execCommand('copy') — Bitwarden's textarea
+                        // fallback verbatim.
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__clipE={done:false};"
+                            "(function(){var o={};"
+                            " o.supported=('queryCommandSupported' in"
+                            "  document?document"
+                            "   .queryCommandSupported('copy'):null);"
+                            " var ta=document.createElement('textarea');"
+                            " ta.textContent='arktos-clip-bw13-exec';"
+                            " ta.style.position='fixed';"
+                            " (document.body||document.documentElement)"
+                            "  .appendChild(ta);ta.select();"
+                            " try{o.ret=document.execCommand('copy');}"
+                            " catch(e){o.err=String(e);}"
+                            " if(ta.parentNode)ta.parentNode"
+                            "  .removeChild(ta);"
+                            " self.__clipE.out=o;self.__clipE.done=true;"
+                            "})()"),
+                            [](const QVariant &) {});
+                        *clipStep = 3;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                if (*clipStep == 3) {   // execCommand('copy') outcome
+                    ++*probeTicks;
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__clipE?JSON.stringify(self.__clipE)"
+                        ":'missing'"),
+                        [&, host](const QVariant &v) {
+                        if (*probeTicks > 240) {
+                            die(QStringLiteral(
+                                "clipboard execCommand leg timed "
+                                "out: %1").arg(v.toString()));
+                            return;
+                        }
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool())
+                            return;
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        const QString clip =
+                            QGuiApplication::clipboard()->text();
+                        const QString sentinel = QStringLiteral(
+                            "arktos-clip-bw13-exec");
+                        if (realExt) {
+                            if (!o.value(QLatin1String("ret")).toBool()
+                                || clip != sentinel) {
+                                if (*probeTicks > 200) {
+                                    hostPoll->stop();
+                                    check(o.value(QLatin1String("ret"))
+                                              .toBool(),
+                                          "execCommand('copy') "
+                                          "fallback succeeds with "
+                                          "the grant");
+                                    check(clip == sentinel,
+                                          "execCommand copy observed "
+                                          "on the real clipboard");
+                                    qInfo() << "extension-host-smoke:"
+                                               " exec outcome:"
+                                            << v.toString()
+                                            << "clipboard:" << clip;
+                                    clipDone();
+                                }
+                                return;
+                            }
+                            hostPoll->stop();
+                            check(true, "execCommand('copy') fallback "
+                                        "succeeds with the grant");
+                            check(true, "execCommand copy observed on "
+                                        "the real clipboard");
+                        } else {
+                            hostPoll->stop();
+                            check(!o.value(QLatin1String("ret"))
+                                      .toBool(),
+                                  "execCommand('copy') refused "
+                                  "without the grant");
+                            check(clip != sentinel,
+                                  "denied execCommand copy never "
+                                  "reached the clipboard");
+                        }
+                        // navigator.clipboard.readText — same focus
+                        // gate as writeText; the hidden host rejects
+                        // typed for BOTH flavors (Chrome parity).
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__clipR={done:false};"
+                            "(async function(){var o={};"
+                            " try{o.text=await navigator.clipboard"
+                            "  .readText();o.ok=true;}"
+                            " catch(e){o.err=String(e&&e.name||e)"
+                            "  +'|'+String(e&&e.message||e);}"
+                            " self.__clipR.out=o;self.__clipR.done=true;"
+                            "})().catch(function(e){self.__clipR.err="
+                            " String(e);self.__clipR.done=true;});"),
+                            [](const QVariant &) {});
+                        *clipStep = 4;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                if (*clipStep == 4) {   // readText outcome
+                    ++*probeTicks;
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__clipR?JSON.stringify(self.__clipR)"
+                        ":'missing'"),
+                        [&, host](const QVariant &v) {
+                        if (*probeTicks > 240) {
+                            die(QStringLiteral(
+                                "clipboard readText leg timed out: %1")
+                                    .arg(v.toString()));
+                            return;
+                        }
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool())
+                            return;
+                        hostPoll->stop();
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        // Same focus gate as writeText — hidden reads
+                        // reject typed for grant-holders too; Chrome
+                        // parity (extension reads happen in focused
+                        // surfaces, measured in the popup leg next).
+                        check(!o.value(QLatin1String("ok")).toBool()
+                              && !o.value(QLatin1String("err"))
+                                     .toString().isEmpty(),
+                              realExt
+                                  ? "hidden readText rejects typed "
+                                    "— Chrome parity (unfocused)"
+                                  : "clipboard.readText rejects "
+                                    "typed without the grant");
+                        qInfo() << "extension-host-smoke: hidden"
+                                   " read rejection:"
+                                << o.value(QLatin1String("err"))
+                                       .toString();
+                        // The popup leg: the copy-password surface is
+                        // the action popup — an ExtensionChromePage
+                        // on a shown view (focused under xvfb), a
+                        // different page class than the host — so
+                        // both the grant wiring and the focused
+                        // denial are proven there.  The fixture ships
+                        // a popup too, so both flavors run it.
+                        QUrl popupUrl;
+                        for (const ExtensionManager::ExtensionInfo
+                                 &ei : extensions->extensions()) {
+                            if (ei.id == extensionId) {
+                                popupUrl = ei.actionPopupUrl;
+                                break;
+                            }
+                        }
+                        if (popupUrl.scheme()
+                                != QLatin1String("chrome-extension")) {
+                            qInfo() << "extension-host-smoke: popup"
+                                       " clipboard leg skipped — no"
+                                       " popup url";
+                            clipDone();
+                            return;
+                        }
+                        popupView = new QWebEngineView;
+                        popupPage = new ExtensionChromePage(
+                            host->page()->profile(), extensionId,
+                            popupView);
+                        popupPage->settings()->setAttribute(
+                            QWebEngineSettings::JavascriptEnabled,
+                            true);
+                        popupView->setPage(popupPage);
+                        // The popup legs need a FOCUSED document —
+                        // navigator.clipboard's Blink focus gate —
+                        // so the view is raised/activated like a
+                        // real action popup (which Chrome always
+                        // opens focused).
+                        popupView->show();
+                        popupView->raise();
+                        popupView->activateWindow();
+                        popupView->setFocus(Qt::OtherFocusReason);
+                        popupPage->load(popupUrl);
+                        *clipStep = 5;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                if (*clipStep == 5) {   // popup bridge + focus wait
+                    ++*probeTicks;
+                    if (!popupPage || !popupView) {
+                        die(QStringLiteral(
+                            "popup page died before the clipboard "
+                            "leg"));
+                        return;
+                    }
+                    // The popup legs need a FOCUSED document —
+                    // Blink gates navigator.clipboard on it before
+                    // permissions — so the view is driven like a real
+                    // action popup (raised, activated, focused).
+                    // Under a WM-less Xvfb that can still leave
+                    // document.hasFocus() false (no compositor answers
+                    // _NET_ACTIVE_WINDOW and QtWebEngine forwards web
+                    // contents focus only from OS-level activation) —
+                    // the grant-holder waits a bounded while, then the
+                    // leg proceeds and the OUTCOME is judged against
+                    // whatever the document actually reported.
+                    popupView->raise();
+                    popupView->activateWindow();
+                    QWidget *proxy = popupView->focusProxy()
+                        ? popupView->focusProxy() : popupView;
+                    proxy->setFocus(Qt::OtherFocusReason);
+                    popupPage->runJavaScript(QStringLiteral(
+                        "window.focus();JSON.stringify({"
+                        "b:!!(window.__arktosHost"
+                        "&&__arktosHost.bridgeUp),"
+                        "f:document.hasFocus(),"
+                        "v:document.visibilityState})"),
+                        [&](const QVariant &v) {
+                        const QJsonObject s = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        const bool bridgeUp =
+                            s.value(QLatin1String("b")).toBool();
+                        if (!bridgeUp) {
+                            if (*probeTicks > 160)
+                                die(QStringLiteral(
+                                    "popup bridge never came up for "
+                                    "the clipboard leg"));
+                            return;
+                        }
+                        // Grant-holder: give focus a bounded window
+                        // (~60 ticks) to land before measuring the
+                        // call — the fixture proceeds at the bridge.
+                        if (realExt
+                            && !s.value(QLatin1String("f")).toBool()
+                            && *probeTicks <= 60)
+                            return;
+                        hostPoll->stop();
+                        popupPage->runJavaScript(QStringLiteral(
+                            "self.__clipP={done:false};"
+                            "(async function(){var o={};"
+                            " window.focus();o.f=document.hasFocus();"
+                            " try{await navigator.clipboard.writeText"
+                            "  ('arktos-clip-bw13-popup');o.ok=true;}"
+                            " catch(e){o.err=String(e&&e.name||e)"
+                            "  +'|'+String(e&&e.message||e);}"
+                            " self.__clipP.out=o;"
+                            " self.__clipP.done=true;})()"
+                            ".catch(function(e){self.__clipP.err="
+                            " String(e);self.__clipP.done=true;});"),
+                            [](const QVariant &) {});
+                        *clipStep = 6;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                if (*clipStep == 6) {   // popup write outcome
+                    ++*probeTicks;
+                    if (!popupPage) {
+                        die(QStringLiteral(
+                            "popup page gone mid-clipboard-leg"));
+                        return;
+                    }
+                    popupPage->runJavaScript(QStringLiteral(
+                        "self.__clipP?JSON.stringify(self.__clipP)"
+                        ":'missing'"),
+                        [&](const QVariant &v) {
+                        if (*probeTicks > 240) {
+                            die(QStringLiteral(
+                                "popup clipboard leg timed out: %1")
+                                    .arg(v.toString()));
+                            return;
+                        }
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool())
+                            return;
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        const QString clip =
+                            QGuiApplication::clipboard()->text();
+                        const QString sentinel = QStringLiteral(
+                            "arktos-clip-bw13-popup");
+                        if (!realExt) {
+                            hostPoll->stop();
+                            // Focused but grantless: the request
+                            // reaches resolveExtensionChromePermission
+                            // which denies — typed rejection, and
+                            // nothing lands on the clipboard.
+                            check(!o.value(QLatin1String("ok")).toBool()
+                                  && !o.value(QLatin1String("err"))
+                                         .toString().isEmpty(),
+                                  "popup clipboard.writeText rejects "
+                                  "typed without the grant");
+                            qInfo() << "extension-host-smoke: popup"
+                                       " write denial:"
+                                    << o.value(QLatin1String("err"))
+                                           .toString();
+                            check(clip != sentinel,
+                                  "denied popup copy never reached "
+                                  "the clipboard");
+                            if (popupView) {
+                                popupView->deleteLater();
+                                popupView.clear();
+                                popupPage.clear();
+                            }
+                            clipDone();
+                            return;
+                        }
+                        if (!o.value(QLatin1String("f")).toBool()) {
+                            hostPoll->stop();
+                            // Environment honesty: a WM-less display
+                            // cannot OS-activate the popup window, so
+                            // the document stays unfocused and Blink's
+                            // focus gate rejects BEFORE the grant is
+                            // consulted — the same typed answer any
+                            // unfocused context gets, on real Chrome
+                            // too (crbug.com/1404835).  The granted
+                            // write path itself is proven end-to-end
+                            // by the execCommand leg above.
+                            check(!o.value(QLatin1String("ok")).toBool()
+                                  && !o.value(QLatin1String("err"))
+                                         .toString().isEmpty()
+                                  && clip != sentinel,
+                                  "popup writeText rejects typed while "
+                                  "unfocused — focus gate precedes "
+                                  "the grant (Chrome parity)");
+                            qInfo() << "extension-host-smoke: popup"
+                                       " could not be OS-focused in"
+                                       " this env; outcome:"
+                                    << v.toString()
+                                    << "clipboard:" << clip;
+                            if (popupView) {
+                                popupView->deleteLater();
+                                popupView.clear();
+                                popupPage.clear();
+                            }
+                            clipDone();
+                            return;
+                        }
+                        if (!o.value(QLatin1String("ok")).toBool()
+                            || clip != sentinel) {
+                            if (*probeTicks > 200) {
+                                hostPoll->stop();
+                                check(o.value(QLatin1String("ok"))
+                                          .toBool(),
+                                      "popup clipboard.writeText "
+                                      "resolves (the copy-password "
+                                      "surface)");
+                                check(clip == sentinel,
+                                      "popup copy observed on the "
+                                      "real clipboard");
+                                qInfo() << "extension-host-smoke:"
+                                           " popup write outcome:"
+                                        << v.toString()
+                                        << "clipboard:" << clip;
+                                if (popupView) {
+                                    popupView->deleteLater();
+                                    popupView.clear();
+                                    popupPage.clear();
+                                }
+                                clipDone();
+                            }
+                            return;
+                        }
+                        hostPoll->stop();
+                        check(true, "popup clipboard.writeText "
+                                    "resolves (the copy-password "
+                                    "surface)");
+                        check(true, "popup copy observed on the real "
+                                    "clipboard");
+                        // clipboardRead, focused: readText must
+                        // return what the popup write committed.
+                        popupPage->runJavaScript(QStringLiteral(
+                            "self.__clipPR={done:false};"
+                            "(async function(){var o={};"
+                            " try{o.text=await navigator.clipboard"
+                            "  .readText();o.ok=true;}"
+                            " catch(e){o.err=String(e&&e.name||e)"
+                            "  +'|'+String(e&&e.message||e);}"
+                            " self.__clipPR.out=o;"
+                            " self.__clipPR.done=true;})()"
+                            ".catch(function(e){self.__clipPR.err="
+                            " String(e);self.__clipPR.done=true;});"),
+                            [](const QVariant &) {});
+                        *clipStep = 7;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                if (*clipStep == 7) {   // realExt popup read outcome
+                    ++*probeTicks;
+                    if (!popupPage) {
+                        die(QStringLiteral(
+                            "popup page gone before the clipboard "
+                            "read leg"));
+                        return;
+                    }
+                    popupPage->runJavaScript(QStringLiteral(
+                        "self.__clipPR?JSON.stringify(self.__clipPR)"
+                        ":'missing'"),
+                        [&](const QVariant &v) {
+                        if (*probeTicks > 240) {
+                            die(QStringLiteral(
+                                "popup clipboard read leg timed "
+                                "out: %1").arg(v.toString()));
+                            return;
+                        }
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool())
+                            return;
+                        hostPoll->stop();
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        check(o.value(QLatin1String("ok")).toBool()
+                              && o.value(QLatin1String("text"))
+                                     .toString()
+                                     == QLatin1String(
+                                         "arktos-clip-bw13-popup"),
+                              "popup clipboard.readText round-trips "
+                              "the real clipboard (clipboardRead "
+                              "grant)");
+                        if (!o.value(QLatin1String("ok")).toBool())
+                            qInfo() << "extension-host-smoke: popup"
+                                       " read outcome:"
+                                    << v.toString();
+                        if (popupView) {
+                            popupView->deleteLater();
+                            popupView.clear();
+                            popupPage.clear();
+                        }
+                        clipDone();
+                    });
+                    return;
+                }
+                clipDone();
             } else {  // phase 1 — teardown
                 if (!host) {
                     check(true, "disable tears the hosted view down");
@@ -14851,6 +17324,1096 @@ int main(int argc, char **argv)
 
         extensions->grantConsent(extDir);
         extensions->loadExtension(extDir);
+        return application.exec();
+    }
+
+    // Headless verification for BW04: chrome.storage.local is the
+    // hosted runtime's CANONICAL store for every context — the
+    // bridge-backed extstorage/ area replaces the engine's own
+    // bindings, so background, popup and content-script contexts all
+    // share one persisted store.  The parent writes two fixtures at
+    // stable paths (a plain 'storage' grant and a
+    // storage+unlimitedStorage grant — deterministic staged trees
+    // keep the extension ids stable across runs), then runs the seed
+    // and verify legs as real child-process restarts sharing this
+    // profile.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--extension-storage-smoke"))) {
+        int storFailures = 0;
+        const auto scheck = [&storFailures](bool ok,
+                                            const QString &what) {
+            qInfo() << "extension-storage-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++storFailures;
+            return ok;
+        };
+        const auto putStorFixture = [&scheck](const QString &name,
+                                              const QString &perms) {
+            const QString dir = QDir::temp().filePath(name);
+            QDir().mkpath(dir);
+            QFile manifestFile(dir + QLatin1String("/manifest.json"));
+            scheck(manifestFile.open(QIODevice::WriteOnly),
+                   QStringLiteral("write %1 manifest").arg(name));
+            manifestFile.write(QByteArray(
+                "{\"manifest_version\":3,\"name\":\"") + name.toUtf8()
+                + "\",\"version\":\"1.0\",\"permissions\":["
+                + perms.toUtf8()
+                + "],\"action\":{\"default_popup\":\"popup.html\"},"
+                  "\"background\":{\"service_worker\":\"sw.js\"}}");
+            manifestFile.close();
+            QFile worker(dir + QLatin1String("/sw.js"));
+            scheck(worker.open(QIODevice::WriteOnly),
+                   QStringLiteral("write %1 sw.js").arg(name));
+            worker.write("chrome.runtime.onInstalled.addListener("
+                         "function(){});\n");
+            worker.close();
+            QFile popup(dir + QLatin1String("/popup.html"));
+            scheck(popup.open(QIODevice::WriteOnly),
+                   QStringLiteral("write %1 popup.html").arg(name));
+            popup.write("<!doctype html><html><body>"
+                        "<div id=\"root\">store popup</div>"
+                        "<script src=\"popup.js\"></script>"
+                        "</body></html>");
+            popup.close();
+            QFile popupJs(dir + QLatin1String("/popup.js"));
+            scheck(popupJs.open(QIODevice::WriteOnly),
+                   QStringLiteral("write %1 popup.js").arg(name));
+            // The cross-context leg: the popup's own script reads
+            // chrome.storage.local — under the canonical bridge
+            // store it sees what the hosted background wrote.
+            popupJs.write(
+                "self.__popupStorage={done:false};"
+                "(async function(){var o={};"
+                " try{var all=await chrome.storage.local.get(null);"
+                "  o.keys=Object.keys(all).length;"
+                "  o.v0=all.vault_k0&&all.vault_k0.login"
+                "    ?all.vault_k0.login.username:null;"
+                " }catch(e){o.err=String(e&&e.stack||e);}"
+                " __popupStorage.out=o;__popupStorage.done=true;"
+                "})();"
+            );
+            popupJs.close();
+            return dir;
+        };
+        const QString storDirA = putStorFixture(
+            QStringLiteral("arktos-extstore-a"),
+            QStringLiteral("\"storage\""));
+        const QString storDirB = putStorFixture(
+            QStringLiteral("arktos-extstore-b"),
+            QStringLiteral("\"storage\",\"unlimitedStorage\""));
+        // BW11: the content-script fixture's dir — the children
+        // write its manifest/scripts themselves; the parent just
+        // stages and cleans the stable path.
+        const QString storDirC = QDir::temp().filePath(
+            QStringLiteral("arktos-extstore-c"));
+        QDir().mkpath(storDirC);
+
+        const auto runStorChild = [](const QString &flag) {
+            QProcess child;
+            child.setProcessChannelMode(QProcess::ForwardedChannels);
+            child.start(QCoreApplication::applicationFilePath(),
+                        QStringList() << flag);
+            if (!child.waitForFinished(300000)) {
+                child.kill();
+                child.waitForFinished(5000);
+                return -1;
+            }
+            return child.exitStatus() == QProcess::NormalExit
+                ? child.exitCode() : -1;
+        };
+        if (scheck(runStorChild(QLatin1String(
+                       "--extension-storage-seed-smoke")) == 0,
+                   QStringLiteral("seed run: vault writes + "
+                                  "concurrency + quota legs")))
+            scheck(runStorChild(QLatin1String(
+                       "--extension-storage-verify-smoke")) == 0,
+                   QStringLiteral("verify run: store survived the "
+                                  "restart"));
+        else
+            scheck(false, QStringLiteral(
+                       "verify run skipped — seed failed"));
+        qInfo() << "extension-storage-smoke:"
+                << (storFailures == 0 ? "PASS" : "FAIL")
+                << "failures:" << storFailures;
+        QDir(storDirA).removeRecursively();
+        QDir(storDirB).removeRecursively();
+        QDir(storDirC).removeRecursively();
+        return storFailures ? 1 : 0;
+    }
+
+    if (args.contains(QLatin1String("--extension-storage-seed-smoke"))
+            || args.contains(
+                   QLatin1String("--extension-storage-verify-smoke"))) {
+        const bool seedPhase = args.contains(
+            QLatin1String("--extension-storage-seed-smoke"));
+        const QString tag = seedPhase
+            ? QStringLiteral("seed") : QStringLiteral("verify");
+        int storFailures = 0;
+        const auto scheck = [&storFailures, &tag](bool ok,
+                                                const QString &what) {
+            qInfo().noquote() << "extension-storage-" << tag
+                              << "-smoke:" << what
+                              << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++storFailures;
+        };
+        const auto sdie = [&application, &tag](const QString &why) {
+            qInfo().noquote() << "extension-storage-" << tag
+                              << "-smoke: FAIL" << why;
+            fflush(nullptr);
+            std::quick_exit(1);
+        };
+        const auto finish = [&storFailures, &tag]() {
+            qInfo().noquote() << "extension-storage-" << tag
+                              << "-smoke:"
+                              << (storFailures == 0 ? "PASS" : "FAIL")
+                              << "failures:" << storFailures;
+            fflush(nullptr);
+            std::quick_exit(storFailures == 0 ? 0 : 1);
+        };
+
+        extensions = ExtensionManager::instance();
+        ExtensionBackgroundRuntime *runtime =
+            ExtensionBackgroundRuntime::instance();
+
+        // Same fixtures the parent wrote — idempotent re-create so
+        // each child is self-contained (same paths => same staged
+        // trees => same extension ids => same extstorage dirs).
+        const auto putStorFixture = [&sdie](const QString &name,
+                                            const QString &perms) {
+            const QString dir = QDir::temp().filePath(name);
+            QDir().mkpath(dir);
+            QFile manifestFile(dir + QLatin1String("/manifest.json"));
+            if (!manifestFile.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write %1 manifest")
+                         .arg(name));
+            manifestFile.write(QByteArray(
+                "{\"manifest_version\":3,\"name\":\"") + name.toUtf8()
+                + "\",\"version\":\"1.0\",\"permissions\":["
+                + perms.toUtf8()
+                + "],\"action\":{\"default_popup\":\"popup.html\"},"
+                  "\"background\":{\"service_worker\":\"sw.js\"}}");
+            manifestFile.close();
+            QFile worker(dir + QLatin1String("/sw.js"));
+            if (!worker.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write %1 sw.js")
+                         .arg(name));
+            worker.write("chrome.runtime.onInstalled.addListener("
+                         "function(){});\n");
+            worker.close();
+            QFile popup(dir + QLatin1String("/popup.html"));
+            if (!popup.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write %1 popup")
+                         .arg(name));
+            popup.write("<!doctype html><html><body>"
+                        "<div id=\"root\">store popup</div>"
+                        "<script src=\"popup.js\"></script>"
+                        "</body></html>");
+            popup.close();
+            QFile popupJs(dir + QLatin1String("/popup.js"));
+            if (!popupJs.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write %1 popup.js")
+                         .arg(name));
+            popupJs.write(
+                "self.__popupStorage={done:false};"
+                "(async function(){var o={};"
+                " try{var all=await chrome.storage.local.get(null);"
+                "  o.keys=Object.keys(all).length;"
+                "  o.v0=all.vault_k0&&all.vault_k0.login"
+                "    ?all.vault_k0.login.username:null;"
+                " }catch(e){o.err=String(e&&e.stack||e);}"
+                " __popupStorage.out=o;__popupStorage.done=true;"
+                "})();");
+            popupJs.close();
+            return dir;
+        };
+        const QString storDirA = putStorFixture(
+            QStringLiteral("arktos-extstore-a"),
+            QStringLiteral("\"storage\""));
+        const QString storDirB = putStorFixture(
+            QStringLiteral("arktos-extstore-b"),
+            QStringLiteral("\"storage\",\"unlimitedStorage\""));
+
+        // BW11: a third fixture carries host_permissions + a declared
+        // content script so storage.onChanged delivery is measured
+        // through the real page-agent path — the worker records every
+        // event its own context sees, the content script does the
+        // same on a loopback page, and the legs below prove the
+        // change record's (changes, areaName) shape crosses contexts
+        // in both directions.  Same idempotent-write contract: the
+        // stable path keeps the extension id stable across children.
+        const QString storDirC = [&sdie]() {
+            const QString dir = QDir::temp().filePath(
+                QStringLiteral("arktos-extstore-c"));
+            QDir().mkpath(dir);
+            QFile manifestFile(dir + QLatin1String("/manifest.json"));
+            if (!manifestFile.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write extstore-c "
+                                    "manifest"));
+            manifestFile.write(
+                "{\"manifest_version\":3,"
+                "\"name\":\"arktos-extstore-c\",\"version\":\"1.0\","
+                "\"permissions\":[\"storage\"],"
+                "\"host_permissions\":[\"http://127.0.0.1/*\","
+                "\"http://localhost/*\"],"
+                "\"content_scripts\":[{\"matches\":"
+                "[\"http://127.0.0.1/*\",\"http://localhost/*\"],"
+                "\"js\":[\"cs.js\"],\"run_at\":\"document_start\","
+                "\"all_frames\":false}],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+            manifestFile.close();
+            QFile worker(dir + QLatin1String("/sw.js"));
+            if (!worker.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write extstore-c sw.js"));
+            worker.write(
+                "self.__swStore={events:[],areaEv:0};"
+                "chrome.storage.onChanged.addListener("
+                "function(ch,a){self.__swStore.events.push("
+                "{area:a,ch:ch});});"
+                "chrome.storage.local.onChanged.addListener("
+                "function(){++self.__swStore.areaEv;});"
+                "chrome.runtime.onInstalled.addListener("
+                "function(){});\n");
+            worker.close();
+            QFile cs(dir + QLatin1String("/cs.js"));
+            if (!cs.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write extstore-c cs.js"));
+            cs.write(
+                "window.__csStore={events:[],areaEv:0};"
+                "chrome.storage.onChanged.addListener("
+                "function(ch,a){window.__csStore.events.push("
+                "{area:a,ch:ch});});"
+                "chrome.storage.local.onChanged.addListener("
+                "function(){++window.__csStore.areaEv;});"
+                "window.__csWrite=function(items){"
+                "return chrome.storage.local.set(items);};\n");
+            cs.close();
+            return dir;
+        }();
+
+        // The seed script is vault-shaped: 64 keys of multi-KB JSON
+        // records written in one call, then a 40-op interleaved
+        // set/get burst on shared keys, then the quota leg — a
+        // >10 MB write MUST fail typed for a plain 'storage' grant
+        // (ext A) and MUST succeed for 'unlimitedStorage' (ext B).
+        // A session sentinel goes down on both so the verify child
+        // can prove the session area does not persist.
+        const char *const kSeedA =
+            "self.__stor={done:false};"
+            "(async function(){var o={};var area=chrome.storage.local;"
+            " await area.clear();"
+            " var blob=function(i){var s='';"
+            "  for(var j=0;j<40;++j)s+='c'+i+':'+j+'='"
+            "    +'x'.repeat(90)+';';"
+            "  return {id:'cipher-'+i,type:1,name:'login '+i,"
+            "   login:{username:'user'+i+'@arktos.test',"
+            "    password:{encryptedValue:s},"
+            "    uris:[{uri:'https://site'+i+'.example/login'}]},"
+            "   notes:s,collectionIds:['c'+i]};};"
+            " var items={};for(var i=0;i<64;++i)items['vault_k'+i]"
+            "   =blob(i);"
+            " await area.set(items);"
+            " var ops=[];for(var i=0;i<40;++i){"
+            "  ops.push(area.set((function(k,v){var m={};m[k]=v;"
+            "    return m;})('race'+(i%8),{v:i})));"
+            "  ops.push(area.get('race'+(i%8)));}"
+            " await Promise.all(ops);"
+            " var all=await area.get(null);"
+            " o.keys=Object.keys(all).length;"
+            " o.v0=all.vault_k0?all.vault_k0.login.username:null;"
+            " o.race=(all.race7&&typeof all.race7.v==='number');"
+            " var big='B'.repeat(11*1024*1024);"
+            " try{await area.set({bigkey:big});o.quota='resolved';}"
+            " catch(e){o.quota=(e&&e.code)||String(e&&e.message||e);}"
+            " o.bytes=await area.getBytesInUse(null);"
+            " await chrome.storage.session.set({__bw04_s:'yes'});"
+            " __stor.out=o;__stor.done=true;"
+            "})().catch(function(e){__stor.err=String(e&&e.stack||e);"
+            "__stor.done=true;});";
+        const char *const kSeedB =
+            "self.__stor={done:false};"
+            "(async function(){var o={};var area=chrome.storage.local;"
+            " await area.clear();"
+            " var items={};for(var i=0;i<6;++i)items['bulk'+i]"
+            "   ='B'.repeat(2*1024*1024)+'-'+i;"
+            " try{await area.set(items);o.bigWrite='ok';}"
+            " catch(e){o.bigWrite='rej:'+((e&&e.code)"
+            "   ||String(e&&e.message||e));}"
+            " var small={};for(var i=0;i<8;++i)small['vault_k'+i]"
+            "   ={login:{username:'u'+i+'@arktos.test'},notes:'n'+i};"
+            " await area.set(small);"
+            " o.bytes=await area.getBytesInUse(null);"
+            " await chrome.storage.session.set({__bw04_s:'yes'});"
+            " __stor.out=o;__stor.done=true;"
+            "})().catch(function(e){__stor.err=String(e&&e.stack||e);"
+            "__stor.done=true;});";
+        const char *const kVerifyA =
+            "self.__stor={done:false};"
+            "(async function(){var o={};"
+            " var all=await chrome.storage.local.get(null);"
+            " o.keys=Object.keys(all).length;"
+            " o.blob=!!(all.vault_k7&&all.vault_k7.login"
+            "   &&all.vault_k7.login.username==='user7@arktos.test'"
+            "   &&all.vault_k7.notes.indexOf('c7:39=')>=0);"
+            " o.bigAbsent=!all.hasOwnProperty('bigkey');"
+            " var sess=await chrome.storage.session.get(null);"
+            " o.sessionKeys=Object.keys(sess).length;"
+            " __stor.out=o;__stor.done=true;"
+            "})().catch(function(e){__stor.err=String(e&&e.stack||e);"
+            "__stor.done=true;});";
+        const char *const kVerifyB =
+            "self.__stor={done:false};"
+            "(async function(){var o={};"
+            " var all=await chrome.storage.local.get(null);"
+            " o.keys=Object.keys(all).length;"
+            " o.bulkLen=all.bulk0?all.bulk0.length:-1;"
+            " o.bytes=await chrome.storage.local.getBytesInUse(null);"
+            " var sess=await chrome.storage.session.get(null);"
+            " o.sessionKeys=Object.keys(sess).length;"
+            " __stor.out=o;__stor.done=true;"
+            "})().catch(function(e){__stor.err=String(e&&e.stack||e);"
+            "__stor.done=true;});";
+        // BW11 seed legs on ext C: the worker writes __bw11_sw twice
+        // so the second event's oldValue proves the change-record
+        // shape, and drops a session sentinel for the verify child.
+        const char *const kSeedCSw =
+            "self.__bw11leg={done:false};"
+            "(async function(){"
+            " self.__swStore.events=[];self.__swStore.areaEv=0;"
+            " await chrome.storage.local.remove('__bw11_sw');"
+            " await chrome.storage.local.set({__bw11_sw:'from-sw'});"
+            " await chrome.storage.local.set({__bw11_sw:'to-sw'});"
+            " await chrome.storage.session.set({__bw11_s:'run'});"
+            " self.__bw11leg={done:true};"
+            "})().catch(function(e){self.__bw11leg={done:true,"
+            "err:String(e&&e.stack||e)};});";
+        // Semantics leg: managed empty + Chrome-shaped (no set
+        // member), sync writable profile-local, session live in-run.
+        const char *const kSeedCSem =
+            "self.__bw11sem={done:false};"
+            "(async function(){var o={};"
+            " try{var m=await chrome.storage.managed.get(null);"
+            "  o.managedKeys=Object.keys(m).length;}catch(e){"
+            "  o.mErr=String(e&&e.message||e);}"
+            " o.managedSet=typeof chrome.storage.managed.set;"
+            " await chrome.storage.sync.set({__bw11_sync:'roams'});"
+            " o.sync=(await chrome.storage.sync.get('__bw11_sync'))"
+            "  .__bw11_sync;"
+            " o.sess=(await chrome.storage.session.get('__bw11_s'))"
+            "  .__bw11_s;"
+            " __bw11sem.out=o;__bw11sem.done=true;"
+            "})().catch(function(e){__bw11sem={done:true,"
+            "err:String(e&&e.stack||e)};});";
+        const char *const kVerifyC =
+            "self.__stor={done:false};"
+            "(async function(){var o={};"
+            " var all=await chrome.storage.local.get(null);"
+            " o.swKey=all.__bw11_sw;o.csKey=all.__bw11_cs;"
+            " var sess=await chrome.storage.session.get(null);"
+            " o.sessionKeys=Object.keys(sess).length;"
+            " o.sync=(await chrome.storage.sync.get('__bw11_sync'))"
+            "  .__bw11_sync;"
+            " o.managedKeys=Object.keys("
+            "  await chrome.storage.managed.get(null)).length;"
+            " __stor.out=o;__stor.done=true;"
+            "})().catch(function(e){__stor.err=String(e&&e.stack||e);"
+            "__stor.done=true;});";
+
+        QString storIdA, storIdB, storIdC;
+        auto phase = std::make_shared<int>(0);
+        auto ticks = std::make_shared<int>(0);
+        QPointer<QWebEngineView> popupView;
+        QPointer<QWebEnginePage> popupPage;
+        // BW11: the content-script leg's loopback server + real tab,
+        // and the two cross-world snapshots the cs legs collect.
+        QTcpServer *csServer = nullptr;
+        QPointer<BrowserMainWindow> csWindow;
+        QPointer<WebView> csView;
+        auto csDrove = std::make_shared<bool>(false);
+        auto swSnap = std::make_shared<QJsonObject>();
+        auto csSnap = std::make_shared<QJsonObject>();
+        auto gotSnaps = std::make_shared<int>(0);
+        QTimer *storPoll = new QTimer(&application);
+        storPoll->setInterval(250);
+
+        // Grade one probe's __stor.out object.
+        const auto grade = [&](const QString &name,
+                               const QJsonObject &o) {
+            if (seedPhase) {
+                scheck(o.value(QLatin1String("err")).toString()
+                           .isEmpty(),
+                       name + QLatin1String(": probe ran clean"));
+                if (name == QLatin1String("a")) {
+                    scheck(o.value(QLatin1String("keys")).toInt()
+                               == 72,
+                           QStringLiteral(
+                               "extA: 64 vault keys + 8 race keys "
+                               "landed"));
+                    scheck(o.value(QLatin1String("v0")).toString()
+                               == QLatin1String("user0@arktos.test"),
+                           QStringLiteral(
+                               "extA: vault blob read-back intact"));
+                    scheck(o.value(QLatin1String("race")).toBool(),
+                           QStringLiteral(
+                               "extA: concurrent set/get burst "
+                               "coherent"));
+                    scheck(o.value(QLatin1String("quota")).toString()
+                               == QLatin1String("quota-exceeded"),
+                           QStringLiteral(
+                               "extA: >10MB write fails typed "
+                               "quota-exceeded (no unlimitedStorage)"));
+                } else {
+                    scheck(o.value(QLatin1String("bigWrite"))
+                               .toString() == QLatin1String("ok"),
+                           QStringLiteral(
+                               "extB: >10MB total write succeeds "
+                               "under unlimitedStorage"));
+                    scheck(o.value(QLatin1String("bytes"))
+                               .toDouble() > 10 * 1024 * 1024,
+                           QStringLiteral(
+                               "extB: getBytesInUse reports >10MB"));
+                }
+            } else {
+                if (name == QLatin1String("a")) {
+                    scheck(o.value(QLatin1String("keys")).toInt()
+                               == 72,
+                           QStringLiteral(
+                               "extA: all seeded keys survived the "
+                               "restart"));
+                    scheck(o.value(QLatin1String("blob")).toBool(),
+                           QStringLiteral(
+                               "extA: vault blob intact across "
+                               "restart"));
+                    scheck(o.value(QLatin1String("bigAbsent"))
+                               .toBool(),
+                           QStringLiteral(
+                               "extA: quota-rejected write never "
+                               "persisted"));
+                    scheck(o.value(QLatin1String("sessionKeys"))
+                               .toInt() == 0,
+                           QStringLiteral(
+                               "extA: session area cleared on "
+                               "restart"));
+                } else if (name == QLatin1String("b")) {
+                    scheck(o.value(QLatin1String("keys")).toInt()
+                               == 14,
+                           QStringLiteral(
+                               "extB: bulk + vault keys survived the "
+                               "restart"));
+                    scheck(o.value(QLatin1String("bulkLen"))
+                               .toDouble() > 2 * 1024 * 1024,
+                           QStringLiteral(
+                               "extB: >2MB blob intact across "
+                               "restart"));
+                    scheck(o.value(QLatin1String("bytes"))
+                               .toDouble() > 10 * 1024 * 1024,
+                           QStringLiteral(
+                               "extB: >10MB store intact across "
+                               "restart"));
+                    scheck(o.value(QLatin1String("sessionKeys"))
+                               .toInt() == 0,
+                           QStringLiteral(
+                               "extB: session area cleared on "
+                               "restart"));
+                } else {
+                    // BW11: ext C's cross-context writes persisted,
+                    // session cleared, sync profile-local, managed
+                    // still empty.
+                    scheck(o.value(QLatin1String("swKey"))
+                               .toString()
+                               == QLatin1String("to-sw"),
+                           QStringLiteral(
+                               "extC: sw write survived the restart"));
+                    scheck(o.value(QLatin1String("csKey"))
+                               .toString()
+                               == QLatin1String("from-cs"),
+                           QStringLiteral(
+                               "extC: content-script write survived "
+                               "the restart"));
+                    scheck(o.value(QLatin1String("sessionKeys"))
+                               .toInt() == 0,
+                           QStringLiteral(
+                               "extC: session area cleared on "
+                               "restart"));
+                    scheck(o.value(QLatin1String("sync"))
+                               .toString()
+                               == QLatin1String("roams"),
+                           QStringLiteral(
+                               "extC: sync area persists "
+                               "profile-local (no roam service)"));
+                    scheck(o.value(QLatin1String("managedKeys"))
+                               .toInt() == 0,
+                           QStringLiteral(
+                               "extC: managed area stays empty "
+                               "(no policy infra)"));
+                }
+            }
+        };
+
+        // BW11: does the recorded event list carry the expected
+        // change record — an entry on 'local' whose changes dict has
+        // the key's newValue (and oldValue when checkOld).
+        const auto hasRecord = [](const QJsonArray &events,
+                                  const QString &key,
+                                  const QString &newValue,
+                                  bool checkOld,
+                                  const QString &oldValue) {
+            for (const QJsonValue &e : events) {
+                const QJsonObject ev = e.toObject();
+                if (ev.value(QLatin1String("area")).toString()
+                        != QLatin1String("local"))
+                    continue;
+                const QJsonObject rec = ev.value(QLatin1String("ch"))
+                    .toObject().value(key).toObject();
+                if (rec.isEmpty()
+                        || rec.value(QLatin1String("newValue"))
+                               .toString() != newValue)
+                    continue;
+                if (checkOld
+                        && rec.value(QLatin1String("oldValue"))
+                               .toString() != oldValue)
+                    continue;
+                return true;
+            }
+            return false;
+        };
+
+        const auto runStorProbe = [&](ExtensionBackgroundHost *host,
+                                      const char *js) {
+            host->page()->runJavaScript(
+                QString::fromLatin1(js), [](const QVariant &) {});
+        };
+        const auto pollProbe = [&](ExtensionBackgroundHost *host,
+                                   const QString &name) {
+            ++*ticks;
+            host->page()->runJavaScript(QStringLiteral(
+                "self.__stor?JSON.stringify(self.__stor):'missing'"),
+                [&, host, name](const QVariant &v) {
+                if (*ticks > 200) {
+                    sdie(name + QLatin1String(": probe timed out: %1")
+                             .arg(v.toString()));
+                    return;
+                }
+                const QJsonObject r = QJsonDocument::fromJson(
+                    v.toString().toUtf8()).object();
+                if (!r.value(QLatin1String("done")).toBool())
+                    return;
+                grade(name, r.value(QLatin1String("out")).toObject());
+                ++*phase;
+                *ticks = 0;
+            });
+        };
+
+        QObject::connect(storPoll, &QTimer::timeout, &application,
+                         [&]() {
+            ExtensionBackgroundHost *hostA =
+                storIdA.isEmpty() ? nullptr : runtime->host(storIdA);
+            ExtensionBackgroundHost *hostB =
+                storIdB.isEmpty() ? nullptr : runtime->host(storIdB);
+            ExtensionBackgroundHost *hostC =
+                storIdC.isEmpty() ? nullptr : runtime->host(storIdC);
+            if (*phase == 0) {
+                if (!hostA || !hostB || !hostC) {
+                    if (++*ticks > 160)
+                        sdie(QStringLiteral("hosts never spawned"));
+                    return;
+                }
+                if (hostA->state()
+                        == ExtensionBackgroundHost::State::Failed
+                    || hostB->state()
+                           == ExtensionBackgroundHost::State::Failed
+                    || hostC->state()
+                           == ExtensionBackgroundHost::State::Failed)
+                    sdie(QStringLiteral("host failed: %1 / %2 / %3")
+                             .arg(hostA->lastError(),
+                                  hostB->lastError(),
+                                  hostC->lastError()));
+                if (hostA->state()
+                        != ExtensionBackgroundHost::State::Ready
+                    || hostB->state()
+                           != ExtensionBackgroundHost::State::Ready
+                    || hostC->state()
+                           != ExtensionBackgroundHost::State::Ready) {
+                    if (++*ticks > 160)
+                        sdie(QStringLiteral(
+                                 "hosts never reached Ready"));
+                    return;
+                }
+                scheck(true, QStringLiteral("all hosts Ready"));
+                *ticks = 0;
+                runStorProbe(hostA,
+                             seedPhase ? kSeedA : kVerifyA);
+                *phase = 1;
+            } else if (*phase == 1) {
+                if (hostA)
+                    pollProbe(hostA, QStringLiteral("a"));
+            } else if (*phase == 2) {
+                if (hostB) {
+                    runStorProbe(hostB,
+                                 seedPhase ? kSeedB : kVerifyB);
+                    *phase = 3;
+                    *ticks = 0;
+                }
+            } else if (*phase == 3) {
+                if (hostB)
+                    pollProbe(hostB, QStringLiteral("b"));
+            } else if (*phase == 4) {
+                if (!seedPhase) {
+                    // BW11: ext C's verify probe — cross-context
+                    // writes persisted, session cleared, sync
+                    // profile-local, managed empty.
+                    if (!hostC) {
+                        sdie(QStringLiteral("host C gone for "
+                                            "verify leg"));
+                        return;
+                    }
+                    runStorProbe(hostC, kVerifyC);
+                    *phase = 5;
+                    *ticks = 0;
+                    return;
+                }
+                storPoll->stop();
+                // Seed-only leg: the action popup — a real sibling
+                // extension page — must read the same canonical
+                // store the hosted background wrote to.
+                if (!hostA || !hostA->page()) {
+                    sdie(QStringLiteral("host page gone for popup "
+                                        "leg"));
+                    return;
+                }
+                popupView = new QWebEngineView;
+                popupPage = new ExtensionChromePage(
+                    hostA->page()->profile(), storIdA, popupView);
+                popupPage->settings()->setAttribute(
+                    QWebEngineSettings::JavascriptEnabled, true);
+                popupView->setPage(popupPage);
+                popupView->show();
+                popupPage->load(QUrl(QStringLiteral(
+                    "chrome-extension://") + storIdA
+                    + QLatin1String("/popup.html")));
+                *phase = 5;
+                *ticks = 0;
+                storPoll->start();
+            } else if (*phase == 5) {
+                if (!seedPhase) {
+                    if (hostC)
+                        pollProbe(hostC, QStringLiteral("c"));
+                    return;
+                }
+                if (!popupPage) {
+                    sdie(QStringLiteral("popup page died"));
+                    return;
+                }
+                ++*ticks;
+                popupPage->runJavaScript(QStringLiteral(
+                    "self.__popupStorage"
+                    "?JSON.stringify(self.__popupStorage):'missing'"),
+                    [&](const QVariant &v) {
+                    if (*ticks > 160) {
+                        sdie(QStringLiteral(
+                                 "popup storage probe timed out: %1")
+                                 .arg(v.toString()));
+                        return;
+                    }
+                    const QJsonObject r = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (!r.value(QLatin1String("done")).toBool())
+                        return;
+                    storPoll->stop();
+                    const QJsonObject o =
+                        r.value(QLatin1String("out")).toObject();
+                    scheck(o.value(QLatin1String("keys")).toInt()
+                               == 72
+                           && o.value(QLatin1String("v0")).toString()
+                                  == QLatin1String("user0@arktos.test"),
+                           QStringLiteral(
+                               "popup context reads the canonical "
+                               "store (bg writes visible)"));
+                    if (popupView) {
+                        popupView->deleteLater();
+                        popupView.clear();
+                        popupPage.clear();
+                    }
+                    *phase = 6;
+                    *ticks = 0;
+                    storPoll->start();
+                });
+            } else if (*phase == 6) {
+                if (!seedPhase) {
+                    storPoll->stop();
+                    // Disk-level proof: the canonical store file
+                    // exists and carries the seeded keys — the write
+                    // path is ours, not the engine's leveldb.
+                    const QString file = BrowserPaths::dataFilePath(
+                        QStringLiteral("extstorage")) + QLatin1Char('/')
+                        + storIdA + QLatin1String("/local.json");
+                    QFile f(file);
+                    QJsonObject disk;
+                    if (f.open(QIODevice::ReadOnly))
+                        disk = QJsonDocument::fromJson(f.readAll())
+                                   .object();
+                    scheck(disk.contains(QLatin1String("vault_k0")),
+                           QStringLiteral(
+                               "extstorage/<id>/local.json holds the "
+                               "seeded vault keys"));
+                    finish();
+                    return;
+                }
+                // BW11 seed leg: a covered loopback page whose
+                // declared content script records storage.onChanged.
+                ++*ticks;
+                if (!*csDrove) {
+                    *csDrove = true;
+                    csServer = new QTcpServer(&application);
+                    if (!csServer->listen(QHostAddress::LocalHost)) {
+                        sdie(QStringLiteral(
+                                 "BW11 leg: loopback cannot listen"));
+                        return;
+                    }
+                    QObject::connect(csServer,
+                        &QTcpServer::newConnection, &application,
+                        [csServer]() {
+                        QTcpSocket *socket =
+                            csServer->nextPendingConnection();
+                        QObject::connect(socket,
+                            &QTcpSocket::readyRead, socket,
+                            [socket]() {
+                            socket->readAll();
+                            const QByteArray body =
+                                "<html><body><h1>bw11 cs "
+                                "page</h1></body></html>";
+                            socket->write("HTTP/1.1 200 OK\r\n"
+                                "Content-Type: text/html\r\n"
+                                "Content-Length: "
+                                + QByteArray::number(body.size())
+                                + "\r\nConnection: close\r\n\r\n"
+                                + body);
+                            socket->disconnectFromHost();
+                            });
+                    });
+                    csWindow = application.newMainWindow();
+                    if (!csWindow || !csWindow->tabWidget()) {
+                        sdie(QStringLiteral(
+                                 "BW11 leg: no cs window"));
+                        return;
+                    }
+                    TabWidget *tw = csWindow->tabWidget();
+                    tw->newTab();
+                    csView = tw->webView(tw->currentIndex());
+                    if (!csView) {
+                        sdie(QStringLiteral("BW11 leg: no cs tab"));
+                        return;
+                    }
+                    csView->load(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/")
+                        .arg(csServer->serverPort())));
+                    return;
+                }
+                if (!csView || !csView->page()) {
+                    sdie(QStringLiteral("BW11 leg: cs tab died"));
+                    return;
+                }
+                if (!hostC || !hostC->page()) {
+                    if (*ticks > 160)
+                        sdie(QStringLiteral("BW11 leg: host C gone"));
+                    return;
+                }
+                WebView *bwView = csView;
+                bwView->page()->runJavaScript(QStringLiteral(
+                    "window.__csStore?'yes':'no'"),
+                    ExtensionBackgroundRuntime::AgentWorldId,
+                    [&, hostC](const QVariant &v) {
+                    if (v.toString() != QLatin1String("yes")) {
+                        if (*ticks > 160)
+                            sdie(QStringLiteral(
+                                     "BW11 leg: covered page's "
+                                     "content script never armed"));
+                        return;
+                    }
+                    scheck(true, QStringLiteral(
+                               "covered page's content script armed "
+                               "its storage listeners"));
+                    runStorProbe(hostC, kSeedCSw);
+                    *phase = 7;
+                    *ticks = 0;
+                });
+            } else if (*phase == 7) {   // BW11: sw writes observed
+                ++*ticks;
+                if (!hostC) {
+                    if (*ticks > 160)
+                        sdie(QStringLiteral("BW11 leg: host C gone"));
+                    return;
+                }
+                hostC->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify({d:!!(self.__bw11leg"
+                    "&&self.__bw11leg.done),"
+                    "err:(self.__bw11leg&&self.__bw11leg.err)||null,"
+                    "ev:self.__swStore.events,"
+                    "aev:self.__swStore.areaEv})"),
+                    [&, hostC](const QVariant &v) {
+                    if (*ticks > 160) {
+                        sdie(QStringLiteral(
+                                 "BW11 sw-write leg timed out: %1")
+                                 .arg(v.toString()));
+                        return;
+                    }
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (!o.value(QLatin1String("d")).toBool())
+                        return;
+                    scheck(o.value(QLatin1String("err")).isNull(),
+                           QStringLiteral(
+                               "sw-side storage writes ran clean"));
+                    const QJsonArray ev =
+                        o.value(QLatin1String("ev")).toArray();
+                    scheck(hasRecord(ev,
+                                     QLatin1String("__bw11_sw"),
+                                     QLatin1String("to-sw"), true,
+                                     QLatin1String("from-sw")),
+                           QStringLiteral(
+                               "sw's own storage.onChanged fired "
+                               "with the (changes, areaName) shape"));
+                    scheck(o.value(QLatin1String("aev")).toInt() >= 2,
+                           QStringLiteral(
+                               "sw's storage.local.onChanged "
+                               "fired"));
+                    // Arm the reverse direction: clear both listener
+                    // logs, then a write the content script itself
+                    // makes must fan back out to every context.
+                    hostC->page()->runJavaScript(QStringLiteral(
+                        "self.__swStore.events=[];"
+                        "self.__swStore.areaEv=0;'reset'"),
+                        [](const QVariant &) {});
+                    if (csView && csView->page())
+                        csView->page()->runJavaScript(QStringLiteral(
+                            "window.__csStore.events=[];"
+                            "window.__csStore.areaEv=0;"
+                            "window.__csWrite({__bw11_cs:'from-cs'});"
+                            "'sent'"),
+                            ExtensionBackgroundRuntime::AgentWorldId,
+                            [](const QVariant &) {});
+                    *phase = 8;
+                    *ticks = 0;
+                });
+            } else if (*phase == 8) {   // BW11: cs write fanned out
+                ++*ticks;
+                if (*gotSnaps == 0) {
+                    if (hostC && hostC->page())
+                        hostC->page()->runJavaScript(QStringLiteral(
+                            "JSON.stringify({ev:self.__swStore.events,"
+                            "aev:self.__swStore.areaEv})"),
+                            [&](const QVariant &v) {
+                            *swSnap = QJsonDocument::fromJson(
+                                v.toString().toUtf8()).object();
+                            ++*gotSnaps;
+                        });
+                    if (csView && csView->page())
+                        csView->page()->runJavaScript(QStringLiteral(
+                            "JSON.stringify({ev:window.__csStore"
+                            ".events,aev:window.__csStore.areaEv})"),
+                            ExtensionBackgroundRuntime::AgentWorldId,
+                            [&](const QVariant &v) {
+                            *csSnap = QJsonDocument::fromJson(
+                                v.toString().toUtf8()).object();
+                            ++*gotSnaps;
+                        });
+                    return;
+                }
+                if (*gotSnaps < 2) {
+                    if (*ticks > 160)
+                        sdie(QStringLiteral(
+                                 "BW11 cs-write leg: probes lost"));
+                    return;
+                }
+                const QJsonArray swEv =
+                    swSnap->value(QLatin1String("ev")).toArray();
+                const QJsonArray csEv =
+                    csSnap->value(QLatin1String("ev")).toArray();
+                const bool swSaw = hasRecord(
+                    swEv, QLatin1String("__bw11_cs"),
+                    QLatin1String("from-cs"), false, QString());
+                const bool csSaw = hasRecord(
+                    csEv, QLatin1String("__bw11_cs"),
+                    QLatin1String("from-cs"), false, QString());
+                if (!swSaw || !csSaw) {
+                    *gotSnaps = 0;
+                    if (*ticks <= 160)
+                        return;
+                    // Timed out — record the honest misses and move
+                    // to the semantics leg anyway.
+                    scheck(swSaw, QStringLiteral(
+                               "content script's storage write "
+                               "reached the hosted background's "
+                               "onChanged"));
+                    scheck(csSaw, QStringLiteral(
+                               "content script's own write echoed "
+                               "to its onChanged"));
+                } else {
+                    scheck(true, QStringLiteral(
+                               "content script's storage write "
+                               "reached the hosted background's "
+                               "onChanged"));
+                    scheck(true, QStringLiteral(
+                               "content script's own write echoed "
+                               "to its onChanged"));
+                    scheck(swSnap->value(QLatin1String("aev"))
+                               .toInt() >= 1,
+                           QStringLiteral(
+                               "sw's storage.local.onChanged saw "
+                               "the cs write"));
+                    scheck(csSnap->value(QLatin1String("aev"))
+                               .toInt() >= 1,
+                           QStringLiteral(
+                               "cs's storage.local.onChanged saw "
+                               "its own write"));
+                }
+                *gotSnaps = 0;
+                // Semantics leg: managed/sync/session probes on the
+                // worker + the agent's managed read on the page.
+                if (hostC)
+                    runStorProbe(hostC, kSeedCSem);
+                if (csView && csView->page())
+                    csView->page()->runJavaScript(QStringLiteral(
+                        "(function(){var a=window.__arktosExtAgents"
+                        "&&window.__arktosExtAgents['%1'];"
+                        "if(!a||!a.chrome||!a.chrome.storage){"
+                        "window.__csManaged={gone:true};return;}"
+                        "var m=a.chrome.storage.managed;"
+                        "window.__csManagedSet=typeof m.set;"
+                        "m.get(null).then(function(v){"
+                        "window.__csManaged=v;},function(e){"
+                        "window.__csManaged={err:String(e)};});})();"
+                        "'ok'").arg(storIdC),
+                        ExtensionBackgroundRuntime::AgentWorldId,
+                        [](const QVariant &) {});
+                *phase = 9;
+                *ticks = 0;
+            } else if (*phase == 9) {   // BW11: semantics poll
+                ++*ticks;
+                if (*gotSnaps == 0) {
+                    if (hostC && hostC->page())
+                        hostC->page()->runJavaScript(QStringLiteral(
+                            "self.__bw11sem"
+                            "?JSON.stringify(self.__bw11sem)"
+                            ":'missing'"),
+                            [&](const QVariant &v) {
+                            *swSnap = QJsonDocument::fromJson(
+                                v.toString().toUtf8()).object();
+                            ++*gotSnaps;
+                        });
+                    if (csView && csView->page())
+                        csView->page()->runJavaScript(QStringLiteral(
+                            "window.__csManaged!==undefined"
+                            "?JSON.stringify({m:window.__csManaged,"
+                            "set:window.__csManagedSet}):'{}'"),
+                            ExtensionBackgroundRuntime::AgentWorldId,
+                            [&](const QVariant &v) {
+                            *csSnap = QJsonDocument::fromJson(
+                                v.toString().toUtf8()).object();
+                            ++*gotSnaps;
+                        });
+                    return;
+                }
+                if (*gotSnaps < 2) {
+                    if (*ticks > 160)
+                        sdie(QStringLiteral(
+                                 "BW11 semantics leg: probes lost"));
+                    return;
+                }
+                const QJsonObject sem = *swSnap;
+                if (!sem.value(QLatin1String("done")).toBool()
+                        || csSnap->isEmpty()) {
+                    *gotSnaps = 0;
+                    if (*ticks > 160)
+                        sdie(QStringLiteral(
+                                 "BW11 semantics probe timed out"));
+                    return;
+                }
+                const QJsonObject o =
+                    sem.value(QLatin1String("out")).toObject();
+                scheck(sem.value(QLatin1String("err")).toString()
+                           .isEmpty()
+                       && o.value(QLatin1String("mErr")).toString()
+                              .isEmpty(),
+                       QStringLiteral(
+                           "managed/sync/session probes ran clean"));
+                scheck(o.value(QLatin1String("managedKeys")).toInt()
+                           == 0,
+                       QStringLiteral(
+                           "managed area answers empty (no policy "
+                           "infra)"));
+                scheck(o.value(QLatin1String("managedSet")).toString()
+                           == QLatin1String("undefined"),
+                       QStringLiteral(
+                           "managed has no set member (Chrome "
+                           "shape)"));
+                scheck(o.value(QLatin1String("sync")).toString()
+                           == QLatin1String("roams"),
+                       QStringLiteral(
+                           "sync area writable (profile-local, "
+                           "no roam service)"));
+                scheck(o.value(QLatin1String("sess")).toString()
+                           == QLatin1String("run"),
+                       QStringLiteral(
+                           "session area live within the run"));
+                const QJsonObject csOut = *csSnap;
+                // m must be exactly {} — an empty store; a 'gone'
+                // or 'err' payload carries keys and fails.
+                scheck(csOut.value(QLatin1String("m")).isObject()
+                       && csOut.value(QLatin1String("m"))
+                              .toObject().isEmpty(),
+                       QStringLiteral(
+                           "content-script managed.get answered "
+                           "the empty store"));
+                scheck(csOut.value(QLatin1String("set")).toString()
+                           == QLatin1String("undefined"),
+                       QStringLiteral(
+                           "content-script managed has no set "
+                           "member (Chrome shape)"));
+                if (csWindow) {
+                    csWindow->deleteLater();
+                    csWindow.clear();
+                    csView.clear();
+                }
+                finish();
+            }
+        });
+
+        QObject::connect(extensions, &ExtensionManager::extensionLoaded,
+            &application, [&](const ExtensionManager::ExtensionInfo &info) {
+            if (info.name == QLatin1String("arktos-extstore-a")) {
+                scheck(info.loaded && info.error.isEmpty(),
+                       QStringLiteral("fixture A loaded"));
+                storIdA = info.id;
+                extensions->setExtensionEnabled(storIdA, true);
+            } else if (info.name == QLatin1String("arktos-extstore-b")) {
+                scheck(info.loaded && info.error.isEmpty(),
+                       QStringLiteral("fixture B loaded"));
+                storIdB = info.id;
+                extensions->setExtensionEnabled(storIdB, true);
+            } else if (info.name == QLatin1String("arktos-extstore-c")) {
+                scheck(info.loaded && info.error.isEmpty(),
+                       QStringLiteral("fixture C loaded"));
+                storIdC = info.id;
+                extensions->setExtensionEnabled(storIdC, true);
+            }
+            if (!storIdA.isEmpty() && !storIdB.isEmpty()
+                    && !storIdC.isEmpty())
+                storPoll->start();
+        });
+        QObject::connect(extensions, &ExtensionManager::errorOccurred,
+                         &application, [sdie](const QString &message) {
+            sdie(QStringLiteral("errorOccurred: %1").arg(message));
+        });
+        QTimer::singleShot(240000, &application, [sdie]() {
+            sdie(QStringLiteral("timeout"));
+        });
+        extensions->grantConsent(storDirA);
+        extensions->grantConsent(storDirB);
+        extensions->grantConsent(storDirC);
+        extensions->loadExtension(storDirA);
+        extensions->loadExtension(storDirB);
+        extensions->loadExtension(storDirC);
         return application.exec();
     }
 

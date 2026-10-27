@@ -33,10 +33,13 @@
 #include <qstringlist.h>
 #include <qurl.h>
 #include <qwebenginepage.h>
+#include <qwebenginesettings.h>
 
 #include "browserprofile.h"
 
 class ExtensionPageBridge;
+class NativeMessagingSession;
+class QProcess;
 class QTimer;
 class QWebChannel;
 class QWebEngineFrame;
@@ -138,6 +141,12 @@ signals:
 private:
     QJsonObject invokeRelay(const QString &method,
                             const QJsonObject &args);
+    // BW08: 'native' — chrome.runtime.connectNative/sendNativeMessage's
+    // host-side ops.  The spawned host is scoped to THIS bridge so a
+    // context dying takes its native ports down with it, exactly like
+    // Chrome tying a port's lifetime to the calling document.
+    QJsonObject invokeNative(const QString &method,
+                             const QJsonObject &args);
     // ER02: tabs.sendMessage — needs the calling bridge itself (the
     // page agent's response resolves onto it), so it lives at this
     // level like getCurrent rather than in the shared backend.
@@ -198,6 +207,21 @@ private:
     void pollExecResult(const QString &execId, int slot, int frameId,
                         QWebEngineFrame frame, quint32 worldId,
                         const QString &key, int triesLeft);
+    // BW12: the frame-addressed half of tabs.sendMessage — the
+    // extEvent push the frame-0 path rides only exists on the main
+    // frame, so a subframe delivery is generated straight into the
+    // frame's agent world; the settled answer leaves as the same
+    // '__arktos.deliverResponse' push the channel-routed respond op
+    // produces.
+    QJsonObject deliverTabMessageToFrame(
+            const QString &mid, const QJsonValue &msg,
+            const QJsonObject &sender, QWebEnginePage *page,
+            int frameId);
+    void pollTabDeliver(const QString &mid, QWebEngineFrame frame,
+                        bool hadListeners, int triesLeft);
+    void finishTabDeliver(const QString &mid,
+                          const QJsonValue &response,
+                          bool hadListeners);
 
     // ER07/ER08: in-flight scripting fan-outs — execId -> one result
     // slot per selected frame plus an expiry so a frame whose eval
@@ -209,6 +233,10 @@ private:
         QTimer *expiry = nullptr;
     };
     QHash<QString, PendingExec> m_pendingExecs;
+    // BW08: live native-messaging sessions — the shim's port id is
+    // the key; sessions are parented to this bridge so context death
+    // terminates their host processes.
+    QHash<QString, NativeMessagingSession *> m_nativePorts;
 
     QString m_extensionId;
     QString m_extensionName;
@@ -221,6 +249,86 @@ private:
     QPointer<ExtensionShimBackend> m_backend;
     QPointer<QWebEnginePage> m_contextPage;
 };
+
+// BW08 — Chrome native messaging.  One session is one spawned
+// native-messaging host bound to one extension port on one shim
+// context: the manifest resolves under the Chrome directory layout
+// (the arktos dirs first, then the Chromium/Chrome dirs a real
+// desktop app like Bitwarden's registers under), the process spawns
+// as argv[0] + the extension's chrome-extension:// origin, and
+// stdin/stdout carry uint32-LE length-prefixed JSON frames in both
+// directions.  Host exit disconnects the port with a typed error;
+// an absent host answers the honest 'not-found', never a fake port.
+class NativeMessagingSession : public QObject
+{
+    Q_OBJECT
+
+public:
+    NativeMessagingSession(const QString &extensionId,
+                           const QString &appName,
+                           QObject *parent = nullptr);
+    ~NativeMessagingSession() override;
+
+    // Manifest resolution — static so the resolution rule stays
+    // shared with the smoke fixture's installer.  Answers the
+    // absolute program path, or a typed error code: 'bad-name',
+    // 'not-found' (no manifest, or one pointing at nothing
+    // runnable), 'invalid-manifest', 'unsupported-type',
+    // 'forbidden' (manifest exists but the extension's origin is
+    // not on its allowed_origins list).
+    static QString userHostsDir();
+    static QStringList searchDirs();
+    static bool resolve(const QString &appName,
+                        const QString &extensionId,
+                        QString *program, QString *error);
+
+    void start(const QString &program);
+    void post(const QJsonValue &message);
+    // Extension-side disconnect — stdin closes, then SIGTERM.  No
+    // 'disconnected' emit: the page already knows it hung up.
+    void stop();
+
+signals:
+    void message(const QJsonValue &message);
+    // Host-side teardown — 'spawn-failed', 'host-exited' (a clean
+    // exit included), 'bad-message' (oversized or malformed frame).
+    void disconnected(const QString &error, int exitCode);
+
+private:
+    void drainStdout();
+    void fail(const QString &code, int exitCode);
+
+    QString m_extensionId;
+    QString m_appName;
+    QProcess *m_process = nullptr;
+    QByteArray m_inbox;
+    // Frames posted while the process was still Starting — flushed
+    // on started(); dropping them would silently eat a same-tick
+    // postMessage (the connect-then-post ordering the shim emits).
+    QByteArray m_outbox;
+    bool m_dead = false;
+};
+
+// BW13: whether the extension's REVIEWED manifest granted the
+// clipboard — REQUIRED permissions declaring clipboardRead or
+// clipboardWrite.  Qt merges Chrome's two grants into the single
+// ClipboardReadWrite permission type and the single
+// JavascriptCanAccessClipboard attribute — the read/write split is
+// not enforceable at engine level.
+bool extensionChromeClipboardGranted(const QString &extensionId);
+
+// BW13: one permission verdict for every extension-chrome page —
+// SEC05's site broker (WebPermissionManager) never sees these
+// pages' requests and an unanswered one hangs.  The extension's
+// consent surface is its REVIEWED manifest, not a site prompt:
+// ClipboardReadWrite grants iff extensionChromeClipboardGranted
+// holds; every other feature denies, which still produces the real
+// Chromium answer — navigator.clipboard rejects with
+// NotAllowedError, execCommand returns false — a typed failure,
+// never a silent no-op.
+void resolveExtensionChromePermission(
+        const QString &extensionId,
+        const QWebEnginePermission &permission);
 
 // SEC26: extension chrome that is not the hosted background (the
 // action popup, the health-probe page) gets the QUAL03 navigation
@@ -244,6 +352,26 @@ public:
         // so this is a no-op today; the self-registering rule keeps
         // every QWebEnginePage subclass covered if that ever changes.
         BrowserProfile::trackPrivateProfilePage(this);
+        // BW13: extension chrome resolves its own permission
+        // requests — see the comment above.
+        connect(this, &QWebEnginePage::permissionRequested, this,
+                [this](const QWebEnginePermission &permission) {
+            resolveExtensionChromePermission(m_extensionId,
+                                             permission);
+        });
+        // BW13: Chrome wires an extension's declared clipboardRead/
+        // clipboardWrite to the renderer's AllowReadFromClipboard/
+        // AllowWriteToClipboard content-settings hooks; Qt's per-page
+        // attribute is the same switch.  Grant-holders' chrome gets
+        // it so execCommand('copy') — the offscreen-document path
+        // Bitwarden actually uses — reaches the real clipboard and a
+        // FOCUSED extension page (the popup) auto-grants
+        // navigator.clipboard.  navigator.clipboard in a hidden
+        // context still hits Blink's focus gate — Chrome parity
+        // (crbug.com/1404835), never silently faked.
+        settings()->setAttribute(
+            QWebEngineSettings::JavascriptCanAccessClipboard,
+            extensionChromeClipboardGranted(m_extensionId));
     }
 
     static bool navigationAllowed(const QUrl &url,
@@ -472,11 +600,16 @@ public:
     // chrome.storage.<area>.onChanged — each fired with the
     // (changes, areaName) listener arguments Chrome passes.
     // 'exclude' skips the posting context: its shim already fired
-    // the event locally when the mutation resolved.
+    // the event locally when the mutation resolved.  BW11: the same
+    // record also reaches the extension's live page agents (content
+    // scripts observe chrome.storage.onChanged like Chrome) —
+    // 'excludePage' skips the page bridge whose own emit already
+    // echoes the write back to its agent.
     void fanOutStorageChanged(const QString &extensionId,
                               const QString &area,
                               const QJsonObject &changes,
-                              ChromeBridge *exclude = nullptr);
+                              ChromeBridge *exclude = nullptr,
+                              ExtensionPageBridge *excludePage = nullptr);
 
     // Whether url-bearing fields may reach this extension ('tabs'
     // permission or a host permission covering the url).  Public so
@@ -542,10 +675,47 @@ public:
     // map getScripts/getRegisteredContentScripts read.
     QJsonObject registeredScriptSpecs(const QString &extensionId) const;
 
-    // Whether the extension's manifest declares the named API
-    // permission — the page agent's chrome.storage gate.
+    // Whether the extension may act under the named API permission —
+    // REQUIRED manifest permissions plus any optional_permissions the
+    // user consented through chrome.permissions.request().  The page
+    // agent's chrome.storage gate and every permission-scoped
+    // namespace consult it.
     bool hasExtensionPermission(const QString &extensionId,
                                 const QString &permission) const;
+
+    // ------------------------------------------------------------------
+    // BW09 — chrome.permissions optional grants.  Chrome persists
+    // permissions.request() consent across sessions: granted
+    // optional_permissions behave exactly like required ones
+    // (contains()/getAll() report them, the gated APIs they name
+    // unlock), granted optional_host_permissions extend host
+    // coverage the same way.  Records live in ProfileSettings under
+    // extensions/optperms/<id> and extensions/opthosts/<id> on the
+    // hosting persona (regProfileId's rule); a disable keeps them
+    // (the maps reload on the next enable), an uninstall drops them
+    // via dropExtensionGrants — a reinstall is a fresh extension.
+    // Every read merges required ∪ granted so the grant feeds the
+    // whole runtime, never just the permissions.* answers.
+    QStringList grantedOptionalPermissions(
+            const QString &extensionId) const;
+    QStringList grantedOptionalOrigins(const QString &extensionId) const;
+    // Declared host_permissions ∪ granted optional origins — every
+    // coverage check (agentCovers, requestVisibleTo, seesUrls, the
+    // content-script registration gate) reads this union.
+    QStringList hostPermissionsFor(const QString &extensionId) const;
+    // The consent surface's record-keeping: grant inserts the newly
+    // consented entries and persists; revoke removes the entries it
+    // held.  Only the caller's diff (newly granted / actually held)
+    // is what listeners hear about.
+    void grantOptionalPermissions(const QString &extensionId,
+                                  const QStringList &permissions,
+                                  const QStringList &origins);
+    void revokeOptionalPermissions(const QString &extensionId,
+                                   const QStringList &permissions,
+                                   const QStringList &origins);
+    // Uninstall: the persisted consent record dies with the
+    // extension — Chrome keeps no grants across a reinstall.
+    void dropExtensionGrants(const QString &extensionId);
 
     // ------------------------------------------------------------------
     // ER01 — page agent plumbing.  The content-script half of the
@@ -622,6 +792,12 @@ public:
     // The page (or its bridge) died — drop its pending sends and port
     // ends; surviving ends get the honest portDisconnect push.
     void unregisterPageContext(ExtensionPageBridge *page);
+    // BW11: a covered page agent's 'hello' handshake registers the
+    // bridge so storage.onChanged fan-outs reach its content-script
+    // listeners — coverage is re-proved per emit, so the entry is
+    // only ever a delivery candidate, never a grant.
+    void registerPageAgent(const QString &extensionId,
+                           ExtensionPageBridge *page);
     // ER02 seam — push a host->page message ('__arktos.deliver');
     // the agent's 'respond' op resolves it back to 'waiter' as
     // '__arktos.deliverResponse'.  False when the mid collides with a
@@ -712,6 +888,13 @@ private:
     // manifest from disk.
     QHash<QString, QStringList> m_extPermissions;
     QHash<QString, QStringList> m_extHostPermissions;
+    // BW09: consented optional grants — m_extPermissions stays the
+    // REQUIRED snapshot; these carry what permissions.request()
+    // added.  Persisted per persona (extensions/optperms|/opthosts);
+    // a grant never lands here without the consent surface's answer.
+    QHash<QString, QStringList> m_extGrantedPerms;
+    QHash<QString, QStringList> m_extGrantedOrigins;
+    void persistOptionalGrants(const QString &extensionId);
     QTimer *m_heartbeat = nullptr;
     bool m_viewFilterInstalled = false;
 
@@ -789,6 +972,25 @@ private:
     };
     QHash<QString, QList<PortEnd>> m_portEnds;
 
+    // BW10: a Port.postMessage fired before the remote end has
+    // registered (the connect()->postMessage() same-tick race —
+    // Chrome queues these inside the port's transport) parks here
+    // instead of dropping.  Every later end registration on the chan
+    // drains the parked posts that are not its own, in order;
+    // entries die with the chan or when their sender end goes away.
+    struct ParkedPortMsg {
+        QPointer<QObject> sender;
+        QString senderPortId;
+        QJsonValue msg;
+    };
+    QHash<QString, QList<ParkedPortMsg>> m_parkedPortMsgs;
+    void parkPortMessage(QObject *from, const QString &chan,
+                         const QString &portId, const QJsonValue &msg);
+    void drainParkedPortMsgs(const QString &chan, QObject *target,
+                             const QString &portId);
+    void dropParkedPortMsgs(const QString &chan, QObject *sender,
+                            const QString &portId);
+
     // ER01/ER02: host->page deliveries awaiting the page agent's
     // 'respond' — mid -> {the page asked, the context awaiting the
     // answer}.  Entries expire like relay sends so an absent or
@@ -800,6 +1002,13 @@ private:
     };
     QHash<QString, PendingPageDelivery> m_pageDeliveries;
     QHash<QString, QTimer *> m_pageDeliveryTimers;
+
+    // BW11: live page agents per extension — the delivery set
+    // storage.onChanged fan-outs enumerate so content-script
+    // listeners see other contexts' writes.  Entries are
+    // registration hints only: emit re-proves agentCovers and
+    // unregisterPageContext drops the bridge on page death.
+    QHash<QString, QList<QPointer<ExtensionPageBridge>>> m_pageAgents;
 
     // EXT17: sibling-page bridges keyed by their page so an open
     // popup's channel is unregistered when the view goes away.

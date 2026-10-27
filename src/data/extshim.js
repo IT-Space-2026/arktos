@@ -46,7 +46,11 @@
  *                         host-side window/tab snapshot; on* events
  *                         are shim events EXT16 pushes into
  *   chrome.webNavigation— event objects (delivery is EXT16)
- *   chrome.permissions  — contains/getAll answered from the manifest
+ *   chrome.permissions  — BW09: the real grant surface — contains/
+ *                         getAll report required ∪ consented-
+ *                         optional grants; request() drives the
+ *                         host's consent surface, remove() revokes;
+ *                         onAdded/onRemoved are host-pushed events
  *   chrome.notifications— ER12: create/update/clear/getAll over the
  *                         host's record registry + freedesktop
  *                         presentation; onClicked/onButtonClicked/
@@ -79,6 +83,10 @@
  *                        https://<id>.chromiumapp.org/<path>,
  *                        synchronous + ungated); every other member
  *                        stays under the typed-unsupported wildcard
+ *   chrome.dom         — BW01: openOrClosedShadowRoot answers the
+ *                        element's reachable shadow root (open
+ *                        roots only — a JS realm cannot see closed
+ *                        ones); the rest typed unsupported
  *   other absent ns     — unsupportedNs(): calls answer typed errors,
  *                         on* event registration is recorded
  *
@@ -276,6 +284,25 @@
                 delete shim.ports[payload.portId];
                 dp.onDisconnect.__fire([dp]);
             }
+            return;
+        }
+        if (name === '__arktos.nativeMessage') {
+            // BW08: a framed stdout message from the native host —
+            // fires the extension port's onMessage (msg, port).
+            if (payload && shim.nativePorts[payload.portId]) {
+                var np = shim.nativePorts[payload.portId];
+                np.onMessage.__fire([payload.msg, np]);
+            }
+            return;
+        }
+        if (name === '__arktos.nativeDisconnect') {
+            // BW08: host exit / spawn failure / protocol error —
+            // the port disconnects with lastError worded like
+            // Chrome's inside the listeners.
+            if (payload)
+                killNativePort(String(payload.portId),
+                               String(payload.error
+                                      || 'host-exited'));
             return;
         }
         var ev = shim.events[name];
@@ -1101,13 +1128,27 @@
         catch (e) { return String(msg).slice(0, 512); }
     }
 
-    function markDelivery(key) {
+    // Delivery dedupe is per-transport: sendMessage rides BOTH the
+    // native binding (realSend reaches every real extension context
+    // — the hosted background and our offscreen documents are real
+    // chrome-extension:// pages) AND the relay.  Chrome fires
+    // onMessage once per sendMessage, so the second transport's
+    // copy of the same content must be dropped.  Marks are keyed by
+    // transport ('native'/'relay') so sibling listener wrappers in
+    // the SAME native dispatch never dedupe each other — Chromium
+    // invokes each wrapper separately and all of them must fire.
+    function markDelivery(key, via) {
         var now = Date.now();
-        shim.recentDeliveries[key] = now;
+        var d = shim.recentDeliveries[key];
+        if (!d || (now - d.t) >= 3000)
+            d = {};
+        d.t = now;
+        d[via] = true;
+        shim.recentDeliveries[key] = d;
         var keys = Object.keys(shim.recentDeliveries);
         if (keys.length > 200) {
             for (var i = 0; i < keys.length; ++i) {
-                if (now - shim.recentDeliveries[keys[i]] > 3000)
+                if (now - shim.recentDeliveries[keys[i]].t > 3000)
                     delete shim.recentDeliveries[keys[i]];
             }
             keys = Object.keys(shim.recentDeliveries);
@@ -1116,9 +1157,9 @@
         }
     }
 
-    function seenDelivery(key) {
-        var t = shim.recentDeliveries[key];
-        return t !== undefined && (Date.now() - t) < 3000;
+    function seenDelivery(key, via) {
+        var d = shim.recentDeliveries[key];
+        return !!d && !!d[via] && (Date.now() - d.t) < 3000;
     }
 
     function seenMid(mid) {
@@ -1158,8 +1199,19 @@
         var mid = payload.mid;
         var msg = env ? env.msg : payload.msg;
         if (seenMid(mid))
-            return;   // already delivered (native won the race)
-        markDelivery(contentKey(msg));
+            return;   // already delivered
+        if (seenDelivery(contentKey(msg), 'native')) {
+            // The native binding already fired this message at this
+            // context's listeners — dropping the relay copy keeps
+            // Chrome's fire-once semantic.  Still answer the relay so
+            // the sender's peer count drains promptly; the real
+            // response already rode back on the native channel.
+            call('relay', 'respond',
+                 { mid: mid, response: null, hadListeners: true })
+                .catch(function () {});
+            return;
+        }
+        markDelivery(contentKey(msg), 'relay');
         var responded = false;
         var listeners = shim.messageListeners.slice();
         function respond(value) {
@@ -1307,6 +1359,104 @@
         return port;
     }
 
+    // BW08 — chrome.runtime.connectNative/sendNativeMessage.  A
+    // native port is a real channel to a spawned host process: the
+    // 'native' bridge ops (connect/post/disconnect) spawn the
+    // manifest-resolved binary and carry the stdio frames; host
+    // pushes arrive as '__arktos.nativeMessage' /
+    // '__arktos.nativeDisconnect'.  Failures are Chrome-typed — the
+    // lastError wording below mirrors Chrome's own strings.
+    shim.nativePorts = {};   // native port id -> Port
+
+    var NATIVE_ERROR_TEXT = {
+        'bad-name': 'Specified native messaging host not found.',
+        'not-found': 'Specified native messaging host not found.',
+        'invalid-manifest':
+            'Invalid native messaging host manifest.',
+        'unsupported-type':
+            'Invalid native messaging host manifest.',
+        'forbidden': 'Access to the specified native messaging '
+                     + 'host is forbidden.',
+        'no-permission': 'You do not have permission to use '
+                         + 'native messaging.',
+        'spawn-failed': 'Failed to start native messaging host.',
+        'host-exited': 'Native host has exited.',
+        'disconnected': 'Native host has exited.',
+        'bad-message': 'Error when communicating with the native '
+                       + 'messaging host.'
+    };
+    function nativeErrorText(code) {
+        return NATIVE_ERROR_TEXT[code]
+            || 'Error when communicating with the native '
+               + 'messaging host.';
+    }
+
+    function killNativePort(localId, code) {
+        var port = shim.nativePorts[localId];
+        if (!port || port.disconnected)
+            return;
+        port.disconnected = true;
+        port.__lastErrorCode = code;
+        delete shim.nativePorts[localId];
+        var message = nativeErrorText(code);
+        // Only host-initiated or failed-connect ends come through
+        // here — a caller's own disconnect() never fires its
+        // onDisconnect.  The defer lets listeners registered in the
+        // same tick as connectNative() land before the fire.
+        setTimeout(function () {
+            setLastError(message);
+            port.onDisconnect.__fire([port]);
+            clearLastError();
+        }, 0);
+    }
+
+    function newNativePort(app) {
+        var localId = 'n' + (++shim.seq) + '#' + Date.now();
+        var port = {
+            name: String(app),
+            // Chrome leaves sender unset on a native port — the
+            // remote end is a process, not an extension context.
+            sender: undefined,
+            onMessage: makeLocalEvent(),
+            onDisconnect: makeLocalEvent(),
+            disconnected: false
+        };
+        port.postMessage = function (msg) {
+            if (port.disconnected)
+                return;
+            call('native', 'post', { portId: localId, msg: msg })
+                .catch(function (e) {
+                    // The session is already gone host-side —
+                    // surface it the same way a host exit does.
+                    killNativePort(
+                        localId,
+                        (e && e.code === 'disconnected')
+                            ? 'host-exited' : 'bad-message');
+                });
+        };
+        port.disconnect = function () {
+            if (port.disconnected)
+                return;
+            port.disconnected = true;
+            delete shim.nativePorts[localId];
+            call('native', 'disconnect', { portId: localId })
+                .catch(function () {});
+        };
+        shim.nativePorts[localId] = port;
+        call('native', 'connect', { app: String(app),
+                                    portId: localId })
+            .catch(function (e) {
+                // Connect-time failure (absent host, forbidden
+                // origin, ungranted permission): the returned port
+                // still exists — it dies on the next tick with the
+                // typed error surfaced through lastError like
+                // Chrome's own connect failure does.
+                killNativePort(localId,
+                               (e && e.code) || 'not-found');
+            });
+        return port;
+    }
+
     // --- chrome.runtime ------------------------------------------------
     var rt = (typeof chrome !== 'undefined') ? chrome.runtime : null;
     if (rt) {
@@ -1334,11 +1484,13 @@
                         if (env) {
                             if (seenMid(env.mid))
                                 return false;
-                            markDelivery(contentKey(env.msg));
+                            markDelivery(contentKey(env.msg), 'native');
                             sender = { id: env.extId || cfg.id };
                             msg = env.msg;
                         } else {
-                            markDelivery(contentKey(msg));
+                            if (seenDelivery(contentKey(msg), 'relay'))
+                                return false;  // relay copy already fired
+                            markDelivery(contentKey(msg), 'native');
                         }
                         return fn.call(this, msg, sender, respond);
                     };
@@ -1786,19 +1938,63 @@
                                 'unsupported', cb);
             }, 'chrome.runtime.getPackageDirectoryEntry');
         }
-        if (typeof rt.sendNativeMessage !== 'function') {
+        {
+            // BW08: unconditional like the managed-storage swap —
+            // the engine DOES ship a native connectNative binding,
+            // but this embedder has no native-messaging service, so
+            // every call answers Chromium's canned "disabled by the
+            // system administrator" — a dead answer dressed as real.
+            // The hosted runtime's port is the working one.
             rtSet('sendNativeMessage', function (app, msg, cb) {
-                return failCall('runtime.sendNativeMessage',
-                                'unsupported', cb);
+                // Chrome's own sendNativeMessage IS a one-shot
+                // native port — spawn, post, first reply resolves,
+                // the host closes.  Building it on the real port
+                // keeps both surfaces agreeing on every failure
+                // shape, including the absent-host typed error.
+                var port = rt.connectNative(app);
+                var done = false;
+                var p = new Promise(function (resolve) {
+                    var finish = function (code, value) {
+                        if (done)
+                            return;
+                        done = true;
+                        try { port.disconnect(); } catch (e) {}
+                        resolve({ e: code, v: value });
+                    };
+                    port.onMessage.addListener(function (m) {
+                        finish(null, m);
+                    });
+                    port.onDisconnect.addListener(function () {
+                        finish(port.__lastErrorCode
+                               || 'host-exited');
+                    });
+                    try {
+                        port.postMessage(msg);
+                    } catch (e) {
+                        finish('bad-message');
+                    }
+                });
+                return p.then(function (r) {
+                    if (r.e) {
+                        // The typed error keeps the code for the
+                        // gap record; the message Chrome-words it.
+                        var err = typedError(r.e,
+                            'runtime.sendNativeMessage');
+                        err.message = 'chrome.runtime.'
+                            + 'sendNativeMessage: '
+                            + nativeErrorText(r.e);
+                        answerCb(cb, undefined,
+                                 nativeErrorText(r.e));
+                        throw err;
+                    }
+                    answerCb(cb, r.v, null);
+                    return r.v;
+                });
             }, 'chrome.runtime.sendNativeMessage');
         }
-        if (typeof rt.connectNative !== 'function') {
-            rtSet('connectNative', function (app) {
-                note('chrome.runtime.connectNative(' + app
-                     + '): no native messaging host');
-                return deadPort(app, 'no-native-messaging');
-            }, 'chrome.runtime.connectNative');
-        }
+        rtSet('connectNative', function (app) {
+            return newNativePort(app);
+        }, 'chrome.runtime.connectNative');
         rtSet('reload', function () {
             // chrome.runtime.reload — the backend's unload+load IS
             // the reload.  The reply may never land because this
@@ -1850,11 +2046,22 @@
     }
 
     // --- chrome.storage -------------------------------------------------
-    // The hosted page's real storage.local IS the store the still-
-    // running service worker and real extension pages share — keep it
-    // (the EXT13 spike measured it working, and replacing it would
-    // fork the extension's state).  The bridge store backs contexts
-    // where the bindings are absent and is exercised directly via
+    // BW04 — ONE canonical store.  Content-script contexts have no
+    // native chrome.* bindings at all (the shared agent world gets
+    // nothing), so their storage ops always ride the bridge store —
+    // extstorage/<id>/<area>.json on the host side.  Keeping the
+    // engine's own storage area inside extension pages therefore
+    // FORKED the extension's state: a background write never reached
+    // a content-script read and vice versa.  Under hosted-only
+    // background routing (BW02) no native service worker exists to
+    // share the native store with, so every shimmed context now
+    // installs the bridge-backed area over whatever native binding
+    // is present — persistence, quota and change semantics become
+    // uniform across background, popup, options and content
+    // contexts.  Data a prior build wrote into the native area is
+    // merged across once (storageAreaSwap below); a locked member
+    // falls back to adoptRealArea so onChanged still fires.
+    // The bridge store is exercised directly via
     // __arktosShim.storageArea().
     // ER17 — the onChanged fan-out.  The engine's storage delegate
     // never emits storage.onChanged in ANY context (verified: a
@@ -2037,6 +2244,12 @@
                 || typeof area.get !== 'function'
                 || typeof area.set !== 'function')
             return;
+        // BW04: the bridge area IS the canonical store — its
+        // mutators already post the change record.  Wrapping it
+        // like a native area would double-fire onChanged.
+        if (area === bridgeLocalRef || area === bridgeSessionRef
+                || area === bridgeSyncRef)
+            return;
         var rec = wrappedAreas[areaName];
         if (!rec || rec.area !== area
                 || (area.set !== rec.wrappedSet
@@ -2181,56 +2394,165 @@
                      'chrome.storage.' + areaName + '.onChanged');
     }
 
+    var hasOwnProp = function (o, k) {
+        return !!o && Object.prototype.hasOwnProperty.call(o, k);
+    };
+
+    // BW04 — one-time native→bridge merge.  Everything the engine's
+    // own area still holds (data written before the canonical-store
+    // cutover, or by a context the shim never reached) copies into
+    // the bridge store — keys the bridge already has win, so a merge
+    // can never clobber fresher state, and a 'migrated' flag the
+    // backend keeps per area makes sure a key the extension DELETED
+    // does not resurrect on the next boot.  Silent by construction:
+    // the merge is plain bridge ops and posts no storage.changed
+    // fan-out.  Answers a gate promise — reads issued while the
+    // merge is still in flight wait on it, so an extension can never
+    // observe a window of pre-merge emptiness.  The watchdog keeps
+    // the wait bounded if the native get never calls back.
+    function mergeNativeArea(areaName, nativeArea) {
+        var release;
+        var gate = new Promise(function (r) { release = r; });
+        var released = false;
+        var done = function () {
+            if (!released) {
+                released = true;
+                release();
+            }
+        };
+        setTimeout(done, 5000);
+        call('storage', areaName + '.migrated', {})
+            .then(function (migrated) {
+                if (migrated) {
+                    done();
+                    return;
+                }
+                var fin = function () {
+                    call('storage', areaName + '.migrated',
+                         { mark: true }).then(done, done);
+                };
+                try {
+                    nativeArea.get(null, function (items) {
+                        try {
+                            if (chrome.runtime
+                                    && chrome.runtime.lastError) {
+                                fin();
+                                return;
+                            }
+                        } catch (e) { fin(); return; }
+                        if (!items || typeof items !== 'object') {
+                            fin();
+                            return;
+                        }
+                        call('storage', areaName + '.get',
+                             { keys: null }).then(function (cur) {
+                            var missing = {};
+                            var n = 0;
+                            for (var k in items) {
+                                if (hasOwnProp(items, k)
+                                        && !hasOwnProp(cur, k)) {
+                                    missing[k] = items[k];
+                                    ++n;
+                                }
+                            }
+                            if (!n) {
+                                fin();
+                                return;
+                            }
+                            call('storage', areaName + '.set',
+                                 { items: missing }).then(function () {
+                                note('chrome.storage.' + areaName
+                                     + ': migrated ' + n
+                                     + ' keys from the engine store');
+                                fin();
+                            }, fin);
+                        }, fin);
+                    });
+                } catch (e) { fin(); }
+            }, done);
+        return gate;
+    }
+
+    // BW04 — install the bridge-backed area over whatever the engine
+    // exposed (or nothing).  On a real native area the swap also
+    // wires the migration gate onto get() so early reads stay
+    // honest; if the member turns out to be locked we keep the
+    // native area and wrap its mutators for onChanged instead —
+    // the divergence that leaves is recorded, never silent.
+    function storageAreaSwap(areaName) {
+        var nativeArea = null;
+        try {
+            var a = chrome.storage && chrome.storage[areaName];
+            if (a && typeof a === 'object'
+                    && typeof a.get === 'function'
+                    && typeof a.set === 'function')
+                nativeArea = a;
+        } catch (e) {}
+        var ref = bridgeStorageArea(areaName);
+        if (nativeArea && areaName !== 'session') {
+            // session is memory-only in Chrome too — nothing in the
+            // engine's area can be worth migrating.
+            var gate = mergeNativeArea(areaName, nativeArea);
+            var rawGet = ref.get;
+            ref.get = function (keys, cb) {
+                var p = gate.then(function () {
+                    return rawGet(keys);
+                });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, {},
+                                        e && e.message || String(e));
+                           });
+                return p;
+            };
+        }
+        defineMember(chrome.storage, areaName, ref,
+                     'chrome.storage.' + areaName);
+        if (chrome.storage[areaName] === ref)
+            return ref;
+        adoptRealArea(areaName);
+        note('chrome.storage.' + areaName
+             + ': native area retained (member locked) — '
+             + 'content-script storage may diverge');
+        return null;
+    }
+
     if (typeof chrome !== 'undefined') {
         if (!chrome.storage)
             safeSet(chrome, 'storage', {}, 'chrome.storage');
         if (chrome.storage) {
-        if (!chrome.storage.local
-                || typeof chrome.storage.local.get !== 'function') {
-            bridgeLocalRef = bridgeStorageArea('local');
-            if (safeSet(chrome.storage, 'local', bridgeLocalRef,
-                        'chrome.storage.local'))
-                note('chrome.storage.local: bridge-backed store '
-                     + '(per-extension namespaced, persisted '
-                     + 'host-side)');
-        } else {
-            adoptRealArea('local');
-        }
-        if (!chrome.storage.session
-                || typeof chrome.storage.session.get !== 'function') {
-            bridgeSessionRef = bridgeStorageArea('session');
-            safeSet(chrome.storage, 'session', bridgeSessionRef,
-                    'chrome.storage.session');
-        } else {
-            adoptRealArea('session');
-        }
+        bridgeLocalRef = storageAreaSwap('local');
+        bridgeSessionRef = storageAreaSwap('session');
         // MD19: sync persists through the bridge like local — there
         // is no cloud sync in Arktos, so the honest answer is a
         // profile-local store, not the volatile session map.
-        if (!chrome.storage.sync
-                || typeof chrome.storage.sync.get !== 'function') {
-            bridgeSyncRef = bridgeStorageArea('sync');
-            if (safeSet(chrome.storage, 'sync', bridgeSyncRef,
-                        'chrome.storage.sync'))
-                note('chrome.storage.sync: bridge-backed store '
-                     + 'persisted profile-local — no cloud sync in '
-                     + 'Arktos, the area does not roam');
-        } else {
-            adoptRealArea('sync');
-        }
-        if (!chrome.storage.managed) {
-            safeSet(chrome.storage, 'managed', {
-                get: function (keys, cb) {
-                    touch('chrome.storage.managed.get');
-                    return okCall({}, cb);
-                },
-                getKeys: function (cb) {
-                    touch('chrome.storage.managed.getKeys');
-                    return okCall([], cb);
-                },
-                onChanged: makeEvent('storage.managed.onChanged')
-            }, 'chrome.storage.managed');
-        }
+        bridgeSyncRef = storageAreaSwap('sync');
+        // BW11: managed is read-only-and-empty under Arktos — no
+        // policy infra exists, so the empty store IS the honest
+        // answer.  Install the stub unconditionally: where the
+        // engine exposes a native managed area it both carries
+        // mutator members Chrome never shows and rejects get(null)
+        // outright — the stub out-truths it on shape and behavior.
+        if (chrome.storage.managed)
+            note('chrome.storage.managed: native area replaced — '
+                 + 'empty read-only stub matches Arktos (no policy '
+                 + 'infra)');
+        defineMember(chrome.storage, 'managed', {
+            get: function (keys, cb) {
+                touch('chrome.storage.managed.get');
+                return okCall({}, cb);
+            },
+            getKeys: function (cb) {
+                touch('chrome.storage.managed.getKeys');
+                return okCall([], cb);
+            },
+            getBytesInUse: function (keys, cb) {
+                touch('chrome.storage.managed.getBytesInUse');
+                return okCall(0, cb);
+            },
+            onChanged: makeEvent('storage.managed.onChanged')
+        }, 'chrome.storage.managed');
         var topChanged = null;
         try { topChanged = chrome.storage.onChanged; } catch (e) {}
         if (!topChanged) {
@@ -2594,6 +2916,10 @@
     if (typeof chrome !== 'undefined') {
         var realTabs = chrome.tabs || {};
         var tabsNs = { __arktosShim: true };
+        // BW01: Chrome's tabs.TAB_ID_NONE sentinel — Bitwarden's
+        // background compares sender tab ids against it; undefined
+        // would silently answer 'not TAB_ID_NONE' for dead ids.
+        tabsNs.TAB_ID_NONE = -1;
         for (var te = 0; te < tabsEvents.length; ++te) {
             // Shim events replace inert/absent event objects — EXT16
             // pushes real browser signals into them via hostEvent.
@@ -3915,44 +4241,39 @@
     }
 
     // --- chrome.permissions ---------------------------------------------------
+    // BW09: every member rides the bridge — the backend's grant set
+    // (required ∪ consented-optional) is authoritative and changes
+    // at runtime, so a handshake-manifest answer would go stale the
+    // moment request() lands.  request() drives the host's real
+    // consent surface and resolves Chrome's boolean; onAdded/
+    // onRemoved arrive as shim events the backend pushes to every
+    // context of the extension.
     if (typeof chrome !== 'undefined') {
-        var permSet = function () {
-            var m = manifest();
-            var perms = (m.permissions || []).concat(
-                m.optional_permissions || []);
-            var origins = (m.host_permissions || []);
-            return { permissions: perms, origins: origins };
+        var permCall = function (method, query, cb) {
+            var p = call('permissions', method, query || {});
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined,
+                                    e && e.message || String(e)); });
+            return p;
         };
         installNs('permissions', {
             contains: function (query, cb) {
                 touch('chrome.permissions.contains');
-                var have = permSet();
-                var ok = true;
-                var asked = query && query.permissions || [];
-                for (var i = 0; i < asked.length; ++i) {
-                    if (have.permissions.indexOf(asked[i]) < 0) {
-                        ok = false;
-                        break;
-                    }
-                }
-                var askedO = query && query.origins || [];
-                for (var j = 0; ok && j < askedO.length; ++j) {
-                    if (have.origins.indexOf(askedO[j]) < 0)
-                        ok = false;
-                }
-                return okCall(ok, cb);
+                return permCall('contains', query, cb);
             },
             getAll: function (cb) {
                 touch('chrome.permissions.getAll');
-                return okCall(permSet(), cb);
+                return permCall('getAll', {}, cb);
             },
-            request: function (permissions, cb) {
-                return failCall('permissions.request',
-                                'unsupported', cb);
+            request: function (query, cb) {
+                touch('chrome.permissions.request');
+                return permCall('request', query, cb);
             },
-            remove: function (permissions, cb) {
-                return failCall('permissions.remove',
-                                'unsupported', cb);
+            remove: function (query, cb) {
+                touch('chrome.permissions.remove');
+                return permCall('remove', query, cb);
             },
             onAdded: makeEvent('permissions.onAdded'),
             onRemoved: makeEvent('permissions.onRemoved')
@@ -5619,6 +5940,42 @@
                           }
                       }),
                       false);
+        // BW01: chrome.dom — Chromium binds this namespace for
+        // extension contexts (its only published member is
+        // openOrClosedShadowRoot, which Bitwarden's autofill scripts
+        // call to walk shadow DOM).  A JS realm can only reach OPEN
+        // shadow roots — closed ones are unreachable by any script —
+        // so the member answers element.shadowRoot: the real value
+        // for open roots, null where the root is closed or absent
+        // (the same answer the page's own traversal would get).  A
+        // first-call note keeps the closed-root limitation visible;
+        // every other member stays under the typed-unsupported
+        // wildcard.
+        if (chrome.dom === undefined) {
+            var domNoted = false;
+            installNs('dom',
+                      unsupportedNs('chrome.dom', {
+                          openOrClosedShadowRoot: function (el) {
+                              touch('chrome.dom'
+                                    + '.openOrClosedShadowRoot');
+                              if (!domNoted) {
+                                  domNoted = true;
+                                  note('chrome.dom'
+                                       + '.openOrClosedShadowRoot: '
+                                       + 'open shadow roots only — '
+                                       + 'closed roots are '
+                                       + 'unreachable from script');
+                              }
+                              try {
+                                  return (el && el.shadowRoot)
+                                         || null;
+                              } catch (e) {
+                                  return null;
+                              }
+                          }
+                      }),
+                      false);
+        }
         // windows.* does have a real event source (the EXT16 hub
         // pushes onCreated/onRemoved/onFocusChanged): pre-create them
         // so the typed-error proxy hands out real events without the
@@ -5732,7 +6089,11 @@
         'chrome.gcm.register', 'chrome.tts.getVoices',
         'chrome.tabGroups.onCreated.addListener',
         'chrome.privacy', 'chrome.devtools', 'chrome.fontSettings',
-        'chrome.enterprise'
+        'chrome.enterprise',
+        // BW01: the measured Bitwarden surface — chrome.dom is a
+        // content-script namespace Chromium also binds on extension
+        // pages; the shim serves it (open roots only).
+        'chrome.dom', 'chrome.dom.openOrClosedShadowRoot'
     ];
     shim.audit = function () {
         var missing = [];
@@ -5775,6 +6136,121 @@
         }, 250);
         if (typeof window.addEventListener === 'function')
             window.addEventListener('load', repairInstalls);
+    }
+
+    // --- BW01 opt-in instrumentation -----------------------------------
+    // cfg.nsTrace (ARKTOS_EXTSHIM_NSTRACE): wrap window.chrome in a
+    // get-trap proxy that NOTEs every lookup resolving to undefined —
+    // 'chrome.<ns>' for a missing namespace and, through cached
+    // second-level proxies, 'chrome.<ns>.<member>' for a missing member
+    // on a present one.  This is the measured-boot instrument the lane
+    // iterates with: a failing top-level access that extension code
+    // swallows would otherwise leave no trace.  Never armed in normal
+    // runs.  Member proxies are cached by identity so
+    // `chrome.x === chrome.x` still holds while armed, and a mid-boot
+    // native rewrite (the swap repairInstalls guards) just mints a
+    // fresh trace proxy on the next access — the namespaces the shim
+    // re-asserts BY identity (tabs/management/offscreen/runtime/
+    // extension/storage) keep their raw objects so the asserts do not
+    // fight the proxy.
+    var traceProxied = null;
+    function armNsTrace() {
+        if (window.chrome === traceProxied)
+            return;
+        try {
+            var real = chrome;
+            var managed = { tabs: 1, management: 1, offscreen: 1,
+                            runtime: 1, extension: 1, storage: 1 };
+            var nsCache = {};
+            var seen = {};
+            var getTrap = function (t, prop, prefix, deepen) {
+                var v;
+                try { v = t[prop]; } catch (e) { v = undefined; }
+                if (typeof prop === 'string' && v === undefined
+                        && prop !== 'then'
+                        && !seen[prefix + '.' + prop]) {
+                    seen[prefix + '.' + prop] = 1;
+                    note('ns-trace: ' + prefix + '.' + prop
+                         + ' -> undefined');
+                }
+                if (deepen && v
+                        && (typeof v === 'object'
+                            || typeof v === 'function')
+                        && typeof prop === 'string'
+                        && !managed[prop]) {
+                    var cached = nsCache[prop];
+                    if (cached && cached.val === v)
+                        return cached.proxy;
+                    // A traced member CALL would carry the proxy as
+                    // receiver — harmless for shim closures but an
+                    // 'Illegal invocation' for native bindings that
+                    // check |this|.  Function members go back bound
+                    // to the real namespace so the instrument stays
+                    // transparent to the code it measures.
+                    var fnBound = {};
+                    var sub = new Proxy(v, {
+                        get: function (tt, pp) {
+                            var r = getTrap(tt, pp,
+                                            'chrome.' + prop, false);
+                            if (typeof r === 'function'
+                                    && typeof pp === 'string') {
+                                var fb = fnBound[pp];
+                                if (!fb || fb.orig !== r) {
+                                    fb = { orig: r,
+                                           bound: r.bind(tt) };
+                                    fnBound[pp] = fb;
+                                }
+                                return fb.bound;
+                            }
+                            return r;
+                        }
+                    });
+                    nsCache[prop] = { val: v, proxy: sub };
+                    return sub;
+                }
+                return v;
+            };
+            Object.defineProperty(window, 'chrome', {
+                configurable: true,
+                enumerable: true,
+                writable: true,
+                value: new Proxy(real, {
+                    get: function (t, prop) {
+                        return getTrap(t, prop, 'chrome', true);
+                    },
+                    has: function (t, prop) { return prop in t; },
+                    set: function (t, prop, v) {
+                        t[prop] = v;
+                        return true;
+                    }
+                })
+            });
+            traceProxied = window.chrome;
+            if (traceProxied === real) {
+                // The defineProperty quietly failed — a read-only
+                // accessor kept the native object.  Honest report,
+                // no fake success.
+                note('ns-trace: proxy refused — native chrome '
+                     + 'binding is non-configurable');
+            } else {
+                note('ns-trace: armed — chrome proxy logging '
+                     + 'undefined accesses');
+            }
+        } catch (e) {
+            note('ns-trace: refused — ' + String(e));
+        }
+    }
+    if (cfg.nsTrace) {
+        armNsTrace();
+        // The engine's lazy binding pass can swap window.chrome whole —
+        // repairInstalls already re-runs on a bootstrap interval; the
+        // re-arm rides along and is a no-op while the proxy holds.
+        var traceArms = 0;
+        var traceTimer = window.setInterval(function () {
+            armNsTrace();
+            if (++traceArms >= 40)
+                window.clearInterval(traceTimer);
+        }, 250);
     }
 
     // Diagnostics surface for tests/smokes.

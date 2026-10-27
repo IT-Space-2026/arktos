@@ -79,6 +79,17 @@ public:
                        QWidget *parent = nullptr,
                        const ExtensionManager::Manifest *installed = nullptr);
 
+    // BW09: the runtime consent surface chrome.permissions.request()
+    // drives — lists exactly the new optional grants the extension
+    // asked for (the review dialog's humanized wording) and answers
+    // true only on an explicit Allow.  Deny is the default button:
+    // a dismissed dialog is a refusal, matching Chrome's
+    // promise-resolves-false outcome.
+    static bool requestPermissions(const QString &extensionName,
+                                   const QStringList &permissions,
+                                   const QStringList &origins,
+                                   QWidget *parent = nullptr);
+
     // Chrome-store-style description of one chrome.* permission name;
     // unknown names get a generic "uses the X API" line.
     static QString describePermission(const QString &permission);

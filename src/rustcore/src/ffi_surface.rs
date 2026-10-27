@@ -695,6 +695,44 @@ fn readability_and_extverify_entry_points() {
         unsafe { crate::rc_ext_manifest_check(b"@@".as_ptr(), 2, &mut out) },
         RcStatus::Corrupt
     );
+
+    // BW02: unpack_package materializes every member under out_dir —
+    // stored and deflated alike — and refuses anything but a package.
+    let unpack_dir = std::env::temp_dir().join("arktos-ffi-extunpack");
+    let _ = std::fs::remove_dir_all(&unpack_dir);
+    let deflated = miniz_oxide::deflate::compress_to_vec(b"deflated!", 6);
+    let pkg = build_zip(&[
+        (b"manifest.json", 0, MANIFEST),
+        (b"sub/bg.js", 8, &deflated),
+        (b"sub/", 0, b""),
+    ]);
+    let dir_c = std::ffi::CString::new(unpack_dir.to_str().unwrap()).unwrap();
+    assert_eq!(
+        unsafe {
+            crate::rc_ext_unpack_package(
+                pkg.as_ptr(), pkg.len(), dir_c.as_ptr())
+        },
+        RcStatus::Ok
+    );
+    assert_eq!(std::fs::read(unpack_dir.join("manifest.json")).unwrap(),
+               MANIFEST);
+    assert_eq!(std::fs::read(unpack_dir.join("sub/bg.js")).unwrap(),
+               b"deflated!");
+    assert_eq!(
+        unsafe {
+            crate::rc_ext_unpack_package(
+                b"not-a-zip".as_ptr(), 9, dir_c.as_ptr())
+        },
+        RcStatus::Corrupt
+    );
+    assert_eq!(
+        unsafe {
+            crate::rc_ext_unpack_package(
+                pkg.as_ptr(), pkg.len(), ptr::null())
+        },
+        RcStatus::InvalidArgument
+    );
+    let _ = std::fs::remove_dir_all(&unpack_dir);
 }
 
 // Minimal zip writer mirroring extverify.rs's test helper (stored
@@ -703,6 +741,14 @@ fn build_zip(entries: &[(&[u8], u16, &[u8])]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut cdes = Vec::new();
     for (name, method, data) in entries {
+        // Central-dir records carry the INFLATED size — for deflated
+        // members compute it, like extverify.rs's build_zip does.
+        let uncomp = match method {
+            8 => miniz_oxide::inflate::decompress_to_vec(data)
+                .unwrap()
+                .len() as u32,
+            _ => data.len() as u32,
+        };
         let off = out.len() as u32;
         out.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
         out.extend_from_slice(&20u16.to_le_bytes());
@@ -711,15 +757,15 @@ fn build_zip(entries: &[(&[u8], u16, &[u8])]) -> Vec<u8> {
         out.extend_from_slice(&[0u8; 4]);
         out.extend_from_slice(&0u32.to_le_bytes());
         out.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(&uncomp.to_le_bytes());
         out.extend_from_slice(&(name.len() as u16).to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes());
         out.extend_from_slice(name);
         out.extend_from_slice(data);
-        cdes.push((off, *method, data.len() as u32, name));
+        cdes.push((off, *method, data.len() as u32, uncomp, name));
     }
     let cd_offset = out.len() as u32;
-    for (off, method, comp, name) in &cdes {
+    for (off, method, comp, uncomp, name) in &cdes {
         out.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
         out.extend_from_slice(&[20u8, 0, 20, 0]);
         out.extend_from_slice(&0u16.to_le_bytes());
@@ -727,7 +773,7 @@ fn build_zip(entries: &[(&[u8], u16, &[u8])]) -> Vec<u8> {
         out.extend_from_slice(&[0u8; 4]);
         out.extend_from_slice(&0u32.to_le_bytes());
         out.extend_from_slice(&comp.to_le_bytes());
-        out.extend_from_slice(&comp.to_le_bytes());
+        out.extend_from_slice(&uncomp.to_le_bytes());
         out.extend_from_slice(&(name.len() as u16).to_le_bytes());
         out.extend_from_slice(&[0u8; 8]);
         out.extend_from_slice(&0u32.to_le_bytes());

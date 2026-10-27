@@ -22,6 +22,10 @@
  *       observe disconnects)
  *   chrome.extension.getURL, chrome.i18n.getMessage — the two
  *       aliases content scripts commonly touch
+ *   chrome.dom.openOrClosedShadowRoot — BW01: the content-script
+ *       namespace Chromium binds natively; answers the element's
+ *       reachable shadow root (open roots only — closed roots are
+ *       unreachable from any JS realm)
  *
  * Per-host scoping: the agent installs chrome.* only when the
  * extension's host_permissions or declared content-script matches
@@ -408,6 +412,89 @@
     }
 
     // --- inbound host->page pushes ----------------------------------------
+    // Shared runtime.onMessage fan — both delivery paths fire the
+    // same listener set: '__arktos.deliver' (the extEvent push the
+    // main-frame path rides) and agent.__deliverOneShot (BW12's
+    // per-frame path, invoked by runJavaScript straight into the
+    // addressed frame).  respond() is the single-shot answer
+    // channel; the return tells the caller whether a responder may
+    // still answer asynchronously (`return true` or a promise keeps
+    // Chrome's channel open; any other value is ignored).
+    function fireMessageListeners(msg, sender, respond) {
+        var wantAsync = false;
+        var listeners = shimEvents['runtime.onMessage'];
+        var count = listeners ? listeners.__count() : 0;
+        if (listeners) {
+            var fns = listeners.__fns();
+            for (var i = 0; i < fns.length; ++i) {
+                try {
+                    var r = fns[i].call(null, msg, sender, respond);
+                    if (r === true)
+                        wantAsync = true;
+                    else if (r && typeof r.then === 'function') {
+                        wantAsync = true;
+                        r.then(function (v) { respond(v); },
+                               function () { respond(undefined); });
+                    }
+                } catch (e) {
+                    record('onMessage listener: ' + e);
+                }
+            }
+        }
+        return { count: count, wantAsync: wantAsync };
+    }
+
+    // BW12 — a one-shot delivery addressed at THIS frame
+    // (tabs.sendMessage's options.frameId).  The agent runs in every
+    // frame's world, but the SEC24 postMessage forwarder only exists
+    // on the main frame, so a subframe agent could never see an
+    // extEvent push nor answer over the 'respond' rpc — the host
+    // invokes this directly inside the frame's agent world instead.
+    // A synchronous settle rides the call's own return envelope; an
+    // async responder parks the answer on
+    // window.__arktosDeliverResults[mid] where the host's poll
+    // collects it.  Both shapes become the same
+    // '__arktos.deliverResponse' the channel-routed respond op makes.
+    agent.__deliverOneShot = function (payload) {
+        var mid = String(payload && payload.mid || '');
+        var reg = window.__arktosDeliverResults =
+            window.__arktosDeliverResults || {};
+        var parked = false;     // async pending — reg[mid] owns it
+        var result = null;      // sync settle rides the return
+        var answered = false;
+        function respond(value) {
+            if (answered)
+                return;
+            answered = true;
+            var entry = {
+                response: value === undefined ? null : value,
+                hadListeners: true
+            };
+            if (parked)
+                reg[mid] = entry;
+            else
+                result = entry;
+        }
+        var st = fireMessageListeners(
+            payload && payload.msg,
+            (payload && payload.sender) || { id: cfg.id },
+            respond);
+        if (answered)
+            return { __deliver: 1, settled: true,
+                     response: result.response,
+                     hadListeners: true };
+        if (!st.wantAsync)
+            return { __deliver: 1, settled: true,
+                     response: null,
+                     hadListeners: st.count > 0 };
+        // The pending marker distinguishes 'still outstanding' from
+        // 'no entry' for the host's poll.
+        parked = true;
+        reg[mid] = null;
+        return { __deliver: 1, pending: true,
+                 hadListeners: st.count > 0 };
+    };
+
     function onExtEvent(name, payload) {
         if (name === '__arktos.extResponse') {
             if (payload && payload.mid)
@@ -444,42 +531,22 @@
                 if (responded)
                     return;
                 responded = true;
+                // hadListeners rides along: a respond() call can only
+                // come from a fired listener — without it the answer
+                // reads as 'receiving end does not exist'.
                 rpc('respond', { mid: mid,
                                  response: value === undefined
-                                     ? null : value })
+                                     ? null : value,
+                                 hadListeners: true })
                     .catch(function (e) {
                         record('respond: ' + String(e && e.message || e));
                     });
             }
-            var wantAsync = false;
-            var listeners = shimEvents['runtime.onMessage']
-                ? shimEvents['runtime.onMessage'] : null;
-            var count = listeners ? listeners.__count() : 0;
-            if (listeners) {
-                var fns = listeners.__fns();
-                for (var i = 0; i < fns.length; ++i) {
-                    try {
-                        var r = fns[i].call(null, payload.msg,
-                                            sender, respond);
-                        if (r === true)
-                            wantAsync = true;
-                        else if (r && typeof r.then === 'function') {
-                            // MV3 promise-response: hold the channel
-                            // until it settles.  Any other return
-                            // value is ignored — only sendResponse
-                            // (or a settling promise) answers.
-                            wantAsync = true;
-                            r.then(function (v) { respond(v); },
-                                   function () { respond(undefined); });
-                        }
-                    } catch (e) {
-                        record('onMessage listener: ' + e);
-                    }
-                }
-            }
-            if (!responded && !wantAsync)
+            var st = fireMessageListeners(payload.msg, sender,
+                                          respond);
+            if (!responded && !st.wantAsync)
                 rpc('respond', { mid: mid, response: null,
-                                 hadListeners: count > 0 })
+                                 hadListeners: st.count > 0 })
                     .then(function (r) {
                         if (!r || r.ok !== true)
                             record('respond refused: '
@@ -524,17 +591,20 @@
             return;
         }
         if (name === '__arktos.storageChanged') {
-            // A mutation this page made echoes back so onChanged
-            // fires here too (other contexts' writes don't reach
-            // the page yet — noted gap, ER05 territory).
-            if (payload) {
-                var area = agent.chrome.storage[payload.areaName];
-                if (area && area.onChanged)
-                    area.onChanged.__fire([payload.changes,
-                                           payload.areaName]);
-                agent.chrome.storage.onChanged
-                    .__fire([payload.changes, payload.areaName]);
-            }
+            // BW11: every context's mutation now reaches the page —
+            // the runtime fans the change record out to each live
+            // agent and this page's own writes echo back through the
+            // same push.  'ext' scopes it like __arktos.portConnect:
+            // the repost reaches every agent on the document, and
+            // only the addressed extension's listeners may fire.
+            if (!payload || payload.ext !== cfg.id)
+                return;
+            var area = agent.chrome.storage[payload.areaName];
+            if (area && area.onChanged)
+                area.onChanged.__fire([payload.changes,
+                                       payload.areaName]);
+            agent.chrome.storage.onChanged
+                .__fire([payload.changes, payload.areaName]);
             return;
         }
     }
@@ -685,6 +755,31 @@
         inIncognitoContext: false
     };
 
+    // BW01: chrome.dom — the one content-script namespace the agent
+    // surface was missing (Bitwarden's injected autofill payloads call
+    // openOrClosedShadowRoot to walk shadow DOM).  Chromium's native
+    // binding returns closed roots too; no JS realm can reach those,
+    // so the member answers element.shadowRoot — the real value for
+    // open roots, null where the root is closed or absent.  The
+    // limitation is noted once rather than silently believed.
+    var domNoted = false;
+    var dom = {
+        openOrClosedShadowRoot: function (el) {
+            touch('chrome.dom.openOrClosedShadowRoot');
+            if (!domNoted) {
+                domNoted = true;
+                note('chrome.dom.openOrClosedShadowRoot: open '
+                     + 'shadow roots only — closed roots are '
+                     + 'unreachable from script');
+            }
+            try {
+                return (el && el.shadowRoot) || null;
+            } catch (e) {
+                return null;
+            }
+        }
+    };
+
     // chrome.storage — the full content-script surface, proxied to
     // the extension's own backend store over the 'storage' op
     // (gated C++-side on the manifest's 'storage' permission).
@@ -729,10 +824,17 @@
             onChanged: makeEvent()
         };
     }
+    var managedArea = storageArea('managed');
+    // Chrome shape: managed is read-only, so its mutator members are
+    // absent — not present-but-erroring (a feature-detecting script
+    // sees Chrome's answer).
+    delete managedArea.set;
+    delete managedArea.remove;
+    delete managedArea.clear;
     var storage = {
         local: storageArea('local'),
         session: storageArea('session'),
-        managed: storageArea('managed'),
+        managed: managedArea,
         sync: storageArea('sync'),
         onChanged: makeEvent()
     };
@@ -766,7 +868,8 @@
         runtime: runtime,
         extension: extension,
         i18n: i18n,
-        storage: storage
+        storage: storage,
+        dom: dom
     };
     // The page-facing alias content scripts also probe: code gated on
     // `typeof chrome !== 'undefined'` inside the wrapper resolves the

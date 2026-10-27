@@ -1085,10 +1085,14 @@ void applyWindowProps(BrowserMainWindow *window,
 constexpr qint64 kSyncQuotaBytesPerItem = 8192;
 constexpr int kSyncMaxItems = 512;
 
-qint64 storageQuotaBytes(const QString &area)
+qint64 storageQuotaBytes(const QString &area, bool unlimitedStorage)
 {
     if (area == QLatin1String("sync"))
-        return 102400;          // sync.QUOTA_BYTES
+        return 102400;          // sync.QUOTA_BYTES — never lifted
+    // BW04: 'unlimitedStorage' lifts the local-area ceiling only —
+    // session keeps its MV3 10 MB bound either way.
+    if (unlimitedStorage && area == QLatin1String("local"))
+        return -1;
     return 10485760;            // local + session (MV3 10 MB)
 }
 
@@ -1456,11 +1460,24 @@ QJsonObject ExtensionShimBackend::loadStoreFile(const QString &area) const
 {
     // The read cap sits just above the 10 MB local-area quota — a
     // legitimately filled store must never refuse to load back.
+    // BW04: 'unlimitedStorage' removes the local write cap entirely,
+    // so for those extensions the bound is a corruption guard, not
+    // a quota — a JSON store past it is torn or forged, not data an
+    // honest write path produced.
+    const qint64 cap = manifestPermissions().contains(
+        QLatin1String("unlimitedStorage"))
+        ? (qint64(1) << 30)
+        : qint64(12) * 1024 * 1024;
     QFile file(storageDir() + QLatin1Char('/') + area
                + QLatin1String(".json"));
-    if (file.size() <= 12 * 1024 * 1024
-            && file.open(QIODevice::ReadOnly))
+    if (file.size() <= cap && file.open(QIODevice::ReadOnly))
         return QJsonDocument::fromJson(file.readAll()).object();
+    if (file.size() > cap)
+        const_cast<ExtensionShimBackend *>(this)->recordNote(
+            QStringLiteral(
+                "chrome.storage.%1: on-disk store exceeds the %2-byte "
+                "load bound — treated as corrupt, starting empty")
+                .arg(area).arg(cap));
     return QJsonObject();
 }
 
@@ -1689,6 +1706,27 @@ QJsonObject ExtensionShimBackend::invokeStorage(const QString &method,
         }
         return okReply();
     }
+    if (op == QLatin1String("migrated")) {
+        // BW04 — the shim's native->bridge merge marker.  A flag
+        // file beside the area store records that the one-time
+        // merge already ran, so a key the extension deleted is never
+        // resurrected off a stale native copy on the next boot.
+        // Bare call answers {migrated: bool}; {mark:true} records
+        // the merge as done.  Not a Chrome member — an internal
+        // protocol op like 'changed' above.
+        const QString flag = storageDir() + QLatin1Char('/') + area
+            + QLatin1String(".migrated");
+        if (args.value(QStringLiteral("mark")).toBool()) {
+            if (!QDir().mkpath(storageDir()))
+                return errReply(QStringLiteral("io-error"));
+            QFile file(flag);
+            if (!file.open(QIODevice::WriteOnly))
+                return errReply(QStringLiteral("io-error"));
+            file.write("1");
+            return okReply();
+        }
+        return okReply(QFile::exists(flag));
+    }
     if (op == QLatin1String("set")) {
         if (area == QLatin1String("managed"))
             return errReply(QStringLiteral("read-only"));
@@ -1719,7 +1757,10 @@ QJsonObject ExtensionShimBackend::invokeStorage(const QString &method,
         QJsonObject merged = store;
         for (auto it = items.constBegin(); it != items.constEnd(); ++it)
             merged.insert(it.key(), it.value());
-        if (storeBytesUsed(merged) > storageQuotaBytes(area))
+        const qint64 quota = storageQuotaBytes(
+            area, manifestPermissions().contains(
+                QLatin1String("unlimitedStorage")));
+        if (quota >= 0 && storeBytesUsed(merged) > quota)
             return errReply(QStringLiteral("quota-exceeded"));
         QJsonObject result;
         result.insert(QStringLiteral("changes"),
@@ -3326,26 +3367,34 @@ QJsonObject ExtensionShimBackend::manifestJson() const
         ExtensionShimBackend *self =
             const_cast<ExtensionShimBackend *>(this);
         self->m_manifestLoaded = true;
-        QFile file(m_extensionPath
-                   + QLatin1String("/manifest.json"));
-        if (file.size() <= 1024 * 1024
-                && file.open(QIODevice::ReadOnly))
-            self->m_manifest =
-                QJsonDocument::fromJson(file.readAll()).object();
+        // BW02: hosted-only routing strips `background` from the
+        // engine-visible manifest — getManifest() must still answer
+        // what the extension actually declared.
+        self->m_manifest =
+            ExtensionManager::declaredManifestJson(m_extensionPath);
     }
     return m_manifest;
 }
 
 QStringList ExtensionShimBackend::manifestPermissions() const
 {
-    // manifestJson()'s "permissions" key is the REQUIRED set already
-    // — optional_permissions live under their own key and stay inert
-    // (invokePermissions answers request() typed unsupported), so an
-    // optional declaration must never unlock a gated call.
+    // manifestJson()'s "permissions" key is the REQUIRED set;
+    // BW09's consented optional grants merge in from the runtime's
+    // record so a granted permission unlocks the gated namespaces
+    // exactly like a required declaration would.  Unconsented
+    // optional_permissions stay inert and never unlock a call.
     QStringList perms;
     for (const QJsonValue &v : manifestJson()
              .value(QStringLiteral("permissions")).toArray())
         perms.append(v.toString());
+    if (ExtensionBackgroundRuntime *runtime =
+            ExtensionBackgroundRuntime::instance()) {
+        for (const QString &granted :
+                 runtime->grantedOptionalPermissions(m_extensionId)) {
+            if (!perms.contains(granted))
+                perms.append(granted);
+        }
+    }
     return perms;
 }
 
@@ -3449,23 +3498,40 @@ QJsonObject ExtensionShimBackend::invokeI18n(const QString &method,
 }
 
 // -------------------------------------------------------------------
-// chrome.permissions — manifest-declared grants (the JS side answers
-// from the handshake manifest; this is the bridge fallback).
+// chrome.permissions — BW09's real optional-permission surface.
+// contains/getAll report REQUIRED ∪ consented-optional grants;
+// request() drives the real consent surface (a runtime grant never
+// appears without it) and remove() revokes held optional grants.
+// onAdded/onRemoved fan out on pushEvent — the shared backend
+// reaches every shim context of the extension, matching Chrome's
+// per-context dispatch.
 // -------------------------------------------------------------------
 
 QJsonObject ExtensionShimBackend::invokePermissions(
         const QString &method, const QJsonObject &args)
 {
     const QJsonObject manifest = manifestJson();
-    // ER16: the GRANTED set is what Chrome reports — required
-    // permissions only.  optional_permissions are never granted
-    // (request() below is typed unsupported), so listing them would
-    // over-claim the extension's own grants.
+    // The GRANTED set Chrome reports — required permissions plus
+    // whatever optional_permissions the consent surface already
+    // granted.  An unconsented optional declaration never lists:
+    // claiming it would over-claim the extension's own grants and
+    // send guarded optional-permission call paths (Bitwarden's
+    // privacy.* probe) into typed errors the guard exists to
+    // prevent.
     const QStringList perms = manifestPermissions();
     QStringList origins;
     for (const QJsonValue &v : manifest.value(
              QStringLiteral("host_permissions")).toArray())
         origins.append(v.toString());
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    if (runtime) {
+        for (const QString &granted :
+                 runtime->grantedOptionalOrigins(m_extensionId)) {
+            if (!origins.contains(granted))
+                origins.append(granted);
+        }
+    }
 
     if (method == QLatin1String("contains")) {
         bool ok = true;
@@ -3490,8 +3556,138 @@ QJsonObject ExtensionShimBackend::invokePermissions(
         all.insert(QStringLiteral("origins"), o);
         return okReply(all);
     }
-    // request/remove would need a grant UI — typed error.
-    return errReply(QStringLiteral("unsupported"));
+
+    if (method != QLatin1String("request")
+            && method != QLatin1String("remove"))
+        return errReply(QStringLiteral("unimplemented"));
+    if (!runtime)
+        return errReply(QStringLiteral("no-runtime"));
+
+    const auto askList = [&args](const QString &key) {
+        QStringList out;
+        for (const QJsonValue &v : args.value(key).toArray()) {
+            const QString s = v.toString();
+            if (!s.isEmpty() && !out.contains(s))
+                out.append(s);
+        }
+        return out;
+    };
+    const QStringList wantPerms =
+        askList(QStringLiteral("permissions"));
+    const QStringList wantOrigins =
+        askList(QStringLiteral("origins"));
+    const auto declared = [&manifest](const QString &key) {
+        QStringList out;
+        for (const QJsonValue &v : manifest.value(key).toArray())
+            out.append(v.toString());
+        return out;
+    };
+    const QStringList requiredPerms =
+        declared(QStringLiteral("permissions"));
+    const QStringList requiredOrigins =
+        declared(QStringLiteral("host_permissions"));
+    const QStringList optionalPerms =
+        declared(QStringLiteral("optional_permissions"));
+    const QStringList optionalOrigins =
+        declared(QStringLiteral("optional_host_permissions"));
+    const QStringList heldPerms =
+        runtime->grantedOptionalPermissions(m_extensionId);
+    const QStringList heldOrigins =
+        runtime->grantedOptionalOrigins(m_extensionId);
+
+    if (method == QLatin1String("request")) {
+        // Chrome's contract: entries already granted (required
+        // declarations or earlier consent) need no prompt; anything
+        // the manifest never declared fails outright — an optional
+        // grant can only ever come from optional_permissions /
+        // optional_host_permissions.
+        QStringList askPerms, askOrigins;
+        for (const QString &want : wantPerms) {
+            if (requiredPerms.contains(want) || heldPerms.contains(want))
+                continue;
+            if (!optionalPerms.contains(want))
+                return errReply(QStringLiteral("not-optional"));
+            askPerms.append(want);
+        }
+        for (const QString &want : wantOrigins) {
+            if (requiredOrigins.contains(want)
+                    || heldOrigins.contains(want))
+                continue;
+            if (!optionalOrigins.contains(want))
+                return errReply(QStringLiteral("not-optional"));
+            askOrigins.append(want);
+        }
+        if (askPerms.isEmpty() && askOrigins.isEmpty())
+            return okReply(true);   // everything already held —
+                                    // Chrome resolves sans prompt
+
+        // The consent surface.  ARKTOS_EXT_PERMISSION_ANSWER=
+        // grant|deny stands in for the user's click in headless
+        // legs — grantConsent's precedent for callers with no UI.
+        // With no surface to show the prompt on, the honest verdict
+        // is a refusal, never a silent grant.
+        bool consented;
+        const QString forced = qEnvironmentVariable(
+            "ARKTOS_EXT_PERMISSION_ANSWER").toLower();
+        if (forced == QLatin1String("grant")) {
+            consented = true;
+        } else if (forced == QLatin1String("deny")) {
+            consented = false;
+        } else {
+            static const QStringList headless{
+                QStringLiteral("offscreen"),
+                QStringLiteral("minimal"),
+                QStringLiteral("minimalegl")};
+            if (headless.contains(QGuiApplication::platformName())) {
+                recordNote(QStringLiteral(
+                    "chrome.permissions.request: no consent surface "
+                    "on a headless platform — answering Chrome's "
+                    "honest 'false', the grant stays withheld"));
+                consented = false;
+            } else {
+                consented = ExtensionReviewDialog::requestPermissions(
+                    m_extensionName, askPerms, askOrigins);
+            }
+        }
+        if (!consented)
+            return okReply(false);   // the honest denial
+
+        runtime->grantOptionalPermissions(
+            m_extensionId, askPerms, askOrigins);
+        emit pushEvent(QStringLiteral("permissions.onAdded"),
+            QJsonObject{{QStringLiteral("__args"), QJsonArray{
+                QJsonObject{
+                    {QStringLiteral("permissions"),
+                     QJsonArray::fromStringList(askPerms)},
+                    {QStringLiteral("origins"),
+                     QJsonArray::fromStringList(askOrigins)}}}}});
+        return okReply(true);
+    }
+
+    // remove(): only held optional grants can leave — required
+    // declarations and anything never granted are untouched, like
+    // Chrome.  onRemoved reports the set that actually went.
+    QStringList remPerms, remOrigins;
+    for (const QString &want : wantPerms) {
+        if (heldPerms.contains(want))
+            remPerms.append(want);
+    }
+    for (const QString &want : wantOrigins) {
+        if (heldOrigins.contains(want))
+            remOrigins.append(want);
+    }
+    if (!remPerms.isEmpty() || !remOrigins.isEmpty()) {
+        runtime->revokeOptionalPermissions(
+            m_extensionId, remPerms, remOrigins);
+        emit pushEvent(QStringLiteral("permissions.onRemoved"),
+            QJsonObject{{QStringLiteral("__args"), QJsonArray{
+                QJsonObject{
+                    {QStringLiteral("permissions"),
+                     QJsonArray::fromStringList(remPerms)},
+                    {QStringLiteral("origins"),
+                     QJsonArray::fromStringList(remOrigins)}}}}});
+    }
+    return okReply(true);
 }
 
 // -------------------------------------------------------------------
@@ -3765,10 +3961,9 @@ static QJsonObject manifestForExtensionPath(const QString &extensionPath)
 {
     if (extensionPath.isEmpty())
         return QJsonObject();
-    QFile file(extensionPath + QLatin1String("/manifest.json"));
-    if (file.size() > 1024 * 1024 || !file.open(QIODevice::ReadOnly))
-        return QJsonObject();
-    return QJsonDocument::fromJson(file.readAll()).object();
+    // BW02: same declared-manifest read as manifestJson() — a
+    // hosted-only tree's engine manifest lacks `background`.
+    return ExtensionManager::declaredManifestJson(extensionPath);
 }
 
 // MD17: a record the engine keeps only as an unload tombstone — a

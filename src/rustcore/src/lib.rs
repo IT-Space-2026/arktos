@@ -2182,6 +2182,38 @@ pub unsafe extern "C" fn rc_ext_manifest_check(
     })
 }
 
+/// Unpacks a verified extension package (.zip, or the zip payload
+/// behind a CRX3 header) into `out_dir_utf8` — the BW02 staging half
+/// of hosted-only background routing: Arktos hands the engine a
+/// doctored directory instead of the raw package, so the bundled /
+/// installed copy never registers a native MV3 service worker the
+/// hosted runtime owns.  RC_OK on success; error text rides
+/// rc_last_error_message().  RC_CORRUPT when the archive fails the
+/// same structural checks rc_ext_verify_package enforces.
+///
+/// # Safety
+/// `pkg` must point to `len` readable bytes; `out_dir_utf8` must be a
+/// NUL-terminated UTF-8 path the process may write into.
+#[no_mangle]
+pub unsafe extern "C" fn rc_ext_unpack_package(
+    pkg: *const u8,
+    len: usize,
+    out_dir_utf8: *const std::os::raw::c_char,
+) -> RcStatus {
+    status_of(|| {
+        let data = unsafe { util::bytes(pkg, len) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad package pointer".into(),
+        })?;
+        let dir = unsafe { util::cstr(out_dir_utf8) }.ok_or_else(|| error::Fail {
+            status: RcStatus::InvalidArgument,
+            msg: "bad out-dir pointer".into(),
+        })?;
+        extverify::unpack_package(data, std::path::Path::new(dir))?;
+        Ok(())
+    })
+}
+
 // ---- bookmark store (RCORE02a) -------------------------------------
 //
 // The canonical bookmark tree lives here; the Qt side keeps

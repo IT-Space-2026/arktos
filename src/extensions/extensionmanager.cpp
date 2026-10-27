@@ -49,6 +49,7 @@
 #include <qregularexpression.h>
 #include <qsavefile.h>
 #include <qsettings.h>
+#include <qstandardpaths.h>
 #include <qtimer.h>
 #include <qxmlstream.h>
 
@@ -102,6 +103,11 @@ static QWebEngineExtensionManager *managerFor(
             return profile->extensionManager();
     }
     return nullptr;
+}
+
+namespace {
+// BW02: defined in the hosted-only routing block below.
+QString extensionStagingRoot();
 }
 
 // The single by-id lookup — removeExtension, setExtensionEnabled and
@@ -463,6 +469,11 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
         ProfileSettings(BrowserProfile::profileIdFor(profile))
             .remove(QStringLiteral("extensions/userworlds/")
                     + plain.id);
+        // BW09: consented optional-permission grants die with the
+        // extension — Chrome keeps no permissions.request() outcome
+        // across a reinstall.
+        ExtensionBackgroundRuntime::instance()
+            ->dropExtensionGrants(plain.id);
         ExtensionBackgroundRuntime::instance()
             ->dropRegisteredScripts(plain.id);
         m_tamperedIds.remove(plain.id);
@@ -495,9 +506,38 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
         // round trip terminates.
         connect(runtime, &ExtensionBackgroundRuntime::hostChanged,
                 this, &ExtensionManager::changed);
+        // BW02: hosted-only extensions never queue a native probe —
+        // the host reaching a terminal state IS the measurement, so
+        // the detail line the probe would have written lands here.
+        connect(runtime, &ExtensionBackgroundRuntime::hostChanged,
+                this, [this, runtime](const QString &id) {
+            ExtensionBackgroundHost *host = runtime->host(id);
+            if (!host || m_healthDetails.contains(id))
+                return;
+            if (host->state() == ExtensionBackgroundHost::State::Ready) {
+                m_healthDetails.insert(id, tr(
+                    "hosted background up — native service worker "
+                    "skipped (hosted-only routing)"));
+                emit changed();
+            } else if (host->state()
+                       == ExtensionBackgroundHost::State::Failed) {
+                m_healthDetails.insert(id, tr(
+                    "hosted background failed — %1")
+                        .arg(host->lastError()));
+                emit changed();
+            }
+        });
     }
-    if (!qEnvironmentVariableIsSet("ARKTOS_EXTHOST_OFF"))
+    if (!qEnvironmentVariableIsSet("ARKTOS_EXTHOST_OFF")) {
+        // BW02: staged doctored trees are session-lived — drop any
+        // leftovers from a previous run before anything can load one.
+        static bool stagingSwept = false;
+        if (!stagingSwept) {
+            stagingSwept = true;
+            QDir(extensionStagingRoot()).removeRecursively();
+        }
         ExtensionBackgroundRuntime::instance()->attachProfile(profile);
+    }
 
     scheduleAutoUpdateCheck();
 
@@ -570,7 +610,9 @@ QList<ExtensionManager::ExtensionInfo> ExtensionManager::extensions() const
         bool hasBackground = false;
         QStringList fatalMissingApis;
         if (!plain.builtin && !plain.path.isEmpty()) {
-            const Manifest manifest = inspectManifest(plain.path);
+            // BW02: doctored trees' engine manifest lacks `background`
+            // — grade against the DECLARED manifest.
+            const Manifest manifest = inspectDeclaredManifest(plain.path);
             if (manifest.valid) {
                 plain.missingApis = manifest.unsupported;
                 fatalMissingApis = manifest.fatalMissing;
@@ -666,7 +708,10 @@ void ExtensionManager::loadExtension(const QString &path)
     }
 #if QT_CONFIG(webengine_extensions)
     if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
-        extensions->loadExtension(path);
+        // BW02: a background-bearing extension the hosted runtime
+        // owns must not also register a native service worker — the
+        // engine gets the doctored staged tree.
+        extensions->loadExtension(hostedEnginePath(path));
         return;
     }
 #endif
@@ -686,7 +731,9 @@ void ExtensionManager::installExtension(const QString &path)
     if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
         // Accepts an unpacked directory or a packaged .zip; installed
         // extensions persist under the profile's installPath().
-        extensions->installExtension(path);
+        // BW02: packages unpack+doctor in staging first so the
+        // installed copy never registers a native service worker.
+        extensions->installExtension(hostedEnginePath(path));
         return;
     }
 #endif
@@ -1074,10 +1121,16 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
         manifest.error = tr("cannot read %1").arg(manifestPath);
         return manifest;
     }
+    return manifestFromBytes(file.readAll());
+}
+
+ExtensionManager::Manifest ExtensionManager::manifestFromBytes(
+        const QByteArray &raw)
+{
+    Manifest manifest;
 #if defined(ARKTOS_RUSTCORE)
     // EXT06: schema + permissions are parsed in Rust — the fields
     // below come back pre-classified, never from raw JSON on this side.
-    const QByteArray raw = file.readAll();
     RcBuffer out{};
     const RcStatus checked = rc_ext_manifest_check(
         reinterpret_cast<const uint8_t *>(raw.constData()),
@@ -1098,7 +1151,7 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
     return manifest;
 #else
     QJsonParseError parseError;
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(raw, &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
         manifest.error = tr("manifest.json is not valid JSON: %1")
             .arg(parseError.errorString());
@@ -1204,6 +1257,385 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
     return manifest;
 }
 
+// -- BW02: hosted-only background routing ------------------------------
+//
+// Qt's engine registers a native MV3 service worker for every loaded
+// extension whose manifest carries a `background` block.  For an
+// extension the hosted runtime owns (ExtensionBackgroundRuntime
+// reconciles every enabled, background-bearing extension into a
+// hidden hosted page) that worker is the WRONG background: it can
+// only crash on the chrome.* namespaces Qt lacks — measured on
+// Bitwarden as "Service worker registration failed. Status code: 15"
+// — while the hosted page runs the real code.  Two backgrounds racing
+// is the bug; the hosted host is authoritative, so the engine must
+// never see the `background` key.
+//
+// The funnel — loadExtension()/installExtension() — hands the engine
+// a tree whose manifest.json is stripped of `background`.  The
+// DECLARED manifest rides inside the same tree as a sidecar named by
+// the marker file kHostedBgMarker ({declared, sha256}); declared
+// readers honor it only inside managed dirs (a profile's installPath
+// or our staging root), so a shipped file pair in a source dir never
+// spoofs the review or health surfaces.  Under ARKTOS_EXTHOST_OFF the
+// runtime is disabled and nothing is doctored — the native path stays
+// the only background, honestly.
+
+namespace {
+
+constexpr char kHostedBgMarker[] = "arktos-hosted-bg.json";
+constexpr char kDeclaredManifestName[] = "arktos-declared-manifest.json";
+
+QString extensionStagingRoot()
+{
+    const QString base = QStandardPaths::writableLocation(
+        QStandardPaths::CacheLocation);
+    return (base.isEmpty() ? QDir::tempPath() : base)
+        + QLatin1String("/arktos-ext-staging");
+}
+
+QString extensionDirFor(const QString &path)
+{
+    const QFileInfo info(path);
+    if (info.isDir())
+        return info.absoluteFilePath();
+    if (info.isFile()
+            && info.fileName() == QLatin1String("manifest.json"))
+        return info.absolutePath();
+    return QString();
+}
+
+QByteArray manifestFileBytes(const QString &dirPath)
+{
+    QFile file(dirPath + QLatin1String("/manifest.json"));
+    if (file.size() > 1024 * 1024 || !file.open(QIODevice::ReadOnly))
+        return QByteArray();
+    return file.readAll();
+}
+
+} // namespace
+
+// The declared-manifest sidecar means something only where WE stage
+// or manage extension trees — a profile's installPath or the staging
+// root.  A file pair an extension ships outside those roots is data,
+// never a claim.
+bool ExtensionManager::managedExtensionDir(const QString &dirPath)
+{
+    QString base = QDir(dirPath).canonicalPath();
+    if (base.isEmpty())
+        base = QDir(dirPath).absolutePath();
+    const QString staging = extensionStagingRoot();
+    if (base == staging || base.startsWith(staging + QLatin1Char('/')))
+        return true;
+#if QT_CONFIG(webengine_extensions)
+    for (ExtensionManager *mgr : extensionManagers()) {
+        if (!mgr)
+            continue;
+        for (const QPointer<QWebEngineProfile> &profile : mgr->m_profiles) {
+            if (!profile || !profile->extensionManager())
+                continue;
+            const QString ip = QDir(
+                profile->extensionManager()->installPath()).canonicalPath();
+            if (!ip.isEmpty()
+                    && (base == ip || base.startsWith(ip + QLatin1Char('/'))))
+                return true;
+        }
+    }
+#endif
+    return false;
+}
+
+QByteArray ExtensionManager::declaredManifestBytes(const QString &dirPath)
+{
+    if (dirPath.isEmpty() || !managedExtensionDir(dirPath))
+        return QByteArray();
+    QFile markerFile(dirPath + QLatin1Char('/')
+                     + QLatin1String(kHostedBgMarker));
+    if (markerFile.size() > 64 * 1024
+            || !markerFile.open(QIODevice::ReadOnly))
+        return QByteArray();
+    const QJsonObject marker = QJsonDocument::fromJson(
+        markerFile.readAll()).object();
+    const QString declared =
+        marker.value(QLatin1String("declared")).toString();
+    const QString sha =
+        marker.value(QLatin1String("sha256")).toString();
+    // The sidecar must be a plain sibling file — never a path.
+    if (declared.isEmpty() || sha.isEmpty()
+            || declared.contains(QLatin1Char('/'))
+            || declared.contains(QLatin1Char('\\')))
+        return QByteArray();
+    QFile sidecar(dirPath + QLatin1Char('/') + declared);
+    if (sidecar.size() > 1024 * 1024
+            || !sidecar.open(QIODevice::ReadOnly))
+        return QByteArray();
+    const QByteArray raw = sidecar.readAll();
+    if (QString::fromLatin1(QCryptographicHash::hash(
+            raw, QCryptographicHash::Sha256).toHex()) != sha)
+        return QByteArray();   // torn write or tamper — honest fallback
+    return raw;
+}
+
+ExtensionManager::Manifest ExtensionManager::inspectDeclaredManifest(
+        const QString &path)
+{
+    const QByteArray declared = declaredManifestBytes(extensionDirFor(path));
+    return declared.isEmpty() ? inspectManifest(path)
+                              : manifestFromBytes(declared);
+}
+
+QJsonObject ExtensionManager::declaredManifestJson(const QString &dirPath)
+{
+    QByteArray raw = declaredManifestBytes(dirPath);
+    if (raw.isEmpty())
+        raw = manifestFileBytes(dirPath);
+    return QJsonDocument::fromJson(raw).object();
+}
+
+bool ExtensionManager::isHostedOnlyBackground(const QString &dirPath)
+{
+    return !declaredManifestBytes(dirPath).isEmpty();
+}
+
+// Writes the doctored pair in place — `background` out of
+// manifest.json, the declared bytes into the sidecar, then the
+// marker.  Call only on trees we own (staging copies, unpacked
+// package staging, installed dirs), never a user's source dir.
+// Writes order sidecar → marker → manifest so a torn run leaves the
+// engine-visible manifest either untouched or complete; a manifest
+// still declaring `background` simply keeps the old behavior.
+static bool doctorExtensionDir(const QString &dirPath)
+{
+    const QByteArray visible = manifestFileBytes(dirPath);
+    if (visible.isEmpty())
+        return false;
+    // A marker can mean this tree was doctored before — but only when
+    // the visible manifest is a doctored OUTPUT of the sidecar's
+    // declared manifest (identical after the strips).  A pair an
+    // extension merely ships fails that check — the visible manifest
+    // stays the truth and the planted record is overwritten below.
+    const bool haveMarker = QFileInfo::exists(
+        dirPath + QLatin1Char('/') + QLatin1String(kHostedBgMarker));
+    const QJsonObject visObj =
+        QJsonDocument::fromJson(visible).object();
+    QJsonObject root = visObj;
+    bool markerOurs = false;
+    if (haveMarker) {
+        const QJsonObject claimed =
+            ExtensionManager::declaredManifestJson(dirPath);
+        QJsonObject strip = claimed;
+        strip.remove(QStringLiteral("background"));
+        strip.remove(QStringLiteral("content_scripts"));
+        QJsonObject oldStrip = claimed;
+        oldStrip.remove(QStringLiteral("background"));
+        markerOurs = (visObj == strip || visObj == oldStrip);
+        if (markerOurs)
+            root = claimed;
+    }
+    const QJsonObject background =
+        root.value(QLatin1String("background")).toObject();
+    // A `background` block that names no script carries nothing for
+    // either side — leave the manifest alone.
+    if (background.value(QLatin1String("scripts")).toArray().isEmpty()
+            && background.value(QLatin1String("service_worker"))
+                   .toString().isEmpty())
+        return false;
+    root.remove(QStringLiteral("background"));
+    // BW06: `content_scripts` goes too.  The engine's own injection
+    // ran the declared scripts beside the hosted runtime's
+    // AgentWorldId copies, and the native copy's sendMessage reaches
+    // the hosted background through the NATIVE channel with a sender
+    // that carries no tab — Bitwarden's triggerAutofillScriptInjection
+    // handler dereferences sender.tab.id, throws, and
+    // injectAutofillScripts never runs.  The hosted runtime injects
+    // the declared set itself (manifestJson() reads the sidecar), so
+    // the engine-visible tree keeps none.
+    root.remove(QStringLiteral("content_scripts"));
+
+    if (markerOurs && visObj == root)
+        return true;   // already fully doctored
+
+    if (!markerOurs) {
+        const QString declaredName = QLatin1String(kDeclaredManifestName);
+        QSaveFile sidecar(dirPath + QLatin1Char('/') + declaredName);
+        if (!sidecar.open(QIODevice::WriteOnly))
+            return false;
+        sidecar.write(visible);
+        if (!sidecar.commit())
+            return false;
+        const QJsonObject marker{
+            {QStringLiteral("declared"), declaredName},
+            {QStringLiteral("sha256"), QString::fromLatin1(
+                QCryptographicHash::hash(visible,
+                                         QCryptographicHash::Sha256)
+                    .toHex())},
+        };
+        QSaveFile markerFile(dirPath + QLatin1Char('/')
+                             + QLatin1String(kHostedBgMarker));
+        if (!markerFile.open(QIODevice::WriteOnly))
+            return false;
+        markerFile.write(
+            QJsonDocument(marker).toJson(QJsonDocument::Compact));
+        if (!markerFile.commit())
+            return false;
+    }
+    QSaveFile manifest(dirPath + QLatin1String("/manifest.json"));
+    if (!manifest.open(QIODevice::WriteOnly))
+        return false;
+    manifest.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    return manifest.commit();
+}
+
+// BW06: an older doctored tree still carries `content_scripts` in the
+// engine-visible manifest — doctoring is owed whenever the declared
+// set has entries the visible manifest hasn't shed yet.
+static bool hostedTreeNeedsDoctoring(const QString &dirPath)
+{
+    const QJsonObject visible = QJsonDocument::fromJson(
+        manifestFileBytes(dirPath)).object();
+    const QJsonObject background =
+        visible.value(QLatin1String("background")).toObject();
+    if (!background.value(QLatin1String("scripts")).toArray().isEmpty()
+            || !background.value(QLatin1String("service_worker"))
+                    .toString().isEmpty())
+        return true;                     // never doctored
+    if (!ExtensionManager::isHostedOnlyBackground(dirPath))
+        return false;                    // no declared truth to strip
+    const QJsonObject declared =
+        ExtensionManager::declaredManifestJson(dirPath);
+    return !declared.value(QLatin1String("content_scripts"))
+                .toArray().isEmpty()
+        && visible.contains(QLatin1String("content_scripts"));
+}
+
+// Stages a doctored copy of a user extension dir under the cache —
+// the engine loads/installs the copy, the source stays untouched.
+// Staged dirs are deterministic per source path so the Chromium-
+// derived extension id stays stable across sessions.
+static QString stageDoctoredExtension(const QString &sourceDir)
+{
+    const QString src = QFileInfo(sourceDir).canonicalFilePath();
+    if (src.isEmpty())
+        return QString();
+    const QString staged = extensionStagingRoot() + QLatin1String("/ext-")
+        + QString::fromLatin1(QCryptographicHash::hash(
+            src.toUtf8(), QCryptographicHash::Sha256).toHex()).left(32);
+    QDir(staged).removeRecursively();
+    if (!QDir().mkpath(staged))
+        return QString();
+    bool ok = true;
+    QDirIterator it(src,
+        QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
+        QDirIterator::Subdirectories);
+    const QDir srcDir(src);
+    while (it.hasNext() && ok) {
+        const QString from = it.next();
+        const QString to =
+            staged + QLatin1Char('/') + srcDir.relativeFilePath(from);
+        QFileInfo(to).absoluteDir().mkpath(QStringLiteral("."));
+        ok = QFile::copy(from, to);
+    }
+    if (!ok || !doctorExtensionDir(staged)) {
+        QDir(staged).removeRecursively();
+        return QString();
+    }
+    return staged;
+}
+
+#if defined(ARKTOS_RUSTCORE)
+// Unpacks an extension package into staging so the doctored-manifest
+// path applies to .zip installs exactly like dir installs.
+static QString unpackPackageForStaging(const QString &zipPath)
+{
+    QFile pkg(zipPath);
+    if (pkg.size() > 64 * 1024 * 1024 || !pkg.open(QIODevice::ReadOnly))
+        return QString();
+    const QByteArray body = pkg.readAll();
+    const QFileInfo info(zipPath);
+    const QString dest = extensionStagingRoot()
+        + QLatin1String("/pkg-")
+        + QString::fromLatin1(QCryptographicHash::hash(
+            (info.absoluteFilePath() + QLatin1Char('@')
+             + QString::number(info.size())
+             + QString::number(info.lastModified().toMSecsSinceEpoch()))
+                .toUtf8(),
+            QCryptographicHash::Sha256).toHex()).left(32);
+    if (QFileInfo::exists(dest + QLatin1String("/manifest.json")))
+        return dest;
+    QDir(dest).removeRecursively();
+    if (!QDir().mkpath(dest))
+        return QString();
+    const RcStatus unpacked = rc_ext_unpack_package(
+        reinterpret_cast<const uint8_t *>(body.constData()),
+        size_t(body.size()), QFile::encodeName(dest).constData());
+    if (unpacked != RC_OK) {
+        char *message = rc_last_error_message();
+        qWarning() << "ExtensionManager: cannot stage package" << zipPath
+                   << "-" << (message ? QString::fromUtf8(message)
+                                      : QStringLiteral("unpack failed"));
+        rc_string_free(message);
+        QDir(dest).removeRecursively();
+        return QString();
+    }
+    return dest;
+}
+#else
+static QString unpackPackageForStaging(const QString &zipPath)
+{
+    // No-Rust builds keep the package path verbatim — the hosted
+    // runtime still spawns, the engine just also runs its worker.
+    Q_UNUSED(zipPath);
+    return QString();
+}
+#endif
+
+// The path the ENGINE should load/install.  A background-bearing
+// extension the hosted runtime owns gets a doctored tree so Chromium
+// never registers a native service worker; anything else passes
+// through unchanged (staging failure falls back to the source path —
+// a native crash loop is a degraded answer, never a fake success).
+QString ExtensionManager::hostedEnginePath(const QString &path)
+{
+#if QT_CONFIG(webengine_extensions)
+    if (qEnvironmentVariableIsSet("ARKTOS_EXTHOST_OFF"))
+        return path;
+    const QFileInfo info(path);
+    QString sourceDir = extensionDirFor(path);
+    bool oursInPlace = false;
+    if (!sourceDir.isEmpty()) {
+        // A reload of an installed dir — doctor in place so the
+        // reload keeps its installed path (and id).
+        if (managedExtensionDir(sourceDir)
+                && !sourceDir.startsWith(extensionStagingRoot()))
+            oursInPlace = true;
+    } else if (info.isFile()
+               && info.suffix() == QLatin1String("zip")) {
+        // Packages: the verified manifest check decides whether
+        // staging is even needed before the unpack pays for it.
+        const Manifest packaged = inspectManifest(info.absoluteFilePath());
+        if (!packaged.valid || packaged.backgroundScripts.isEmpty())
+            return path;
+        sourceDir = unpackPackageForStaging(info.absoluteFilePath());
+        if (sourceDir.isEmpty())
+            return path;
+        oursInPlace = true;
+    } else {
+        return path;
+    }
+    // The DECLARED manifest decides — an already-doctored managed
+    // tree shows the engine no background yet must still pass
+    // through here so newer strips (BW06's content_scripts) land.
+    const Manifest manifest = inspectDeclaredManifest(sourceDir);
+    if (!manifest.valid || manifest.backgroundScripts.isEmpty())
+        return path;
+    if (oursInPlace)
+        return doctorExtensionDir(sourceDir) ? sourceDir : path;
+    const QString staged = stageDoctoredExtension(sourceDir);
+    return staged.isEmpty() ? path : staged;
+#else
+    return path;
+#endif
+}
+
 QStringList ExtensionManager::unsupportedPermissions()
 {
     // chrome.* APIs whose browser-side delegates do not exist in Qt
@@ -1304,8 +1736,9 @@ QStringList ExtensionManager::runtimeServes()
     // The fatal-table members it covers — scripting, webRequest —
     // stop condemning an extension; the rest move out of the flat
     // "will not work" tier into "partially supported".  Surfaces the
-    // runtime does NOT serve (blocking webRequest, nativeMessaging,
-    // ...) stay absent on purpose — they keep the raw engine verdict.
+    // runtime does NOT serve (blocking webRequest,
+    // webRequestAuthProvider, ...) stay absent on purpose — they
+    // keep the raw engine verdict.
     static const QStringList served = {
         // MD21: chrome.bookmarks rides the RC05 store through
         // BookmarksManager — the namespace is fully served.
@@ -1341,6 +1774,12 @@ QStringList ExtensionManager::runtimeServes()
         QStringLiteral("history"),
         QStringLiteral("idle"),
         QStringLiteral("menus"),
+        // BW08: runtime.connectNative/sendNativeMessage spawn real
+        // native-messaging hosts — manifest resolution, allowed_origins
+        // gating, the uint32-LE stdio protocol, host-exit disconnects.
+        // Grant-holders get a working port; everyone else and every
+        // absent host gets Chrome's typed errors.
+        QStringLiteral("nativeMessaging"),
         QStringLiteral("notifications"),
         QStringLiteral("offscreen"),
         // MD31: chrome.privacy serves the eight ChromeSetting
@@ -1595,6 +2034,28 @@ void ExtensionManager::verifyInstalledIntegrity(QWebEngineProfile *profile)
         if (plain.builtin)
             continue;
         const QString key = integritySettingsKey(storage, info.id());
+        // BW02: an install predating hosted routing still hands the
+        // engine its `background` — doctor the installed tree in place
+        // and re-pin so the sweep doesn't flag our own rewrite.  A
+        // running extension reloads so the hosted host is the only
+        // background this session too, not just next launch.
+        // BW06: trees doctored before the `content_scripts` strip get
+        // re-doctored the same way — the engine keeps dual-injecting
+        // until their visible manifest sheds the declared set.
+        if (!qEnvironmentVariableIsSet("ARKTOS_EXTHOST_OFF")
+                && hostedTreeNeedsDoctoring(info.path())) {
+            const Manifest manifest = inspectDeclaredManifest(info.path());
+            if (manifest.valid
+                    && !manifest.backgroundScripts.isEmpty()
+                    && doctorExtensionDir(info.path())) {
+                const QByteArray rehash = extensionTreeHash(info.path());
+                if (!rehash.isEmpty())
+                    ProfileSettings(BrowserProfile::profileIdFor(profile))
+                        .setValue(key, QString::fromLatin1(rehash));
+                if (info.isLoaded() && info.isEnabled())
+                    reloadExtension(plain.id);
+            }
+        }
         ProfileSettings settings(BrowserProfile::profileIdFor(profile));
         const QString pinned = settings.value(key).toString();
         const QString current =
@@ -1752,10 +2213,17 @@ void ExtensionManager::enqueuePendingProbes()
         }
         if (queued)
             continue;
-        if (inspectManifest(info.path).hasBackground)
+        // BW02: the declared manifest decides whether a background
+        // exists; for a hosted-only tree the native probe would only
+        // measure the worker we stripped on purpose — the host-state
+        // fold in extensions() carries the verdict instead.
+        const Manifest manifest = inspectDeclaredManifest(info.path);
+        if (manifest.hasBackground
+                && !(isHostedOnlyBackground(info.path)
+                     && !qEnvironmentVariableIsSet("ARKTOS_EXTHOST_OFF")))
             m_healthQueue.append(
                 qMakePair(info.id, QPointer<QWebEngineProfile>(profile)));
-        else
+        else if (!manifest.hasBackground)
             // Nothing to measure — no background to be dead.
             m_healthVerdicts.insert(info.id, ProbeVerdict::None);
     }
@@ -1787,11 +2255,16 @@ void ExtensionManager::requestHealthProbe(const QString &id, bool force)
         if (info.id != id)
             continue;
         if (info.path.isEmpty()
-                || !inspectManifest(info.path).hasBackground) {
+                || !inspectDeclaredManifest(info.path).hasBackground) {
             m_healthVerdicts.insert(id, ProbeVerdict::None);
             emit changed();
             return;
         }
+        // BW02: a hosted-only background has no native worker to
+        // probe — the host-state fold is the measurement.
+        if (isHostedOnlyBackground(info.path)
+                && !qEnvironmentVariableIsSet("ARKTOS_EXTHOST_OFF"))
+            return;
         break;
     }
     for (const QPointer<QWebEngineProfile> &profile : m_profiles) {
@@ -1977,7 +2450,7 @@ void ExtensionManager::evaluateHealthReport(const QByteArray &json)
         if (candidate.id == m_healthProbeId
                 && !candidate.path.isEmpty()) {
             declaresBackground =
-                inspectManifest(candidate.path).hasBackground;
+                inspectDeclaredManifest(candidate.path).hasBackground;
             break;
         }
     }
@@ -2026,7 +2499,50 @@ void ExtensionManager::finishHealthProbe(ProbeVerdict verdict,
 
 QString ExtensionManager::healthProbeDetail(const QString &id) const
 {
-    return m_healthDetails.value(id);
+    QString detail = m_healthDetails.value(id);
+#if QT_CONFIG(webengine_extensions)
+    // BW02: the detail names which context answers as the
+    // extension's background — the "exactly one background per id"
+    // debug check reads this.
+    QString route;
+    if (ExtensionBackgroundHost *host =
+            ExtensionBackgroundRuntime::instance()->host(id)) {
+        route = host->state() == ExtensionBackgroundHost::State::Ready
+            ? QStringLiteral("hosted")
+            : host->state() == ExtensionBackgroundHost::State::Starting
+                ? QStringLiteral("hosted-starting")
+                : QStringLiteral("hosted-failed");
+    } else {
+        for (const ExtensionInfo &info : extensions()) {
+            if (info.id != id)
+                continue;
+            if (!info.path.isEmpty()) {
+                const Manifest m = inspectDeclaredManifest(info.path);
+                route = !m.hasBackground ? QStringLiteral("none")
+                    : isHostedOnlyBackground(info.path)
+                        ? QStringLiteral("hosted-pending")
+                        : QStringLiteral("native");
+                // BW06: the declared content scripts ride the hosted
+                // runtime's injections for a doctored tree — the
+                // detail says so rather than implying the engine's.
+                if (m.contentScriptCount > 0)
+                    detail += (detail.isEmpty() ? QString()
+                                                  : QLatin1String("; "))
+                        + QStringLiteral("contentScripts=")
+                        + (isHostedOnlyBackground(info.path)
+                               && !qEnvironmentVariableIsSet(
+                                   "ARKTOS_EXTHOST_OFF")
+                               ? QStringLiteral("hosted")
+                               : QStringLiteral("native"));
+            }
+            break;
+        }
+    }
+    if (!route.isEmpty())
+        detail += (detail.isEmpty() ? QString() : QLatin1String("; "))
+            + QStringLiteral("background=") + route;
+#endif
+    return detail;
 }
 
 QWebEnginePage *ExtensionManager::healthProbePage() const
@@ -2346,7 +2862,7 @@ QString ExtensionManager::updateUrlFor(const QString &id) const
     if (QWebEngineExtensionManager *extensions = managerFor(m_profiles)) {
         const QWebEngineExtensionInfo info = findById(extensions, id);
         if (!info.id().isEmpty() && !info.path().isEmpty()) {
-            const Manifest manifest = inspectManifest(info.path());
+            const Manifest manifest = inspectDeclaredManifest(info.path());
             return manifest.valid ? manifest.updateUrl : QString();
         }
     }
@@ -2379,7 +2895,7 @@ void ExtensionManager::checkForUpdates(bool manual)
         UpdateResult result;
         result.id = info.id;
         result.name = info.name.isEmpty() ? info.id : info.name;
-        const Manifest manifest = inspectManifest(info.path);
+        const Manifest manifest = inspectDeclaredManifest(info.path);
         if (manifest.valid)
             result.currentVersion = manifest.version;
         const QString updateUrl = manifest.updateUrl;
