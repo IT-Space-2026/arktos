@@ -972,6 +972,25 @@ private:
     };
     QHash<QString, QList<PortEnd>> m_portEnds;
 
+    // BW10: a Port.postMessage fired before the remote end has
+    // registered (the connect()->postMessage() same-tick race —
+    // Chrome queues these inside the port's transport) parks here
+    // instead of dropping.  Every later end registration on the chan
+    // drains the parked posts that are not its own, in order;
+    // entries die with the chan or when their sender end goes away.
+    struct ParkedPortMsg {
+        QPointer<QObject> sender;
+        QString senderPortId;
+        QJsonValue msg;
+    };
+    QHash<QString, QList<ParkedPortMsg>> m_parkedPortMsgs;
+    void parkPortMessage(QObject *from, const QString &chan,
+                         const QString &portId, const QJsonValue &msg);
+    void drainParkedPortMsgs(const QString &chan, QObject *target,
+                             const QString &portId);
+    void dropParkedPortMsgs(const QString &chan, QObject *sender,
+                            const QString &portId);
+
     // ER01/ER02: host->page deliveries awaiting the page agent's
     // 'respond' — mid -> {the page asked, the context awaiting the
     // answer}.  Entries expire like relay sends so an absent or

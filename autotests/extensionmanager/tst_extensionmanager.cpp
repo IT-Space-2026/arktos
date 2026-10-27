@@ -6967,7 +6967,8 @@ void tst_ExtensionManager::extensionTabMessaging()
                               QJsonObject{}}})
                  .value(QLatin1String("error")).toString(),
              QStringLiteral("invalid-argument"));
-    // Subframe addressing is a documented gap — typed, not silently
+    // BW12: subframe addressing is routed for real — a frameId with
+    // no live frame answers 'not-found', still never silently
     // delivered to frame 0.
     QCOMPARE(bridge->invoke(
                  QStringLiteral("tabs"),
@@ -6980,7 +6981,7 @@ void tst_ExtensionManager::extensionTabMessaging()
                               QJsonObject{{QStringLiteral("frameId"),
                                            1}}}})
                  .value(QLatin1String("error")).toString(),
-             QStringLiteral("unsupported"));
+             QStringLiteral("not-found"));
 
     // --- an uncovered page: the push never happens ------------------
     // The agentCovers gate runs BEFORE extEvent is emitted — an

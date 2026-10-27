@@ -2328,7 +2328,19 @@ void ExtensionBackgroundRuntime::unregisterRelayContext(
             continue;
         if (ends.isEmpty()) {
             m_portEnds.remove(chan);
+            m_parkedPortMsgs.remove(chan);
             continue;
+        }
+        auto pit = m_parkedPortMsgs.find(chan);
+        if (pit != m_parkedPortMsgs.end()) {
+            QList<ParkedPortMsg> &parked = pit.value();
+            for (int i = parked.size() - 1; i >= 0; --i) {
+                if (!parked.at(i).sender
+                        || parked.at(i).sender == bridge)
+                    parked.removeAt(i);
+            }
+            if (parked.isEmpty())
+                m_parkedPortMsgs.erase(pit);
         }
         for (const PortEnd &end : std::as_const(ends)) {
             if (end.target) {
@@ -2360,6 +2372,10 @@ bool ExtensionBackgroundRuntime::hasRelayContext(
 constexpr int kMaxRelayPending = 512;
 constexpr int kMaxPortEndsPerChan = 64;
 constexpr int kMaxPortChans = 1024;
+// BW10: parked connect-time posts — Chrome's port transport queues
+// messages the caller posts before the remote end has accepted, so
+// the cap exists only to bound a chan that is never accepted.
+constexpr int kMaxParkedPortMsgsPerChan = 64;
 
 int ExtensionBackgroundRuntime::relaySend(ChromeBridge *from,
                                           const QString &mid,
@@ -2475,6 +2491,7 @@ int ExtensionBackgroundRuntime::relayPortConnect(
         return 0;
     }
     ends.append(PortEnd{from, portId});
+    drainParkedPortMsgs(chan, from, portId);
     // A complete MessageSender — extension handlers gate on
     // sender.origin == chrome.runtime.getURL('') (Bitwarden's
     // senderIsInternal drops the session port otherwise).  The id is
@@ -2527,6 +2544,61 @@ void ExtensionBackgroundRuntime::relayPortAccept(
         return;
     }
     ends.append(PortEnd{accepter, portId});
+    drainParkedPortMsgs(chan, accepter, portId);
+}
+
+void ExtensionBackgroundRuntime::parkPortMessage(
+        QObject *from, const QString &chan, const QString &portId,
+        const QJsonValue &msg)
+{
+    QList<ParkedPortMsg> &parked = m_parkedPortMsgs[chan];
+    if (parked.size() >= kMaxParkedPortMsgsPerChan)
+        return;
+    parked.append(ParkedPortMsg{from, portId, msg});
+}
+
+void ExtensionBackgroundRuntime::drainParkedPortMsgs(
+        const QString &chan, QObject *target, const QString &portId)
+{
+    auto it = m_parkedPortMsgs.find(chan);
+    if (it == m_parkedPortMsgs.end() || !target)
+        return;
+    // A connect is one port pair: the first remote end to register
+    // consumes the posts parked since the connect went out — a later
+    // accepter is a different pair and sees none of them.  The new
+    // end never receives its own posts back either way.
+    QList<ParkedPortMsg> keep;
+    for (const ParkedPortMsg &p : std::as_const(it.value())) {
+        if (p.sender == target && p.senderPortId == portId) {
+            keep.append(p);
+            continue;
+        }
+        emitToEnd(target, QStringLiteral("__arktos.portMessage"),
+                  QJsonObject{{QStringLiteral("portId"), portId},
+                              {QStringLiteral("msg"), p.msg}});
+        if (auto *cb = qobject_cast<ChromeBridge *>(target))
+            nudgeBridge(cb);
+    }
+    if (keep.isEmpty())
+        m_parkedPortMsgs.erase(it);
+    else
+        it.value() = keep;
+}
+
+void ExtensionBackgroundRuntime::dropParkedPortMsgs(
+        const QString &chan, QObject *sender, const QString &portId)
+{
+    auto it = m_parkedPortMsgs.find(chan);
+    if (it == m_parkedPortMsgs.end())
+        return;
+    QList<ParkedPortMsg> &parked = it.value();
+    for (int i = parked.size() - 1; i >= 0; --i) {
+        const ParkedPortMsg &p = parked.at(i);
+        if (p.sender == sender && p.senderPortId == portId)
+            parked.removeAt(i);
+    }
+    if (parked.isEmpty())
+        m_parkedPortMsgs.erase(it);
 }
 
 int ExtensionBackgroundRuntime::relayPortMessage(
@@ -2554,6 +2626,11 @@ int ExtensionBackgroundRuntime::relayPortMessage(
         if (auto *cb = qobject_cast<ChromeBridge *>(end.target))
             nudgeBridge(cb);
     }
+    // BW10: posted before the remote end registered (the
+    // connect()->postMessage() same-tick race) — park it like
+    // Chrome's transport queue; the end's registration drains it.
+    if (delivered == 0 && !ends.isEmpty())
+        parkPortMessage(from, chan, portId, msg);
     return delivered;
 }
 
@@ -2572,8 +2649,10 @@ void ExtensionBackgroundRuntime::relayPortDisconnect(
                 && ends.at(i).localPortId == portId)
             ends.removeAt(i);
     }
+    dropParkedPortMsgs(chan, from, portId);
     if (ends.isEmpty()) {
         m_portEnds.erase(it);
+        m_parkedPortMsgs.remove(chan);
         return;
     }
     for (const PortEnd &end : std::as_const(ends)) {
@@ -5305,6 +5384,7 @@ QJsonObject ExtensionBackgroundRuntime::pagePortConnect(
         return pageErr(QStringLiteral("too-many-ends"));
     }
     ends.append(PortEnd{page, portId});
+    drainParkedPortMsgs(chan, page, portId);
     int peers = 0;
     const QJsonObject payload{
         {QStringLiteral("chan"), chan},
@@ -5342,6 +5422,7 @@ QJsonObject ExtensionBackgroundRuntime::pagePortAccept(
         return pageErr(QStringLiteral("too-many-ends"));
     }
     ends.append(PortEnd{page, portId});
+    drainParkedPortMsgs(chan, page, portId);
     return pageOk();
 }
 
@@ -5367,6 +5448,10 @@ QJsonObject ExtensionBackgroundRuntime::pagePortMessage(
         if (auto *cb = qobject_cast<ChromeBridge *>(end.target))
             nudgeBridge(cb);
     }
+    // BW10: posted before the remote end registered — park it like
+    // Chrome's transport queue (see relayPortMessage).
+    if (delivered == 0 && !ends.isEmpty())
+        parkPortMessage(page, chan, portId, msg);
     return pageOk(QJsonObject{{QStringLiteral("delivered"),
                                delivered}});
 }
@@ -5386,8 +5471,10 @@ QJsonObject ExtensionBackgroundRuntime::pagePortDisconnect(
                 && ends.at(i).localPortId == portId)
             ends.removeAt(i);
     }
+    dropParkedPortMsgs(chan, page, portId);
     if (ends.isEmpty()) {
         m_portEnds.erase(it);
+        m_parkedPortMsgs.remove(chan);
         return pageOk();
     }
     for (const PortEnd &end : std::as_const(ends)) {
@@ -5432,6 +5519,7 @@ QJsonObject ExtensionBackgroundRuntime::tabPortConnect(
         return pageErr(QStringLiteral("too-many-ends"));
     }
     ends.append(PortEnd{from, portId});
+    drainParkedPortMsgs(chan, from, portId);
     // The extension-context MessageSender — same construction
     // relayPortConnect stamps: id trusted from the bridge, url the
     // connecting document's real url when a context page exists.
@@ -5526,7 +5614,19 @@ void ExtensionBackgroundRuntime::unregisterPageContext(
             continue;
         if (ends.isEmpty()) {
             m_portEnds.remove(chan);
+            m_parkedPortMsgs.remove(chan);
             continue;
+        }
+        auto pit = m_parkedPortMsgs.find(chan);
+        if (pit != m_parkedPortMsgs.end()) {
+            QList<ParkedPortMsg> &parked = pit.value();
+            for (int i = parked.size() - 1; i >= 0; --i) {
+                if (!parked.at(i).sender
+                        || parked.at(i).sender == page)
+                    parked.removeAt(i);
+            }
+            if (parked.isEmpty())
+                m_parkedPortMsgs.erase(pit);
         }
         for (const PortEnd &end : std::as_const(ends)) {
             if (end.target) {
