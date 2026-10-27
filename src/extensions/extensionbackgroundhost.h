@@ -675,10 +675,47 @@ public:
     // map getScripts/getRegisteredContentScripts read.
     QJsonObject registeredScriptSpecs(const QString &extensionId) const;
 
-    // Whether the extension's manifest declares the named API
-    // permission — the page agent's chrome.storage gate.
+    // Whether the extension may act under the named API permission —
+    // REQUIRED manifest permissions plus any optional_permissions the
+    // user consented through chrome.permissions.request().  The page
+    // agent's chrome.storage gate and every permission-scoped
+    // namespace consult it.
     bool hasExtensionPermission(const QString &extensionId,
                                 const QString &permission) const;
+
+    // ------------------------------------------------------------------
+    // BW09 — chrome.permissions optional grants.  Chrome persists
+    // permissions.request() consent across sessions: granted
+    // optional_permissions behave exactly like required ones
+    // (contains()/getAll() report them, the gated APIs they name
+    // unlock), granted optional_host_permissions extend host
+    // coverage the same way.  Records live in ProfileSettings under
+    // extensions/optperms/<id> and extensions/opthosts/<id> on the
+    // hosting persona (regProfileId's rule); a disable keeps them
+    // (the maps reload on the next enable), an uninstall drops them
+    // via dropExtensionGrants — a reinstall is a fresh extension.
+    // Every read merges required ∪ granted so the grant feeds the
+    // whole runtime, never just the permissions.* answers.
+    QStringList grantedOptionalPermissions(
+            const QString &extensionId) const;
+    QStringList grantedOptionalOrigins(const QString &extensionId) const;
+    // Declared host_permissions ∪ granted optional origins — every
+    // coverage check (agentCovers, requestVisibleTo, seesUrls, the
+    // content-script registration gate) reads this union.
+    QStringList hostPermissionsFor(const QString &extensionId) const;
+    // The consent surface's record-keeping: grant inserts the newly
+    // consented entries and persists; revoke removes the entries it
+    // held.  Only the caller's diff (newly granted / actually held)
+    // is what listeners hear about.
+    void grantOptionalPermissions(const QString &extensionId,
+                                  const QStringList &permissions,
+                                  const QStringList &origins);
+    void revokeOptionalPermissions(const QString &extensionId,
+                                   const QStringList &permissions,
+                                   const QStringList &origins);
+    // Uninstall: the persisted consent record dies with the
+    // extension — Chrome keeps no grants across a reinstall.
+    void dropExtensionGrants(const QString &extensionId);
 
     // ------------------------------------------------------------------
     // ER01 — page agent plumbing.  The content-script half of the
@@ -851,6 +888,13 @@ private:
     // manifest from disk.
     QHash<QString, QStringList> m_extPermissions;
     QHash<QString, QStringList> m_extHostPermissions;
+    // BW09: consented optional grants — m_extPermissions stays the
+    // REQUIRED snapshot; these carry what permissions.request()
+    // added.  Persisted per persona (extensions/optperms|/opthosts);
+    // a grant never lands here without the consent surface's answer.
+    QHash<QString, QStringList> m_extGrantedPerms;
+    QHash<QString, QStringList> m_extGrantedOrigins;
+    void persistOptionalGrants(const QString &extensionId);
     QTimer *m_heartbeat = nullptr;
     bool m_viewFilterInstalled = false;
 

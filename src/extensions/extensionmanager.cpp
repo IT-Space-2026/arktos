@@ -469,6 +469,11 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
         ProfileSettings(BrowserProfile::profileIdFor(profile))
             .remove(QStringLiteral("extensions/userworlds/")
                     + plain.id);
+        // BW09: consented optional-permission grants die with the
+        // extension — Chrome keeps no permissions.request() outcome
+        // across a reinstall.
+        ExtensionBackgroundRuntime::instance()
+            ->dropExtensionGrants(plain.id);
         ExtensionBackgroundRuntime::instance()
             ->dropRegisteredScripts(plain.id);
         m_tamperedIds.remove(plain.id);

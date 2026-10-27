@@ -3378,14 +3378,23 @@ QJsonObject ExtensionShimBackend::manifestJson() const
 
 QStringList ExtensionShimBackend::manifestPermissions() const
 {
-    // manifestJson()'s "permissions" key is the REQUIRED set already
-    // — optional_permissions live under their own key and stay inert
-    // (invokePermissions answers request() typed unsupported), so an
-    // optional declaration must never unlock a gated call.
+    // manifestJson()'s "permissions" key is the REQUIRED set;
+    // BW09's consented optional grants merge in from the runtime's
+    // record so a granted permission unlocks the gated namespaces
+    // exactly like a required declaration would.  Unconsented
+    // optional_permissions stay inert and never unlock a call.
     QStringList perms;
     for (const QJsonValue &v : manifestJson()
              .value(QStringLiteral("permissions")).toArray())
         perms.append(v.toString());
+    if (ExtensionBackgroundRuntime *runtime =
+            ExtensionBackgroundRuntime::instance()) {
+        for (const QString &granted :
+                 runtime->grantedOptionalPermissions(m_extensionId)) {
+            if (!perms.contains(granted))
+                perms.append(granted);
+        }
+    }
     return perms;
 }
 
@@ -3489,23 +3498,40 @@ QJsonObject ExtensionShimBackend::invokeI18n(const QString &method,
 }
 
 // -------------------------------------------------------------------
-// chrome.permissions — manifest-declared grants (the JS side answers
-// from the handshake manifest; this is the bridge fallback).
+// chrome.permissions — BW09's real optional-permission surface.
+// contains/getAll report REQUIRED ∪ consented-optional grants;
+// request() drives the real consent surface (a runtime grant never
+// appears without it) and remove() revokes held optional grants.
+// onAdded/onRemoved fan out on pushEvent — the shared backend
+// reaches every shim context of the extension, matching Chrome's
+// per-context dispatch.
 // -------------------------------------------------------------------
 
 QJsonObject ExtensionShimBackend::invokePermissions(
         const QString &method, const QJsonObject &args)
 {
     const QJsonObject manifest = manifestJson();
-    // ER16: the GRANTED set is what Chrome reports — required
-    // permissions only.  optional_permissions are never granted
-    // (request() below is typed unsupported), so listing them would
-    // over-claim the extension's own grants.
+    // The GRANTED set Chrome reports — required permissions plus
+    // whatever optional_permissions the consent surface already
+    // granted.  An unconsented optional declaration never lists:
+    // claiming it would over-claim the extension's own grants and
+    // send guarded optional-permission call paths (Bitwarden's
+    // privacy.* probe) into typed errors the guard exists to
+    // prevent.
     const QStringList perms = manifestPermissions();
     QStringList origins;
     for (const QJsonValue &v : manifest.value(
              QStringLiteral("host_permissions")).toArray())
         origins.append(v.toString());
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    if (runtime) {
+        for (const QString &granted :
+                 runtime->grantedOptionalOrigins(m_extensionId)) {
+            if (!origins.contains(granted))
+                origins.append(granted);
+        }
+    }
 
     if (method == QLatin1String("contains")) {
         bool ok = true;
@@ -3530,8 +3556,138 @@ QJsonObject ExtensionShimBackend::invokePermissions(
         all.insert(QStringLiteral("origins"), o);
         return okReply(all);
     }
-    // request/remove would need a grant UI — typed error.
-    return errReply(QStringLiteral("unsupported"));
+
+    if (method != QLatin1String("request")
+            && method != QLatin1String("remove"))
+        return errReply(QStringLiteral("unimplemented"));
+    if (!runtime)
+        return errReply(QStringLiteral("no-runtime"));
+
+    const auto askList = [&args](const QString &key) {
+        QStringList out;
+        for (const QJsonValue &v : args.value(key).toArray()) {
+            const QString s = v.toString();
+            if (!s.isEmpty() && !out.contains(s))
+                out.append(s);
+        }
+        return out;
+    };
+    const QStringList wantPerms =
+        askList(QStringLiteral("permissions"));
+    const QStringList wantOrigins =
+        askList(QStringLiteral("origins"));
+    const auto declared = [&manifest](const QString &key) {
+        QStringList out;
+        for (const QJsonValue &v : manifest.value(key).toArray())
+            out.append(v.toString());
+        return out;
+    };
+    const QStringList requiredPerms =
+        declared(QStringLiteral("permissions"));
+    const QStringList requiredOrigins =
+        declared(QStringLiteral("host_permissions"));
+    const QStringList optionalPerms =
+        declared(QStringLiteral("optional_permissions"));
+    const QStringList optionalOrigins =
+        declared(QStringLiteral("optional_host_permissions"));
+    const QStringList heldPerms =
+        runtime->grantedOptionalPermissions(m_extensionId);
+    const QStringList heldOrigins =
+        runtime->grantedOptionalOrigins(m_extensionId);
+
+    if (method == QLatin1String("request")) {
+        // Chrome's contract: entries already granted (required
+        // declarations or earlier consent) need no prompt; anything
+        // the manifest never declared fails outright — an optional
+        // grant can only ever come from optional_permissions /
+        // optional_host_permissions.
+        QStringList askPerms, askOrigins;
+        for (const QString &want : wantPerms) {
+            if (requiredPerms.contains(want) || heldPerms.contains(want))
+                continue;
+            if (!optionalPerms.contains(want))
+                return errReply(QStringLiteral("not-optional"));
+            askPerms.append(want);
+        }
+        for (const QString &want : wantOrigins) {
+            if (requiredOrigins.contains(want)
+                    || heldOrigins.contains(want))
+                continue;
+            if (!optionalOrigins.contains(want))
+                return errReply(QStringLiteral("not-optional"));
+            askOrigins.append(want);
+        }
+        if (askPerms.isEmpty() && askOrigins.isEmpty())
+            return okReply(true);   // everything already held —
+                                    // Chrome resolves sans prompt
+
+        // The consent surface.  ARKTOS_EXT_PERMISSION_ANSWER=
+        // grant|deny stands in for the user's click in headless
+        // legs — grantConsent's precedent for callers with no UI.
+        // With no surface to show the prompt on, the honest verdict
+        // is a refusal, never a silent grant.
+        bool consented;
+        const QString forced = qEnvironmentVariable(
+            "ARKTOS_EXT_PERMISSION_ANSWER").toLower();
+        if (forced == QLatin1String("grant")) {
+            consented = true;
+        } else if (forced == QLatin1String("deny")) {
+            consented = false;
+        } else {
+            static const QStringList headless{
+                QStringLiteral("offscreen"),
+                QStringLiteral("minimal"),
+                QStringLiteral("minimalegl")};
+            if (headless.contains(QGuiApplication::platformName())) {
+                recordNote(QStringLiteral(
+                    "chrome.permissions.request: no consent surface "
+                    "on a headless platform — answering Chrome's "
+                    "honest 'false', the grant stays withheld"));
+                consented = false;
+            } else {
+                consented = ExtensionReviewDialog::requestPermissions(
+                    m_extensionName, askPerms, askOrigins);
+            }
+        }
+        if (!consented)
+            return okReply(false);   // the honest denial
+
+        runtime->grantOptionalPermissions(
+            m_extensionId, askPerms, askOrigins);
+        emit pushEvent(QStringLiteral("permissions.onAdded"),
+            QJsonObject{{QStringLiteral("__args"), QJsonArray{
+                QJsonObject{
+                    {QStringLiteral("permissions"),
+                     QJsonArray::fromStringList(askPerms)},
+                    {QStringLiteral("origins"),
+                     QJsonArray::fromStringList(askOrigins)}}}}});
+        return okReply(true);
+    }
+
+    // remove(): only held optional grants can leave — required
+    // declarations and anything never granted are untouched, like
+    // Chrome.  onRemoved reports the set that actually went.
+    QStringList remPerms, remOrigins;
+    for (const QString &want : wantPerms) {
+        if (heldPerms.contains(want))
+            remPerms.append(want);
+    }
+    for (const QString &want : wantOrigins) {
+        if (heldOrigins.contains(want))
+            remOrigins.append(want);
+    }
+    if (!remPerms.isEmpty() || !remOrigins.isEmpty()) {
+        runtime->revokeOptionalPermissions(
+            m_extensionId, remPerms, remOrigins);
+        emit pushEvent(QStringLiteral("permissions.onRemoved"),
+            QJsonObject{{QStringLiteral("__args"), QJsonArray{
+                QJsonObject{
+                    {QStringLiteral("permissions"),
+                     QJsonArray::fromStringList(remPerms)},
+                    {QStringLiteral("origins"),
+                     QJsonArray::fromStringList(remOrigins)}}}}});
+    }
+    return okReply(true);
 }
 
 // -------------------------------------------------------------------

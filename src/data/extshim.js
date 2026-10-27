@@ -46,7 +46,11 @@
  *                         host-side window/tab snapshot; on* events
  *                         are shim events EXT16 pushes into
  *   chrome.webNavigation— event objects (delivery is EXT16)
- *   chrome.permissions  — contains/getAll answered from the manifest
+ *   chrome.permissions  — BW09: the real grant surface — contains/
+ *                         getAll report required ∪ consented-
+ *                         optional grants; request() drives the
+ *                         host's consent surface, remove() revokes;
+ *                         onAdded/onRemoved are host-pushed events
  *   chrome.notifications— ER12: create/update/clear/getAll over the
  *                         host's record registry + freedesktop
  *                         presentation; onClicked/onButtonClicked/
@@ -4237,51 +4241,39 @@
     }
 
     // --- chrome.permissions ---------------------------------------------------
+    // BW09: every member rides the bridge — the backend's grant set
+    // (required ∪ consented-optional) is authoritative and changes
+    // at runtime, so a handshake-manifest answer would go stale the
+    // moment request() lands.  request() drives the host's real
+    // consent surface and resolves Chrome's boolean; onAdded/
+    // onRemoved arrive as shim events the backend pushes to every
+    // context of the extension.
     if (typeof chrome !== 'undefined') {
-        var permSet = function () {
-            var m = manifest();
-            // Chrome's granted set is required permissions only —
-            // optional_permissions sit ungranted until
-            // permissions.request() consents to them (typed
-            // 'unsupported' here, so they never land).  Listing
-            // them anyway lies about the extension's own grants
-            // and sends guarded optional-permission call paths
-            // (Bitwarden's privacy.* probe) into typed errors the
-            // guard exists to prevent.
-            var perms = (m.permissions || []).slice();
-            var origins = (m.host_permissions || []);
-            return { permissions: perms, origins: origins };
+        var permCall = function (method, query, cb) {
+            var p = call('permissions', method, query || {});
+            if (cb)
+                p.then(function (v) { answerCb(cb, v); },
+                       function (e) {
+                           answerCb(cb, undefined,
+                                    e && e.message || String(e)); });
+            return p;
         };
         installNs('permissions', {
             contains: function (query, cb) {
                 touch('chrome.permissions.contains');
-                var have = permSet();
-                var ok = true;
-                var asked = query && query.permissions || [];
-                for (var i = 0; i < asked.length; ++i) {
-                    if (have.permissions.indexOf(asked[i]) < 0) {
-                        ok = false;
-                        break;
-                    }
-                }
-                var askedO = query && query.origins || [];
-                for (var j = 0; ok && j < askedO.length; ++j) {
-                    if (have.origins.indexOf(askedO[j]) < 0)
-                        ok = false;
-                }
-                return okCall(ok, cb);
+                return permCall('contains', query, cb);
             },
             getAll: function (cb) {
                 touch('chrome.permissions.getAll');
-                return okCall(permSet(), cb);
+                return permCall('getAll', {}, cb);
             },
-            request: function (permissions, cb) {
-                return failCall('permissions.request',
-                                'unsupported', cb);
+            request: function (query, cb) {
+                touch('chrome.permissions.request');
+                return permCall('request', query, cb);
             },
-            remove: function (permissions, cb) {
-                return failCall('permissions.remove',
-                                'unsupported', cb);
+            remove: function (query, cb) {
+                touch('chrome.permissions.remove');
+                return permCall('remove', query, cb);
             },
             onAdded: makeEvent('permissions.onAdded'),
             onRemoved: makeEvent('permissions.onRemoved')

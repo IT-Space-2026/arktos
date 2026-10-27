@@ -622,9 +622,9 @@ void NativeMessagingSession::fail(const QString &code, int exitCode)
 }
 
 // BW08: 'native' — the extension's 'nativeMessaging' grant is
-// REQUIRED-permission gated (an optional grant stays inert until
-// chrome.permissions.request consents it — typed unsupported in
-// this runtime), so an ungranted call fails 'no-permission' and
+// permission gated (an optional grant stays inert until
+// chrome.permissions.request consents it — BW09 wires the real
+// consent), so an ungranted call fails 'no-permission' and
 // never silently works.  Resolution failures return their typed
 // code synchronously — the shim turns them into an immediate
 // onDisconnect with Chrome-worded lastError, the same shape a
@@ -709,9 +709,8 @@ QJsonObject ChromeBridge::invokeNative(const QString &method,
 // ------------------------------------------------------------------
 
 // BW13 — the shared clipboard-grant predicate (the header carries
-// the contract).  Required permissions only: an optional grant is
-// inert until chrome.permissions.request consents it, and this
-// runtime answers request() typed-unsupported.
+// the contract).  Required permissions plus BW09's consented
+// optional grants: an unconsented optional declaration stays inert.
 bool extensionChromeClipboardGranted(const QString &extensionId)
 {
     ExtensionBackgroundRuntime *runtime =
@@ -1729,6 +1728,12 @@ void ExtensionBackgroundRuntime::syncNow()
         if (!desired.contains(id)) {
             m_extPermissions.remove(id);
             m_extHostPermissions.remove(id);
+            // BW09: the in-memory grant set goes with the context —
+            // the persisted record survives a disable (Chrome
+            // parity) and only uninstall's dropExtensionGrants erases
+            // it.
+            m_extGrantedPerms.remove(id);
+            m_extGrantedOrigins.remove(id);
         }
     }
 
@@ -1785,13 +1790,49 @@ void ExtensionBackgroundRuntime::syncNow()
         // manifest's declared permissions.  ER16: REQUIRED only —
         // manifest.permissions merges optional_permissions in, and an
         // optional grant is inert until chrome.permissions.request
-        // consents it (typed unsupported in this runtime), so it must
-        // never unlock a gated call or event family.  BW13: snapshot
-        // the whole desired set, not just background carriers — a
-        // background-less extension's chrome pages (its action
-        // popup) resolve permission requests off the same map.
+        // consents it, so it must never unlock a gated call or event
+        // family on its own.  BW13: snapshot the whole desired set,
+        // not just background carriers — a background-less
+        // extension's chrome pages (its action popup) resolve
+        // permission requests off the same map.
         m_extPermissions.insert(id, manifest.requiredPermissions);
         m_extHostPermissions.insert(id, manifest.hostPermissions);
+        // BW09: consented optional grants re-arm with the extension —
+        // Chrome persists permissions.request() outcomes across
+        // sessions.  The record is persona-scoped like the regscripts
+        // one and intersected with what the manifest still declares
+        // optional, so an update dropping a declaration drops the
+        // grant too.
+        {
+            QStringList optionalDeclared = manifest.permissions;
+            for (const QString &required : manifest.requiredPermissions)
+                optionalDeclared.removeAll(required);
+            QStringList optionalOrigins;
+            for (const QJsonValue &v : ExtensionManager
+                     ::declaredManifestJson(want.path)
+                     .value(QStringLiteral("optional_host_permissions"))
+                     .toArray())
+                optionalOrigins.append(v.toString());
+            ProfileSettings grants(BrowserProfile::profileIdFor(
+                want.profile));
+            QStringList keptPerms, keptOrigins;
+            for (const QString &grant : grants.value(
+                     QStringLiteral("extensions/optperms/") + id)
+                     .toStringList()) {
+                if (optionalDeclared.contains(grant)
+                        && !keptPerms.contains(grant))
+                    keptPerms.append(grant);
+            }
+            for (const QString &grant : grants.value(
+                     QStringLiteral("extensions/opthosts/") + id)
+                     .toStringList()) {
+                if (optionalOrigins.contains(grant)
+                        && !keptOrigins.contains(grant))
+                    keptOrigins.append(grant);
+            }
+            m_extGrantedPerms.insert(id, keptPerms);
+            m_extGrantedOrigins.insert(id, keptOrigins);
+        }
         if (manifest.backgroundScripts.isEmpty()) {
             m_noBackground.insert(id);
             continue;
@@ -2721,21 +2762,108 @@ void scrubObject(QJsonObject &object)
 
 } // namespace
 
+// BW09: a consented optional grant unlocks exactly what the same
+// REQUIRED declaration would — required ∪ granted is the gate set
+// every permission-scoped call/event checks.
 bool ExtensionBackgroundRuntime::hasExtensionPermission(
         const QString &extensionId, const QString &permission) const
 {
-    return m_extPermissions.value(extensionId)
-        .contains(permission);
+    return m_extPermissions.value(extensionId).contains(permission)
+        || m_extGrantedPerms.value(extensionId).contains(permission);
+}
+
+QStringList ExtensionBackgroundRuntime::grantedOptionalPermissions(
+        const QString &extensionId) const
+{
+    return m_extGrantedPerms.value(extensionId);
+}
+
+QStringList ExtensionBackgroundRuntime::grantedOptionalOrigins(
+        const QString &extensionId) const
+{
+    return m_extGrantedOrigins.value(extensionId);
+}
+
+QStringList ExtensionBackgroundRuntime::hostPermissionsFor(
+        const QString &extensionId) const
+{
+    QStringList out = m_extHostPermissions.value(extensionId);
+    for (const QString &granted : m_extGrantedOrigins.value(extensionId)) {
+        if (!out.contains(granted))
+            out.append(granted);
+    }
+    return out;
+}
+
+void ExtensionBackgroundRuntime::persistOptionalGrants(
+        const QString &extensionId)
+{
+    ProfileSettings settings(regProfileId(extensionId));
+    const QString permKey = QStringLiteral("extensions/optperms/")
+        + extensionId;
+    const QString hostKey = QStringLiteral("extensions/opthosts/")
+        + extensionId;
+    const QStringList perms = m_extGrantedPerms.value(extensionId);
+    const QStringList origins = m_extGrantedOrigins.value(extensionId);
+    if (perms.isEmpty())
+        settings.remove(permKey);
+    else
+        settings.setValue(permKey, perms);
+    if (origins.isEmpty())
+        settings.remove(hostKey);
+    else
+        settings.setValue(hostKey, origins);
+}
+
+void ExtensionBackgroundRuntime::grantOptionalPermissions(
+        const QString &extensionId, const QStringList &permissions,
+        const QStringList &origins)
+{
+    QStringList &perms = m_extGrantedPerms[extensionId];
+    for (const QString &grant : permissions) {
+        if (!perms.contains(grant))
+            perms.append(grant);
+    }
+    QStringList &orig = m_extGrantedOrigins[extensionId];
+    for (const QString &grant : origins) {
+        if (!orig.contains(grant))
+            orig.append(grant);
+    }
+    persistOptionalGrants(extensionId);
+}
+
+void ExtensionBackgroundRuntime::revokeOptionalPermissions(
+        const QString &extensionId, const QStringList &permissions,
+        const QStringList &origins)
+{
+    QStringList &perms = m_extGrantedPerms[extensionId];
+    for (const QString &grant : permissions)
+        perms.removeAll(grant);
+    QStringList &orig = m_extGrantedOrigins[extensionId];
+    for (const QString &grant : origins)
+        orig.removeAll(grant);
+    persistOptionalGrants(extensionId);
+}
+
+void ExtensionBackgroundRuntime::dropExtensionGrants(
+        const QString &extensionId)
+{
+    m_extGrantedPerms.remove(extensionId);
+    m_extGrantedOrigins.remove(extensionId);
+    ProfileSettings settings(regProfileId(extensionId));
+    settings.remove(QStringLiteral("extensions/optperms/")
+                    + extensionId);
+    settings.remove(QStringLiteral("extensions/opthosts/")
+                    + extensionId);
 }
 
 bool ExtensionBackgroundRuntime::seesUrls(const QString &extensionId,
                                           const QString &url) const
 {
-    if (m_extPermissions.value(extensionId)
-            .contains(QLatin1String("tabs")))
+    if (hasExtensionPermission(extensionId, QLatin1String("tabs")))
         return true;
     const QUrl qurl(QString::fromUtf8(url.toUtf8()));
-    for (const QString &pattern : m_extHostPermissions.value(extensionId)) {
+    for (const QString &pattern : hostPermissionsFor(extensionId)) {
         if (hostCovers(pattern, qurl))
             return true;
     }
@@ -2749,8 +2877,7 @@ bool ExtensionBackgroundRuntime::seesUrls(const QString &extensionId,
 bool ExtensionBackgroundRuntime::requestVisibleTo(
         const QString &extensionId, const QUrl &url) const
 {
-    for (const QString &pattern :
-             m_extHostPermissions.value(extensionId)) {
+    for (const QString &pattern : hostPermissionsFor(extensionId)) {
         if (hostCovers(pattern, url))
             return true;
     }
@@ -2878,7 +3005,7 @@ int ExtensionBackgroundRuntime::fanOut(
         if (!onlyExtensionId.isEmpty() && extId != onlyExtensionId)
             continue;
         if (!gate.isEmpty()
-                && !m_extPermissions.value(extId).contains(gate))
+                && !hasExtensionPermission(extId, gate))
             continue;
         const QJsonObject shaped = shapedPayload(extId, name, payload);
         // MD23: an empty shaped answer is a withhold — coverage
@@ -2972,7 +3099,7 @@ bool ExtensionBackgroundRuntime::agentCovers(
     const QString scheme = pageUrl.scheme();
     if (scheme.isEmpty())
         return false;
-    QStringList patterns = m_extHostPermissions.value(extensionId);
+    QStringList patterns = hostPermissionsFor(extensionId);
     if (ExtensionBackgroundHost *host =
             m_hosts.value(extensionId))
         patterns += host->contentScriptMatches();
@@ -4549,7 +4676,7 @@ QJsonObject ExtensionBackgroundRuntime::registerContentScripts(
     // The coverage union agentCovers consults — declared
     // content-script matches count as host access for registration
     // exactly like Chrome treats them.
-    QStringList coverage = m_extHostPermissions.value(extensionId);
+    QStringList coverage = hostPermissionsFor(extensionId);
     if (ExtensionBackgroundHost *host = m_hosts.value(extensionId))
         coverage += host->contentScriptMatches();
 
@@ -4720,7 +4847,7 @@ QJsonObject ExtensionBackgroundRuntime::updateContentScripts(
         merged.append(spec);
     }
 
-    QStringList coverage = m_extHostPermissions.value(extensionId);
+    QStringList coverage = hostPermissionsFor(extensionId);
     if (ExtensionBackgroundHost *host = m_hosts.value(extensionId))
         coverage += host->contentScriptMatches();
     QList<QJsonObject> normalized;

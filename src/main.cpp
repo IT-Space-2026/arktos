@@ -13455,6 +13455,12 @@ int main(int argc, char **argv)
                 "\"permissions\":[\"storage\",\"tabs\",\"alarms\","
                 "\"webNavigation\",\"contextMenus\",\"offscreen\","
                 "\"notifications\",\"nativeMessaging\"],"
+                // BW09: 'privacy' is the fixture's optional grant —
+                // the permissions leg drives
+                // contains=false -> request -> contains=true on it
+                // and its gated get() proves the consent fed the
+                // runtime's grant set.
+                "\"optional_permissions\":[\"privacy\"],"
                 "\"host_permissions\":[\"http://127.0.0.1/*\","
                 "\"http://localhost/*\"],"
                 "\"content_scripts\":[{\"matches\":"
@@ -13663,6 +13669,8 @@ int main(int argc, char **argv)
         // 17 = the BW13 clipboard legs (both flavors, after
         // offscreen); 18 = the BW08 native-messaging legs (fixture:
         // echo/absent/forbidden/host-exit; real: the honest verdict);
+        // 19 = the BW09 permissions legs (consent grant -> gated
+        // call -> revoke -> refused consent);
         // 1 = waiting for teardown after
         // disable; 2 = the re-enable respawn must reach Ready again.
         auto phase = std::make_shared<int>(0);
@@ -13687,6 +13695,8 @@ int main(int argc, char **argv)
         // so the run never pollutes a real user config dir).
         auto natStep = std::make_shared<int>(0);
         auto natManifests = std::make_shared<QStringList>();
+        // BW09: the permissions leg's sub-step (see phase 19).
+        auto permStep = std::make_shared<int>(0);
         BrowserMainWindow *smokeWindow = nullptr;
         // Never destruct a WebEngine page/view inside a runJavaScript
         // result callback — the IPC teardown can deadlock the channel
@@ -15905,10 +15915,8 @@ int main(int argc, char **argv)
                                 hostPoll->stop();
                                 check(false, "real sendNativeMessage "
                                             "settled (typed verdict)");
-                                extensions->setExtensionEnabled(
-                                    extensionId, false);
-                                *phase = 1;
-                                *hostTicks = 0;
+                                *phase = 19;
+                                *permStep = 0;
                             }
                             return;
                         }
@@ -15922,10 +15930,12 @@ int main(int argc, char **argv)
                                   && err != QLatin1String("none"),
                               "real sendNativeMessage answers a "
                               "Chrome-typed error, not a hang");
-                        extensions->setExtensionEnabled(
-                            extensionId, false);
-                        *phase = 1;
-                        *hostTicks = 0;
+                        // BW09: the permissions leg runs next while
+                        // the extension is still enabled — its exit
+                        // performs the disable phase 1 waits on.
+                        *phase = 19;
+                        *permStep = 0;
+                        *probeTicks = 0;
                         hostPoll->start();
                         return;
                     }
@@ -15942,8 +15952,8 @@ int main(int argc, char **argv)
                                         "settled");
                             qInfo() << "extension-host-smoke: nat:"
                                     << v.toString();
-                            *phase = 11;
-                            *afDrove = false;
+                            *phase = 19;
+                            *permStep = 0;
                             *probeTicks = 0;
                             hostPoll->start();
                         }
@@ -15981,11 +15991,299 @@ int main(int argc, char **argv)
                                      .contains(QLatin1String("exited")),
                           "host exit disconnects with 'host has "
                           "exited'");
-                    // Fixture: the BW05 port legs follow — they need
-                    // the extension still enabled and a fresh drive
-                    // flag.
-                    *phase = 11;
-                    *afDrove = false;
+                    // Fixture: the BW09 permissions leg runs next —
+                    // it hands the BW05 port legs its fresh drive
+                    // flag itself.
+                    *phase = 19;
+                    *permStep = 0;
+                    *probeTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 19) {  // BW09: chrome.permissions
+                // The optional-permission round trip measured end to
+                // end: contains() answers the honest false, request()
+                // drives the consent surface (the
+                // ARKTOS_EXT_PERMISSION_ANSWER env stands in for the
+                // user's click — a headless leg cannot click) and
+                // lands a REAL runtime grant, contains()+getAll()
+                // report it, the gated API it names unlocks,
+                // remove() revokes it with onRemoved, and a refused
+                // consent answers false while granting nothing.
+                // The fixture asks for 'privacy' (its declared
+                // optional grant); the real extension asks for
+                // 'nativeMessaging' — Bitwarden's own optional
+                // grant, whose gated call phase 18 just measured
+                // answering 'no-permission'.
+                if (!host)
+                    return;
+                const QString wanted = realExt
+                    ? QStringLiteral("nativeMessaging")
+                    : QStringLiteral("privacy");
+                if (*permStep == 0) {
+                    *permStep = 1;
+                    *probeTicks = 0;
+                    qputenv("ARKTOS_EXT_PERMISSION_ANSWER", "grant");
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__perm={done:false};"
+                        "(async function(){var o={};"
+                        "var added=[];"
+                        "chrome.permissions.onAdded.addListener("
+                        "function(p){added.push(p);});"
+                        "var W='%1';"
+                        // Reset the baseline: a grant survives across
+                        // sessions by design, so a previous leg (or a
+                        // real user consent) must be revoked before
+                        // the honest false is measured.
+                        "await chrome.permissions.remove("
+                        "{permissions:[W]});"
+                        "o.required=await chrome.permissions.contains("
+                        "{permissions:['storage']});"
+                        "o.pre=await chrome.permissions.contains("
+                        "{permissions:[W]});"
+                        "%2"
+                        "o.allPre=(await chrome.permissions.getAll())"
+                        ".permissions.indexOf(W)>=0;"
+                        "o.req=await chrome.permissions.request("
+                        "{permissions:[W]});"
+                        "o.post=await chrome.permissions.contains("
+                        "{permissions:[W]});"
+                        "o.allPost=(await chrome.permissions.getAll())"
+                        ".permissions.indexOf(W)>=0;"
+                        "o.sawAdded=added.some(function(p){"
+                        "return (p.permissions||[]).indexOf(W)>=0;});"
+                        "%3"
+                        "self.__perm={out:o,done:true};"
+                        "})().catch(function(e){"
+                        "self.__perm={err:String(e&&e.stack||e),"
+                        "done:true};});")
+                        .arg(wanted,
+                             realExt
+                                 ? QString()
+                                 : QStringLiteral(
+                                     "try{await chrome.privacy.services"
+                                     ".passwordSavingEnabled.get({});"
+                                     "o.preGate='served';}catch(e){"
+                                     "o.preGate=e.code||String(e);}"),
+                             realExt
+                                 ? QStringLiteral(
+                                     "await new Promise(function(r){"
+                                     "chrome.runtime.sendNativeMessage("
+                                     "'com.8bit.bitwarden',{probe:1},"
+                                     "function(rr){o.postGate="
+                                     "(chrome.runtime.lastError&&"
+                                     "chrome.runtime.lastError.message)"
+                                     "||('answered:'+JSON.stringify(rr));"
+                                     "r();});});")
+                                 : QStringLiteral(
+                                     "try{var gv=await chrome.privacy"
+                                     ".services.passwordSavingEnabled"
+                                     ".get({});o.postGate=(gv&&typeof "
+                                     "gv==='object'&&'value' in gv);}"
+                                     "catch(e){o.postGate='err:'+"
+                                     "(e.code||String(e));}")),
+                        [](const QVariant &) {});
+                    return;
+                }
+                if (*permStep == 1) {
+                    ++*probeTicks;
+                    host->page()->runJavaScript(QStringLiteral(
+                        "JSON.stringify(self.__perm||null)"),
+                        [&, host, wanted](const QVariant &v) {
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool()) {
+                            if (*probeTicks > 160) {
+                                hostPoll->stop();
+                                check(false, "permissions grant leg "
+                                            "settled");
+                                qInfo() << "extension-host-smoke:"
+                                           " perm:" << v.toString();
+                                *permStep = 2;
+                                *probeTicks = 0;
+                                qputenv("ARKTOS_EXT_PERMISSION_ANSWER",
+                                        "deny");
+                                host->page()->runJavaScript(
+                                    QStringLiteral(
+                                        "self.__perm2={done:true,"
+                                        "out:{skipped:true}};"),
+                                    [](const QVariant &) {});
+                                hostPoll->start();
+                            }
+                            return;
+                        }
+                        hostPoll->stop();
+                        check(r.value(QLatin1String("err")).toString()
+                                  .isEmpty(),
+                              "permissions grant leg ran clean");
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        qInfo() << "extension-host-smoke: perm:"
+                                << v.toString();
+                        check(o.value(QLatin1String("required")).toBool(),
+                              "contains() answers the required grant "
+                              "true");
+                        check(!o.value(QLatin1String("pre")).toBool(),
+                              "contains(<optional>) is false before "
+                              "consent");
+                        check(!o.value(QLatin1String("allPre")).toBool(),
+                              "getAll() omits the ungranted optional");
+                        check(o.value(QLatin1String("req")).toBool(),
+                              "request(<optional>) resolved true "
+                              "after consent");
+                        check(o.value(QLatin1String("post")).toBool(),
+                              "contains(<optional>) true after "
+                              "consent");
+                        check(o.value(QLatin1String("allPost")).toBool(),
+                              "getAll() lists the consented grant");
+                        check(o.value(QLatin1String("sawAdded")).toBool(),
+                              "permissions.onAdded fired with the "
+                              "grant");
+                        // The grant's record persists per persona —
+                        // Chrome keeps request() outcomes across
+                        // sessions.
+                        const QStringList persisted = ProfileSettings(
+                            BrowserProfile::profileIdFor(
+                                host->page()->profile()))
+                            .value(QStringLiteral("extensions/optperms/")
+                                   + extensionId)
+                            .toStringList();
+                        check(persisted.contains(wanted),
+                              "the consented grant persisted for the "
+                              "persona");
+                        if (!realExt) {
+                            check(o.value(QLatin1String("preGate"))
+                                      .toString()
+                                      == QLatin1String("no-permission"),
+                                  "gated privacy call answered typed "
+                                  "no-permission before consent");
+                            check(o.value(QLatin1String("postGate"))
+                                      .toBool(),
+                                  "gated privacy call answers real "
+                                  "after the grant");
+                        } else {
+                            const QString postGate =
+                                o.value(QLatin1String("postGate"))
+                                    .toString();
+                            check(postGate.contains(
+                                      QLatin1String("not found")),
+                                  "granted nativeMessaging gate "
+                                  "answers 'not found', not "
+                                  "'no-permission'");
+                        }
+                        // Deny + revoke leg: the env answer flips to
+                        // deny so request()'s refusal path is
+                        // measured on the same grant.
+                        *permStep = 2;
+                        *probeTicks = 0;
+                        qputenv("ARKTOS_EXT_PERMISSION_ANSWER", "deny");
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__perm2={done:false};"
+                            "(async function(){var o={};"
+                            "var removed=[];"
+                            "chrome.permissions.onRemoved.addListener("
+                            "function(p){removed.push(p);});"
+                            "var W='%1';"
+                            "o.removed=await chrome.permissions.remove("
+                            "{permissions:[W]});"
+                            "o.afterRemove=await chrome.permissions"
+                            ".contains({permissions:[W]});"
+                            "o.sawRemoved=removed.some(function(p){"
+                            "return (p.permissions||[]).indexOf(W)>=0;"
+                            "});"
+                            "o.denyReq=await chrome.permissions.request("
+                            "{permissions:[W]});"
+                            "o.afterDeny=await chrome.permissions"
+                            ".contains({permissions:[W]});"
+                            "o.undeclared=null;"
+                            "try{await chrome.permissions.request("
+                            "{permissions:['bookmarks']});"
+                            "o.undeclared='resolved';}"
+                            "catch(e){o.undeclared=e.code||String(e);}"
+                            "self.__perm2={out:o,done:true};"
+                            "})().catch(function(e){"
+                            "self.__perm2={err:String(e&&e.stack||e),"
+                            "done:true};});")
+                            .arg(wanted),
+                            [](const QVariant &) {});
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                // permStep == 2 — the deny/revoke poll.
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify(self.__perm2||null)"),
+                    [&, host, wanted](const QVariant &v) {
+                    const QJsonObject r = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (!r.value(QLatin1String("done")).toBool()) {
+                        if (*probeTicks > 160) {
+                            hostPoll->stop();
+                            check(false, "permissions deny/revoke leg "
+                                        "settled");
+                            qInfo() << "extension-host-smoke: perm2:"
+                                    << v.toString();
+                            qunsetenv("ARKTOS_EXT_PERMISSION_ANSWER");
+                            if (realExt) {
+                                extensions->setExtensionEnabled(
+                                    extensionId, false);
+                                *phase = 1;
+                                *hostTicks = 0;
+                            } else {
+                                *phase = 11;
+                                *afDrove = false;
+                            }
+                            *probeTicks = 0;
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    hostPoll->stop();
+                    qunsetenv("ARKTOS_EXT_PERMISSION_ANSWER");
+                    check(r.value(QLatin1String("err")).toString()
+                              .isEmpty(),
+                          "permissions deny/revoke leg ran clean");
+                    const QJsonObject o =
+                        r.value(QLatin1String("out")).toObject();
+                    qInfo() << "extension-host-smoke: perm2:"
+                            << v.toString();
+                    check(o.value(QLatin1String("removed")).toBool(),
+                          "remove(<held optional>) resolved");
+                    check(!o.value(QLatin1String("afterRemove")).toBool(),
+                          "contains() false again after remove()");
+                    check(o.value(QLatin1String("sawRemoved")).toBool(),
+                          "permissions.onRemoved fired with the "
+                          "revoked set");
+                    check(!o.value(QLatin1String("denyReq")).toBool(),
+                          "request() answers false when consent is "
+                          "refused");
+                    check(!o.value(QLatin1String("afterDeny")).toBool(),
+                          "a refused request granted nothing");
+                    check(o.value(QLatin1String("undeclared")).toString()
+                              == QLatin1String("not-optional"),
+                          "request() of an undeclared permission "
+                          "fails typed 'not-optional'");
+                    const QStringList persisted = ProfileSettings(
+                        BrowserProfile::profileIdFor(
+                            host->page()->profile()))
+                        .value(QStringLiteral("extensions/optperms/")
+                               + extensionId)
+                        .toStringList();
+                    check(!persisted.contains(wanted),
+                          "the revoked grant left the persisted "
+                          "record");
+                    if (realExt) {
+                        extensions->setExtensionEnabled(
+                            extensionId, false);
+                        *phase = 1;
+                        *hostTicks = 0;
+                    } else {
+                        // Fixture: the BW05 port legs follow — they
+                        // need the extension still enabled and a
+                        // fresh drive flag.
+                        *phase = 11;
+                        *afDrove = false;
+                    }
                     *probeTicks = 0;
                     hostPoll->start();
                 });
