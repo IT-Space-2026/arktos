@@ -4884,3 +4884,10 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   private windows still record nothing. Engine capabilities stay
   honest — features a backend cannot deliver remain disabled in the
   engine menu rather than silently pretending parity.
+- Extension action popup on macOS (MAC02): the bubble no longer paints
+  blank — the page is bound to its view before loading like every
+  other web surface in the app (the deferred attach it used was the
+  one ordering none of the working surfaces share), the extension's
+  chrome.* bridge is wired ahead of the page's first commit, and the
+  bubble is a plain frameless window of the same class the DevTools
+  and picture-in-picture surfaces use instead of a utility panel.

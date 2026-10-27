@@ -35,8 +35,10 @@ class QToolButton;
 // EXT08: per-window extension action strip — Chrome's
 // between-omnibox-and-menu cluster.  One flat QToolButton per
 // enabled+loaded extension whose manifest declares an action popup;
-// the click opens a Qt::Popup-framed QWebEngineView on the canonical
-// browsing profile loading the extension's actionPopupUrl.  The
+// the click opens a bubble-framed QWebEngineView on the canonical
+// browsing profile loading the extension's actionPopupUrl (an
+// overlaid child of the window on Linux, a frameless top-level
+// window on macOS).  The
 // whole strip hides while zero popup-bearing extensions are enabled
 // (no dead gap in the splitter), and private/tor windows never
 // construct it at all — no profile they run may load extensions

@@ -379,10 +379,11 @@ bool ExtensionActionBar::eventFilter(QObject *watched, QEvent *event)
             return true;
         }
     }
-    // The bubble is an overlaid child of the browser window (see
-    // openPopup) — not a Qt::Popup — so it gets no built-in
-    // click-outside dismissal.  Filter app-wide instead: any press
-    // outside the bubble or its button closes it, matching Chrome.
+    // The bubble is an overlaid child of the browser window on Linux
+    // and a frameless top-level on macOS (see openPopup) — never a
+    // Qt::Popup — so it gets no built-in click-outside dismissal.
+    // Filter app-wide instead: any press outside the bubble or its
+    // button closes it, matching Chrome.
     if (event->type() == QEvent::MouseButtonPress && m_popup
             && m_popup->isVisible()) {
         QWidget *target = qobject_cast<QWidget *>(watched);
@@ -464,12 +465,12 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     // too heavy to keep around after the bubble dismisses, and an
     // orphaned page outlives the profile at teardown.
     //
-    // The bubble is an overlaid child of the browser window, not a
-    // top-level window at all.  QWebEngineView never composites into a
-    // Qt::Popup window — Chromium's renderer has no usable surface
-    // there (on macOS the bubble shows dead, on Linux the
+    // On Linux the bubble is an overlaid child of the browser window,
+    // not a top-level window at all.  QWebEngineView never composites
+    // into a Qt::Popup window — Chromium's renderer has no usable
+    // surface there (on macOS the bubble shows dead, on Linux the
     // chrome-extension:// main frame never even commits).  A frameless
-    // Tool window renders, but on Wayland top-level geometry requests
+    // top-level renders, but on Wayland top-level geometry requests
     // go through compositor placement — every move/resize landed the
     // bubble somewhere new (the "popup jumps everywhere" report).  A
     // child overlay is positioned in widget coordinates on every
@@ -479,16 +480,16 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     if (!hostWindow)
         hostWindow = window();
 #ifdef Q_OS_MACOS
-    // macOS: a QWebEngineView cannot composite inside a non-native
-    // child overlay at all — without WA_NativeWindow the surface
-    // never exists (white bubble), and with it the RWHV's NSWindow
-    // binds inside an alien ancestor chain and paints black.  The
-    // reliable bubble there is a real frameless Tool window;
-    // move() is honored on macOS top-levels, so the Wayland
-    // placement-negotiation problem that ruled out Tool windows on
-    // Linux does not apply.
+    // MAC02: the macOS bubble is a real frameless top-level window of
+    // the plain Qt::Window class — the same NSWindow class the main
+    // window, DevToolsWindow and PipWindow composite through (the
+    // only WebEngine surfaces actually proven to paint on this
+    // platform).  Qt::Tool produces an NSPanel, the child overlay is
+    // an alien widget chain, and neither class of surface is proven;
+    // the overlay was also already measured failing under the old
+    // deferred-attach ordering (white, then black once native).
     QFrame *popup = new QFrame(hostWindow,
-                               Qt::Tool | Qt::FramelessWindowHint);
+                               Qt::Window | Qt::FramelessWindowHint);
 #else
     QFrame *popup = new QFrame(hostWindow);
 #endif
@@ -512,17 +513,32 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     // even when the user has scripts off (Chrome parity).
     page->settings()->setAttribute(QWebEngineSettings::JavascriptEnabled,
                                    true);
-    // The page loads viewless first and is attached to the view only
-    // after its navigation commits: a RWHV created mid-navigation can
-    // stall the commit entirely (the Qt::Popup/Linux stall) or never
-    // composite (the macOS white bubble).  The page is parented to the
-    // view so lifetime needs no extra handling.
+    // MAC02: bind the page to the view BEFORE the navigation starts —
+    // every other WebEngine surface in the app attaches eagerly (the
+    // tabs, PipWindow, DevToolsWindow, the reader overlay, the hosted
+    // background page).  The previous load-viewless-then-setPage
+    // ordering was the one variable no working surface shares and is
+    // the best explanation for the whole macOS report chain — a
+    // surface that exists but never gets committed, shown content
+    // paints exactly as observed (white under the alien overlay,
+    // black under WA_NativeWindow, blank under the Tool window).
+    // The page is parented to the view so lifetime needs no extra
+    // handling.
+    view->setPage(page);
+    // EXT17: wire the chromeBridge channel before the first commit —
+    // the DocumentCreation preamble polls for qt.webChannelTransport.
+    // The view watch still self-wires at commit as the fallback when
+    // the hosted background is not up yet (this returns false then,
+    // and for non-hosted native extensions).
+    ExtensionBackgroundRuntime::instance()
+        ->attachExtensionPage(page, id);
     layout->addWidget(view);
     popup->resize(360, 500);
 
     // Positioning space differs by platform: the Linux overlay child
     // is moved in hostWindow coordinates and clamped to the host
-    // rect; the macOS Tool window is moved in global coordinates and
+    // rect; the macOS top-level window is moved in global coordinates
+    // and
     // clamped to its screen.  The anchor point is the anchor's
     // bottom-right corner in the popup's coordinate space — the
     // bubble's top-right edge aligns to it.
@@ -598,11 +614,6 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
             [popupGuard, pageGuard, measure](bool ok) {
         if (!ok || !popupGuard || !pageGuard)
             return;
-        // Commit landed — the view can safely take the page now.
-        QWebEngineView *v =
-            qobject_cast<QWebEngineView *>(pageGuard->parent());
-        if (v && v->page() != pageGuard)
-            v->setPage(pageGuard.data());
         measure();
     });
     // Retries ride the popup's own lifetime — timers die with it.

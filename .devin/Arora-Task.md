@@ -381,8 +381,11 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | CONC01 | Concurrent store writers: two windows writing bookmarks.xbel + history.db — xbel write atomicity across windows, SQLite writer contention — details below | done | 0 | 3 real fixes: rustcore save_path shared .rc-tmp name → atomic_write (pid+seq staging — torn-rename hole closed), XbelWriter QFile truncate → QSaveFile (no-rust + export path), history.db PRAGMA busy_timeout=5000 (peer-commit SQLITE_BUSY no longer surfaces); session.dat/QSettings/sitedecisions/profiles/vault audited already-atomic, last-writer-wins documented in details — verified: cargo 269/270 (1 pre-existing), tst_xbel 15/15, 12 concurrent standalone smoke runs on one profile all PASS |
 | INFRA01 | taskloop task-file race: runner read-modify-write clobbers concurrent edits (lost-update hit twice today) — flock around the row update — details below | done | 0 | new .devin/taskfile.sh — flock on <file>.lock + temp+rename for every task-file write (set row fields, append-detail, with-lock escape hatch); all 6 taskloop-* lanes route bump_attempts/mark_blocked through it; RUNNER_PROMPT_*+file headers require it so agent edits serialize too. Verified: queued set waited out a held lock (1.7s) — both edits survived; 12-writer storm 0 losses; error paths reject bad id/status/pipe; bash -n clean |
 | SEC30 | Omnibox paste self-XSS: pasting javascript:... + Enter executes via loadUrl's javascript branch — typed bookmarklets stay allowed, but strip the scheme from pasted text like Chrome — details below | done | 0 | omnibox javascript: strip on every untrusted paste/drop gesture via opt-in LineEdit sanitizer; typed bookmarklets untouched — verified: tst_locationbar 57/57, tst_tabwidget 45/45 incl e2e offscreen --disable-gpu |
-| MAC02 | macOS verify: extension action popup renders (Bitwarden login) — was white, then black under WA_NativeWindow; 37ea0aaf switched to frameless Tool window — details below | pending | 0 | needs:macos — parked until a macOS host runs the loop; blind-fixed on Linux, verify on real hardware |
-| MAC03 | macOS verify: reader button presence + glyph — now eligibility-gated in 37ea0aaf (was permanently visible); if "looks wrong" persists compare glyph vs Safari/Firefox on Retina — details below | pending | 0 | needs:macos — parked until a macOS host runs the loop |
+| MAC02 | macOS verify: extension action popup renders (Bitwarden login) — was white, then black under WA_NativeWindow; 37ea0aaf switched to frameless Tool window — details below | done | 0 | Blind fix: popup now attaches page->view eagerly + wires chromeBridge pre-commit (was viewless load + setPage on loadFinished — the one ordering no proven-good WebEngine surface shares); macOS surface Tool/NSPanel -> frameless Qt::Window (PiP/DevTools class). Linux-verified: ARKTOS_DEBUG_POPUP grab shows fully rendered Bitwarden login popup; quit-after-load + actionPopupSelfWires PASS. Runtime mac-verify still owed |
+| MAC03 | macOS verify: reader button presence + glyph — now eligibility-gated in 37ea0aaf (was permanently visible); if "looks wrong" persists compare glyph vs Safari/Firefox on Retina — details below | pending | 0 | USER-CONFIRMED wrong on v1.0 dmg: reader button presence/glyph still off after 37ea0aaf eligibility gating. No macOS host here — audit readerbutton paint/eligibility blind, fix most likely cause, runtime mac-verify still owed |
+| MAC04 | macOS fix: extension settings page shows no enable tick boxes — details below | pending | 0 | USER-CONFIRMED on v1.0 dmg: the extensions settings page is missing the per-extension checkboxes entirely. Audit the settings/delegate painting under macOS style — likely custom item widgets/delegate painting invisible under the Mac style or items added without checkState. Fix blind, Linux smoke-verify, runtime mac-verify owed |
+| MAC05 | macOS fix: search/url bar renders a stray mini close/clear button — details below | pending | 0 | USER-CONFIRMED on v1.0 dmg: mini close button still present in the url/search field (07162d22 focus-gated it but it persists on macOS). Audit SearchLineEdit/clear-button code path under Q_OS_MAC — likely setClearButtonEnabled true or the gated wiring not applied. Fix blind, runtime mac-verify owed |
+| MAC06 | macOS fix: bundled Bitwarden never installs — details below | pending | 0 | USER-CONFIRMED on v1.0 dmg: Bitwarden does not appear/work. Audit installBundledExtensions on macOS: bundledExtensionsPath() must resolve Contents/Resources/share/arktos/extensions inside the .app; also the one-shot extensions/bundled/ consumed marker means a profile that ran a broken earlier build never retries — add retry when zip present but extension absent. Fix blind, runtime mac-verify owed |
 
 ## Task details
 
@@ -3775,6 +3778,48 @@ the chain, ARKTOS_DEBUG_POPUP=1 env for /tmp/popup_*.png grabs,
 QTWEBENGINE remote debugging to inspect the RWHV. Capture
 `--version` output and window server logs. Only mark done with a
 rendered-popup screenshot or equivalent runtime proof.
+
+
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Audit conclusion — the failing variable was never the window flags,
+it was the construction ORDER.  b7a64b55 made the popup the app's
+only "load viewless, setPage on loadFinished" surface; every surface
+that provably paints WebEngine content on macOS (the main window,
+DevToolsWindow's QMainWindow, PipWindow's frameless Qt::Window, the
+reader-mode child overlay, the hosted background page, and both
+popup autotests) attaches its page to the view BEFORE the
+navigation starts.  The observed chain is consistent with the
+deferred attach never landing committed, shown content: white under
+the alien overlay (widget background), black under WA_NativeWindow
+(an NSWindow with no RWHV bound to it), blank under the Tool window.
+
+Fix (src/extensions/extensionactionbar.cpp):
+- view->setPage(page) is now eager, before show+load, on every
+  platform — identical to the proven reader-overlay/PiP/DevTools
+  construction.  The loadFinished->setPage deferral is gone (the
+  original justification, the Qt::Popup commit stall, no longer
+  applies: nothing is a Qt::Popup anymore).
+- ExtensionBackgroundRuntime::attachExtensionPage(page, id) is
+  called explicitly pre-commit (EXT19's documented path for callers
+  that can wire early) so the chromeBridge channel exists when the
+  DocumentCreation preamble polls qt.webChannelTransport, instead
+  of depending on urlChanged emission timing at a deferred setPage.
+  Falls back to the view watch when the host isn't up yet.
+- macOS bubble surface: Qt::Tool (NSPanel) -> Qt::Window |
+  Qt::FramelessWindowHint — the same NSWindow class the proven-good
+  main window/DevTools/PiP composite through.
+
+Linux verification (real code path): ARKTOS_DEBUG_POPUP=1 run on an
+isolated XDG store auto-installed bundled Bitwarden and opened the
+action popup — /tmp/popup_*.png grabs at 14/20/27s show the fully
+rendered Bitwarden login+onboarding page (form fields, button,
+branding — chrome.* bridge live, 509x509 doc-fit bubble).
+--quit-after-load exit 0; tst_extensionmanager
+actionPopupSelfWires PASS.  macOS runtime verification is still
+owed — if the bubble still misrenders on hardware, the remaining
+leads are QWindow::fromWinId container and
+WA_DontCreateNativeAncestors, in that order.
 
 ### MAC03
 User report (build f7b85d58): "reader mode button still bad" after
