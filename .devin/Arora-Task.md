@@ -383,7 +383,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | SEC30 | Omnibox paste self-XSS: pasting javascript:... + Enter executes via loadUrl's javascript branch — typed bookmarklets stay allowed, but strip the scheme from pasted text like Chrome — details below | done | 0 | omnibox javascript: strip on every untrusted paste/drop gesture via opt-in LineEdit sanitizer; typed bookmarklets untouched — verified: tst_locationbar 57/57, tst_tabwidget 45/45 incl e2e offscreen --disable-gpu |
 | MAC02 | macOS verify: extension action popup renders (Bitwarden login) — was white, then black under WA_NativeWindow; 37ea0aaf switched to frameless Tool window — details below | done | 0 | Blind fix: popup now attaches page->view eagerly + wires chromeBridge pre-commit (was viewless load + setPage on loadFinished — the one ordering no proven-good WebEngine surface shares); macOS surface Tool/NSPanel -> frameless Qt::Window (PiP/DevTools class). Linux-verified: ARKTOS_DEBUG_POPUP grab shows fully rendered Bitwarden login popup; quit-after-load + actionPopupSelfWires PASS. Runtime mac-verify still owed |
 | MAC03 | macOS verify: reader button presence + glyph — now eligibility-gated in 37ea0aaf (was permanently visible); if "looks wrong" persists compare glyph vs Safari/Firefox on Retina — details below | done | 0 | Blind fix: presence stomped by updateReaderState — action stayed setVisible(readerUsable) + trailing widget setVisible undid refresh() gate on every tab switch, and unified NSToolbar ignores widget hide() entirely (item latched on). Now action+widget gated on readerUsable && isAvailable(); glyph engine already matches ChromeIconEngine contract (DPR pixmap, pinned Accent, 1.35 stroke) — no further blind geometry guess. Verified: rewritten tst readerModeButton PASS + reader/theme suite green offscreen; mac runtime verify still owed |
-| MAC04 | macOS fix: extension settings page shows no enable tick boxes — details below | pending | 0 | USER-CONFIRMED on v1.0 dmg: the extensions settings page is missing the per-extension checkboxes entirely. Audit the settings/delegate painting under macOS style — likely custom item widgets/delegate painting invisible under the Mac style or items added without checkState. Fix blind, Linux smoke-verify, runtime mac-verify owed |
+| MAC04 | macOS fix: extension settings page shows no enable tick boxes — details below | done | 0 | Blind fix: per-row enable control is now a real QCheckBox index widget (rendered via standalone-control path, not the style-painted item-view indicator that failed on the macOS dmg); item keeps CheckStateRole so toggling still routes itemChanged->setExtensionEnabled, and a column-0 delegate drops the painted indicator/text so nothing double-draws. Verified: tst_settingsdialog 59/59 incl. new box legs, clean pixel render, --quit-after-load exit 0; mac runtime verify still owed |
 | MAC05 | macOS fix: search/url bar renders a stray mini close/clear button — details below | pending | 0 | USER-CONFIRMED on v1.0 dmg: mini close button still present in the url/search field (07162d22 focus-gated it but it persists on macOS). Audit SearchLineEdit/clear-button code path under Q_OS_MAC — likely setClearButtonEnabled true or the gated wiring not applied. Fix blind, runtime mac-verify owed |
 | MAC06 | macOS fix: bundled Bitwarden never installs — details below | pending | 0 | USER-CONFIRMED on v1.0 dmg: Bitwarden does not appear/work. Audit installBundledExtensions on macOS: bundledExtensionsPath() must resolve Contents/Resources/share/arktos/extensions inside the .app; also the one-shot extensions/bundled/ consumed marker means a profile that ran a broken earlier build never retries — add retry when zip present but extension absent. Fix blind, runtime mac-verify owed |
 
@@ -3882,3 +3882,49 @@ PASS; readerModeContent x5 + readerSanitizer + darkThemeReaderGlyph +
 torReaderAccent + torNavIconsDarkChrome + darkChromeIcons all PASS
 offscreen; arktos --quit-after-load about:blank exit 0.  macOS
 runtime verification is still owed.
+
+### MAC04
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Audit conclusion — the item-model path is airtight: refreshExtensions
+sets CheckStateRole on every row (v1.0 tag verified identical), the
+PlainTextItemDelegate only overrides displayText, and the painted
+indicator chain (initStyleOption -> HasCheckIndicator -> CE_ItemViewItem
+-> PE_IndicatorItemViewItemCheck -> qmacstyle NSButton draw) delegates
+correctly through the app style stack (QStyleSheetStyle ->
+ChromeProxyStyle -> QMacStyle).  The style-painted item-view check
+indicator is nonetheless the only render step that is platform-style
+dependent — every other enable affordance in Preferences is a real
+QCheckBox — so the fix removes the dependence instead of chasing an
+unverifiable Qt-internal quirk.
+
+Fix (src/settings.cpp):
+- refreshExtensions() gives every row a real QCheckBox as the
+  column-0 index widget (setItemWidget), labeled with the extension
+  name, checked from info.enabled, tree font, AccessibleName, and the
+  row's path tooltip.  Real widgets render through the standalone-
+  control path the rest of the dialog demonstrably uses.
+- The item keeps CheckStateRole data: box toggled -> item
+  setCheckState -> itemChanged -> extensionItemChanged ->
+  setExtensionEnabled — the same manager-facing path as before, so
+  tests and programmatic checkState writes still work; the box is a
+  view of the item state (synced back in extensionItemChanged).
+- New file-local ExtensionEnableBoxDelegate (PlainTextItemDelegate
+  subclass) drops HasDisplay/HasCheckIndicator/HasDecoration on
+  column 0 — the painted indicator+text would smear through the
+  widget's transparent background (confirmed on a pixel render:
+  double-draw without it, clean with it).  Model data untouched, so
+  Name still drives the .ui sortingEnabled order.
+- extensionSelectionChanged syncs each box's WindowText to
+  HighlightedText/Text per row selection — the painted text they
+  replace switched roles on selection.
+
+Linux verification: tst_settingsdialog 59/59 incl. new leg — per-row
+QCheckBox itemWidget exists, labeled with the name, mirrors item
+checkState both directions, viewport-parented; extensionColumnSizing/
+extensionVersionColumn/extensionHostedStatus all PASS; scratch render
+of the tree under the app stylesheet stack shows a clean single
+checkbox per row (offscreen); arktos --quit-after-load exit 0.
+macOS runtime verification is still owed — if the box still doesn't
+appear, the residual lead is that ALL native checkboxes fail on that
+build (would surface across Preferences, not just this page).

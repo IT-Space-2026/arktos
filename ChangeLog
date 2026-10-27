@@ -770,6 +770,10 @@ UI:
   so Bitwarden shows "2026.9.3" while built-in components with no
   manifest on disk show an honest "—". When an update check finds a
   newer package the cell reads "1.0.0 → 2.0.0 available" (EXT09).
+- The per-extension enable control on Preferences > Extensions is now
+  a real checkbox widget in every row instead of a style-painted
+  indicator, so the toggle cannot disappear under platform-style
+  quirks (MAC04).
 - Extensions can now drive the real tab strip through chrome.tabs:
   remove, reload, duplicate, move, highlight, goBack/goForward and
   discard (which parks the tab into the same sleeping state the

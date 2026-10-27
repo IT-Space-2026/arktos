@@ -113,6 +113,7 @@
 
 #include <qabstractbutton.h>
 #include <qapplication.h>
+#include <qcheckbox.h>
 #include <qcombobox.h>
 #include <qdesktopservices.h>
 #include <qdialogbuttonbox.h>
@@ -172,6 +173,28 @@ static QString extensionsEngineScope()
         "Extensions run on %1 tabs only.")
         .arg(hosts.join(QLatin1String(", ")));
 }
+
+// MAC04: column 0 of the extensions tree carries a real QCheckBox
+// index widget (refreshExtensions) — the item's own painted
+// indicator+text would smear through the widget's transparent
+// background, so the delegate drops the painted pieces for that
+// column only.  The model data stays put: Name still drives sorting
+// and CheckStateRole stays the state itemChanged/the box exchange.
+class ExtensionEnableBoxDelegate : public PlainTextItemDelegate
+{
+public:
+    using PlainTextItemDelegate::PlainTextItemDelegate;
+
+    void initStyleOption(QStyleOptionViewItem *option,
+                         const QModelIndex &index) const override
+    {
+        PlainTextItemDelegate::initStyleOption(option, index);
+        if (index.column() == 0)
+            option->features &= ~(QStyleOptionViewItem::HasDisplay
+                                  | QStyleOptionViewItem::HasCheckIndicator
+                                  | QStyleOptionViewItem::HasDecoration);
+    }
+};
 
 SettingsDialog::SettingsDialog(QWidget *parent)
     : QWidget(parent)
@@ -521,7 +544,8 @@ SettingsDialog::SettingsDialog(QWidget *parent)
 
     // Extension names come from manifest.json and userscript names
     // from filenames — markup-looking text stays literal.
-    extensionsTree->setItemDelegate(new PlainTextItemDelegate(extensionsTree));
+    extensionsTree->setItemDelegate(
+        new ExtensionEnableBoxDelegate(extensionsTree));
     userScriptsList->setItemDelegate(new PlainTextItemDelegate(userScriptsList));
     // EXT06: the Description column is the long free-text one — it
     // takes the leftover width while Name/Status/Source keep their
@@ -3179,6 +3203,24 @@ void SettingsDialog::extensionUpdateCheckFinished(
 
 void SettingsDialog::extensionSelectionChanged()
 {
+    // MAC04: the per-row QCheckBox index widgets paint their own
+    // label — the painted item text they replace used to switch to
+    // HighlightedText on selection, so the boxes follow the same
+    // cue or the selected row reads as dark-on-Highlight.
+    const QPalette treePalette = extensionsTree->palette();
+    for (int i = 0; i < extensionsTree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem *row = extensionsTree->topLevelItem(i);
+        QCheckBox *box = qobject_cast<QCheckBox *>(
+            extensionsTree->itemWidget(row, 0));
+        if (!box)
+            continue;
+        QPalette boxPalette = box->palette();
+        boxPalette.setColor(QPalette::WindowText,
+            treePalette.color(row->isSelected()
+                ? QPalette::HighlightedText : QPalette::Text));
+        box->setPalette(boxPalette);
+    }
+
     QTreeWidgetItem *item = extensionsTree->currentItem();
     extensionRemoveButton->setEnabled(item != nullptr);
     if (!item) {
@@ -3300,6 +3342,14 @@ void SettingsDialog::extensionItemChanged(QTreeWidgetItem *item, int column)
 {
     if (column != 0 || !item)
         return;
+    // MAC04: the index-widget checkbox is a view of CheckStateRole —
+    // programmatic checkState writes (tests, other callers) must move
+    // it too.
+    if (QCheckBox *enableBox = qobject_cast<QCheckBox *>(
+            extensionsTree->itemWidget(item, 0))) {
+        const QSignalBlocker blocker(enableBox);
+        enableBox->setChecked(item->checkState(0) == Qt::Checked);
+    }
     const QString id = item->data(0, Qt::UserRole).toString();
     if (id.isEmpty())
         return;
@@ -3401,6 +3451,27 @@ void SettingsDialog::refreshExtensions()
                             : tr("(no description)")));
         item->setData(0, Qt::UserRole, info.id);
         item->setToolTip(0, SafeText::escaped(info.path));
+        // MAC04: the style-painted item check indicator does not
+        // reach the user on macOS (v1.0 dmg report) — under the app
+        // style stack (sheet style -> ChromeProxyStyle -> QMacStyle)
+        // the indicator primitive is the one render step that is
+        // platform-style dependent, and every other enable affordance
+        // in this dialog is a real QCheckBox.  Give each row a real
+        // one as an index widget so the toggle can never vanish with
+        // a style quirk.  The item keeps its CheckStateRole data:
+        // toggling routes through itemChanged -> extensionItemChanged
+        // -> setExtensionEnabled exactly like the painted checkbox
+        // did, and the box mirrors item state in extensionItemChanged.
+        QCheckBox *enableBox = new QCheckBox(item->text(0));
+        enableBox->setChecked(info.enabled);
+        enableBox->setFont(extensionsTree->font());
+        enableBox->setAccessibleName(tr("Enable %1").arg(item->text(0)));
+        enableBox->setToolTip(item->toolTip(0));
+        connect(enableBox, &QCheckBox::toggled, this,
+                [item](bool on) {
+            item->setCheckState(0, on ? Qt::Checked : Qt::Unchecked);
+        });
+        extensionsTree->setItemWidget(item, 0, enableBox);
         if (info.id == selectedId)
             extensionsTree->setCurrentItem(item);
     }

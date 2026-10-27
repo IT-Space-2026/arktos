@@ -3124,6 +3124,26 @@ void tst_SettingsDialog::extensionPage()
     row->setCheckState(0, Qt::Unchecked);
     row->setCheckState(0, Qt::Checked);
 
+    // MAC04: every row also carries a real QCheckBox index widget —
+    // the enable affordance can never vanish under a platform style
+    // that fails to paint item-view check indicators (the v1.0 dmg
+    // report).  The item's CheckStateRole stays the model of record:
+    // box clicks move the item, item writes move the box.
+    QCheckBox *enableBox = qobject_cast<QCheckBox *>(
+        dialog.extensionsTree->itemWidget(row, 0));
+    QVERIFY(enableBox);
+    QCOMPARE(enableBox->text(), row->text(0));
+    QCOMPARE(enableBox->isChecked(), row->checkState(0) == Qt::Checked);
+    QVERIFY(!enableBox->accessibleName().isEmpty());
+    enableBox->click();
+    QCOMPARE(row->checkState(0), Qt::Unchecked);
+    QVERIFY(!enableBox->isChecked());
+    row->setCheckState(0, Qt::Checked);
+    QVERIFY(enableBox->isChecked());
+    // The box lives under the viewport, so the row's painted cells
+    // never double the indicator.
+    QVERIFY(enableBox->parent() == dialog.extensionsTree->viewport());
+
     // Wrong-column and id-less item changes are ignored.
     QVERIFY(QMetaObject::invokeMethod(&dialog, "extensionItemChanged",
         Q_ARG(QTreeWidgetItem*, row), Q_ARG(int, 1)));
