@@ -1731,8 +1731,9 @@ QStringList ExtensionManager::runtimeServes()
     // The fatal-table members it covers — scripting, webRequest —
     // stop condemning an extension; the rest move out of the flat
     // "will not work" tier into "partially supported".  Surfaces the
-    // runtime does NOT serve (blocking webRequest, nativeMessaging,
-    // ...) stay absent on purpose — they keep the raw engine verdict.
+    // runtime does NOT serve (blocking webRequest,
+    // webRequestAuthProvider, ...) stay absent on purpose — they
+    // keep the raw engine verdict.
     static const QStringList served = {
         // MD21: chrome.bookmarks rides the RC05 store through
         // BookmarksManager — the namespace is fully served.
@@ -1768,6 +1769,12 @@ QStringList ExtensionManager::runtimeServes()
         QStringLiteral("history"),
         QStringLiteral("idle"),
         QStringLiteral("menus"),
+        // BW08: runtime.connectNative/sendNativeMessage spawn real
+        // native-messaging hosts — manifest resolution, allowed_origins
+        // gating, the uint32-LE stdio protocol, host-exit disconnects.
+        // Grant-holders get a working port; everyone else and every
+        // absent host gets Chrome's typed errors.
+        QStringLiteral("nativeMessaging"),
         QStringLiteral("notifications"),
         QStringLiteral("offscreen"),
         // MD31: chrome.privacy serves the eight ChromeSetting

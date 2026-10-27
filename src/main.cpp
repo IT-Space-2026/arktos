@@ -13250,7 +13250,7 @@ int main(int argc, char **argv)
                 "\"name\":\"arktos-smoke-ext\","
                 "\"version\":\"0.1\","
                 "\"description\":\"EXT01 smoke fixture\","
-                "\"permissions\":[\"storage\",\"tabs\",\"nativeMessaging\"],"
+                "\"permissions\":[\"storage\",\"tabs\",\"debugger\"],"
                 "\"host_permissions\":[\"https://*.example.com/*\"],"
                 "\"action\":{\"default_title\":\"smoke\"},"
                 "\"background\":{\"service_worker\":\"sw.js\"}}");
@@ -13274,8 +13274,10 @@ int main(int argc, char **argv)
               "manifest parsed");
         // ER19: permissions the hosted runtime serves leave
         // 'unsupported' for 'unverified' ("partially supported") —
-        // nativeMessaging stays unserved and keeps the raw verdict.
-        check(manifest.unsupported.contains(QLatin1String("nativeMessaging"))
+        // debugger stays unserved (BW08 served nativeMessaging, so
+        // the genuinely-unserved probe moved to it) and keeps the
+        // raw verdict.
+        check(manifest.unsupported.contains(QLatin1String("debugger"))
               && !manifest.unsupported.contains(QLatin1String("tabs"))
               && manifest.unverified.contains(QLatin1String("tabs"))
               && !manifest.unsupported.contains(QLatin1String("storage")),
@@ -13452,7 +13454,7 @@ int main(int argc, char **argv)
                 "\"description\":\"EXT14 hosted-runtime fixture\","
                 "\"permissions\":[\"storage\",\"tabs\",\"alarms\","
                 "\"webNavigation\",\"contextMenus\",\"offscreen\","
-                "\"notifications\"],"
+                "\"notifications\",\"nativeMessaging\"],"
                 "\"host_permissions\":[\"http://127.0.0.1/*\","
                 "\"http://localhost/*\"],"
                 "\"content_scripts\":[{\"matches\":"
@@ -13659,7 +13661,8 @@ int main(int argc, char **argv)
         // loopback login form; 15 = the BW12 per-frame sendMessage
         // legs between the BW05 port legs and the reconnect leg;
         // 17 = the BW13 clipboard legs (both flavors, after
-        // offscreen);
+        // offscreen); 18 = the BW08 native-messaging legs (fixture:
+        // echo/absent/forbidden/host-exit; real: the honest verdict);
         // 1 = waiting for teardown after
         // disable; 2 = the re-enable respawn must reach Ready again.
         auto phase = std::make_shared<int>(0);
@@ -13679,6 +13682,11 @@ int main(int argc, char **argv)
         auto offRel = std::make_shared<QString>();
         // BW13: the clipboard leg's sub-step (see phase 17).
         auto clipStep = std::make_shared<int>(0);
+        // BW08: the native-messaging leg's sub-step (see phase 18)
+        // plus the fixture manifests it installs (removed at finish
+        // so the run never pollutes a real user config dir).
+        auto natStep = std::make_shared<int>(0);
+        auto natManifests = std::make_shared<QStringList>();
         BrowserMainWindow *smokeWindow = nullptr;
         // Never destruct a WebEngine page/view inside a runJavaScript
         // result callback — the IPC teardown can deadlock the channel
@@ -13750,15 +13758,21 @@ int main(int argc, char **argv)
         // rule: runJavaScript result callbacks outlive the tick).
         const auto clipDone = [&]() {
             if (realExt) {
-                extensions->setExtensionEnabled(extensionId, false);
-                *phase = 1;
-                *hostTicks = 0;
+                // BW08: the real extension still owes the
+                // native-messaging verdict leg — it runs with the
+                // extension still enabled and performs the disable
+                // itself.
+                *phase = 18;
+                *natStep = 0;
+                *probeTicks = 0;
             } else {
-                // Fixture: the BW05 port legs follow — they need
-                // the extension still enabled and a fresh drive
-                // flag.
-                *phase = 11;
-                *afDrove = false;
+                // Fixture: the BW08 native legs follow — they run
+                // BEFORE the BW05 port legs so the pre-existing
+                // cs echo-port failure (a real defect native
+                // injection used to mask, recorded under BW06)
+                // cannot starve them.
+                *phase = 18;
+                *natStep = 0;
                 *probeTicks = 0;
             }
             hostPoll->start();
@@ -13769,6 +13783,10 @@ int main(int argc, char **argv)
             qInfo() << "extension-host-smoke:"
                     << (failures == 0 ? "PASS" : "FAIL")
                     << "failures:" << failures;
+            // BW08: drop the fixture's native-host manifests so a
+            // run never leaves registrations in a real config dir.
+            for (const QString &p : *natManifests)
+                QFile::remove(p);
             if (!realExt)
                 QDir(extDir).removeRecursively();
             std::quick_exit(failures == 0 ? 0 : 1);
@@ -15686,6 +15704,289 @@ int main(int argc, char **argv)
                     closeSmokeWindow();
                     *phase = 1;
                     *hostTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 18) {  // BW08: nativeMessaging
+                // The fixture leg installs real Chrome-layout host
+                // manifests (echo + a wrong-origin 'deny' twin plus
+                // a read-one-then-exit host for the disconnect
+                // semantics) under the same resolver the runtime
+                // uses, then drives the shim's connectNative/
+                // sendNativeMessage from the hosted page.  The real
+                // extension just records the honest verdict of one
+                // sendNativeMessage — Bitwarden declares the grant
+                // optional and never consents it, so a typed
+                // 'no-permission' IS the working answer here.
+                if (!host)
+                    return;
+                if (*natStep == 0) {
+                    *natStep = 1;
+                    if (!realExt) {
+                        // Echo host + exit-after-one host —
+                        // python3 speaks the uint32-LE framing in a
+                        // dozen lines; absent python answers an
+                        // honest fixture failure.
+                        const QString hostsDir =
+                            NativeMessagingSession::userHostsDir();
+                        if (!QDir().mkpath(hostsDir)) {
+                            die(QStringLiteral(
+                                "cannot create NativeMessagingHosts "
+                                "dir"));
+                            return;
+                        }
+                        const QString echoPy =
+                            extDir + QLatin1String("/native_echo.py");
+                        const QString exitPy =
+                            extDir + QLatin1String("/native_exit.py");
+                        const auto putHost = [](const QString &p,
+                                                const QByteArray &src) {
+                            QFile f(p);
+                            if (!f.open(QIODevice::WriteOnly))
+                                return false;
+                            f.write(src);
+                            f.close();
+                            f.setPermissions(
+                                QFileDevice::ReadOwner
+                                | QFileDevice::WriteOwner
+                                | QFileDevice::ExeOwner
+                                | QFileDevice::ReadGroup
+                                | QFileDevice::ExeGroup
+                                | QFileDevice::ReadOther
+                                | QFileDevice::ExeOther);
+                            return true;
+                        };
+                        if (!putHost(echoPy,
+                                "#!/usr/bin/env python3\n"
+                                "import struct,sys,json\n"
+                                "while True:\n"
+                                " h=sys.stdin.buffer.read(4)\n"
+                                " if len(h)<4: break\n"
+                                " (n,)=struct.unpack('<I',h)\n"
+                                " b=sys.stdin.buffer.read(n)\n"
+                                " if len(b)<n: break\n"
+                                " m=json.loads(b)\n"
+                                " o=json.dumps({'echo':m}).encode()\n"
+                                " sys.stdout.buffer.write(\n"
+                                "  struct.pack('<I',len(o))+o)\n"
+                                " sys.stdout.buffer.flush()\n")
+                            || !putHost(exitPy,
+                                "#!/usr/bin/env python3\n"
+                                "import struct,sys,json\n"
+                                "h=sys.stdin.buffer.read(4)\n"
+                                "if len(h)>=4:\n"
+                                " (n,)=struct.unpack('<I',h)\n"
+                                " b=sys.stdin.buffer.read(n)\n"
+                                " o=json.dumps({'bye':True}).encode()\n"
+                                " sys.stdout.buffer.write(\n"
+                                "  struct.pack('<I',len(o))+o)\n"
+                                " sys.stdout.buffer.flush()\n")) {
+                            die(QStringLiteral(
+                                "cannot write native host fixture"));
+                            return;
+                        }
+                        const QString origin =
+                            QStringLiteral("chrome-extension://")
+                            + extensionId + QLatin1Char('/');
+                        const auto putManifest =
+                            [&](const QString &app,
+                                const QString &path,
+                                const QString &allowed) {
+                            const QString p = hostsDir
+                                + QLatin1Char('/') + app
+                                + QLatin1String(".json");
+                            QFile f(p);
+                            if (!f.open(QIODevice::WriteOnly))
+                                return false;
+                            f.write(QByteArray(
+                                "{\"name\":\"") + app.toUtf8()
+                                + "\",\"description\":\"BW08 smoke "
+                                  "host\",\"path\":\"" + path.toUtf8()
+                                + "\",\"type\":\"stdio\",\"allowed_"
+                                  "origins\":[\"" + allowed.toUtf8()
+                                + "\"]}");
+                            f.close();
+                            natManifests->append(p);
+                            return true;
+                        };
+                        if (!putManifest(
+                                QStringLiteral("org.arktos.test.echo"),
+                                echoPy, origin)
+                            || !putManifest(
+                                QStringLiteral("org.arktos.test.exiter"),
+                                exitPy, origin)
+                            || !putManifest(
+                                QStringLiteral("org.arktos.test.deny"),
+                                echoPy,
+                                QStringLiteral(
+                                    "chrome-extension://"
+                                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                                    "aa/"))) {
+                            die(QStringLiteral(
+                                "cannot write native host manifest"));
+                            return;
+                        }
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__nat={};"
+                            "(function(){var o=self.__nat;"
+                            // echo port round-trip + caller
+                            // disconnect (no own onDisconnect)
+                            "var p=chrome.runtime.connectNative("
+                            "'org.arktos.test.echo');"
+                            "p.onMessage.addListener(function(m){"
+                            " o.echo=m;p.disconnect();"
+                            " o.echoDone=true;});"
+                            "p.onDisconnect.addListener(function(){"
+                            " o.echoDisc=(chrome.runtime.lastError"
+                            "  &&chrome.runtime.lastError.message)"
+                            "  ||null;o.echoDone=true;});"
+                            "p.postMessage({ping:'native-hello'});"
+                            // one-shot round trip
+                            "chrome.runtime.sendNativeMessage("
+                            "'org.arktos.test.echo',{one:1},"
+                            "function(r){o.one={r:r===undefined?null:r,"
+                            "e:(chrome.runtime.lastError"
+                            "  &&chrome.runtime.lastError.message)"
+                            "  ||null};o.oneDone=true;});"
+                            // absent host -> typed not-found
+                            "chrome.runtime.sendNativeMessage("
+                            "'org.arktos.test.missing',{probe:1},"
+                            "function(r){o.miss={r:r===undefined?null:r,"
+                            "e:(chrome.runtime.lastError"
+                            "  &&chrome.runtime.lastError.message)"
+                            "  ||'none'};o.missDone=true;});"
+                            // denied origin -> typed forbidden
+                            "var d=chrome.runtime.connectNative("
+                            "'org.arktos.test.deny');"
+                            "d.onDisconnect.addListener(function(){"
+                            " o.deny={e:(chrome.runtime.lastError"
+                            "  &&chrome.runtime.lastError.message)"
+                            "  ||'none'};o.denyDone=true;});"
+                            // host exit -> typed disconnect
+                            "var x=chrome.runtime.connectNative("
+                            "'org.arktos.test.exiter');"
+                            "x.onMessage.addListener(function(m){"
+                            " o.xLast=m;});"
+                            "x.onDisconnect.addListener(function(){"
+                            " o.xit={last:o.xLast||null,"
+                            " e:(chrome.runtime.lastError"
+                            "  &&chrome.runtime.lastError.message)"
+                            "  ||'none'};o.xitDone=true;});"
+                            "x.postMessage({go:1});"
+                            "})();"),
+                            [](const QVariant &) {});
+                    } else {
+                        // Real extension: one sendNativeMessage to
+                        // Bitwarden's desktop host name — the grant
+                        // is optional+ungranted so the typed
+                        // 'no-permission' is the honest working
+                        // answer; a hang here is the failure.
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__nat={};"
+                            "chrome.runtime.sendNativeMessage("
+                            "'com.8bit.bitwarden',{command:'bw-test'},"
+                            "function(r){self.__nat={r:r===undefined"
+                            "?null:r,"
+                            "e:(chrome.runtime.lastError"
+                            "  &&chrome.runtime.lastError.message)"
+                            "  ||'none',done:true};});"),
+                            [](const QVariant &) {});
+                    }
+                    return;
+                }
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify(self.__nat||null)"),
+                    [&](const QVariant &v) {
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (realExt) {
+                        if (!o.value(QLatin1String("done")).toBool()) {
+                            if (*probeTicks > 120) {
+                                hostPoll->stop();
+                                check(false, "real sendNativeMessage "
+                                            "settled (typed verdict)");
+                                extensions->setExtensionEnabled(
+                                    extensionId, false);
+                                *phase = 1;
+                                *hostTicks = 0;
+                            }
+                            return;
+                        }
+                        hostPoll->stop();
+                        const QString err =
+                            o.value(QLatin1String("e")).toString();
+                        qInfo() << "extension-host-smoke: real"
+                                   " sendNativeMessage verdict:"
+                                << err;
+                        check(!err.isEmpty()
+                                  && err != QLatin1String("none"),
+                              "real sendNativeMessage answers a "
+                              "Chrome-typed error, not a hang");
+                        extensions->setExtensionEnabled(
+                            extensionId, false);
+                        *phase = 1;
+                        *hostTicks = 0;
+                        hostPoll->start();
+                        return;
+                    }
+                    const bool allDone =
+                        o.value(QLatin1String("echoDone")).toBool()
+                        && o.value(QLatin1String("oneDone")).toBool()
+                        && o.value(QLatin1String("missDone")).toBool()
+                        && o.value(QLatin1String("denyDone")).toBool()
+                        && o.value(QLatin1String("xitDone")).toBool();
+                    if (!allDone) {
+                        if (*probeTicks > 160) {
+                            hostPoll->stop();
+                            check(false, "native messaging legs all "
+                                        "settled");
+                            qInfo() << "extension-host-smoke: nat:"
+                                    << v.toString();
+                            *phase = 11;
+                            *afDrove = false;
+                            *probeTicks = 0;
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    hostPoll->stop();
+                    qInfo() << "extension-host-smoke: nat:"
+                            << v.toString();
+                    check(o.value(QLatin1String("echo")).toObject()
+                              .value(QLatin1String("echo")).toObject()
+                              .value(QLatin1String("ping")).toString()
+                              == QLatin1String("native-hello"),
+                          "connectNative echo round-trip over real "
+                          "stdio framing");
+                    check(o.value(QLatin1String("one")).toObject()
+                              .value(QLatin1String("r")).toObject()
+                              .value(QLatin1String("echo")).toObject()
+                              .value(QLatin1String("one")).toInt() == 1,
+                          "sendNativeMessage one-shot round-trip");
+                    check(o.value(QLatin1String("miss")).toObject()
+                              .value(QLatin1String("e")).toString()
+                              .contains(QLatin1String("not found")),
+                          "absent host answers typed 'not found'");
+                    check(o.value(QLatin1String("deny")).toObject()
+                              .value(QLatin1String("e")).toString()
+                              .contains(QLatin1String("forbidden")),
+                          "wrong-origin host answers typed "
+                          "'forbidden'");
+                    const QJsonObject xit =
+                        o.value(QLatin1String("xit")).toObject();
+                    check(xit.value(QLatin1String("last")).toObject()
+                              .value(QLatin1String("bye")).toBool()
+                              && xit.value(QLatin1String("e"))
+                                     .toString()
+                                     .contains(QLatin1String("exited")),
+                          "host exit disconnects with 'host has "
+                          "exited'");
+                    // Fixture: the BW05 port legs follow — they need
+                    // the extension still enabled and a fresh drive
+                    // flag.
+                    *phase = 11;
+                    *afDrove = false;
+                    *probeTicks = 0;
                     hostPoll->start();
                 });
             } else if (*phase == 16) {  // BW07: chrome.offscreen

@@ -44,7 +44,9 @@
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
+#include <qprocess.h>
 #include <qregularexpression.h>
+#include <qstandardpaths.h>
 #include <qtimer.h>
 #include <qwidget.h>
 
@@ -145,6 +147,11 @@ QJsonObject ChromeBridge::invoke(const QString &ns,
                 << ns << method << args;
     if (ns == QLatin1String("relay"))
         return invokeRelay(method, args);
+    // BW08: chrome.runtime.connectNative/sendNativeMessage — the
+    // spawned host's lifetime binds to THIS context like a relay
+    // port does, so the dispatch lives at this level too.
+    if (ns == QLatin1String("native"))
+        return invokeNative(method, args);
     // EXT17: getCurrent is context-local — the bridge knows which
     // page asked (a popup hosted inside a real tab resolves to that
     // tab; the hidden background page is never a tab).
@@ -335,6 +342,363 @@ QJsonObject ChromeBridge::invokeRelay(const QString &method,
         runtime->relayPortDisconnect(
             this, args.value(QStringLiteral("chan")).toString(),
             args.value(QStringLiteral("portId")).toString());
+        return ok();
+    }
+    return err(QStringLiteral("unimplemented"));
+}
+
+// ------------------------------------------------------------------
+// BW08 — Chrome native messaging
+// ------------------------------------------------------------------
+// connectNative/sendNativeMessage on the hosted runtime: resolve the
+// host manifest under the Chrome directory layout (our dirs first,
+// then the Chromium/Chrome dirs a real desktop app registers under),
+// spawn argv[0] + the extension origin, and speak uint32-LE
+// length-prefixed JSON on stdio in both directions.  The session's
+// lifetime binds to the calling bridge, so the port dies with its
+// context like Chrome's does.  sendNativeMessage needs no op of its
+// own — the shim builds it on the real port (spawn, post, first
+// reply, close), matching what Chrome does internally.
+//
+// The frame cap is deliberately larger than Chrome's documented 1MB
+// — real vault payloads (Bitwarden desktop IPC) legitimately exceed
+// that.  The bound exists only to keep a corrupt or hostile length
+// header from growing the inbox without limit.
+static constexpr quint32 kMaxNativeHostMessage = 64u * 1024u * 1024u;
+
+QString NativeMessagingSession::userHostsDir()
+{
+    return QStandardPaths::writableLocation(
+               QStandardPaths::GenericConfigLocation)
+        + QLatin1String("/arktos/NativeMessagingHosts");
+}
+
+QStringList NativeMessagingSession::searchDirs()
+{
+    const QString config = QStandardPaths::writableLocation(
+        QStandardPaths::GenericConfigLocation);
+    return {
+        // Ours first — an arktos-registered host outranks the compat
+        // dirs a Chrome/Chromium-targeted desktop app installs into.
+        config + QLatin1String("/arktos/NativeMessagingHosts"),
+        config + QLatin1String("/chromium/NativeMessagingHosts"),
+        config + QLatin1String("/google-chrome/NativeMessagingHosts"),
+        QStringLiteral("/etc/arktos/native-messaging-hosts"),
+        QStringLiteral("/etc/chromium/native-messaging-hosts"),
+        QStringLiteral("/etc/opt/chrome/native-messaging-hosts"),
+    };
+}
+
+bool NativeMessagingSession::resolve(const QString &appName,
+                                     const QString &extensionId,
+                                     QString *program, QString *error)
+{
+    // Chrome's host-name rule: lowercase alnum, '.', '_', '-'; no
+    // leading/trailing dot, no empty components.  '/' can never
+    // appear, so the manifest lookup can never leave the search
+    // dirs.
+    static const QRegularExpression nameRe(
+        QStringLiteral("[a-z0-9_-]+(\\.[a-z0-9_-]+)*"));
+    if (appName.isEmpty() || appName.size() > 128
+            || !nameRe.match(appName).hasMatch()
+            || appName.contains(QLatin1String(".."))) {
+        *error = QStringLiteral("bad-name");
+        return false;
+    }
+    const QString fileName = appName + QLatin1String(".json");
+    QString manifestPath;
+    for (const QString &dir : searchDirs()) {
+        const QString candidate = QDir(dir).filePath(fileName);
+        if (QFileInfo::exists(candidate)) {
+            manifestPath = candidate;
+            break;
+        }
+    }
+    if (manifestPath.isEmpty()) {
+        *error = QStringLiteral("not-found");
+        return false;
+    }
+    QFile file(manifestPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        *error = QStringLiteral("invalid-manifest");
+        return false;
+    }
+    const QJsonObject manifest =
+        QJsonDocument::fromJson(file.readAll()).object();
+    // Chrome requires the manifest's own 'name' to equal the
+    // requested host — a mismatch means the file belongs to
+    // another registration.
+    if (manifest.isEmpty()
+            || manifest.value(QLatin1String("name")).toString()
+                   != appName) {
+        *error = QStringLiteral("invalid-manifest");
+        return false;
+    }
+    const QString type =
+        manifest.value(QLatin1String("type")).toString();
+    if (!type.isEmpty() && type != QLatin1String("stdio")) {
+        *error = QStringLiteral("unsupported-type");
+        return false;
+    }
+    QString path = manifest.value(QLatin1String("path")).toString();
+    if (path.isEmpty()) {
+        *error = QStringLiteral("invalid-manifest");
+        return false;
+    }
+    if (QDir::isRelativePath(path))
+        path = QDir(QFileInfo(manifestPath).absolutePath())
+            .absoluteFilePath(path);
+    const QFileInfo exe(path);
+    if (!exe.exists() || !exe.isFile() || !exe.isExecutable()) {
+        // A manifest pointing at nothing runnable answers like an
+        // absent host — Chrome reports it the same way.
+        *error = QStringLiteral("not-found");
+        return false;
+    }
+    const QString origin = QStringLiteral("chrome-extension://")
+        + extensionId + QLatin1Char('/');
+    const QJsonArray allowed =
+        manifest.value(QLatin1String("allowed_origins")).toArray();
+    if (!allowed.contains(QJsonValue(origin))) {
+        *error = QStringLiteral("forbidden");
+        return false;
+    }
+    *program = exe.absoluteFilePath();
+    return true;
+}
+
+NativeMessagingSession::NativeMessagingSession(
+        const QString &extensionId, const QString &appName,
+        QObject *parent)
+    : QObject(parent)
+    , m_extensionId(extensionId)
+    , m_appName(appName)
+{
+}
+
+NativeMessagingSession::~NativeMessagingSession()
+{
+    stop();
+}
+
+void NativeMessagingSession::start(const QString &program)
+{
+    m_process = new QProcess(this);
+    m_process->setProgram(program);
+    // Chrome's spawn contract: argv[1] is the calling extension's
+    // origin (the --parent-window flag is Windows-only there).
+    m_process->setArguments(
+        {QStringLiteral("chrome-extension://") + m_extensionId
+         + QLatin1Char('/')});
+    m_process->setProcessChannelMode(QProcess::SeparateChannels);
+    connect(m_process, &QProcess::readyReadStandardOutput, this,
+            &NativeMessagingSession::drainStdout);
+    connect(m_process, &QProcess::started, this, [this]() {
+        // Frames posted while the spawn was still in flight flush
+        // here — the shim posts immediately after connect, so this
+        // race is the common case, not an edge.
+        if (!m_outbox.isEmpty()
+                && m_process->state() == QProcess::Running) {
+            m_process->write(m_outbox);
+            m_outbox.clear();
+        }
+    });
+    connect(m_process, &QProcess::errorOccurred, this,
+            [this](QProcess::ProcessError error) {
+        if (m_dead)
+            return;
+        fail(error == QProcess::FailedToStart
+                 ? QStringLiteral("spawn-failed")
+                 : QStringLiteral("host-exited"), -1);
+    });
+    connect(m_process,
+            qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+            this, [this](int code, QProcess::ExitStatus) {
+        if (m_dead)
+            return;
+        // A clean exit disconnects the port exactly like a crash —
+        // 'host-exited' is the honest answer either way.  Frames the
+        // host flushed before EOF still deliver first.
+        drainStdout();
+        if (!m_dead)
+            fail(QStringLiteral("host-exited"), code);
+    });
+    m_process->start();
+}
+
+void NativeMessagingSession::post(const QJsonValue &message)
+{
+    if (m_dead || !m_process
+            || m_process->state() == QProcess::NotRunning)
+        return;
+    QByteArray body;
+    if (message.isObject()) {
+        body = QJsonDocument(message.toObject())
+            .toJson(QJsonDocument::Compact);
+    } else if (message.isArray()) {
+        body = QJsonDocument(message.toArray())
+            .toJson(QJsonDocument::Compact);
+    } else {
+        // Scalars serialize through a one-element array peel —
+        // Chrome accepts any JSON-serializable message value.
+        const QByteArray wrapped = QJsonDocument(QJsonArray{message})
+            .toJson(QJsonDocument::Compact);
+        body = wrapped.mid(1, wrapped.size() - 2);
+    }
+    QByteArray frame(4, Qt::Uninitialized);
+    qToLittleEndian(quint32(body.size()),
+                    reinterpret_cast<uchar *>(frame.data()));
+    frame.append(body);
+    if (m_process->state() == QProcess::Running) {
+        m_process->write(frame);
+    } else {
+        // Still Starting — queue, never drop (see m_outbox).
+        if (m_outbox.size() + frame.size()
+                < qint64(kMaxNativeHostMessage))
+            m_outbox.append(frame);
+    }
+}
+
+void NativeMessagingSession::stop()
+{
+    if (m_dead)
+        return;
+    m_dead = true;
+    if (!m_process)
+        return;
+    m_process->disconnect(this);
+    m_process->closeWriteChannel();
+    if (m_process->state() != QProcess::NotRunning) {
+        m_process->terminate();
+        if (!m_process->waitForFinished(2000))
+            m_process->kill();
+    }
+}
+
+void NativeMessagingSession::drainStdout()
+{
+    if (!m_process)
+        return;
+    m_inbox.append(m_process->readAllStandardOutput());
+    while (!m_dead) {
+        if (m_inbox.size() < 4)
+            return;
+        const quint32 len = qFromLittleEndian<quint32>(
+            reinterpret_cast<const uchar *>(m_inbox.constData()));
+        if (len > kMaxNativeHostMessage) {
+            fail(QStringLiteral("bad-message"), -1);
+            return;
+        }
+        if (m_inbox.size() < qint64(4) + qint64(len))
+            return;
+        const QByteArray body = m_inbox.mid(4, qsizetype(len));
+        m_inbox.remove(0, qsizetype(4) + qsizetype(len));
+        // Chrome's protocol expects a JSON object per frame — a
+        // scalar or malformed payload is a protocol error, not a
+        // message.
+        const QJsonDocument doc = QJsonDocument::fromJson(body);
+        if (doc.isObject())
+            emit message(doc.object());
+        else if (doc.isArray())
+            emit message(doc.array());
+        else {
+            fail(QStringLiteral("bad-message"), -1);
+            return;
+        }
+    }
+}
+
+void NativeMessagingSession::fail(const QString &code, int exitCode)
+{
+    if (m_dead)
+        return;
+    m_dead = true;
+    if (m_process && m_process->state() != QProcess::NotRunning) {
+        m_process->disconnect(this);
+        m_process->kill();
+        m_process->waitForFinished(500);
+    }
+    emit disconnected(code, exitCode);
+}
+
+// BW08: 'native' — the extension's 'nativeMessaging' grant is
+// REQUIRED-permission gated (an optional grant stays inert until
+// chrome.permissions.request consents it — typed unsupported in
+// this runtime), so an ungranted call fails 'no-permission' and
+// never silently works.  Resolution failures return their typed
+// code synchronously — the shim turns them into an immediate
+// onDisconnect with Chrome-worded lastError, the same shape a
+// late host exit produces asynchronously.
+QJsonObject ChromeBridge::invokeNative(const QString &method,
+                                       const QJsonObject &args)
+{
+    auto ok = [](const QJsonValue &v = QJsonValue()) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), true);
+        if (!v.isUndefined())
+            o.insert(QStringLiteral("result"), v);
+        return o;
+    };
+    auto err = [](const QString &code) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"), code);
+        return o;
+    };
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    if (!runtime
+            || !runtime->hasExtensionPermission(
+                m_extensionId, QStringLiteral("nativeMessaging")))
+        return err(QStringLiteral("no-permission"));
+    const QString portId =
+        args.value(QStringLiteral("portId")).toString();
+    if (method == QLatin1String("connect")) {
+        const QString app =
+            args.value(QStringLiteral("app")).toString();
+        if (app.isEmpty() || portId.isEmpty()
+                || m_nativePorts.contains(portId))
+            return err(QStringLiteral("invalid-argument"));
+        QString program, error;
+        if (!NativeMessagingSession::resolve(app, m_extensionId,
+                                             &program, &error))
+            return err(error);
+        auto *session =
+            new NativeMessagingSession(m_extensionId, app, this);
+        connect(session, &NativeMessagingSession::message, this,
+                [this, portId](const QJsonValue &msg) {
+            emit hostEvent(QStringLiteral("__arktos.nativeMessage"),
+                QJsonObject{{QStringLiteral("portId"), portId},
+                            {QStringLiteral("msg"), msg}});
+        });
+        connect(session, &NativeMessagingSession::disconnected, this,
+                [this, portId](const QString &error, int exitCode) {
+            if (NativeMessagingSession *s =
+                    m_nativePorts.take(portId))
+                s->deleteLater();
+            emit hostEvent(
+                QStringLiteral("__arktos.nativeDisconnect"),
+                QJsonObject{{QStringLiteral("portId"), portId},
+                            {QStringLiteral("error"), error},
+                            {QStringLiteral("exit"), exitCode}});
+        });
+        m_nativePorts.insert(portId, session);
+        session->start(program);
+        return ok();
+    }
+    if (method == QLatin1String("post")) {
+        NativeMessagingSession *session = m_nativePorts.value(portId);
+        if (!session)
+            return err(QStringLiteral("disconnected"));
+        session->post(args.value(QStringLiteral("msg")));
+        return ok();
+    }
+    if (method == QLatin1String("disconnect")) {
+        if (NativeMessagingSession *session =
+                m_nativePorts.take(portId)) {
+            session->stop();
+            session->deleteLater();
+        }
         return ok();
     }
     return err(QStringLiteral("unimplemented"));

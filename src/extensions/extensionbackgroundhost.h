@@ -38,6 +38,8 @@
 #include "browserprofile.h"
 
 class ExtensionPageBridge;
+class NativeMessagingSession;
+class QProcess;
 class QTimer;
 class QWebChannel;
 class QWebEngineFrame;
@@ -139,6 +141,12 @@ signals:
 private:
     QJsonObject invokeRelay(const QString &method,
                             const QJsonObject &args);
+    // BW08: 'native' — chrome.runtime.connectNative/sendNativeMessage's
+    // host-side ops.  The spawned host is scoped to THIS bridge so a
+    // context dying takes its native ports down with it, exactly like
+    // Chrome tying a port's lifetime to the calling document.
+    QJsonObject invokeNative(const QString &method,
+                             const QJsonObject &args);
     // ER02: tabs.sendMessage — needs the calling bridge itself (the
     // page agent's response resolves onto it), so it lives at this
     // level like getCurrent rather than in the shared backend.
@@ -225,6 +233,10 @@ private:
         QTimer *expiry = nullptr;
     };
     QHash<QString, PendingExec> m_pendingExecs;
+    // BW08: live native-messaging sessions — the shim's port id is
+    // the key; sessions are parented to this bridge so context death
+    // terminates their host processes.
+    QHash<QString, NativeMessagingSession *> m_nativePorts;
 
     QString m_extensionId;
     QString m_extensionName;
@@ -236,6 +248,65 @@ private:
     // a popup bridge must answer typed errors, not dangle.
     QPointer<ExtensionShimBackend> m_backend;
     QPointer<QWebEnginePage> m_contextPage;
+};
+
+// BW08 — Chrome native messaging.  One session is one spawned
+// native-messaging host bound to one extension port on one shim
+// context: the manifest resolves under the Chrome directory layout
+// (the arktos dirs first, then the Chromium/Chrome dirs a real
+// desktop app like Bitwarden's registers under), the process spawns
+// as argv[0] + the extension's chrome-extension:// origin, and
+// stdin/stdout carry uint32-LE length-prefixed JSON frames in both
+// directions.  Host exit disconnects the port with a typed error;
+// an absent host answers the honest 'not-found', never a fake port.
+class NativeMessagingSession : public QObject
+{
+    Q_OBJECT
+
+public:
+    NativeMessagingSession(const QString &extensionId,
+                           const QString &appName,
+                           QObject *parent = nullptr);
+    ~NativeMessagingSession() override;
+
+    // Manifest resolution — static so the resolution rule stays
+    // shared with the smoke fixture's installer.  Answers the
+    // absolute program path, or a typed error code: 'bad-name',
+    // 'not-found' (no manifest, or one pointing at nothing
+    // runnable), 'invalid-manifest', 'unsupported-type',
+    // 'forbidden' (manifest exists but the extension's origin is
+    // not on its allowed_origins list).
+    static QString userHostsDir();
+    static QStringList searchDirs();
+    static bool resolve(const QString &appName,
+                        const QString &extensionId,
+                        QString *program, QString *error);
+
+    void start(const QString &program);
+    void post(const QJsonValue &message);
+    // Extension-side disconnect — stdin closes, then SIGTERM.  No
+    // 'disconnected' emit: the page already knows it hung up.
+    void stop();
+
+signals:
+    void message(const QJsonValue &message);
+    // Host-side teardown — 'spawn-failed', 'host-exited' (a clean
+    // exit included), 'bad-message' (oversized or malformed frame).
+    void disconnected(const QString &error, int exitCode);
+
+private:
+    void drainStdout();
+    void fail(const QString &code, int exitCode);
+
+    QString m_extensionId;
+    QString m_appName;
+    QProcess *m_process = nullptr;
+    QByteArray m_inbox;
+    // Frames posted while the process was still Starting — flushed
+    // on started(); dropping them would silently eat a same-tick
+    // postMessage (the connect-then-post ordering the shim emits).
+    QByteArray m_outbox;
+    bool m_dead = false;
 };
 
 // BW13: whether the extension's REVIEWED manifest granted the

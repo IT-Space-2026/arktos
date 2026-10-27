@@ -282,6 +282,25 @@
             }
             return;
         }
+        if (name === '__arktos.nativeMessage') {
+            // BW08: a framed stdout message from the native host —
+            // fires the extension port's onMessage (msg, port).
+            if (payload && shim.nativePorts[payload.portId]) {
+                var np = shim.nativePorts[payload.portId];
+                np.onMessage.__fire([payload.msg, np]);
+            }
+            return;
+        }
+        if (name === '__arktos.nativeDisconnect') {
+            // BW08: host exit / spawn failure / protocol error —
+            // the port disconnects with lastError worded like
+            // Chrome's inside the listeners.
+            if (payload)
+                killNativePort(String(payload.portId),
+                               String(payload.error
+                                      || 'host-exited'));
+            return;
+        }
         var ev = shim.events[name];
         if (!ev && name.indexOf('chrome.') === 0)
             ev = shim.events[name.slice('chrome.'.length)];
@@ -1336,6 +1355,104 @@
         return port;
     }
 
+    // BW08 — chrome.runtime.connectNative/sendNativeMessage.  A
+    // native port is a real channel to a spawned host process: the
+    // 'native' bridge ops (connect/post/disconnect) spawn the
+    // manifest-resolved binary and carry the stdio frames; host
+    // pushes arrive as '__arktos.nativeMessage' /
+    // '__arktos.nativeDisconnect'.  Failures are Chrome-typed — the
+    // lastError wording below mirrors Chrome's own strings.
+    shim.nativePorts = {};   // native port id -> Port
+
+    var NATIVE_ERROR_TEXT = {
+        'bad-name': 'Specified native messaging host not found.',
+        'not-found': 'Specified native messaging host not found.',
+        'invalid-manifest':
+            'Invalid native messaging host manifest.',
+        'unsupported-type':
+            'Invalid native messaging host manifest.',
+        'forbidden': 'Access to the specified native messaging '
+                     + 'host is forbidden.',
+        'no-permission': 'You do not have permission to use '
+                         + 'native messaging.',
+        'spawn-failed': 'Failed to start native messaging host.',
+        'host-exited': 'Native host has exited.',
+        'disconnected': 'Native host has exited.',
+        'bad-message': 'Error when communicating with the native '
+                       + 'messaging host.'
+    };
+    function nativeErrorText(code) {
+        return NATIVE_ERROR_TEXT[code]
+            || 'Error when communicating with the native '
+               + 'messaging host.';
+    }
+
+    function killNativePort(localId, code) {
+        var port = shim.nativePorts[localId];
+        if (!port || port.disconnected)
+            return;
+        port.disconnected = true;
+        port.__lastErrorCode = code;
+        delete shim.nativePorts[localId];
+        var message = nativeErrorText(code);
+        // Only host-initiated or failed-connect ends come through
+        // here — a caller's own disconnect() never fires its
+        // onDisconnect.  The defer lets listeners registered in the
+        // same tick as connectNative() land before the fire.
+        setTimeout(function () {
+            setLastError(message);
+            port.onDisconnect.__fire([port]);
+            clearLastError();
+        }, 0);
+    }
+
+    function newNativePort(app) {
+        var localId = 'n' + (++shim.seq) + '#' + Date.now();
+        var port = {
+            name: String(app),
+            // Chrome leaves sender unset on a native port — the
+            // remote end is a process, not an extension context.
+            sender: undefined,
+            onMessage: makeLocalEvent(),
+            onDisconnect: makeLocalEvent(),
+            disconnected: false
+        };
+        port.postMessage = function (msg) {
+            if (port.disconnected)
+                return;
+            call('native', 'post', { portId: localId, msg: msg })
+                .catch(function (e) {
+                    // The session is already gone host-side —
+                    // surface it the same way a host exit does.
+                    killNativePort(
+                        localId,
+                        (e && e.code === 'disconnected')
+                            ? 'host-exited' : 'bad-message');
+                });
+        };
+        port.disconnect = function () {
+            if (port.disconnected)
+                return;
+            port.disconnected = true;
+            delete shim.nativePorts[localId];
+            call('native', 'disconnect', { portId: localId })
+                .catch(function () {});
+        };
+        shim.nativePorts[localId] = port;
+        call('native', 'connect', { app: String(app),
+                                    portId: localId })
+            .catch(function (e) {
+                // Connect-time failure (absent host, forbidden
+                // origin, ungranted permission): the returned port
+                // still exists — it dies on the next tick with the
+                // typed error surfaced through lastError like
+                // Chrome's own connect failure does.
+                killNativePort(localId,
+                               (e && e.code) || 'not-found');
+            });
+        return port;
+    }
+
     // --- chrome.runtime ------------------------------------------------
     var rt = (typeof chrome !== 'undefined') ? chrome.runtime : null;
     if (rt) {
@@ -1817,19 +1934,63 @@
                                 'unsupported', cb);
             }, 'chrome.runtime.getPackageDirectoryEntry');
         }
-        if (typeof rt.sendNativeMessage !== 'function') {
+        {
+            // BW08: unconditional like the managed-storage swap —
+            // the engine DOES ship a native connectNative binding,
+            // but this embedder has no native-messaging service, so
+            // every call answers Chromium's canned "disabled by the
+            // system administrator" — a dead answer dressed as real.
+            // The hosted runtime's port is the working one.
             rtSet('sendNativeMessage', function (app, msg, cb) {
-                return failCall('runtime.sendNativeMessage',
-                                'unsupported', cb);
+                // Chrome's own sendNativeMessage IS a one-shot
+                // native port — spawn, post, first reply resolves,
+                // the host closes.  Building it on the real port
+                // keeps both surfaces agreeing on every failure
+                // shape, including the absent-host typed error.
+                var port = rt.connectNative(app);
+                var done = false;
+                var p = new Promise(function (resolve) {
+                    var finish = function (code, value) {
+                        if (done)
+                            return;
+                        done = true;
+                        try { port.disconnect(); } catch (e) {}
+                        resolve({ e: code, v: value });
+                    };
+                    port.onMessage.addListener(function (m) {
+                        finish(null, m);
+                    });
+                    port.onDisconnect.addListener(function () {
+                        finish(port.__lastErrorCode
+                               || 'host-exited');
+                    });
+                    try {
+                        port.postMessage(msg);
+                    } catch (e) {
+                        finish('bad-message');
+                    }
+                });
+                return p.then(function (r) {
+                    if (r.e) {
+                        // The typed error keeps the code for the
+                        // gap record; the message Chrome-words it.
+                        var err = typedError(r.e,
+                            'runtime.sendNativeMessage');
+                        err.message = 'chrome.runtime.'
+                            + 'sendNativeMessage: '
+                            + nativeErrorText(r.e);
+                        answerCb(cb, undefined,
+                                 nativeErrorText(r.e));
+                        throw err;
+                    }
+                    answerCb(cb, r.v, null);
+                    return r.v;
+                });
             }, 'chrome.runtime.sendNativeMessage');
         }
-        if (typeof rt.connectNative !== 'function') {
-            rtSet('connectNative', function (app) {
-                note('chrome.runtime.connectNative(' + app
-                     + '): no native messaging host');
-                return deadPort(app, 'no-native-messaging');
-            }, 'chrome.runtime.connectNative');
-        }
+        rtSet('connectNative', function (app) {
+            return newNativePort(app);
+        }, 'chrome.runtime.connectNative');
         rtSet('reload', function () {
             // chrome.runtime.reload — the backend's unload+load IS
             // the reload.  The reply may never land because this
