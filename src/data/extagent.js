@@ -412,6 +412,89 @@
     }
 
     // --- inbound host->page pushes ----------------------------------------
+    // Shared runtime.onMessage fan — both delivery paths fire the
+    // same listener set: '__arktos.deliver' (the extEvent push the
+    // main-frame path rides) and agent.__deliverOneShot (BW12's
+    // per-frame path, invoked by runJavaScript straight into the
+    // addressed frame).  respond() is the single-shot answer
+    // channel; the return tells the caller whether a responder may
+    // still answer asynchronously (`return true` or a promise keeps
+    // Chrome's channel open; any other value is ignored).
+    function fireMessageListeners(msg, sender, respond) {
+        var wantAsync = false;
+        var listeners = shimEvents['runtime.onMessage'];
+        var count = listeners ? listeners.__count() : 0;
+        if (listeners) {
+            var fns = listeners.__fns();
+            for (var i = 0; i < fns.length; ++i) {
+                try {
+                    var r = fns[i].call(null, msg, sender, respond);
+                    if (r === true)
+                        wantAsync = true;
+                    else if (r && typeof r.then === 'function') {
+                        wantAsync = true;
+                        r.then(function (v) { respond(v); },
+                               function () { respond(undefined); });
+                    }
+                } catch (e) {
+                    record('onMessage listener: ' + e);
+                }
+            }
+        }
+        return { count: count, wantAsync: wantAsync };
+    }
+
+    // BW12 — a one-shot delivery addressed at THIS frame
+    // (tabs.sendMessage's options.frameId).  The agent runs in every
+    // frame's world, but the SEC24 postMessage forwarder only exists
+    // on the main frame, so a subframe agent could never see an
+    // extEvent push nor answer over the 'respond' rpc — the host
+    // invokes this directly inside the frame's agent world instead.
+    // A synchronous settle rides the call's own return envelope; an
+    // async responder parks the answer on
+    // window.__arktosDeliverResults[mid] where the host's poll
+    // collects it.  Both shapes become the same
+    // '__arktos.deliverResponse' the channel-routed respond op makes.
+    agent.__deliverOneShot = function (payload) {
+        var mid = String(payload && payload.mid || '');
+        var reg = window.__arktosDeliverResults =
+            window.__arktosDeliverResults || {};
+        var parked = false;     // async pending — reg[mid] owns it
+        var result = null;      // sync settle rides the return
+        var answered = false;
+        function respond(value) {
+            if (answered)
+                return;
+            answered = true;
+            var entry = {
+                response: value === undefined ? null : value,
+                hadListeners: true
+            };
+            if (parked)
+                reg[mid] = entry;
+            else
+                result = entry;
+        }
+        var st = fireMessageListeners(
+            payload && payload.msg,
+            (payload && payload.sender) || { id: cfg.id },
+            respond);
+        if (answered)
+            return { __deliver: 1, settled: true,
+                     response: result.response,
+                     hadListeners: true };
+        if (!st.wantAsync)
+            return { __deliver: 1, settled: true,
+                     response: null,
+                     hadListeners: st.count > 0 };
+        // The pending marker distinguishes 'still outstanding' from
+        // 'no entry' for the host's poll.
+        parked = true;
+        reg[mid] = null;
+        return { __deliver: 1, pending: true,
+                 hadListeners: st.count > 0 };
+    };
+
     function onExtEvent(name, payload) {
         if (name === '__arktos.extResponse') {
             if (payload && payload.mid)
@@ -455,35 +538,11 @@
                         record('respond: ' + String(e && e.message || e));
                     });
             }
-            var wantAsync = false;
-            var listeners = shimEvents['runtime.onMessage']
-                ? shimEvents['runtime.onMessage'] : null;
-            var count = listeners ? listeners.__count() : 0;
-            if (listeners) {
-                var fns = listeners.__fns();
-                for (var i = 0; i < fns.length; ++i) {
-                    try {
-                        var r = fns[i].call(null, payload.msg,
-                                            sender, respond);
-                        if (r === true)
-                            wantAsync = true;
-                        else if (r && typeof r.then === 'function') {
-                            // MV3 promise-response: hold the channel
-                            // until it settles.  Any other return
-                            // value is ignored — only sendResponse
-                            // (or a settling promise) answers.
-                            wantAsync = true;
-                            r.then(function (v) { respond(v); },
-                                   function () { respond(undefined); });
-                        }
-                    } catch (e) {
-                        record('onMessage listener: ' + e);
-                    }
-                }
-            }
-            if (!responded && !wantAsync)
+            var st = fireMessageListeners(payload.msg, sender,
+                                          respond);
+            if (!responded && !st.wantAsync)
                 rpc('respond', { mid: mid, response: null,
-                                 hadListeners: count > 0 })
+                                 hadListeners: st.count > 0 })
                     .then(function (r) {
                         if (!r || r.ok !== true)
                             record('respond refused: '

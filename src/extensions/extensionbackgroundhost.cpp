@@ -2591,27 +2591,31 @@ QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
     if (mid.isEmpty() || msg.isUndefined()
             || !ownsRelayKey(m_extensionId, mid))
         return err(QStringLiteral("invalid-argument"));
-    // options.frameId: the page's channel forwarder lives in the
-    // main frame only — subframe addressing is a documented gap,
-    // answered typed rather than silently mis-delivered to frame 0.
+    // options.frameId: BW12 — a nonzero id addresses exactly one
+    // subframe (frame ids are the DFS positions chrome.scripting
+    // exposes).  The subframe path lives in
+    // deliverTabMessageToFrame — the extEvent push below only
+    // exists on the main frame, so a subframe agent must be
+    // invoked inside its own world directly.  options.documentId
+    // stays typed-unsupported: this runtime never mints Chrome's
+    // per-document handles.
     const QJsonObject opts =
         args.value(QStringLiteral("opts")).toObject();
-    if (opts.contains(QStringLiteral("frameId"))
-            && int(opts.value(QStringLiteral("frameId"))
-                       .toDouble(-1)) != 0)
+    if (opts.contains(QStringLiteral("documentId")))
         return err(QStringLiteral("unsupported"));
+    const int frameId =
+        opts.contains(QStringLiteral("frameId"))
+            ? int(opts.value(QStringLiteral("frameId"))
+                      .toDouble(-1))
+            : 0;
+    if (frameId < 0)
+        return err(QStringLiteral("invalid-argument"));
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
     WebView *view = ExtensionShimBackend::viewForTabId(
         int(args.value(QStringLiteral("id")).toDouble(-1)));
     if (!view || !view->page())
         return err(QStringLiteral("not-found"));
-    if (!runtime->agentCovers(m_extensionId, view->page()->url()))
-        return err(QStringLiteral("no-host-access"));
-    ExtensionPageBridge *page =
-        view->page()->findChild<ExtensionPageBridge *>();
-    if (!page)
-        return err(QStringLiteral("no-receiver"));
     // A Chrome-shaped MessageSender for an extension context: the
     // id is trusted from the bridge; url is the calling document's
     // real url minus our internal marker fragment; no .tab field.
@@ -2626,6 +2630,15 @@ QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
         {QStringLiteral("url"), senderUrl},
         {QStringLiteral("origin"),
          QStringLiteral("chrome-extension://") + m_extensionId}};
+    if (frameId != 0)
+        return deliverTabMessageToFrame(mid, msg, sender,
+                                        view->page(), frameId);
+    if (!runtime->agentCovers(m_extensionId, view->page()->url()))
+        return err(QStringLiteral("no-host-access"));
+    ExtensionPageBridge *page =
+        view->page()->findChild<ExtensionPageBridge *>();
+    if (!page)
+        return err(QStringLiteral("no-receiver"));
     if (!runtime->pageDeliver(page, m_extensionId, mid, msg,
                               sender, this))
         // SEC26-3: a duplicate in-flight mid or a full delivery map
@@ -2657,8 +2670,11 @@ QJsonObject ChromeBridge::invokeTabConnect(const QJsonObject &args)
     if (chan.isEmpty() || portId.isEmpty()
             || !ownsRelayKey(m_extensionId, chan))
         return err(QStringLiteral("invalid-argument"));
-    // connectInfo.frameId/documentId: the page agent lives in the
-    // main frame only — the same documented gap sendMessage answers.
+    // connectInfo.frameId/documentId: a connect's channel rides the
+    // SEC24 postMessage forwarder, which lives on the main frame
+    // only — unlike sendMessage's one-shot BW12 delivery there is
+    // no per-frame invoke path for a long-lived port, so a nonzero
+    // frameId stays typed-unsupported here.
     const QJsonObject opts =
         args.value(QStringLiteral("opts")).toObject();
     if ((opts.contains(QStringLiteral("frameId"))
@@ -3236,6 +3252,164 @@ void ChromeBridge::pollExecResult(const QString &execId, int slot,
                                    worldId, key, triesLeft - 1);
             });
         });
+}
+
+// -------------------------------------------------------------------
+// BW12 — the frame-addressed half of tabs.sendMessage.  The page
+// agent's transport (the SEC24 whitelisted postMessage forwarder)
+// exists on the main frame only, so the '__arktos.deliver' push a
+// frame-0 delivery rides can never reach a subframe agent — the
+// message is generated straight into the addressed frame's
+// AgentWorldId instead: agent.__deliverOneShot fires THAT frame's
+// runtime.onMessage listeners and either settles synchronously on
+// the call's return envelope or parks the answer on
+// window.__arktosDeliverResults[mid] for pollTabDeliver to collect.
+// Both shapes leave as the same '__arktos.deliverResponse' push the
+// channel-routed 'respond' op produces on the main path — the shim
+// cannot tell the two transports apart, which is the point.
+//
+// Frame ids are the DFS positions chrome.scripting exposes (the
+// collectFrames ordering — 0 is the main frame); a position outside
+// the live tree is 'not-found'.  The ER16 per-frame coverage check
+// runs BEFORE any source is generated into the frame's document —
+// a covered top-level page does not smuggle messaging into an
+// uncovered subframe.
+// -------------------------------------------------------------------
+
+void ChromeBridge::finishTabDeliver(const QString &mid,
+                                    const QJsonValue &response,
+                                    bool hadListeners)
+{
+    emit hostEvent(QStringLiteral("__arktos.deliverResponse"),
+                   QJsonObject{{QStringLiteral("mid"), mid},
+                               {QStringLiteral("response"), response},
+                               {QStringLiteral("hadListeners"),
+                                hadListeners}});
+}
+
+void ChromeBridge::pollTabDeliver(const QString &mid,
+                                  QWebEngineFrame frame,
+                                  bool hadListeners, int triesLeft)
+{
+    if (!frame.isValid() || triesLeft <= 0) {
+        // The listener held the channel open past the window — the
+        // honest 'port closed' shape (hadListeners true when the
+        // frame's agent reported a listener set).
+        finishTabDeliver(mid, QJsonValue(QJsonValue::Null),
+                         hadListeners);
+        return;
+    }
+    const QPointer<ChromeBridge> self(this);
+    frame.runJavaScript(
+        QStringLiteral(
+            "(window.__arktosDeliverResults||{})[%1]||null")
+            .arg(jsLiteral(mid)),
+        ExtensionBackgroundRuntime::AgentWorldId,
+        [self, this, mid, frame, hadListeners,
+         triesLeft](const QVariant &value) mutable {
+            if (!self)
+                return;
+            const QJsonObject entry = value.toJsonObject();
+            if (!entry.isEmpty()) {
+                frame.runJavaScript(
+                    QStringLiteral(
+                        "delete (window.__arktosDeliverResults||{})"
+                        "[%1]")
+                        .arg(jsLiteral(mid)),
+                    ExtensionBackgroundRuntime::AgentWorldId);
+                finishTabDeliver(
+                    mid, entry.value(QStringLiteral("response")),
+                    entry.value(QStringLiteral("hadListeners"))
+                        .toBool());
+                return;
+            }
+            QTimer::singleShot(150, this, [self, this, mid, frame,
+                                           hadListeners,
+                                           triesLeft]() {
+                if (self)
+                    pollTabDeliver(mid, frame, hadListeners,
+                                   triesLeft - 1);
+            });
+        });
+}
+
+QJsonObject ChromeBridge::deliverTabMessageToFrame(
+        const QString &mid, const QJsonValue &msg,
+        const QJsonObject &sender, QWebEnginePage *page,
+        int frameId)
+{
+    auto ok = [](const QJsonValue &v = QJsonValue()) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), true);
+        if (!v.isUndefined())
+            o.insert(QStringLiteral("result"), v);
+        return o;
+    };
+    auto err = [](const QString &code) {
+        QJsonObject o;
+        o.insert(QStringLiteral("ok"), false);
+        o.insert(QStringLiteral("error"), code);
+        return o;
+    };
+    if (!page)
+        return err(QStringLiteral("not-found"));
+    QList<QWebEngineFrame> frames;
+    QList<QUrl> coverUrls;
+    const QWebEngineFrame mainFrame = page->mainFrame();
+    if (mainFrame.isValid())
+        collectFrames(mainFrame, page->url(), &frames, &coverUrls);
+    if (frameId < 0 || frameId >= frames.size())
+        return err(QStringLiteral("not-found"));
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    if (!runtime->agentCovers(m_extensionId, coverUrls.at(frameId)))
+        return err(QStringLiteral("no-host-access"));
+    QWebEngineFrame frame = frames.at(frameId);
+    // The delivery source: invoke the addressed frame's agent entry
+    // point.  A frame whose world never ran the agent (no profile
+    // injection — e.g. an originless document) answers null, which
+    // lands as 'receiving end does not exist' — Chrome's own shape
+    // for a frame with no live listener realm.
+    QJsonObject payload{
+        {QStringLiteral("mid"), mid},
+        {QStringLiteral("msg"), msg},
+        {QStringLiteral("sender"), sender}};
+    QString payloadJson = QString::fromUtf8(
+        QJsonDocument(payload).toJson(QJsonDocument::Compact));
+    // JSON permits raw U+2028/2029 — JS source does not.
+    payloadJson.replace(QChar(0x2028), QStringLiteral("\\u2028"))
+        .replace(QChar(0x2029), QStringLiteral("\\u2029"));
+    const QString source = QStringLiteral(
+        "(function(){var __a=null;"
+        "try{__a=(window.__arktosExtAgents||{})[%1]||null;}"
+        "catch(e){}"
+        "if(__a&&typeof __a.__deliverOneShot==='function')"
+        "return __a.__deliverOneShot(%2);"
+        "return null;})()")
+        .arg(jsLiteral(m_extensionId), payloadJson);
+    const QPointer<ChromeBridge> self(this);
+    frame.runJavaScript(
+        source, ExtensionBackgroundRuntime::AgentWorldId,
+        [self, this, mid, frame](const QVariant &value) {
+            if (!self)
+                return;
+            const QJsonObject envelope = value.toJsonObject();
+            const bool hadListeners =
+                envelope.value(QStringLiteral("hadListeners"))
+                    .toBool();
+            if (envelope.value(QStringLiteral("pending")).toBool()) {
+                // A responder holds the channel — collect the parked
+                // answer (80 * 150ms sits inside the shim's own 15s
+                // safety net).
+                pollTabDeliver(mid, frame, hadListeners, 80);
+                return;
+            }
+            finishTabDeliver(
+                mid,
+                envelope.value(QStringLiteral("response")),
+                hadListeners);
+        });
+    return ok(QJsonObject{{QStringLiteral("delivered"), true}});
 }
 
 // -------------------------------------------------------------------

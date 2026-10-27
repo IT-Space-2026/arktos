@@ -198,6 +198,21 @@ private:
     void pollExecResult(const QString &execId, int slot, int frameId,
                         QWebEngineFrame frame, quint32 worldId,
                         const QString &key, int triesLeft);
+    // BW12: the frame-addressed half of tabs.sendMessage — the
+    // extEvent push the frame-0 path rides only exists on the main
+    // frame, so a subframe delivery is generated straight into the
+    // frame's agent world; the settled answer leaves as the same
+    // '__arktos.deliverResponse' push the channel-routed respond op
+    // produces.
+    QJsonObject deliverTabMessageToFrame(
+            const QString &mid, const QJsonValue &msg,
+            const QJsonObject &sender, QWebEnginePage *page,
+            int frameId);
+    void pollTabDeliver(const QString &mid, QWebEngineFrame frame,
+                        bool hadListeners, int triesLeft);
+    void finishTabDeliver(const QString &mid,
+                          const QJsonValue &response,
+                          bool hadListeners);
 
     // ER07/ER08: in-flight scripting fan-outs — execId -> one result
     // slot per selected frame plus an expiry so a frame whose eval

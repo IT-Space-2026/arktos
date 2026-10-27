@@ -50,6 +50,7 @@
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
 #include "extensionmanager.h"
+#include "extensionshimbackend.h"
 #include "fingerprintprotector.h"
 #include "history.h"
 #include "historymanager.h"
@@ -177,6 +178,7 @@
 #include <QtWebEngineCore/QWebEngineExtensionInfo>
 #include <QtWebEngineCore/QWebEngineExtensionManager>
 #include <QtWebEngineCore/QWebEngineFindTextResult>
+#include <QtWebEngineCore/QWebEngineFrame>
 #include <QtWebEngineCore/QWebEngineLoadingInfo>
 #include <QtWebEngineCore/QWebEngineProfile>
 #include <QtWebEngineCore/QWebEngineUrlRequestInfo>
@@ -13455,7 +13457,11 @@ int main(int argc, char **argv)
                 "\"content_scripts\":[{\"matches\":"
                 "[\"http://127.0.0.1/*\",\"http://localhost/*\"],"
                 "\"js\":[\"cs.js\"],\"run_at\":\"document_start\","
-                "\"all_frames\":false}],"
+                "\"all_frames\":false},{\"matches\":"
+                "[\"http://127.0.0.1/*\",\"http://localhost/*\"],"
+                "\"js\":[\"cs_frame.js\"],"
+                "\"run_at\":\"document_start\","
+                "\"all_frames\":true}],"
                 "\"action\":{\"default_popup\":\"popup.html\","
                 "\"default_title\":\"Smoke\"},"
                 "\"background\":{\"service_worker\":\"sw.js\"}}");
@@ -13484,6 +13490,30 @@ int main(int argc, char **argv)
                 " window.__csDisc=true;});\n"
                 "port.postMessage({ping:'hello-cs'});\n");
             csJs.close();
+            // BW12: the all_frames content script — answers a
+            // 'frameEcho' one-shot with WHICH frame's listener fired,
+            // so the smoke can prove tabs.sendMessage's frameId
+            // routing reached (only) the addressed frame.
+            // __csFrameReady is the readiness marker the leg polls
+            // inside the subframe's agent world.
+            QFile csFrameJs(extDir + QLatin1String("/cs_frame.js"));
+            if (!csFrameJs.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-host-smoke: FAIL"
+                           " (cannot write cs_frame.js)";
+                return 1;
+            }
+            csFrameJs.write(
+                "window.__csFrameReady=false;\n"
+                "chrome.runtime.onMessage.addListener("
+                "function(m,s,r){\n"
+                " if(m&&m.cmd==='frameEcho'){\n"
+                "  r({from:window===window.top?'main':'sub',\n"
+                "     href:String(location.href)});\n"
+                " }\n"
+                " return false;\n"
+                "});\n"
+                "window.__csFrameReady=true;\n");
+            csFrameJs.close();
             // EXT17: the action popup document — the sibling-page
             // injection must land on it, and its sendMessage must
             // reach the hosted background over the relay.
@@ -13594,7 +13624,9 @@ int main(int argc, char **argv)
         // its own bridge; 7 = the popup probe runs; 8 = fixture-only
         // hosted-side ping verification; 9 = the real extension's
         // popup gate inspection; 10 = the autofill attempt against a
-        // loopback login form; 1 = waiting for teardown after
+        // loopback login form; 15 = the BW12 per-frame sendMessage
+        // legs between the BW05 port legs and the reconnect leg;
+        // 1 = waiting for teardown after
         // disable; 2 = the re-enable respawn must reach Ready again.
         auto phase = std::make_shared<int>(0);
         auto hostTicks = std::make_shared<int>(0);
@@ -14891,10 +14923,25 @@ int main(int argc, char **argv)
                         QObject::connect(socket,
                             &QTcpSocket::readyRead, socket,
                             [socket]() {
-                            socket->readAll();
-                            const QByteArray body =
-                                "<html><body><h1>port fixture</h1>"
-                                "</body></html>";
+                            const QByteArray req = socket->readAll();
+                            // BW12: /frames serves a document with a
+                            // covered subframe (/framesub) and an
+                            // uncovered data: subframe — everything
+                            // else gets the plain port-fixture page.
+                            QByteArray body;
+                            if (req.contains("/framesub"))
+                                body = "<html><body><h1>frame "
+                                       "sub</h1></body></html>";
+                            else if (req.contains("/frames"))
+                                body = "<html><body>"
+                                    "<iframe src=\"/framesub\">"
+                                    "</iframe>"
+                                    "<iframe src=\"data:text/html,"
+                                    "%3Cb%3Ed%3C/b%3E\"></iframe>"
+                                    "</body></html>";
+                            else
+                                body = "<html><body><h1>port "
+                                       "fixture</h1></body></html>";
                             socket->write("HTTP/1.1 200 OK\r\n"
                                 "Content-Type: text/html\r\n"
                                 "Content-Length: "
@@ -15018,9 +15065,254 @@ int main(int argc, char **argv)
                     }
                     check(true, "tab close propagates onDisconnect "
                                 "to the hosted port end");
+                    // BW12's per-frame sendMessage legs run next —
+                    // phase 13's reconnect window follows them.
+                    *phase = 15;
+                    *afDrove = false;
+                    *afStep = 0;
+                    *probeTicks = 0;
+                });
+            } else if (*phase == 15) {  // BW12: per-frame sendMessage
+                if (!host)
+                    return;
+                if (!*afDrove) {
+                    *afDrove = true;
+                    smokeWindow = application.newMainWindow();
+                    if (!smokeWindow || !smokeWindow->tabWidget()) {
+                        die(QStringLiteral("no frame-leg window"));
+                        return;
+                    }
+                    TabWidget *tw = smokeWindow->tabWidget();
+                    tw->newTab();
+                    // The strip's CURRENT tab — newTab() makes the
+                    // fresh tab current, so index 0 is the window's
+                    // pre-existing blank and an active-tab query
+                    // would never land there.
+                    WebView *view = tw->webView(tw->currentIndex());
+                    if (!view) {
+                        die(QStringLiteral("no frame-leg tab"));
+                        return;
+                    }
+                    view->load(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/frames")
+                        .arg(afServer->serverPort())));
+                    return;
+                }
+                ++*probeTicks;
+                TabWidget *frameTw = smokeWindow
+                        && smokeWindow->tabWidget()
+                    ? smokeWindow->tabWidget() : nullptr;
+                WebView *view = frameTw
+                    ? frameTw->webView(frameTw->currentIndex())
+                    : nullptr;
+                if (!view || !view->page()) {
+                    hostPoll->stop();
+                    check(false, "frame-leg tab survives");
                     *phase = 13;
                     *afDrove = false;
+                    *afStep = 0;
                     *probeTicks = 0;
+                    hostPoll->start();
+                    return;
+                }
+                // Frame positions here are the DFS children order —
+                // the same numbering deliverTabMessageToFrame's
+                // collectFrames answers for.
+                const QWebEngineFrame mainFrame =
+                    view->page()->mainFrame();
+                const QList<QWebEngineFrame> kids =
+                    mainFrame.isValid()
+                        ? mainFrame.children()
+                        : QList<QWebEngineFrame>();
+                int subIdx = -1;
+                int dataIdx = -1;
+                for (int i = 0; i < kids.size(); ++i) {
+                    const QUrl u = kids.at(i).url();
+                    if (u.scheme() == QLatin1String("data"))
+                        dataIdx = i + 1;
+                    else if (u.path().contains(
+                                 QLatin1String("framesub")))
+                        subIdx = i + 1;
+                }
+                if (subIdx < 0) {
+                    if (*probeTicks > 80) {
+                        hostPoll->stop();
+                        check(false, "covered subframe committed");
+                        closeSmokeWindow();
+                        *phase = 13;
+                        *afDrove = false;
+                        *afStep = 0;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    }
+                    return;
+                }
+                if (*afStep == 0) {
+                    // Gate the send batch on the addressed frame's
+                    // declared content script having armed its
+                    // listener — the fixture stamps __csFrameReady
+                    // after addListener inside its agent world.
+                    QWebEngineFrame subFrame = kids.at(subIdx - 1);
+                    WebView *frameView = view;
+                    subFrame.runJavaScript(
+                        QStringLiteral(
+                            "window.__csFrameReady===true"
+                            "?'yes':'no'"),
+                        ExtensionBackgroundRuntime::AgentWorldId,
+                        [&, host, subIdx, dataIdx,
+                         frameView](const QVariant &v) {
+                        if (v.toString()
+                                != QLatin1String("yes")) {
+                            if (*probeTicks > 120) {
+                                hostPoll->stop();
+                                check(false, "subframe content "
+                                             "script armed");
+                                closeSmokeWindow();
+                                *phase = 13;
+                                *afDrove = false;
+                                *afStep = 0;
+                                *probeTicks = 0;
+                                hostPoll->start();
+                            }
+                            return;
+                        }
+                        *afStep = 1;
+                        *probeTicks = 0;
+                        // Legs through the hosted background's real
+                        // chrome.tabs.sendMessage, resolved the way
+                        // a real extension resolves "the" tab:
+                        // {active:true,lastFocusedWindow:true}.  The
+                        // leg records the resolved id vs the host-
+                        // known tab id — active-tab resolution must
+                        // reflect the real tab.  Sends: unaddressed
+                        // (main-frame path), frameId-addressed into
+                        // the covered subframe, and two typed-error
+                        // legs — an out-of-tree frameId, plus the
+                        // uncovered data: frame when it
+                        // materialized.
+                        const QString dataLeg =
+                            dataIdx >= 0
+                                ? QStringLiteral(",['data',%1]")
+                                      .arg(dataIdx)
+                                : QString();
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__frames={done:false};"
+                            "chrome.tabs.query({active:true,"
+                            "lastFocusedWindow:true},"
+                            "function(foc){"
+                            "var t=foc&&foc[0];"
+                            "var o={done:false,"
+                            "want:%3,"
+                            "foc:(foc||[]).map(function(x){return{id:x.id,"
+                            "u:String(x.url),w:x.windowId};})};"
+                            "self.__frames=o;"
+                            "if(!t){o.done=true;return;}"
+                            "var legs=[['main',-1],['sub',%1],"
+                            "['far',42]%2];"
+                            "var i=0;"
+                            "function next(){"
+                            " if(i>=legs.length){o.done=true;return;}"
+                            " var L=legs[i++];"
+                            " var opts=L[1]<0?{}:{frameId:L[1]};"
+                            " chrome.tabs.sendMessage(t.id,"
+                            " {cmd:'frameEcho'},opts,function(r){"
+                            "  o[L[0]]={r:r===undefined?null:r,"
+                            "   le:chrome.runtime.lastError"
+                            "    ?String(chrome.runtime.lastError"
+                            "      .message):null};"
+                            "  next();});}"
+                            "next();});")
+                            .arg(subIdx).arg(dataLeg)
+                            .arg(ExtensionShimBackend::tabIdFor(
+                                     frameView)),
+                            [](const QVariant &) {});
+                    });
+                    return;
+                }
+                host->page()->runJavaScript(QStringLiteral(
+                    "self.__frames?JSON.stringify(self.__frames)"
+                    ":'null'"),
+                    [&](const QVariant &v) {
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (!o.value(QLatin1String("done")).toBool()) {
+                        if (*probeTicks > 120) {
+                            hostPoll->stop();
+                            check(false, "frame-routing batch "
+                                         "settled");
+                            closeSmokeWindow();
+                            *phase = 13;
+                            *afDrove = false;
+                            *afStep = 0;
+                            *probeTicks = 0;
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    hostPoll->stop();
+                    qInfo().noquote()
+                        << "extension-host-smoke: frame legs"
+                        << QString::fromUtf8(QJsonDocument(o)
+                               .toJson(QJsonDocument::Compact));
+                    const QJsonArray focTabs =
+                        o.value(QLatin1String("foc")).toArray();
+                    check(focTabs.size() == 1
+                          && focTabs.at(0).toObject()
+                                     .value(QLatin1String("id"))
+                                     .toInt()
+                              == o.value(QLatin1String("want"))
+                                     .toInt(),
+                          "active-tab query resolves the real "
+                          "frame-fixture tab");
+                    const QJsonObject main =
+                        o.value(QLatin1String("main")).toObject();
+                    const QJsonObject mainR =
+                        main.value(QLatin1String("r")).toObject();
+                    check(mainR.value(QLatin1String("from"))
+                                  .toString()
+                              == QLatin1String("main"),
+                          "unaddressed sendMessage lands on the "
+                          "main frame");
+                    const QJsonObject sub =
+                        o.value(QLatin1String("sub")).toObject();
+                    const QJsonObject subR =
+                        sub.value(QLatin1String("r")).toObject();
+                    check(subR.value(QLatin1String("from"))
+                                  .toString()
+                              == QLatin1String("sub")
+                          && subR.value(QLatin1String("href"))
+                                 .toString().contains(
+                                     QLatin1String("framesub")),
+                          "frameId sendMessage reaches the "
+                          "addressed subframe's content script");
+                    check(sub.value(QLatin1String("le")).isNull(),
+                          "frameId sendMessage response path "
+                          "returns without lastError");
+                    const QJsonObject far =
+                        o.value(QLatin1String("far")).toObject();
+                    check(!far.value(QLatin1String("le"))
+                              .toString().isEmpty(),
+                          "out-of-tree frameId answers a typed "
+                          "error");
+                    if (o.contains(QLatin1String("data"))) {
+                        const QJsonObject data =
+                            o.value(QLatin1String("data")).toObject();
+                        check(data.value(QLatin1String("le"))
+                                  .toString().contains(
+                                      QLatin1String("no-host-access")),
+                              "uncovered subframe answers a typed "
+                              "error (no-host-access)");
+                    } else {
+                        qInfo() << "extension-host-smoke: data:"
+                                   " iframe never materialized —"
+                                   " uncovered-frame leg skipped";
+                    }
+                    closeSmokeWindow();
+                    *phase = 13;
+                    *afDrove = false;
+                    *afStep = 0;
+                    *probeTicks = 0;
+                    hostPoll->start();
                 });
             } else if (*phase == 13) {  // BW05: reconnect + teardown
                 if (!host)
