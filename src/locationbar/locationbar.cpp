@@ -86,15 +86,20 @@ LocationBar::LocationBar(QWidget *parent)
     addWidget(m_privacyIndicator, RightSide);
 
     // clear button on the right — shown only while the user is
-    // editing (focus + non-empty text), not as permanent chrome over
-    // a loaded url, matching Chrome/Firefox behavior.
+    // editing (a live user edit under the caret), not as permanent
+    // chrome over a loaded url, matching Chrome/Firefox behavior.
     m_clearButton = new ClearButton(this);
     connect(m_clearButton, &ClearButton::clicked,
             this, &QLineEdit::clear);
     connect(this, &QLineEdit::textChanged, this,
-            [this](const QString &t) {
-        m_clearButton->setVisible(hasFocus() && !t.isEmpty());
-    });
+            [this](const QString &) { updateClearButtonVisibility(); });
+    // MAC05: the widget's own FocusOut is not the only blur edge
+    // worth hiding on.  The bar lives inside a native NSToolbar item
+    // on macOS (unified title+toolbar), where focus transitions out
+    // of toolbar item views are the flaky path — a blur Qt tracked
+    // but could not deliver as a widget event still recomputes here.
+    connect(qApp, &QApplication::focusChanged, this,
+            [this](QWidget *, QWidget *) { updateClearButtonVisibility(); });
     addWidget(m_clearButton, RightSide);
 
     updateTextMargins();
@@ -359,9 +364,22 @@ void LocationBar::paintEvent(QPaintEvent *event)
     painter.drawText(domainX, baseline, shown.mid(start, length));
 }
 
+void LocationBar::updateClearButtonVisibility()
+{
+    // MAC05: "a live edit is in the field" is the gate, not bare
+    // focus — the button is an affordance for user-typed text under
+    // the caret, never chrome over a displayed url.  Reading the
+    // baseline flag means every programmatic url write re-hides it
+    // even where Qt's focus reporting cannot be trusted (native
+    // NSToolbar hosting on macOS, where a FocusOut can be missed and
+    // leave hasFocus() stuck true).
+    m_clearButton->setVisible(hasFocus() && !hasBaselineText()
+                              && !text().isEmpty());
+}
+
 void LocationBar::focusInEvent(QFocusEvent *event)
 {
-    m_clearButton->setVisible(!text().isEmpty());
+    updateClearButtonVisibility();
     QLineEdit::focusInEvent(event);
 }
 

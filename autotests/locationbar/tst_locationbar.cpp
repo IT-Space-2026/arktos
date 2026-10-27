@@ -155,6 +155,7 @@ private slots:
     void escapeRestoresUrl();
     void backspaceClearsField();
     void focusOutRestoresUrl();
+    void clearButtonEditingGate();
     void doubleClickSelects();
     void dropUrl();
     void siteIcon();
@@ -359,6 +360,61 @@ void tst_LocationBar::focusOutRestoresUrl()
     bar.clear();
     bar.sendFocusOut();
     QCOMPARE(bar.text(), QString::fromUtf8(view.url().toEncoded()));
+}
+
+// MAC05: the clear (x) affordance belongs to a live user edit only —
+// a displayed url, a focused-but-baseline field, and any programmatic
+// write must all leave it hidden.  The v1.0 dmg could get it stuck
+// visible: the gate read bare hasFocus() and the bar lives inside a
+// native NSToolbar item on macOS, the flaky focus path.
+void tst_LocationBar::clearButtonEditingGate()
+{
+    QWidget window;
+    QVBoxLayout layout(&window);
+    TestLocationBar *bar = new TestLocationBar(&window);
+    layout.addWidget(bar);
+    QLineEdit *focusSponge = new QLineEdit(&window);
+    layout.addWidget(focusSponge);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    ClearButton *clear = bar->findChild<ClearButton *>();
+    QVERIFY(clear);
+    QVERIFY(!clear->isVisible());
+
+    // Focus plus a programmatic url write is display state, not an
+    // edit — the old hasFocus() gate showed the button here.
+    bar->setFocus();
+    QVERIFY(bar->hasFocus());
+    bar->setText(QLatin1String("http://displayed.example/"));
+    QVERIFY(!clear->isVisible());
+
+    // Typing is a live edit — the affordance appears.
+    QTest::keyClicks(bar, QLatin1String("a"));
+    QVERIFY(clear->isVisible());
+
+    // Blur drops it.
+    focusSponge->setFocus();
+    QVERIFY(!bar->hasFocus());
+    QVERIFY(!clear->isVisible());
+
+    // Refocusing mid-edit session keeps it — the typed text is still
+    // a pending edit, not baseline display text.
+    bar->setFocus();
+    QVERIFY(bar->hasFocus());
+    QVERIFY(clear->isVisible());
+
+    // A programmatic write re-baselines the text and re-hides the
+    // button even while the bar still holds focus.
+    bar->setText(QLatin1String("http://rewritten.example/"));
+    QVERIFY(!clear->isVisible());
+
+    // Clicking the affordance still clears the field and drops it.
+    QTest::keyClicks(bar, QLatin1String("b"));
+    QVERIFY(clear->isVisible());
+    clear->click();
+    QVERIFY(bar->text().isEmpty());
+    QVERIFY(!clear->isVisible());
 }
 
 void tst_LocationBar::doubleClickSelects()

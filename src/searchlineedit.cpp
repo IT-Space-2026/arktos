@@ -32,8 +32,12 @@
 #include "clearbutton.h"
 #include "searchbutton.h"
 
+#include <qapplication.h>
+#include <qevent.h>
+
 SearchLineEdit::SearchLineEdit(QWidget *parent)
     : LineEdit(parent)
+    , m_clearButtonEditingGated(false)
 {
     init();
 }
@@ -48,14 +52,49 @@ void SearchLineEdit::init()
     m_clearButton = new ClearButton(this);
     connect(m_clearButton, &ClearButton::clicked,
             this, &SearchLineEdit::clear);
-    connect(this, &SearchLineEdit::textChanged,
-            m_clearButton, &ClearButton::textChanged);
+    connect(this, &SearchLineEdit::textChanged, this,
+            [this](const QString &) { updateClearButtonVisibility(); });
+    // MAC05: same blur insurance as the location bar — an app-level
+    // focus move recomputes the gate even when the widget's own
+    // FocusOut never arrived (toolbar-hosted fields on macOS).
+    connect(qApp, &QApplication::focusChanged, this,
+            [this](QWidget *, QWidget *) { updateClearButtonVisibility(); });
     addWidget(m_clearButton, RightSide);
     m_clearButton->hide();
 
     updateTextMargins();
     setInactiveText(tr("Search"));
     setAccessibleName(tr("Search"));
+}
+
+void SearchLineEdit::setClearButtonEditingGated(bool gated)
+{
+    m_clearButtonEditingGated = gated;
+    updateClearButtonVisibility();
+}
+
+bool SearchLineEdit::clearButtonEditingGated() const
+{
+    return m_clearButtonEditingGated;
+}
+
+void SearchLineEdit::updateClearButtonVisibility()
+{
+    m_clearButton->setVisible(m_clearButtonEditingGated
+        ? hasFocus() && !hasBaselineText() && !text().isEmpty()
+        : !text().isEmpty());
+}
+
+void SearchLineEdit::focusInEvent(QFocusEvent *event)
+{
+    LineEdit::focusInEvent(event);
+    updateClearButtonVisibility();
+}
+
+void SearchLineEdit::focusOutEvent(QFocusEvent *event)
+{
+    LineEdit::focusOutEvent(event);
+    updateClearButtonVisibility();
 }
 
 ClearButton *SearchLineEdit::clearButton() const

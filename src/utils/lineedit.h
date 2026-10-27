@@ -108,6 +108,15 @@ protected:
     bool deletingText() const { return m_deleteBurst; }
     // An explicit completion pick commits forward intent.
     void endDeleteBurst() { m_deleteBurst = false; }
+    // SRCH10: true while the field holds baseline text — the last
+    // programmatic write, or what it had at focus-in — i.e. the
+    // content is NOT a live user edit.  Chrome that only belongs
+    // while the user is editing (MAC05's clear affordance) reads
+    // this instead of trusting bare focus state, which is the flaky
+    // edge for fields hosted inside the native unified toolbar on
+    // macOS: a url display write re-baselines the text and drops the
+    // affordance no matter what Qt's focus tracker believes.
+    bool hasBaselineText() const { return m_pristine; }
 
 protected slots:
     void updateTextMargins();

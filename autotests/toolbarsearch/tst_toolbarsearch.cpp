@@ -25,9 +25,12 @@
 #include <QtGui/QtGui>
 #include <qstandarditemmodel.h>
 #include <qcompleter.h>
+#include <qlayout.h>
+#include <qlineedit.h>
 #include <qurlquery.h>
 #include <qwebengineprofile.h>
 
+#include "clearbutton.h"
 #include "toolbarsearch.h"
 #include "searchbar.h"
 #include "searchbutton.h"
@@ -69,6 +72,7 @@ private slots:
     void fieldEnginePrefs();
     void suggestionsOptIn();
     void searchBarAnimation();
+    void clearButtonGated();
 };
 
 void tst_ToolbarSearch::initTestCase()
@@ -514,6 +518,40 @@ void tst_ToolbarSearch::searchBarAnimation()
     QVERIFY(edit);
     QTest::keyClick(edit, Qt::Key_Return);
     QCOMPARE(bar.nextCount, 1);
+}
+
+// MAC05: the nav-bar search field opts into the editing gate — the
+// clear button lives only while a user edit is in the field.  Kept
+// search text (the default) is baseline, not an edit, so it can no
+// longer pin the button permanently like the v1.0 dmg showed.
+void tst_ToolbarSearch::clearButtonGated()
+{
+    QWidget window;
+    QVBoxLayout layout(&window);
+    ToolbarSearch *search = new ToolbarSearch(&window);
+    layout.addWidget(search);
+    QLineEdit *focusSponge = new QLineEdit(&window);
+    layout.addWidget(focusSponge);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+    QVERIFY(search->clearButtonEditingGated());
+    ClearButton *clear = search->clearButton();
+    QVERIFY(clear);
+    QVERIFY(!clear->isVisible());
+
+    // Kept text written programmatically under focus: display state.
+    search->setFocus();
+    QVERIFY(search->hasFocus());
+    search->setText(QLatin1String("kept query"));
+    QVERIFY(!clear->isVisible());
+
+    // A live user edit shows it; blur drops it.
+    QTest::keyClicks(search, QLatin1String("x"));
+    QVERIFY(clear->isVisible());
+    focusSponge->setFocus();
+    QVERIFY(!search->hasFocus());
+    QVERIFY(!clear->isVisible());
 }
 
 QTEST_MAIN(tst_ToolbarSearch)

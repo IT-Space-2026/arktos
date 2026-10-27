@@ -384,7 +384,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC02 | macOS verify: extension action popup renders (Bitwarden login) — was white, then black under WA_NativeWindow; 37ea0aaf switched to frameless Tool window — details below | done | 0 | Blind fix: popup now attaches page->view eagerly + wires chromeBridge pre-commit (was viewless load + setPage on loadFinished — the one ordering no proven-good WebEngine surface shares); macOS surface Tool/NSPanel -> frameless Qt::Window (PiP/DevTools class). Linux-verified: ARKTOS_DEBUG_POPUP grab shows fully rendered Bitwarden login popup; quit-after-load + actionPopupSelfWires PASS. Runtime mac-verify still owed |
 | MAC03 | macOS verify: reader button presence + glyph — now eligibility-gated in 37ea0aaf (was permanently visible); if "looks wrong" persists compare glyph vs Safari/Firefox on Retina — details below | done | 0 | Blind fix: presence stomped by updateReaderState — action stayed setVisible(readerUsable) + trailing widget setVisible undid refresh() gate on every tab switch, and unified NSToolbar ignores widget hide() entirely (item latched on). Now action+widget gated on readerUsable && isAvailable(); glyph engine already matches ChromeIconEngine contract (DPR pixmap, pinned Accent, 1.35 stroke) — no further blind geometry guess. Verified: rewritten tst readerModeButton PASS + reader/theme suite green offscreen; mac runtime verify still owed |
 | MAC04 | macOS fix: extension settings page shows no enable tick boxes — details below | done | 0 | Blind fix: per-row enable control is now a real QCheckBox index widget (rendered via standalone-control path, not the style-painted item-view indicator that failed on the macOS dmg); item keeps CheckStateRole so toggling still routes itemChanged->setExtensionEnabled, and a column-0 delegate drops the painted indicator/text so nothing double-draws. Verified: tst_settingsdialog 59/59 incl. new box legs, clean pixel render, --quit-after-load exit 0; mac runtime verify still owed |
-| MAC05 | macOS fix: search/url bar renders a stray mini close/clear button — details below | pending | 0 | USER-CONFIRMED on v1.0 dmg: mini close button still present in the url/search field (07162d22 focus-gated it but it persists on macOS). Audit SearchLineEdit/clear-button code path under Q_OS_MAC — likely setClearButtonEnabled true or the gated wiring not applied. Fix blind, runtime mac-verify owed |
+| MAC05 | macOS fix: search/url bar renders a stray mini close/clear button — details below | done | 0 | Blind fix: clear (x) affordance is now gated on a live user edit (focus + non-baseline text via SRCH10 pristine bookkeeping), not bare hasFocus() — a programmatic url write always re-baselines and re-hides it even under stuck Qt focus in the native NSToolbar; ToolbarSearch opts into the same gate (was ungated entirely), dialog/find fields keep the always-on-text affordance; qApp focusChanged covers undelivered FocusOut. Verified: tst_locationbar 58/58 + tst_toolbarsearch 13/13 incl. new gate legs, searchlineedit 4/4, tabwidget 46/46, --quit-after-load exit 0; chromeSlots SIGSEGV reproduces on unmodified HEAD (pre-existing). mac runtime verify still owed |
 | MAC06 | macOS fix: bundled Bitwarden never installs — details below | pending | 0 | USER-CONFIRMED on v1.0 dmg: Bitwarden does not appear/work. Audit installBundledExtensions on macOS: bundledExtensionsPath() must resolve Contents/Resources/share/arktos/extensions inside the .app; also the one-shot extensions/bundled/ consumed marker means a profile that ran a broken earlier build never retries — add retry when zip present but extension absent. Fix blind, runtime mac-verify owed |
 
 ## Task details
@@ -3928,3 +3928,73 @@ checkbox per row (offscreen); arktos --quit-after-load exit 0.
 macOS runtime verification is still owed — if the box still doesn't
 appear, the residual lead is that ALL native checkboxes fail on that
 build (would surface across Preferences, not just this page).
+
+
+### MAC05
+
+User report (v1.0 dmg): a stray mini close/clear button persists in
+the url/search field even though 07162d22 focus-gated it.  Audit the
+SearchLineEdit/clear-button path under Q_OS_MAC — the likely causes
+are setClearButtonEnabled(true) leaking in, or the gated wiring not
+applied on every nav-bar field.  Fix blind on Linux; runtime
+verification on the macOS dmg is still owed.
+
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Audit conclusion — setClearButtonEnabled is not the cause (the only
+users are devtools filter fields in bidipanel.cpp).  The gated wiring
+had two real holes:
+
+- LocationBar keyed the button on `hasFocus() && !text().isEmpty()`.
+  On macOS the nav bar is hosted in a native NSToolbar
+  (setUnifiedTitleAndToolBarOnMac(true); Qt6's cocoa plugin builds a
+  real NSToolbar and embeds the QToolBar), and FocusOut delivery out
+  of toolbar item views is the flaky path — a FocusIn that lands with
+  no matching FocusOut latches hasFocus() true, and every later
+  textChanged re-shows the button permanently.
+- SearchLineEdit (ToolbarSearch — the nav-bar "search field" half of
+  the report) was never gated at all: textChanged ->
+  ClearButton::textChanged showed it on any non-empty text, and with
+  the keep-typed-text default it was permanent chrome after one
+  search.
+
+Fix — the gate is now "a live user edit is in the field", not bare
+focus:
+
+- LineEdit gains hasBaselineText() — a protected read of SRCH10's
+  m_pristine bookkeeping (true while the field holds the last
+  programmatic write / the text it had at focus-in).  LocationBar and
+  gated SearchLineEdits now show the button only while
+  hasFocus() && !hasBaselineText() && !text().isEmpty().  Every
+  programmatic url write re-baselines the text and re-hides the
+  affordance no matter what Qt's focus tracker believes — under a
+  stuck-focus toolbar item the button can never sit over a loaded
+  url, and it still appears the moment the user types.
+- Both fields additionally recompute on QApplication::focusChanged,
+  so a blur Qt tracked but could not deliver to a toolbar-hosted
+  widget still drops the button.
+- SearchLineEdit keeps the old non-empty-only affordance by default
+  (dialog filter fields, the find banner — a populated filter's
+  one-click reset is useful); ToolbarSearch opts in via
+  setClearButtonEditingGated(true), and its setButtonMode path now
+  routes through the same update helper.
+- Residual: if Qt's focus tracking itself desyncs on macOS (native
+  first responder in the RWHV without a focusWidget change), a
+  button already showing mid-typing can stay until the next url
+  write — a narrower failure than the reported permanent chrome, and
+  it cannot appear unprovoked anymore.
+
+Linux verification: tst_locationbar 58/58 incl. new
+clearButtonEditingGate leg (programmatic write under focus stays
+hidden, typing shows, blur hides, refocus mid-edit restores,
+re-baseline re-hides, click still clears); tst_toolbarsearch 13/13
+incl. clearButtonGated; tst_searchlineedit 4/4; tst_tabwidget 46/46
+(re-run — the first pass took the known offscreen WebEngine
+mojo/GL crash that also fires on unmodified HEAD);
+arktos --quit-after-load about:blank exit 0 offscreen.
+tst_browsermainwindow chromeSlots SIGSEGVs identically on unmodified
+HEAD (pre-existing offscreen WebEngine teardown, not this change).
+macOS runtime verification is still owed — if a glyph still lingers
+in the field on hardware, the remaining leads are NSToolbar-item
+child-view compositing and full first-responder desync, in that
+order.

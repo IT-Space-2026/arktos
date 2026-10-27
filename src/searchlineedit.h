@@ -44,10 +44,26 @@ public:
     ClearButton *clearButton() const;
     SearchButton *searchButton() const;
 
+    // MAC05: default search fields (dialog filters, the find banner)
+    // show the clear button whenever text is present — a useful
+    // one-click reset.  Nav-bar fields opt into the editing gate
+    // instead: the button only lives while a user edit is in the
+    // field (focus + non-baseline text), never as permanent chrome —
+    // and it drops on every programmatic write even where Qt's focus
+    // reporting is unreliable (native NSToolbar hosting on macOS).
+    void setClearButtonEditingGated(bool gated);
+    bool clearButtonEditingGated() const;
+
+protected:
+    void focusInEvent(QFocusEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
+    void updateClearButtonVisibility();
+
 private:
     void init();
     ClearButton *m_clearButton;
     SearchButton *m_searchButton;
+    bool m_clearButtonEditingGated;
 
 };
 

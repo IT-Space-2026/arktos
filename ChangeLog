@@ -4904,3 +4904,10 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   the unified toolbar only honors the action's visibility, not the
   widget's. The View → Reader Mode menu item still lets you try reader
   mode on any page and reports "not available" honestly.
+- Address/search field clear (x) button now only appears while you are
+  actually typing — it no longer lingers over a loaded url or kept
+  search text once the field loses its caret (the "stray mini close
+  button" seen on the macOS build, where the focus-gated version could
+  get stuck under the native unified toolbar). The toolbar search field
+  follows the same rule; clear buttons in dialogs and the find bar are
+  unchanged.

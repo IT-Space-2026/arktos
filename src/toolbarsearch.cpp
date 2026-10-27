@@ -108,6 +108,11 @@ ToolbarSearch::ToolbarSearch(QWidget *parent)
     , m_suggestTimer(nullptr)
     , m_completer(nullptr)
 {
+    // MAC05: nav-bar chrome, same contract as the location bar — the
+    // clear button lives only while a user edit is in the field, not
+    // pinned over kept search text (keepTypedText is the default,
+    // which used to leave it visible permanently).
+    setClearButtonEditingGated(true);
     connect(openSearchManager(), &OpenSearchManager::currentEngineChanged,
             this, &ToolbarSearch::currentEngineChanged);
     connect(openSearchManager(), &OpenSearchManager::suggestionsEnabledChanged,
@@ -198,7 +203,7 @@ void ToolbarSearch::setButtonMode(bool buttonMode)
         setFocusPolicy(Qt::StrongFocus);
         setMinimumWidth(0);
         setMaximumWidth(QWIDGETSIZE_MAX);
-        clearButton()->setVisible(!text().isEmpty());
+        updateClearButtonVisibility();
     }
 }
 
