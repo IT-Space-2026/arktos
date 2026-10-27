@@ -82,6 +82,10 @@
 #if defined(Q_OS_UNIX)
 #include <unistd.h>
 #endif
+#if defined(Q_OS_MAC)
+#include <mach/mach.h>
+#include <sys/sysctl.h>
+#endif
 
 #include <qnetworkcookie.h>
 #include <qwebenginecookiestore.h>
@@ -5719,7 +5723,23 @@ static void systemMemoryBytes(qint64 *total, qint64 *available)
     }
 #endif
     if (*total < 0) {
-#if defined(Q_OS_UNIX)
+#if defined(Q_OS_MAC)
+        // macOS has no _SC_AVPHYS_PAGES: capacity rides hw.memsize,
+        // available = (free + inactive) * page size from Mach VM stats.
+        uint64_t memsize = 0;
+        size_t memsizeLen = sizeof(memsize);
+        if (sysctlbyname("hw.memsize", &memsize, &memsizeLen, nullptr, 0) == 0)
+            *total = qint64(memsize);
+        const mach_port_t host = mach_host_self();
+        vm_size_t macPageSize = 0;
+        vm_statistics64_data_t vmstat;
+        mach_msg_type_number_t statCount = HOST_VM_INFO64_COUNT;
+        if (host_page_size(host, &macPageSize) == KERN_SUCCESS
+            && host_statistics64(host, HOST_VM_INFO64,
+                                 reinterpret_cast<host_info64_t>(&vmstat),
+                                 &statCount) == KERN_SUCCESS)
+            *available = qint64(vmstat.free_count + vmstat.inactive_count) * qint64(macPageSize);
+#elif defined(Q_OS_UNIX)
         const long pageSize = sysconf(_SC_PAGESIZE);
         const long pages = sysconf(_SC_PHYS_PAGES);
         const long freePages = sysconf(_SC_AVPHYS_PAGES);
