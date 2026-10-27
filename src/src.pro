@@ -11,11 +11,17 @@ mac {
     # bundle data the dmg ships no share/arktos/extensions and
     # bundledExtensionsPath() can never resolve.  QMAKE_BUNDLE_DATA
     # copies at build time, so macdeployqt -dmg carries it.
-    bundledext.path = Contents/Resources/share/arktos/extensions
-    bundledext.files = $$PWD/data/extensions/bitwarden-*.zip \
-                       $$PWD/data/extensions/bitwarden-LICENSE*.txt \
-                       $$PWD/data/extensions/PROVENANCE.txt
-    QMAKE_BUNDLE_DATA += bundledext
+    # QMAKE_BUNDLE_DATA entries are one copy rule each — globs do not
+    # expand on the generated cp line, so every file needs its own entry.
+    bwzip.path = Contents/Resources/share/arktos/extensions
+    bwzip.files = $$PWD/data/extensions/bitwarden-2026.9.3.zip
+    bwlic1.path = Contents/Resources/share/arktos/extensions
+    bwlic1.files = $$PWD/data/extensions/bitwarden-LICENSE.txt
+    bwlic2.path = Contents/Resources/share/arktos/extensions
+    bwlic2.files = $$PWD/data/extensions/bitwarden-LICENSE_GPL.txt
+    bwprov.path = Contents/Resources/share/arktos/extensions
+    bwprov.files = $$PWD/data/extensions/PROVENANCE.txt
+    QMAKE_BUNDLE_DATA += bwzip bwlic1 bwlic2 bwprov
 }
 
 DEFINES += \
