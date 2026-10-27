@@ -1854,11 +1854,22 @@
     }
 
     // --- chrome.storage -------------------------------------------------
-    // The hosted page's real storage.local IS the store the still-
-    // running service worker and real extension pages share — keep it
-    // (the EXT13 spike measured it working, and replacing it would
-    // fork the extension's state).  The bridge store backs contexts
-    // where the bindings are absent and is exercised directly via
+    // BW04 — ONE canonical store.  Content-script contexts have no
+    // native chrome.* bindings at all (the shared agent world gets
+    // nothing), so their storage ops always ride the bridge store —
+    // extstorage/<id>/<area>.json on the host side.  Keeping the
+    // engine's own storage area inside extension pages therefore
+    // FORKED the extension's state: a background write never reached
+    // a content-script read and vice versa.  Under hosted-only
+    // background routing (BW02) no native service worker exists to
+    // share the native store with, so every shimmed context now
+    // installs the bridge-backed area over whatever native binding
+    // is present — persistence, quota and change semantics become
+    // uniform across background, popup, options and content
+    // contexts.  Data a prior build wrote into the native area is
+    // merged across once (storageAreaSwap below); a locked member
+    // falls back to adoptRealArea so onChanged still fires.
+    // The bridge store is exercised directly via
     // __arktosShim.storageArea().
     // ER17 — the onChanged fan-out.  The engine's storage delegate
     // never emits storage.onChanged in ANY context (verified: a
@@ -2041,6 +2052,12 @@
                 || typeof area.get !== 'function'
                 || typeof area.set !== 'function')
             return;
+        // BW04: the bridge area IS the canonical store — its
+        // mutators already post the change record.  Wrapping it
+        // like a native area would double-fire onChanged.
+        if (area === bridgeLocalRef || area === bridgeSessionRef
+                || area === bridgeSyncRef)
+            return;
         var rec = wrappedAreas[areaName];
         if (!rec || rec.area !== area
                 || (area.set !== rec.wrappedSet
@@ -2185,43 +2202,140 @@
                      'chrome.storage.' + areaName + '.onChanged');
     }
 
+    var hasOwnProp = function (o, k) {
+        return !!o && Object.prototype.hasOwnProperty.call(o, k);
+    };
+
+    // BW04 — one-time native→bridge merge.  Everything the engine's
+    // own area still holds (data written before the canonical-store
+    // cutover, or by a context the shim never reached) copies into
+    // the bridge store — keys the bridge already has win, so a merge
+    // can never clobber fresher state, and a 'migrated' flag the
+    // backend keeps per area makes sure a key the extension DELETED
+    // does not resurrect on the next boot.  Silent by construction:
+    // the merge is plain bridge ops and posts no storage.changed
+    // fan-out.  Answers a gate promise — reads issued while the
+    // merge is still in flight wait on it, so an extension can never
+    // observe a window of pre-merge emptiness.  The watchdog keeps
+    // the wait bounded if the native get never calls back.
+    function mergeNativeArea(areaName, nativeArea) {
+        var release;
+        var gate = new Promise(function (r) { release = r; });
+        var released = false;
+        var done = function () {
+            if (!released) {
+                released = true;
+                release();
+            }
+        };
+        setTimeout(done, 5000);
+        call('storage', areaName + '.migrated', {})
+            .then(function (migrated) {
+                if (migrated) {
+                    done();
+                    return;
+                }
+                var fin = function () {
+                    call('storage', areaName + '.migrated',
+                         { mark: true }).then(done, done);
+                };
+                try {
+                    nativeArea.get(null, function (items) {
+                        try {
+                            if (chrome.runtime
+                                    && chrome.runtime.lastError) {
+                                fin();
+                                return;
+                            }
+                        } catch (e) { fin(); return; }
+                        if (!items || typeof items !== 'object') {
+                            fin();
+                            return;
+                        }
+                        call('storage', areaName + '.get',
+                             { keys: null }).then(function (cur) {
+                            var missing = {};
+                            var n = 0;
+                            for (var k in items) {
+                                if (hasOwnProp(items, k)
+                                        && !hasOwnProp(cur, k)) {
+                                    missing[k] = items[k];
+                                    ++n;
+                                }
+                            }
+                            if (!n) {
+                                fin();
+                                return;
+                            }
+                            call('storage', areaName + '.set',
+                                 { items: missing }).then(function () {
+                                note('chrome.storage.' + areaName
+                                     + ': migrated ' + n
+                                     + ' keys from the engine store');
+                                fin();
+                            }, fin);
+                        }, fin);
+                    });
+                } catch (e) { fin(); }
+            }, done);
+        return gate;
+    }
+
+    // BW04 — install the bridge-backed area over whatever the engine
+    // exposed (or nothing).  On a real native area the swap also
+    // wires the migration gate onto get() so early reads stay
+    // honest; if the member turns out to be locked we keep the
+    // native area and wrap its mutators for onChanged instead —
+    // the divergence that leaves is recorded, never silent.
+    function storageAreaSwap(areaName) {
+        var nativeArea = null;
+        try {
+            var a = chrome.storage && chrome.storage[areaName];
+            if (a && typeof a === 'object'
+                    && typeof a.get === 'function'
+                    && typeof a.set === 'function')
+                nativeArea = a;
+        } catch (e) {}
+        var ref = bridgeStorageArea(areaName);
+        if (nativeArea && areaName !== 'session') {
+            // session is memory-only in Chrome too — nothing in the
+            // engine's area can be worth migrating.
+            var gate = mergeNativeArea(areaName, nativeArea);
+            var rawGet = ref.get;
+            ref.get = function (keys, cb) {
+                var p = gate.then(function () {
+                    return rawGet(keys);
+                });
+                if (cb)
+                    p.then(function (v) { answerCb(cb, v); },
+                           function (e) {
+                               answerCb(cb, {},
+                                        e && e.message || String(e));
+                           });
+                return p;
+            };
+        }
+        defineMember(chrome.storage, areaName, ref,
+                     'chrome.storage.' + areaName);
+        if (chrome.storage[areaName] === ref)
+            return ref;
+        adoptRealArea(areaName);
+        note('chrome.storage.' + areaName
+             + ': native area retained (member locked) — '
+             + 'content-script storage may diverge');
+        return null;
+    }
+
     if (typeof chrome !== 'undefined') {
         if (!chrome.storage)
             safeSet(chrome, 'storage', {}, 'chrome.storage');
         if (chrome.storage) {
-        if (!chrome.storage.local
-                || typeof chrome.storage.local.get !== 'function') {
-            bridgeLocalRef = bridgeStorageArea('local');
-            if (safeSet(chrome.storage, 'local', bridgeLocalRef,
-                        'chrome.storage.local'))
-                note('chrome.storage.local: bridge-backed store '
-                     + '(per-extension namespaced, persisted '
-                     + 'host-side)');
-        } else {
-            adoptRealArea('local');
-        }
-        if (!chrome.storage.session
-                || typeof chrome.storage.session.get !== 'function') {
-            bridgeSessionRef = bridgeStorageArea('session');
-            safeSet(chrome.storage, 'session', bridgeSessionRef,
-                    'chrome.storage.session');
-        } else {
-            adoptRealArea('session');
-        }
+        bridgeLocalRef = storageAreaSwap('local');
+        bridgeSessionRef = storageAreaSwap('session');
         // MD19: sync persists through the bridge like local — there
         // is no cloud sync in Arktos, so the honest answer is a
         // profile-local store, not the volatile session map.
-        if (!chrome.storage.sync
-                || typeof chrome.storage.sync.get !== 'function') {
-            bridgeSyncRef = bridgeStorageArea('sync');
-            if (safeSet(chrome.storage, 'sync', bridgeSyncRef,
-                        'chrome.storage.sync'))
-                note('chrome.storage.sync: bridge-backed store '
-                     + 'persisted profile-local — no cloud sync in '
-                     + 'Arktos, the area does not roam');
-        } else {
-            adoptRealArea('sync');
-        }
+        bridgeSyncRef = storageAreaSwap('sync');
         if (!chrome.storage.managed) {
             safeSet(chrome.storage, 'managed', {
                 get: function (keys, cb) {

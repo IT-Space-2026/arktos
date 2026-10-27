@@ -93,9 +93,9 @@ QJsonObject ExtensionPageBridge::senderFor(const QString &extensionId,
                 BrowserMainWindow *window
                         = BrowserMainWindow::parentWindow(view);
                 if (tw && window) {
-                    const int index = tw->webViewIndex(view);
-                    const int windowId
-                        = ExtensionShimBackend::windowIdFor(window);
+            const int index = tw->webViewIndex(view);
+            const int windowId
+                = ExtensionShimBackend::windowIdFor(window);
                     sender.insert(QStringLiteral("tab"),
                                   ExtensionShimBackend::tabObject(
                                       view, index, windowId));

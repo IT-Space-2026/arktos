@@ -3080,6 +3080,93 @@ void tst_ExtensionManager::extensionStorageExtras()
                 .contains(QLatin1String("k")));
     }
 
+    // --- BW04: 'unlimitedStorage' lifts the local ceiling ---------
+    // The same >10 MB write that failed typed above must succeed for
+    // a manifest declaring the grant; sync/session keep their caps
+    // either way.
+    const QString dirU = dir + QLatin1String("-unlimited");
+    QVERIFY(QDir().mkpath(dirU));
+    {
+        QFile manifestFile(dirU + QLatin1String("/manifest.json"));
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly));
+        manifestFile.write(
+            "{\"manifest_version\":3,\"name\":\"tst-store-u\","
+            "\"version\":\"1.0\",\"permissions\":[\"storage\","
+            "\"unlimitedStorage\"]}");
+        manifestFile.close();
+    }
+    const QString idU = QStringLiteral("tstmockextensionid0100");
+    {
+        ExtensionShimBackend unlim(idU, QStringLiteral("tst-store-u"),
+                                   dirU);
+        reply = unlim.invoke(
+            QStringLiteral("storage"), QStringLiteral("local.set"),
+            QJsonObject{{QStringLiteral("items"),
+                         QJsonObject{{QStringLiteral("huge"),
+                                      QString(11 * 1024 * 1024,
+                                              QLatin1Char('z'))}}}});
+        QVERIFY2(reply.value(QLatin1String("ok")).toBool(),
+                 "unlimitedStorage local.set past 10 MB must land");
+        // ...and it must LOAD back — the read bound scales with the
+        // lifted write cap or restart persistence is a lie.
+        ExtensionShimBackend unlimAgain(
+            idU, QStringLiteral("tst-store-u"), dirU);
+        reply = unlimAgain.invoke(
+            QStringLiteral("storage"), QStringLiteral("local.get"),
+            QJsonObject{{QStringLiteral("keys"),
+                         QStringLiteral("huge")}});
+        QCOMPARE(reply.value(QLatin1String("result")).toObject()
+                 .value(QLatin1String("huge")).toString().size(),
+                 11 * 1024 * 1024);
+        // session keeps its cap even with the grant.
+        reply = unlim.invoke(
+            QStringLiteral("storage"), QStringLiteral("session.set"),
+            QJsonObject{{QStringLiteral("items"),
+                         QJsonObject{{QStringLiteral("huge"),
+                                      QString(11 * 1024 * 1024,
+                                              QLatin1Char('z'))}}}});
+        QCOMPARE(reply.value(QLatin1String("error")).toString(),
+                 QStringLiteral("quota-exceeded"));
+        // sync keeps its caps too.
+        reply = unlim.invoke(
+            QStringLiteral("storage"), QStringLiteral("sync.set"),
+            QJsonObject{{QStringLiteral("items"),
+                         QJsonObject{{QStringLiteral("big"),
+                                      QString(9000,
+                                              QLatin1Char('x'))}}}});
+        QCOMPARE(reply.value(QLatin1String("error")).toString(),
+                 QStringLiteral("quota-exceeded"));
+    }
+
+    // --- BW04: the native->bridge merge marker ---------------------
+    // Bare 'migrated' reports false, then {mark:true} records it and
+    // later queries answer true — across a backend respawn too.
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("local.migrated"),
+        QJsonObject());
+    QCOMPARE(reply.value(QLatin1String("result")).toBool(), false);
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("local.migrated"),
+        QJsonObject{{QStringLiteral("mark"), true}});
+    QVERIFY(reply.value(QLatin1String("ok")).toBool());
+    reply = backend.invoke(
+        QStringLiteral("storage"), QStringLiteral("local.migrated"),
+        QJsonObject());
+    QCOMPARE(reply.value(QLatin1String("result")).toBool(), true);
+    {
+        ExtensionShimBackend marked(id, QStringLiteral("tst-store"),
+                                    dir);
+        reply = marked.invoke(
+            QStringLiteral("storage"),
+            QStringLiteral("local.migrated"), QJsonObject());
+        QCOMPARE(reply.value(QLatin1String("result")).toBool(), true);
+    }
+
+    QDir(BrowserPaths::dataFilePath(
+        QStringLiteral("extstorage")) + QLatin1Char('/') + idU)
+        .removeRecursively();
+    QDir(dirU).removeRecursively();
+
     QDir(BrowserPaths::dataFilePath(
         QStringLiteral("extstorage")) + QLatin1Char('/') + id)
         .removeRecursively();

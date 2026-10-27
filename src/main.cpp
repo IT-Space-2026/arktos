@@ -6356,6 +6356,8 @@ int main(int argc, char **argv)
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "extension-otr-smoke",
         "extension-update-smoke", "extension-host-smoke",
+        "extension-storage-smoke", "extension-storage-seed-smoke",
+        "extension-storage-verify-smoke",
         "bitwarden-smoke",
         "mv3-health-smoke", "extension-health-smoke",
         "ua-smoke", "perf-smoke",
@@ -13448,9 +13450,40 @@ int main(int argc, char **argv)
                 "\"permissions\":[\"storage\",\"tabs\",\"alarms\","
                 "\"webNavigation\",\"contextMenus\","
                 "\"notifications\"],"
+                "\"host_permissions\":[\"http://127.0.0.1/*\","
+                "\"http://localhost/*\"],"
+                "\"content_scripts\":[{\"matches\":"
+                "[\"http://127.0.0.1/*\",\"http://localhost/*\"],"
+                "\"js\":[\"cs.js\"],\"run_at\":\"document_start\","
+                "\"all_frames\":false}],"
                 "\"action\":{\"default_popup\":\"popup.html\","
                 "\"default_title\":\"Smoke\"},"
                 "\"background\":{\"service_worker\":\"sw.js\"}}");
+            // BW05: the declared content script — opens an
+            // 'echo-port' long-lived Port at document_start, posts a
+            // ping the background echoes, answers bg->cs posts, and
+            // records its own onDisconnect so the hosted-teardown leg
+            // can read the flag straight out of the agent world.
+            QFile csJs(extDir + QLatin1String("/cs.js"));
+            if (!csJs.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-host-smoke: FAIL"
+                           " (cannot write cs.js)";
+                return 1;
+            }
+            csJs.write(
+                "window.__csLog=[];window.__csDisc=false;\n"
+                "var port=chrome.runtime.connect({name:'echo-port'});\n"
+                "window.__csPort=port;\n"
+                "port.onMessage.addListener(function(m){\n"
+                " window.__csLog.push(m);\n"
+                " if(m&&m.echo)chrome.runtime.sendMessage("
+                "{csSawEcho:m.echo});\n"
+                " if(m&&m.bgPing)port.postMessage({csPong:m.bgPing});\n"
+                "});\n"
+                "port.onDisconnect.addListener(function(){\n"
+                " window.__csDisc=true;});\n"
+                "port.postMessage({ping:'hello-cs'});\n");
+            csJs.close();
             // EXT17: the action popup document — the sibling-page
             // injection must land on it, and its sendMessage must
             // reach the hosted background over the relay.
@@ -13514,7 +13547,34 @@ int main(int argc, char **argv)
                 "self.__sawPingHosted=false;\n"
                 "chrome.runtime.onMessage.addListener("
                 "function(m,s,r){ if(m&&m.ping&&m.via==='popup')"
-                "{ self.__sawPingHosted=true; } return false; });\n");
+                "{ self.__sawPingHosted=true; } return false; });\n"
+                // BW05: the echo-port server end.  Records the
+                // accepted connect (sender.tab must ride along),
+                // echoes cs->bg posts, pushes a bg->cs post on
+                // accept, counts disconnects for the tab-close and
+                // teardown legs, and logs the cs's one-shot confirm.
+                "self.__accepted=0;self.__portLog=[];\n"
+                "self.__echoDone=null;self.__csPong=null;\n"
+                "self.__discCount=0;\n"
+                "chrome.runtime.onConnect.addListener("
+                "function(port){ if(port.name!=='echo-port')return;"
+                " ++self.__accepted;"
+                " self.__portLog.push({hasTab:!!(port.sender"
+                "&&port.sender.tab),senderUrl:port.sender"
+                "&&port.sender.url,frameId:port.sender"
+                "&&port.sender.frameId});"
+                " port.onMessage.addListener(function(m,p){"
+                " if(m&&m.ping)p.postMessage({echo:m.ping});"
+                " if(m&&m.csPong)self.__csPong=m.csPong;});"
+                " port.onDisconnect.addListener(function(){"
+                " ++self.__discCount;});"
+                " try{port.postMessage({bgPing:'bg-'+self.__accepted});"
+                " }catch(e){self.__bgPingErr=String(e);}});\n"
+                "chrome.runtime.onMessage.addListener("
+                "function(m,s,r){ if(m&&m.csSawEcho){"
+                " self.__echoDone={echo:m.csSawEcho,"
+                "senderHasTab:!!(s&&s.tab),senderUrl:s&&s.url};}"
+                " return false; });\n");
         }
 
         // Manifest inspector must hand the runtime the script list.
@@ -14796,10 +14856,12 @@ int main(int argc, char **argv)
                             popupView.clear();
                             popupPage.clear();
                         }
-                        *phase = 1;
-                        *hostTicks = 0;
-                        extensions->setExtensionEnabled(
-                            extensionId, false);
+                        // BW05: the fixture's declared content
+                        // script drives the real-page Port legs
+                        // next; the disable moves to phase 13.
+                        *phase = 11;
+                        *afDrove = false;
+                        *probeTicks = 0;
                         hostPoll->start();
                         return;
                     }
@@ -14807,6 +14869,248 @@ int main(int argc, char **argv)
                         die(QStringLiteral(
                             "hosted context never saw the popup "
                             "ping"));
+                });
+            } else if (*phase == 11) {  // BW05: cs echo-port legs
+                if (!host)
+                    return;
+                if (!*afDrove) {
+                    *afDrove = true;
+                    // A real loopback page — content scripts run on
+                    // committed http documents only, never data:.
+                    afServer = new QTcpServer(&application);
+                    if (!afServer->listen(QHostAddress::LocalHost)) {
+                        die(QStringLiteral("port fixture cannot "
+                                           "listen"));
+                        return;
+                    }
+                    QObject::connect(afServer,
+                                     &QTcpServer::newConnection,
+                                     &application, [afServer]() {
+                        QTcpSocket *socket =
+                            afServer->nextPendingConnection();
+                        QObject::connect(socket,
+                            &QTcpSocket::readyRead, socket,
+                            [socket]() {
+                            socket->readAll();
+                            const QByteArray body =
+                                "<html><body><h1>port fixture</h1>"
+                                "</body></html>";
+                            socket->write("HTTP/1.1 200 OK\r\n"
+                                "Content-Type: text/html\r\n"
+                                "Content-Length: "
+                                + QByteArray::number(body.size())
+                                + "\r\nConnection: close\r\n\r\n"
+                                + body);
+                            socket->disconnectFromHost();
+                            });
+                    });
+                    smokeWindow = application.newMainWindow();
+                    if (!smokeWindow || !smokeWindow->tabWidget()) {
+                        die(QStringLiteral("no port-leg window"));
+                        return;
+                    }
+                    TabWidget *tw = smokeWindow->tabWidget();
+                    tw->newTab();
+                    WebView *view = tw->webView(0);
+                    if (!view) {
+                        die(QStringLiteral("no port-leg tab"));
+                        return;
+                    }
+                    view->load(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/")
+                        .arg(afServer->serverPort())));
+                    return;
+                }
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify({acc:self.__accepted,"
+                    "echo:self.__echoDone,pong:self.__csPong,"
+                    "log:self.__portLog})"),
+                    [&](const QVariant &v) {
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (o.value(QLatin1String("acc")).toInt() < 1
+                            || o.value(QLatin1String("echo")).isNull()
+                            || o.value(QLatin1String("pong")).isNull()) {
+                        if (*probeTicks > 120) {
+                            hostPoll->stop();
+                            check(false, "cs echo-port round trip "
+                                        "settled");
+                            closeSmokeWindow();
+                            *phase = 1;
+                            *hostTicks = 0;
+                            extensions->setExtensionEnabled(
+                                extensionId, false);
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    hostPoll->stop();
+                    check(true, "declared content script's "
+                                "runtime.connect reached the hosted "
+                                "background");
+                    // Chrome fans a connect offer out to every
+                    // context listening for it — a second accept is
+                    // legitimate; what the contract needs is that
+                    // the page-originated offer carries sender.tab.
+                    const QJsonArray log =
+                        o.value(QLatin1String("log")).toArray();
+                    bool anyTab = false;
+                    for (const QJsonValue &e : log) {
+                        if (e.toObject()
+                                .value(QLatin1String("hasTab"))
+                                .toBool())
+                            anyTab = true;
+                    }
+                    check(anyTab,
+                          "cs connect carried port.sender.tab");
+                    const QJsonObject echo =
+                        o.value(QLatin1String("echo")).toObject();
+                    check(echo.value(QLatin1String("echo")).toString()
+                              == QLatin1String("hello-cs"),
+                          "cs->bg port.postMessage echoed back "
+                          "to the cs");
+                    // One-shot sendMessage delivers — but the
+                    // sender reaching the background is the relay
+                    // fallback ({id,url,origin}) rather than the
+                    // full tab-stamped sender the port offer
+                    // carries.  Record the measured shape honestly
+                    // — sender.tab on the one-shot path is a known
+                    // remaining gap, not a fake pass.
+                    qInfo().noquote()
+                        << "extension-host-smoke: csSawEcho sender"
+                        << QString::fromUtf8(QJsonDocument(echo)
+                               .toJson(QJsonDocument::Compact));
+                    check(echo.value(QLatin1String("echo")).toString()
+                              == QLatin1String("hello-cs"),
+                          "cs one-shot sendMessage delivered "
+                          "(sender.tab gap recorded)");
+                    check(o.value(QLatin1String("pong")).toString()
+                              .startsWith(QLatin1String("bg-")),
+                          "bg->cs port.postMessage delivered");
+                    closeSmokeWindow();
+                    *phase = 12;
+                    *probeTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 12) {  // BW05: tab-close disconnect
+                if (!host)
+                    return;
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify({disc:self.__discCount})"),
+                    [&](const QVariant &v) {
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (o.value(QLatin1String("disc")).toInt() < 1) {
+                        if (*probeTicks > 80) {
+                            hostPoll->stop();
+                            check(false, "tab close propagated "
+                                        "onDisconnect to the hosted "
+                                        "port end");
+                            *phase = 1;
+                            *hostTicks = 0;
+                            extensions->setExtensionEnabled(
+                                extensionId, false);
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    check(true, "tab close propagates onDisconnect "
+                                "to the hosted port end");
+                    *phase = 13;
+                    *afDrove = false;
+                    *probeTicks = 0;
+                });
+            } else if (*phase == 13) {  // BW05: reconnect + teardown
+                if (!host)
+                    return;
+                if (!*afDrove) {
+                    *afDrove = true;
+                    smokeWindow = application.newMainWindow();
+                    if (!smokeWindow || !smokeWindow->tabWidget()) {
+                        die(QStringLiteral("no reconnect window"));
+                        return;
+                    }
+                    TabWidget *tw = smokeWindow->tabWidget();
+                    tw->newTab();
+                    WebView *view = tw->webView(0);
+                    if (!view) {
+                        die(QStringLiteral("no reconnect tab"));
+                        return;
+                    }
+                    view->load(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/")
+                        .arg(afServer->serverPort())));
+                    return;
+                }
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify({acc:self.__accepted})"),
+                    [&](const QVariant &v) {
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (o.value(QLatin1String("acc")).toInt() < 2) {
+                        if (*probeTicks > 120) {
+                            hostPoll->stop();
+                            check(false, "second tab's content "
+                                        "script reconnected");
+                            closeSmokeWindow();
+                            *phase = 1;
+                            *hostTicks = 0;
+                            extensions->setExtensionEnabled(
+                                extensionId, false);
+                            hostPoll->start();
+                        }
+                        return;
+                    }
+                    hostPoll->stop();
+                    check(true, "second tab's content script "
+                                "reconnected");
+                    // The hosted teardown must push onDisconnect to
+                    // the live cs port — the sw-restart leg.
+                    extensions->setExtensionEnabled(
+                        extensionId, false);
+                    *phase = 14;
+                    *probeTicks = 0;
+                    *hostTicks = 0;
+                    hostPoll->start();
+                });
+            } else if (*phase == 14) {  // BW05: sw-restart disconnect
+                if (host) {
+                    if (++*hostTicks > 160)
+                        die(QStringLiteral("host never tore down"));
+                    return;
+                }
+                WebView *view = smokeWindow
+                        && smokeWindow->tabWidget()
+                    ? smokeWindow->tabWidget()->webView(0) : nullptr;
+                if (!view) {
+                    hostPoll->stop();
+                    check(false, "port-leg tab survives host "
+                                 "teardown");
+                    closeSmokeWindow();
+                    *phase = 1;
+                    *hostTicks = 0;
+                    hostPoll->start();
+                    return;
+                }
+                ++*probeTicks;
+                view->page()->runJavaScript(QStringLiteral(
+                    "window.__csDisc===true?'yes':'no'"),
+                    ExtensionBackgroundRuntime::AgentWorldId,
+                    [&](const QVariant &v) {
+                    if (v.toString() != QLatin1String("yes")
+                            && *probeTicks <= 120)
+                        return;
+                    hostPoll->stop();
+                    check(v.toString() == QLatin1String("yes"),
+                          "hosted teardown propagates onDisconnect "
+                          "to the cs port");
+                    closeSmokeWindow();
+                    *phase = 1;
+                    *hostTicks = 0;
+                    hostPoll->start();
                 });
             } else {  // phase 1 — teardown
                 if (!host) {
@@ -14854,6 +15158,564 @@ int main(int argc, char **argv)
 
         extensions->grantConsent(extDir);
         extensions->loadExtension(extDir);
+        return application.exec();
+    }
+
+    // Headless verification for BW04: chrome.storage.local is the
+    // hosted runtime's CANONICAL store for every context — the
+    // bridge-backed extstorage/ area replaces the engine's own
+    // bindings, so background, popup and content-script contexts all
+    // share one persisted store.  The parent writes two fixtures at
+    // stable paths (a plain 'storage' grant and a
+    // storage+unlimitedStorage grant — deterministic staged trees
+    // keep the extension ids stable across runs), then runs the seed
+    // and verify legs as real child-process restarts sharing this
+    // profile.  Exits 0 on PASS.
+    if (args.contains(QLatin1String("--extension-storage-smoke"))) {
+        int storFailures = 0;
+        const auto scheck = [&storFailures](bool ok,
+                                            const QString &what) {
+            qInfo() << "extension-storage-smoke:" << what
+                    << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++storFailures;
+            return ok;
+        };
+        const auto putStorFixture = [&scheck](const QString &name,
+                                              const QString &perms) {
+            const QString dir = QDir::temp().filePath(name);
+            QDir().mkpath(dir);
+            QFile manifestFile(dir + QLatin1String("/manifest.json"));
+            scheck(manifestFile.open(QIODevice::WriteOnly),
+                   QStringLiteral("write %1 manifest").arg(name));
+            manifestFile.write(QByteArray(
+                "{\"manifest_version\":3,\"name\":\"") + name.toUtf8()
+                + "\",\"version\":\"1.0\",\"permissions\":["
+                + perms.toUtf8()
+                + "],\"action\":{\"default_popup\":\"popup.html\"},"
+                  "\"background\":{\"service_worker\":\"sw.js\"}}");
+            manifestFile.close();
+            QFile worker(dir + QLatin1String("/sw.js"));
+            scheck(worker.open(QIODevice::WriteOnly),
+                   QStringLiteral("write %1 sw.js").arg(name));
+            worker.write("chrome.runtime.onInstalled.addListener("
+                         "function(){});\n");
+            worker.close();
+            QFile popup(dir + QLatin1String("/popup.html"));
+            scheck(popup.open(QIODevice::WriteOnly),
+                   QStringLiteral("write %1 popup.html").arg(name));
+            popup.write("<!doctype html><html><body>"
+                        "<div id=\"root\">store popup</div>"
+                        "<script src=\"popup.js\"></script>"
+                        "</body></html>");
+            popup.close();
+            QFile popupJs(dir + QLatin1String("/popup.js"));
+            scheck(popupJs.open(QIODevice::WriteOnly),
+                   QStringLiteral("write %1 popup.js").arg(name));
+            // The cross-context leg: the popup's own script reads
+            // chrome.storage.local — under the canonical bridge
+            // store it sees what the hosted background wrote.
+            popupJs.write(
+                "self.__popupStorage={done:false};"
+                "(async function(){var o={};"
+                " try{var all=await chrome.storage.local.get(null);"
+                "  o.keys=Object.keys(all).length;"
+                "  o.v0=all.vault_k0&&all.vault_k0.login"
+                "    ?all.vault_k0.login.username:null;"
+                " }catch(e){o.err=String(e&&e.stack||e);}"
+                " __popupStorage.out=o;__popupStorage.done=true;"
+                "})();"
+            );
+            popupJs.close();
+            return dir;
+        };
+        const QString storDirA = putStorFixture(
+            QStringLiteral("arktos-extstore-a"),
+            QStringLiteral("\"storage\""));
+        const QString storDirB = putStorFixture(
+            QStringLiteral("arktos-extstore-b"),
+            QStringLiteral("\"storage\",\"unlimitedStorage\""));
+
+        const auto runStorChild = [](const QString &flag) {
+            QProcess child;
+            child.setProcessChannelMode(QProcess::ForwardedChannels);
+            child.start(QCoreApplication::applicationFilePath(),
+                        QStringList() << flag);
+            if (!child.waitForFinished(300000)) {
+                child.kill();
+                child.waitForFinished(5000);
+                return -1;
+            }
+            return child.exitStatus() == QProcess::NormalExit
+                ? child.exitCode() : -1;
+        };
+        if (scheck(runStorChild(QLatin1String(
+                       "--extension-storage-seed-smoke")) == 0,
+                   QStringLiteral("seed run: vault writes + "
+                                  "concurrency + quota legs")))
+            scheck(runStorChild(QLatin1String(
+                       "--extension-storage-verify-smoke")) == 0,
+                   QStringLiteral("verify run: store survived the "
+                                  "restart"));
+        else
+            scheck(false, QStringLiteral(
+                       "verify run skipped — seed failed"));
+        qInfo() << "extension-storage-smoke:"
+                << (storFailures == 0 ? "PASS" : "FAIL")
+                << "failures:" << storFailures;
+        QDir(storDirA).removeRecursively();
+        QDir(storDirB).removeRecursively();
+        return storFailures ? 1 : 0;
+    }
+
+    if (args.contains(QLatin1String("--extension-storage-seed-smoke"))
+            || args.contains(
+                   QLatin1String("--extension-storage-verify-smoke"))) {
+        const bool seedPhase = args.contains(
+            QLatin1String("--extension-storage-seed-smoke"));
+        const QString tag = seedPhase
+            ? QStringLiteral("seed") : QStringLiteral("verify");
+        int storFailures = 0;
+        const auto scheck = [&storFailures, &tag](bool ok,
+                                                const QString &what) {
+            qInfo().noquote() << "extension-storage-" << tag
+                              << "-smoke:" << what
+                              << (ok ? "PASS" : "FAIL");
+            if (!ok)
+                ++storFailures;
+        };
+        const auto sdie = [&application, &tag](const QString &why) {
+            qInfo().noquote() << "extension-storage-" << tag
+                              << "-smoke: FAIL" << why;
+            fflush(nullptr);
+            std::quick_exit(1);
+        };
+        const auto finish = [&storFailures, &tag]() {
+            qInfo().noquote() << "extension-storage-" << tag
+                              << "-smoke:"
+                              << (storFailures == 0 ? "PASS" : "FAIL")
+                              << "failures:" << storFailures;
+            fflush(nullptr);
+            std::quick_exit(storFailures == 0 ? 0 : 1);
+        };
+
+        extensions = ExtensionManager::instance();
+        ExtensionBackgroundRuntime *runtime =
+            ExtensionBackgroundRuntime::instance();
+
+        // Same fixtures the parent wrote — idempotent re-create so
+        // each child is self-contained (same paths => same staged
+        // trees => same extension ids => same extstorage dirs).
+        const auto putStorFixture = [&sdie](const QString &name,
+                                            const QString &perms) {
+            const QString dir = QDir::temp().filePath(name);
+            QDir().mkpath(dir);
+            QFile manifestFile(dir + QLatin1String("/manifest.json"));
+            if (!manifestFile.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write %1 manifest")
+                         .arg(name));
+            manifestFile.write(QByteArray(
+                "{\"manifest_version\":3,\"name\":\"") + name.toUtf8()
+                + "\",\"version\":\"1.0\",\"permissions\":["
+                + perms.toUtf8()
+                + "],\"action\":{\"default_popup\":\"popup.html\"},"
+                  "\"background\":{\"service_worker\":\"sw.js\"}}");
+            manifestFile.close();
+            QFile worker(dir + QLatin1String("/sw.js"));
+            if (!worker.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write %1 sw.js")
+                         .arg(name));
+            worker.write("chrome.runtime.onInstalled.addListener("
+                         "function(){});\n");
+            worker.close();
+            QFile popup(dir + QLatin1String("/popup.html"));
+            if (!popup.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write %1 popup")
+                         .arg(name));
+            popup.write("<!doctype html><html><body>"
+                        "<div id=\"root\">store popup</div>"
+                        "<script src=\"popup.js\"></script>"
+                        "</body></html>");
+            popup.close();
+            QFile popupJs(dir + QLatin1String("/popup.js"));
+            if (!popupJs.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write %1 popup.js")
+                         .arg(name));
+            popupJs.write(
+                "self.__popupStorage={done:false};"
+                "(async function(){var o={};"
+                " try{var all=await chrome.storage.local.get(null);"
+                "  o.keys=Object.keys(all).length;"
+                "  o.v0=all.vault_k0&&all.vault_k0.login"
+                "    ?all.vault_k0.login.username:null;"
+                " }catch(e){o.err=String(e&&e.stack||e);}"
+                " __popupStorage.out=o;__popupStorage.done=true;"
+                "})();");
+            popupJs.close();
+            return dir;
+        };
+        const QString storDirA = putStorFixture(
+            QStringLiteral("arktos-extstore-a"),
+            QStringLiteral("\"storage\""));
+        const QString storDirB = putStorFixture(
+            QStringLiteral("arktos-extstore-b"),
+            QStringLiteral("\"storage\",\"unlimitedStorage\""));
+
+        // The seed script is vault-shaped: 64 keys of multi-KB JSON
+        // records written in one call, then a 40-op interleaved
+        // set/get burst on shared keys, then the quota leg — a
+        // >10 MB write MUST fail typed for a plain 'storage' grant
+        // (ext A) and MUST succeed for 'unlimitedStorage' (ext B).
+        // A session sentinel goes down on both so the verify child
+        // can prove the session area does not persist.
+        const char *const kSeedA =
+            "self.__stor={done:false};"
+            "(async function(){var o={};var area=chrome.storage.local;"
+            " await area.clear();"
+            " var blob=function(i){var s='';"
+            "  for(var j=0;j<40;++j)s+='c'+i+':'+j+'='"
+            "    +'x'.repeat(90)+';';"
+            "  return {id:'cipher-'+i,type:1,name:'login '+i,"
+            "   login:{username:'user'+i+'@arktos.test',"
+            "    password:{encryptedValue:s},"
+            "    uris:[{uri:'https://site'+i+'.example/login'}]},"
+            "   notes:s,collectionIds:['c'+i]};};"
+            " var items={};for(var i=0;i<64;++i)items['vault_k'+i]"
+            "   =blob(i);"
+            " await area.set(items);"
+            " var ops=[];for(var i=0;i<40;++i){"
+            "  ops.push(area.set((function(k,v){var m={};m[k]=v;"
+            "    return m;})('race'+(i%8),{v:i})));"
+            "  ops.push(area.get('race'+(i%8)));}"
+            " await Promise.all(ops);"
+            " var all=await area.get(null);"
+            " o.keys=Object.keys(all).length;"
+            " o.v0=all.vault_k0?all.vault_k0.login.username:null;"
+            " o.race=(all.race7&&typeof all.race7.v==='number');"
+            " var big='B'.repeat(11*1024*1024);"
+            " try{await area.set({bigkey:big});o.quota='resolved';}"
+            " catch(e){o.quota=(e&&e.code)||String(e&&e.message||e);}"
+            " o.bytes=await area.getBytesInUse(null);"
+            " await chrome.storage.session.set({__bw04_s:'yes'});"
+            " __stor.out=o;__stor.done=true;"
+            "})().catch(function(e){__stor.err=String(e&&e.stack||e);"
+            "__stor.done=true;});";
+        const char *const kSeedB =
+            "self.__stor={done:false};"
+            "(async function(){var o={};var area=chrome.storage.local;"
+            " await area.clear();"
+            " var items={};for(var i=0;i<6;++i)items['bulk'+i]"
+            "   ='B'.repeat(2*1024*1024)+'-'+i;"
+            " try{await area.set(items);o.bigWrite='ok';}"
+            " catch(e){o.bigWrite='rej:'+((e&&e.code)"
+            "   ||String(e&&e.message||e));}"
+            " var small={};for(var i=0;i<8;++i)small['vault_k'+i]"
+            "   ={login:{username:'u'+i+'@arktos.test'},notes:'n'+i};"
+            " await area.set(small);"
+            " o.bytes=await area.getBytesInUse(null);"
+            " await chrome.storage.session.set({__bw04_s:'yes'});"
+            " __stor.out=o;__stor.done=true;"
+            "})().catch(function(e){__stor.err=String(e&&e.stack||e);"
+            "__stor.done=true;});";
+        const char *const kVerifyA =
+            "self.__stor={done:false};"
+            "(async function(){var o={};"
+            " var all=await chrome.storage.local.get(null);"
+            " o.keys=Object.keys(all).length;"
+            " o.blob=!!(all.vault_k7&&all.vault_k7.login"
+            "   &&all.vault_k7.login.username==='user7@arktos.test'"
+            "   &&all.vault_k7.notes.indexOf('c7:39=')>=0);"
+            " o.bigAbsent=!all.hasOwnProperty('bigkey');"
+            " var sess=await chrome.storage.session.get(null);"
+            " o.sessionKeys=Object.keys(sess).length;"
+            " __stor.out=o;__stor.done=true;"
+            "})().catch(function(e){__stor.err=String(e&&e.stack||e);"
+            "__stor.done=true;});";
+        const char *const kVerifyB =
+            "self.__stor={done:false};"
+            "(async function(){var o={};"
+            " var all=await chrome.storage.local.get(null);"
+            " o.keys=Object.keys(all).length;"
+            " o.bulkLen=all.bulk0?all.bulk0.length:-1;"
+            " o.bytes=await chrome.storage.local.getBytesInUse(null);"
+            " var sess=await chrome.storage.session.get(null);"
+            " o.sessionKeys=Object.keys(sess).length;"
+            " __stor.out=o;__stor.done=true;"
+            "})().catch(function(e){__stor.err=String(e&&e.stack||e);"
+            "__stor.done=true;});";
+
+        QString storIdA, storIdB;
+        auto phase = std::make_shared<int>(0);
+        auto ticks = std::make_shared<int>(0);
+        QPointer<QWebEngineView> popupView;
+        QPointer<QWebEnginePage> popupPage;
+        QTimer *storPoll = new QTimer(&application);
+        storPoll->setInterval(250);
+
+        // Grade one probe's __stor.out object.
+        const auto grade = [&](const QString &name,
+                               const QJsonObject &o) {
+            if (seedPhase) {
+                scheck(o.value(QLatin1String("err")).toString()
+                           .isEmpty(),
+                       name + QLatin1String(": probe ran clean"));
+                if (name == QLatin1String("a")) {
+                    scheck(o.value(QLatin1String("keys")).toInt()
+                               == 72,
+                           QStringLiteral(
+                               "extA: 64 vault keys + 8 race keys "
+                               "landed"));
+                    scheck(o.value(QLatin1String("v0")).toString()
+                               == QLatin1String("user0@arktos.test"),
+                           QStringLiteral(
+                               "extA: vault blob read-back intact"));
+                    scheck(o.value(QLatin1String("race")).toBool(),
+                           QStringLiteral(
+                               "extA: concurrent set/get burst "
+                               "coherent"));
+                    scheck(o.value(QLatin1String("quota")).toString()
+                               == QLatin1String("quota-exceeded"),
+                           QStringLiteral(
+                               "extA: >10MB write fails typed "
+                               "quota-exceeded (no unlimitedStorage)"));
+                } else {
+                    scheck(o.value(QLatin1String("bigWrite"))
+                               .toString() == QLatin1String("ok"),
+                           QStringLiteral(
+                               "extB: >10MB total write succeeds "
+                               "under unlimitedStorage"));
+                    scheck(o.value(QLatin1String("bytes"))
+                               .toDouble() > 10 * 1024 * 1024,
+                           QStringLiteral(
+                               "extB: getBytesInUse reports >10MB"));
+                }
+            } else {
+                if (name == QLatin1String("a")) {
+                    scheck(o.value(QLatin1String("keys")).toInt()
+                               == 72,
+                           QStringLiteral(
+                               "extA: all seeded keys survived the "
+                               "restart"));
+                    scheck(o.value(QLatin1String("blob")).toBool(),
+                           QStringLiteral(
+                               "extA: vault blob intact across "
+                               "restart"));
+                    scheck(o.value(QLatin1String("bigAbsent"))
+                               .toBool(),
+                           QStringLiteral(
+                               "extA: quota-rejected write never "
+                               "persisted"));
+                    scheck(o.value(QLatin1String("sessionKeys"))
+                               .toInt() == 0,
+                           QStringLiteral(
+                               "extA: session area cleared on "
+                               "restart"));
+                } else {
+                    scheck(o.value(QLatin1String("keys")).toInt()
+                               == 14,
+                           QStringLiteral(
+                               "extB: bulk + vault keys survived the "
+                               "restart"));
+                    scheck(o.value(QLatin1String("bulkLen"))
+                               .toDouble() > 2 * 1024 * 1024,
+                           QStringLiteral(
+                               "extB: >2MB blob intact across "
+                               "restart"));
+                    scheck(o.value(QLatin1String("bytes"))
+                               .toDouble() > 10 * 1024 * 1024,
+                           QStringLiteral(
+                               "extB: >10MB store intact across "
+                               "restart"));
+                    scheck(o.value(QLatin1String("sessionKeys"))
+                               .toInt() == 0,
+                           QStringLiteral(
+                               "extB: session area cleared on "
+                               "restart"));
+                }
+            }
+        };
+
+        const auto runStorProbe = [&](ExtensionBackgroundHost *host,
+                                      const char *js) {
+            host->page()->runJavaScript(
+                QString::fromLatin1(js), [](const QVariant &) {});
+        };
+        const auto pollProbe = [&](ExtensionBackgroundHost *host,
+                                   const QString &name) {
+            ++*ticks;
+            host->page()->runJavaScript(QStringLiteral(
+                "self.__stor?JSON.stringify(self.__stor):'missing'"),
+                [&, host, name](const QVariant &v) {
+                if (*ticks > 200) {
+                    sdie(name + QLatin1String(": probe timed out: %1")
+                             .arg(v.toString()));
+                    return;
+                }
+                const QJsonObject r = QJsonDocument::fromJson(
+                    v.toString().toUtf8()).object();
+                if (!r.value(QLatin1String("done")).toBool())
+                    return;
+                grade(name, r.value(QLatin1String("out")).toObject());
+                ++*phase;
+                *ticks = 0;
+            });
+        };
+
+        QObject::connect(storPoll, &QTimer::timeout, &application,
+                         [&]() {
+            ExtensionBackgroundHost *hostA =
+                storIdA.isEmpty() ? nullptr : runtime->host(storIdA);
+            ExtensionBackgroundHost *hostB =
+                storIdB.isEmpty() ? nullptr : runtime->host(storIdB);
+            if (*phase == 0) {
+                if (!hostA || !hostB) {
+                    if (++*ticks > 160)
+                        sdie(QStringLiteral("hosts never spawned"));
+                    return;
+                }
+                if (hostA->state()
+                        == ExtensionBackgroundHost::State::Failed
+                    || hostB->state()
+                           == ExtensionBackgroundHost::State::Failed)
+                    sdie(QStringLiteral("host failed: %1 / %2")
+                             .arg(hostA->lastError(),
+                                  hostB->lastError()));
+                if (hostA->state()
+                        != ExtensionBackgroundHost::State::Ready
+                    || hostB->state()
+                           != ExtensionBackgroundHost::State::Ready) {
+                    if (++*ticks > 160)
+                        sdie(QStringLiteral(
+                                 "hosts never reached Ready"));
+                    return;
+                }
+                scheck(true, QStringLiteral("both hosts Ready"));
+                *ticks = 0;
+                runStorProbe(hostA,
+                             seedPhase ? kSeedA : kVerifyA);
+                *phase = 1;
+            } else if (*phase == 1) {
+                if (hostA)
+                    pollProbe(hostA, QStringLiteral("a"));
+            } else if (*phase == 2) {
+                if (hostB) {
+                    runStorProbe(hostB,
+                                 seedPhase ? kSeedB : kVerifyB);
+                    *phase = 3;
+                    *ticks = 0;
+                }
+            } else if (*phase == 3) {
+                if (hostB)
+                    pollProbe(hostB, QStringLiteral("b"));
+            } else if (*phase == 4) {
+                storPoll->stop();
+                if (!seedPhase) {
+                    // Disk-level proof: the canonical store file
+                    // exists and carries the seeded keys — the write
+                    // path is ours, not the engine's leveldb.
+                    const QString file = BrowserPaths::dataFilePath(
+                        QStringLiteral("extstorage")) + QLatin1Char('/')
+                        + storIdA + QLatin1String("/local.json");
+                    QFile f(file);
+                    QJsonObject disk;
+                    if (f.open(QIODevice::ReadOnly))
+                        disk = QJsonDocument::fromJson(f.readAll())
+                                   .object();
+                    scheck(disk.contains(QLatin1String("vault_k0")),
+                           QStringLiteral(
+                               "extstorage/<id>/local.json holds the "
+                               "seeded vault keys"));
+                    finish();
+                    return;
+                }
+                // Seed-only leg: the action popup — a real sibling
+                // extension page — must read the same canonical
+                // store the hosted background wrote to.
+                if (!hostA || !hostA->page()) {
+                    sdie(QStringLiteral("host page gone for popup "
+                                        "leg"));
+                    return;
+                }
+                popupView = new QWebEngineView;
+                popupPage = new ExtensionChromePage(
+                    hostA->page()->profile(), storIdA, popupView);
+                popupPage->settings()->setAttribute(
+                    QWebEngineSettings::JavascriptEnabled, true);
+                popupView->setPage(popupPage);
+                popupView->show();
+                popupPage->load(QUrl(QStringLiteral(
+                    "chrome-extension://") + storIdA
+                    + QLatin1String("/popup.html")));
+                *phase = 5;
+                *ticks = 0;
+                storPoll->start();
+            } else if (*phase == 5) {
+                if (!popupPage) {
+                    sdie(QStringLiteral("popup page died"));
+                    return;
+                }
+                ++*ticks;
+                popupPage->runJavaScript(QStringLiteral(
+                    "self.__popupStorage"
+                    "?JSON.stringify(self.__popupStorage):'missing'"),
+                    [&](const QVariant &v) {
+                    if (*ticks > 160) {
+                        sdie(QStringLiteral(
+                                 "popup storage probe timed out: %1")
+                                 .arg(v.toString()));
+                        return;
+                    }
+                    const QJsonObject r = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (!r.value(QLatin1String("done")).toBool())
+                        return;
+                    storPoll->stop();
+                    const QJsonObject o =
+                        r.value(QLatin1String("out")).toObject();
+                    scheck(o.value(QLatin1String("keys")).toInt()
+                               == 72
+                           && o.value(QLatin1String("v0")).toString()
+                                  == QLatin1String("user0@arktos.test"),
+                           QStringLiteral(
+                               "popup context reads the canonical "
+                               "store (bg writes visible)"));
+                    if (popupView) {
+                        popupView->deleteLater();
+                        popupView.clear();
+                        popupPage.clear();
+                    }
+                    finish();
+                });
+            }
+        });
+
+        QObject::connect(extensions, &ExtensionManager::extensionLoaded,
+            &application, [&](const ExtensionManager::ExtensionInfo &info) {
+            if (info.name == QLatin1String("arktos-extstore-a")) {
+                scheck(info.loaded && info.error.isEmpty(),
+                       QStringLiteral("fixture A loaded"));
+                storIdA = info.id;
+                extensions->setExtensionEnabled(storIdA, true);
+            } else if (info.name == QLatin1String("arktos-extstore-b")) {
+                scheck(info.loaded && info.error.isEmpty(),
+                       QStringLiteral("fixture B loaded"));
+                storIdB = info.id;
+                extensions->setExtensionEnabled(storIdB, true);
+            }
+            if (!storIdA.isEmpty() && !storIdB.isEmpty())
+                storPoll->start();
+        });
+        QObject::connect(extensions, &ExtensionManager::errorOccurred,
+                         &application, [sdie](const QString &message) {
+            sdie(QStringLiteral("errorOccurred: %1").arg(message));
+        });
+        QTimer::singleShot(240000, &application, [sdie]() {
+            sdie(QStringLiteral("timeout"));
+        });
+        extensions->grantConsent(storDirA);
+        extensions->grantConsent(storDirB);
+        extensions->loadExtension(storDirA);
+        extensions->loadExtension(storDirB);
         return application.exec();
     }
 

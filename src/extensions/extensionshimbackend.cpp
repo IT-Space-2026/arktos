@@ -1085,10 +1085,14 @@ void applyWindowProps(BrowserMainWindow *window,
 constexpr qint64 kSyncQuotaBytesPerItem = 8192;
 constexpr int kSyncMaxItems = 512;
 
-qint64 storageQuotaBytes(const QString &area)
+qint64 storageQuotaBytes(const QString &area, bool unlimitedStorage)
 {
     if (area == QLatin1String("sync"))
-        return 102400;          // sync.QUOTA_BYTES
+        return 102400;          // sync.QUOTA_BYTES — never lifted
+    // BW04: 'unlimitedStorage' lifts the local-area ceiling only —
+    // session keeps its MV3 10 MB bound either way.
+    if (unlimitedStorage && area == QLatin1String("local"))
+        return -1;
     return 10485760;            // local + session (MV3 10 MB)
 }
 
@@ -1456,11 +1460,24 @@ QJsonObject ExtensionShimBackend::loadStoreFile(const QString &area) const
 {
     // The read cap sits just above the 10 MB local-area quota — a
     // legitimately filled store must never refuse to load back.
+    // BW04: 'unlimitedStorage' removes the local write cap entirely,
+    // so for those extensions the bound is a corruption guard, not
+    // a quota — a JSON store past it is torn or forged, not data an
+    // honest write path produced.
+    const qint64 cap = manifestPermissions().contains(
+        QLatin1String("unlimitedStorage"))
+        ? (qint64(1) << 30)
+        : qint64(12) * 1024 * 1024;
     QFile file(storageDir() + QLatin1Char('/') + area
                + QLatin1String(".json"));
-    if (file.size() <= 12 * 1024 * 1024
-            && file.open(QIODevice::ReadOnly))
+    if (file.size() <= cap && file.open(QIODevice::ReadOnly))
         return QJsonDocument::fromJson(file.readAll()).object();
+    if (file.size() > cap)
+        const_cast<ExtensionShimBackend *>(this)->recordNote(
+            QStringLiteral(
+                "chrome.storage.%1: on-disk store exceeds the %2-byte "
+                "load bound — treated as corrupt, starting empty")
+                .arg(area).arg(cap));
     return QJsonObject();
 }
 
@@ -1689,6 +1706,27 @@ QJsonObject ExtensionShimBackend::invokeStorage(const QString &method,
         }
         return okReply();
     }
+    if (op == QLatin1String("migrated")) {
+        // BW04 — the shim's native->bridge merge marker.  A flag
+        // file beside the area store records that the one-time
+        // merge already ran, so a key the extension deleted is never
+        // resurrected off a stale native copy on the next boot.
+        // Bare call answers {migrated: bool}; {mark:true} records
+        // the merge as done.  Not a Chrome member — an internal
+        // protocol op like 'changed' above.
+        const QString flag = storageDir() + QLatin1Char('/') + area
+            + QLatin1String(".migrated");
+        if (args.value(QStringLiteral("mark")).toBool()) {
+            if (!QDir().mkpath(storageDir()))
+                return errReply(QStringLiteral("io-error"));
+            QFile file(flag);
+            if (!file.open(QIODevice::WriteOnly))
+                return errReply(QStringLiteral("io-error"));
+            file.write("1");
+            return okReply();
+        }
+        return okReply(QFile::exists(flag));
+    }
     if (op == QLatin1String("set")) {
         if (area == QLatin1String("managed"))
             return errReply(QStringLiteral("read-only"));
@@ -1719,7 +1757,10 @@ QJsonObject ExtensionShimBackend::invokeStorage(const QString &method,
         QJsonObject merged = store;
         for (auto it = items.constBegin(); it != items.constEnd(); ++it)
             merged.insert(it.key(), it.value());
-        if (storeBytesUsed(merged) > storageQuotaBytes(area))
+        const qint64 quota = storageQuotaBytes(
+            area, manifestPermissions().contains(
+                QLatin1String("unlimitedStorage")));
+        if (quota >= 0 && storeBytesUsed(merged) > quota)
             return errReply(QStringLiteral("quota-exceeded"));
         QJsonObject result;
         result.insert(QStringLiteral("changes"),
