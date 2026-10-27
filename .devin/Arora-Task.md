@@ -382,7 +382,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | INFRA01 | taskloop task-file race: runner read-modify-write clobbers concurrent edits (lost-update hit twice today) — flock around the row update — details below | done | 0 | new .devin/taskfile.sh — flock on <file>.lock + temp+rename for every task-file write (set row fields, append-detail, with-lock escape hatch); all 6 taskloop-* lanes route bump_attempts/mark_blocked through it; RUNNER_PROMPT_*+file headers require it so agent edits serialize too. Verified: queued set waited out a held lock (1.7s) — both edits survived; 12-writer storm 0 losses; error paths reject bad id/status/pipe; bash -n clean |
 | SEC30 | Omnibox paste self-XSS: pasting javascript:... + Enter executes via loadUrl's javascript branch — typed bookmarklets stay allowed, but strip the scheme from pasted text like Chrome — details below | done | 0 | omnibox javascript: strip on every untrusted paste/drop gesture via opt-in LineEdit sanitizer; typed bookmarklets untouched — verified: tst_locationbar 57/57, tst_tabwidget 45/45 incl e2e offscreen --disable-gpu |
 | MAC02 | macOS verify: extension action popup renders (Bitwarden login) — was white, then black under WA_NativeWindow; 37ea0aaf switched to frameless Tool window — details below | done | 0 | Blind fix: popup now attaches page->view eagerly + wires chromeBridge pre-commit (was viewless load + setPage on loadFinished — the one ordering no proven-good WebEngine surface shares); macOS surface Tool/NSPanel -> frameless Qt::Window (PiP/DevTools class). Linux-verified: ARKTOS_DEBUG_POPUP grab shows fully rendered Bitwarden login popup; quit-after-load + actionPopupSelfWires PASS. Runtime mac-verify still owed |
-| MAC03 | macOS verify: reader button presence + glyph — now eligibility-gated in 37ea0aaf (was permanently visible); if "looks wrong" persists compare glyph vs Safari/Firefox on Retina — details below | pending | 0 | USER-CONFIRMED wrong on v1.0 dmg: reader button presence/glyph still off after 37ea0aaf eligibility gating. No macOS host here — audit readerbutton paint/eligibility blind, fix most likely cause, runtime mac-verify still owed |
+| MAC03 | macOS verify: reader button presence + glyph — now eligibility-gated in 37ea0aaf (was permanently visible); if "looks wrong" persists compare glyph vs Safari/Firefox on Retina — details below | done | 0 | Blind fix: presence stomped by updateReaderState — action stayed setVisible(readerUsable) + trailing widget setVisible undid refresh() gate on every tab switch, and unified NSToolbar ignores widget hide() entirely (item latched on). Now action+widget gated on readerUsable && isAvailable(); glyph engine already matches ChromeIconEngine contract (DPR pixmap, pinned Accent, 1.35 stroke) — no further blind geometry guess. Verified: rewritten tst readerModeButton PASS + reader/theme suite green offscreen; mac runtime verify still owed |
 | MAC04 | macOS fix: extension settings page shows no enable tick boxes — details below | pending | 0 | USER-CONFIRMED on v1.0 dmg: the extensions settings page is missing the per-extension checkboxes entirely. Audit the settings/delegate painting under macOS style — likely custom item widgets/delegate painting invisible under the Mac style or items added without checkState. Fix blind, Linux smoke-verify, runtime mac-verify owed |
 | MAC05 | macOS fix: search/url bar renders a stray mini close/clear button — details below | pending | 0 | USER-CONFIRMED on v1.0 dmg: mini close button still present in the url/search field (07162d22 focus-gated it but it persists on macOS). Audit SearchLineEdit/clear-button code path under Q_OS_MAC — likely setClearButtonEnabled true or the gated wiring not applied. Fix blind, runtime mac-verify owed |
 | MAC06 | macOS fix: bundled Bitwarden never installs — details below | pending | 0 | USER-CONFIRMED on v1.0 dmg: Bitwarden does not appear/work. Audit installBundledExtensions on macOS: bundledExtensionsPath() must resolve Contents/Resources/share/arktos/extensions inside the .app; also the one-shot extensions/bundled/ consumed marker means a profile that ran a broken earlier build never retries — add retry when zip present but extension absent. Fix blind, runtime mac-verify owed |
@@ -3835,3 +3835,50 @@ gated on ReaderMode::isAvailable(). VERIFY on real macOS:
    do not guess blind again. Ask the user for their screenshot if
    the defect is not obvious.
 Only mark done with runtime proof on Retina hardware.
+
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Audit conclusion — 37ea0aaf gated only the WIDGET's visibility inside
+ReaderButton::refresh() (setVisible(isAvailable())), but the toolbar
+item's presence is owned by the wrapping QWidgetAction, and
+BrowserMainWindow::updateReaderState() kept m_navReaderAction->setVisible(readerUsable)
+plus a trailing m_readerModeButton->setVisible(readerUsable) that
+re-showed the widget outright.  Two consequences:
+
+- On macOS the nav bar is a unified NSToolbar
+  (setUnifiedTitleAndToolBarOnMac(true)) — Qt's bridge inserts/removes
+  native toolbar items on the ACTION's visibility only, so the
+  widget-level hide() never took the item out.  The button stayed
+  permanently visible on every page: the reported "still bad".
+- On every platform the trailing setVisible(readerUsable) ran on each
+  tab switch / view-menu open and stomped the gate: a settled
+  "not article" verdict emits no availableChanged (setAvailable
+  early-returns when already false), so nothing ever hid it again —
+  the widget was only correct at the instant refresh() last ran.
+
+Fix (src/browsermainwindow.cpp): updateReaderState() now computes
+readerPresent = readerUsable && view && view->readerMode()->isAvailable()
+and applies it to BOTH the action and the widget — isAvailable() is
+forced while the overlay is active, so the exit affordance can never
+hide itself.  ReaderButton::refresh() keeps its widget-level mirror
+(same predicate minus the caps gate; the action stays the presence
+owner).  Stale READ04 "always present" docs updated in
+readerbutton.h + browsermainwindow.cpp.
+
+Glyph audit: ReaderIconEngine already rides the proven
+ChromeIconEngine contract — per-request scaledPixmap at
+devicePixelRatioF (Retina-crisp), palette-snapshot tint with the
+ad8f9c12-pinned Accent, ~1.35px grid stroke matching the themed
+siblings.  No macOS-specific glyph defect found; per the task's own
+guidance no further geometry guess was made blind — if the glyph
+itself still reads wrong on Retina, the next lead is a 2x location-bar
+screenshot vs Safari's reader glyph (task details step 3).
+
+Linux verification: tst_browsermainwindow readerModeButton rewritten
+to the gated contract (blank tab hidden incl. action, article tab
+appears+suggested, active stays present, new non-article tab hides,
+View-menu invoke still reports "not available", widget tab hides) —
+PASS; readerModeContent x5 + readerSanitizer + darkThemeReaderGlyph +
+torReaderAccent + torNavIconsDarkChrome + darkChromeIcons all PASS
+offscreen; arktos --quit-after-load about:blank exit 0.  macOS
+runtime verification is still owed.

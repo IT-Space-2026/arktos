@@ -26,11 +26,13 @@
 class WebView;
 
 // READ02: the navigation-toolbar reader-mode button — the browser's
-// single reader control (READ03 removed the in-bar twin).  READ04:
-// always present on engine tabs — the article heuristic is allowed to
-// be wrong, so it no longer gates presence; ReaderMode::isAvailable()
-// only drives the "suggested" accent.  Checked while the reader
-// overlay is up.  Click toggles reader mode.
+// single reader control (READ03 removed the in-bar twin).  Presence
+// follows ReaderMode::isAvailable() — the Safari/Chrome/Firefox
+// contract where the affordance only exists on article-eligible
+// pages (a permanently visible glyph that refuses on most pages
+// reads as a broken button); the toolbar's QWidgetAction mirrors the
+// same gate since native toolbars ignore the widget's hidden flag.
+// Checked while the reader overlay is up.  Click toggles reader mode.
 class ReaderButton : public QToolButton
 {
     Q_OBJECT

@@ -1899,15 +1899,22 @@ void BrowserMainWindow::updateReaderState()
     m_viewReaderAction->setEnabled(readerUsable);
     m_viewReaderAction->setChecked(view && view->readerMode()
                                    && view->readerMode()->isActive());
-    // READ02/READ04: the nav-row button follows the same tab — it
-    // manages its own checked/suggested state off the view's
-    // ReaderMode.  The article heuristic no longer gates presence; it
-    // only drives the "suggested" accent.  Only tabs where reader
-    // mode can never apply (widget pages like History/Preferences,
-    // engine tabs whose caps row says so) hide the control.
+    // READ02: the nav-row button follows the same tab — it manages
+    // its own checked/suggested state off the view's ReaderMode.
+    // Presence follows the article probe like Safari/Chrome/Firefox
+    // (isAvailable() is forced while the overlay is up, so the active
+    // button can never hide itself), and it MUST ride the action:
+    // under the unified NSToolbar the native item's presence is
+    // governed by the QAction's visibility alone, so the widget's own
+    // hidden flag left the macOS item latched on.  The previous
+    // setVisible(readerUsable) also stomped the gate on every tab
+    // switch on every platform — a settled "not article" verdict
+    // emits no availableChanged, so nothing ever hid it again.
     m_readerModeButton->setWebView(view);
-    m_navReaderAction->setVisible(readerUsable);
-    m_readerModeButton->setVisible(readerUsable);
+    const bool readerPresent = readerUsable && view && view->readerMode()
+                               && view->readerMode()->isAvailable();
+    m_navReaderAction->setVisible(readerPresent);
+    m_readerModeButton->setVisible(readerPresent);
     // PiP has no caps row — its only honest availability signal stays
     // "this tab hosts a WebView" (the QWebChannel it rides is
     // WebView-bound).
@@ -2224,11 +2231,11 @@ void BrowserMainWindow::setupToolBar()
     // before the location bar starts.  READ03: the only reader
     // control — the in-bar duplicate is gone.  Palette-painted glyph
     // (no icon theme ships a reader glyph), hidden until the first
-    // updateReaderState() — READ04 keeps it present on every engine
-    // tab, accent-marked on article-like pages, checked while the
-    // overlay is up.  updateReaderState() re-points it at the
-    // current tab along with the View-menu action, so the two can
-    // never disagree.
+    // updateReaderState() — presence follows the page's article
+    // probe (accent-outlined while merely suggested, accent-filled
+    // while the overlay is up).  updateReaderState() re-points it at
+    // the current tab along with the View-menu action, so the two
+    // can never disagree.
     m_readerModeButton = new ReaderButton(m_navigationBar);
     m_readerModeButton->setObjectName(QLatin1String("navReaderButton"));
     // addWidget() wraps the button in a QWidgetAction — a toolbar

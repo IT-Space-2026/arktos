@@ -4891,3 +4891,12 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   chrome.* bridge is wired ahead of the page's first commit, and the
   bubble is a plain frameless window of the same class the DevTools
   and picture-in-picture surfaces use instead of a utility panel.
+- Reader Mode button presence fixed for real (MAC03): the toolbar item
+  is now governed by the article probe on every platform — it stays
+  hidden on non-article pages and appears once a page qualifies (or
+  while the reader overlay is up, so it can always be used to exit).
+  Previously the toolbar item was still added on every web tab, which
+  kept the button permanently visible — most visibly on macOS, where
+  the unified toolbar only honors the action's visibility, not the
+  widget's. The View → Reader Mode menu item still lets you try reader
+  mode on any page and reports "not available" honestly.

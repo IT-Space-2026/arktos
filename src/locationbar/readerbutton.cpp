@@ -235,9 +235,12 @@ void ReaderButton::refresh()
     // visible glyph that refuses on most pages reads as a broken
     // button (the "reader button looks wrong" reports); hiding it
     // until isAvailable() (probed article OR already active) makes
-    // appearance itself the affordance.  BrowserMainWindow still
-    // hides the control outright where it can never apply
-    // (widget/engine tabs) — m_webView stays the base gate.
+    // appearance itself the affordance.  The toolbar's QWidgetAction
+    // mirrors this same gate in updateReaderState() — the widget
+    // flag alone latches off under the native NSToolbar (the macOS
+    // "still bad" report).  BrowserMainWindow still hides the
+    // control outright where it can never apply (widget/engine
+    // tabs) — m_webView stays the base gate.
     setVisible(m_webView != nullptr && mode && mode->isAvailable());
     setChecked(active);
     setProperty("suggested", suggested);
