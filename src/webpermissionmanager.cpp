@@ -18,6 +18,7 @@
  */
 
 #include "webpermissionmanager.h"
+#include "extensionbackgroundhost.h"
 #include "profilesettings.h"
 
 #include <qapplication.h>
@@ -435,6 +436,28 @@ void WebPermissionManager::handleRequest(QWidget *parent,
         QWebEnginePermission::PermissionType type, bool offTheRecord,
         const std::function<void(bool)> &resolve)
 {
+    // BW13: extension chrome loaded in an ordinary tab (a popped-out
+    // extension view at chrome-extension://<id>/...) is not a site —
+    // its consent is the reviewed manifest, never a stored row, a
+    // session answer or a prompt, so it bypasses the whole site
+    // pipeline including the permpolicy consult below.
+    // ClipboardReadWrite resolves iff REQUIRED permissions declared
+    // clipboardRead or clipboardWrite (Qt merges Chrome's two grants
+    // into the one type); every other feature still denies.  The
+    // hidden extension chrome (HostedBackgroundPage /
+    // ExtensionChromePage) resolves its own requests without this
+    // broker — same verdict, resolveExtensionChromePermission.
+    if (origin.scheme() == QLatin1String("chrome-extension")) {
+        ExtensionBackgroundRuntime *runtime =
+            ExtensionBackgroundRuntime::instance();
+        resolve(type == QWebEnginePermission::PermissionType
+                            ::ClipboardReadWrite
+            && (runtime->hasExtensionPermission(
+                    origin.host(), QLatin1String("clipboardRead"))
+                || runtime->hasExtensionPermission(
+                    origin.host(), QLatin1String("clipboardWrite"))));
+        return;
+    }
 #if defined(ARKTOS_RUSTCORE)
     // MD03: the whole verdict pipeline — feature gate, remembered
     // row, session answer — is one permpolicy consult.  Only "ask"

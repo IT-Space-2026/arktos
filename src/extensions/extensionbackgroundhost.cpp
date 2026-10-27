@@ -344,6 +344,44 @@ QJsonObject ChromeBridge::invokeRelay(const QString &method,
 // ExtensionBackgroundHost
 // ------------------------------------------------------------------
 
+// BW13 — the shared clipboard-grant predicate (the header carries
+// the contract).  Required permissions only: an optional grant is
+// inert until chrome.permissions.request consents it, and this
+// runtime answers request() typed-unsupported.
+bool extensionChromeClipboardGranted(const QString &extensionId)
+{
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    return runtime->hasExtensionPermission(
+                extensionId, QLatin1String("clipboardRead"))
+        || runtime->hasExtensionPermission(
+                extensionId, QLatin1String("clipboardWrite"));
+}
+
+// BW13 — extension chrome's permission verdict (the header carries
+// the contract).  The hosted background, its offscreen documents,
+// the action popup and the probe pages all route permissionRequested
+// here: extension chrome is not a WebPage, so SEC05's broker never
+// sees these requests and an unanswered one would hang.
+void resolveExtensionChromePermission(
+        const QString &extensionId,
+        const QWebEnginePermission &permission)
+{
+    if (!permission.isValid())
+        return;
+    const bool grant =
+        permission.permissionType()
+            == QWebEnginePermission::PermissionType::ClipboardReadWrite
+        && permission.origin().scheme()
+               == QLatin1String("chrome-extension")
+        && permission.origin().host() == extensionId
+        && extensionChromeClipboardGranted(extensionId);
+    if (grant)
+        permission.grant();
+    else
+        permission.deny();
+}
+
 namespace {
 
 // QUAL03: setWebChannel binds 'chromeBridge' to the PAGE, not the
@@ -369,6 +407,25 @@ public:
         // PRIV07 bookkeeping — same no-op-today rule as
         // ExtensionChromePage (extensions refuse OTR loads).
         BrowserProfile::trackPrivateProfilePage(this);
+        // BW13: same verdict the popup/probe pages get — clipboard
+        // is granted iff the manifest declared it; every other
+        // feature denies typed instead of hanging unanswered.
+        connect(this, &QWebEnginePage::permissionRequested, this,
+                [this](const QWebEnginePermission &permission) {
+            resolveExtensionChromePermission(m_extensionId,
+                                             permission);
+        });
+        // BW13: Chrome wires an extension's declared clipboardRead/
+        // clipboardWrite to the renderer's AllowReadFromClipboard/
+        // AllowWriteToClipboard content-settings hooks; Qt's per-page
+        // attribute is the same switch.  execCommand('copy') — the
+        // offscreen-document path Bitwarden actually uses — reaches
+        // the real clipboard for grant-holders; navigator.clipboard
+        // in a hidden context still hits Blink's focus gate (Chrome
+        // parity, crbug.com/1404835), never silently faked.
+        settings()->setAttribute(
+            QWebEngineSettings::JavascriptCanAccessClipboard,
+            extensionChromeClipboardGranted(m_extensionId));
         // ER20: extension chrome is not web content — the profile's
         // JavascriptEnabled preference governs pages, never extension
         // contexts (Chrome parity; devtoolswindow.cpp does the same
@@ -1356,7 +1413,7 @@ void ExtensionBackgroundRuntime::syncNow()
         // rustcore) — never a raw JSON parse here.
         const ExtensionManager::Manifest manifest =
             ExtensionManager::inspectDeclaredManifest(want.path);
-        if (!manifest.valid || manifest.backgroundScripts.isEmpty()) {
+        if (!manifest.valid) {
             m_noBackground.insert(id);
             continue;
         }
@@ -1365,9 +1422,16 @@ void ExtensionBackgroundRuntime::syncNow()
         // manifest.permissions merges optional_permissions in, and an
         // optional grant is inert until chrome.permissions.request
         // consents it (typed unsupported in this runtime), so it must
-        // never unlock a gated call or event family.
+        // never unlock a gated call or event family.  BW13: snapshot
+        // the whole desired set, not just background carriers — a
+        // background-less extension's chrome pages (its action
+        // popup) resolve permission requests off the same map.
         m_extPermissions.insert(id, manifest.requiredPermissions);
         m_extHostPermissions.insert(id, manifest.hostPermissions);
+        if (manifest.backgroundScripts.isEmpty()) {
+            m_noBackground.insert(id);
+            continue;
+        }
         if (!want.profile)
             continue;
         auto *host = new ExtensionBackgroundHost(

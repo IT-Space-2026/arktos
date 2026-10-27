@@ -148,6 +148,7 @@
 #include <QtCore/QProcessEnvironment>
 #include <QtCore/QScopeGuard>
 #include <QtGui/QAbstractTextDocumentLayout>
+#include <QtGui/QClipboard>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QIcon>
 #include <QtGui/QImage>
@@ -13657,6 +13658,8 @@ int main(int argc, char **argv)
         // popup gate inspection; 10 = the autofill attempt against a
         // loopback login form; 15 = the BW12 per-frame sendMessage
         // legs between the BW05 port legs and the reconnect leg;
+        // 17 = the BW13 clipboard legs (both flavors, after
+        // offscreen);
         // 1 = waiting for teardown after
         // disable; 2 = the re-enable respawn must reach Ready again.
         auto phase = std::make_shared<int>(0);
@@ -13674,6 +13677,8 @@ int main(int argc, char **argv)
         // extension's declared document).
         auto offStep = std::make_shared<int>(0);
         auto offRel = std::make_shared<QString>();
+        // BW13: the clipboard leg's sub-step (see phase 17).
+        auto clipStep = std::make_shared<int>(0);
         BrowserMainWindow *smokeWindow = nullptr;
         // Never destruct a WebEngine page/view inside a runJavaScript
         // result callback — the IPC teardown can deadlock the channel
@@ -13731,6 +13736,19 @@ int main(int argc, char **argv)
         // (observed: dangling captures took the realExt branch and
         // segfaulted inside setExtensionEnabled).
         const auto offDone = [&]() {
+            // BW13: the clipboard legs run next for both flavors —
+            // they need the extension still enabled; phase 17's own
+            // exit (clipDone) performs the disable/teardown or the
+            // port-leg handoff this used to do directly.
+            *phase = 17;
+            *clipStep = 0;
+            *probeTicks = 0;
+            hostPoll->start();
+        };
+        // BW13: the clipboard legs' exit — see the phase-17 comment
+        // for why this mirror of offDone exists (dead-stack-lambda
+        // rule: runJavaScript result callbacks outlive the tick).
+        const auto clipDone = [&]() {
             if (realExt) {
                 extensions->setExtensionEnabled(extensionId, false);
                 *phase = 1;
@@ -16104,6 +16122,563 @@ int main(int argc, char **argv)
                           "offscreen page torn down host-side");
                     offDone();
                 });
+            } else if (*phase == 17) {  // BW13: clipboard legs
+                // Bitwarden's copy-password flow runs
+                // navigator.clipboard in the (focused) popup and the
+                // execCommand('copy') textarea in hidden
+                // background/offscreen contexts — both measured on
+                // the extension's own chrome with Chrome parity:
+                // Blink rejects navigator.clipboard in an unfocused
+                // document BEFORE consulting permissions
+                // ("Document is not focused" — real Chrome does the
+                // same in offscreen documents, crbug.com/1404835),
+                // so the hidden-host async legs assert the typed
+                // parity rejection while execCommand — the offscreen
+                // path — must reach the real QClipboard iff the
+                // manifest declared the grant.  The shown popup
+                // measures the focused path: resolves+observed for
+                // the grant-holder, typed denial for the fixture.
+                // The verify is the OBSERVED text, never the API's
+                // self-report.
+                //
+                // Platform guard: a QPA without a usable clipboard
+                // (offscreen) makes the leg unmeasurable — a probe
+                // write/read pair decides; no store, an honest skip.
+                if (*clipStep == 0) {
+                    QClipboard *cb = QGuiApplication::clipboard();
+                    const QString probe =
+                        QStringLiteral("__arktos_clip_cap__");
+                    cb->setText(probe);
+                    if (cb->text() != probe) {
+                        qInfo() << "extension-host-smoke: clipboard"
+                                   " legs skipped — platform has no"
+                                   " usable clipboard";
+                        clipDone();
+                        return;
+                    }
+                    cb->setText(QString());
+                    if (!host) {
+                        check(realExt,
+                              "clipboard legs skipped — host gone");
+                        clipDone();
+                        return;
+                    }
+                    *clipStep = 1;
+                    *probeTicks = 0;
+                    return;
+                }
+                if (!host) {
+                    check(realExt,
+                          "clipboard legs skipped — host gone");
+                    clipDone();
+                    return;
+                }
+                if (*clipStep == 1) {   // navigator.clipboard.writeText
+                    *clipStep = 2;
+                    *probeTicks = 0;
+                    const QString sentinel = realExt
+                        ? QStringLiteral("arktos-clip-bw13-nav")
+                        : QStringLiteral("arktos-clip-bw13-neg");
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__clipW={done:false};"
+                        "(async function(){var o={};"
+                        " o.has=('clipboard' in navigator"
+                        "  &&'writeText' in (navigator.clipboard||{}));"
+                        " try{await navigator.clipboard.writeText('%1');"
+                        "  o.ok=true;}"
+                        " catch(e){o.err=String(e&&e.name||e)"
+                        "  +'|'+String(e&&e.message||e);}"
+                        " self.__clipW.out=o;self.__clipW.done=true;"
+                        "})().catch(function(e){self.__clipW.err="
+                        " String(e);self.__clipW.done=true;});")
+                        .arg(sentinel),
+                        [](const QVariant &) {});
+                    return;
+                }
+                if (*clipStep == 2) {   // write outcome — parity deny
+                    ++*probeTicks;
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__clipW?JSON.stringify(self.__clipW)"
+                        ":'missing'"),
+                        [&, host](const QVariant &v) {
+                        if (*probeTicks > 240) {
+                            die(QStringLiteral(
+                                "clipboard writeText leg timed out: %1")
+                                    .arg(v.toString()));
+                            return;
+                        }
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool())
+                            return;
+                        hostPoll->stop();
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        const QString clip =
+                            QGuiApplication::clipboard()->text();
+                        const QString sentinel = realExt
+                            ? QStringLiteral("arktos-clip-bw13-nav")
+                            : QStringLiteral("arktos-clip-bw13-neg");
+                        // Both flavors reject typed here: the hidden
+                        // host is an unfocused document, and Blink's
+                        // focus gate fires before permissions are
+                        // even consulted — real Chrome answers the
+                        // same NotAllowedError in offscreen documents
+                        // (crbug.com/1404835).  Honest parity, never
+                        // a silent success: the clipboard must stay
+                        // untouched either way.
+                        check(!o.value(QLatin1String("ok")).toBool()
+                              && !o.value(QLatin1String("err"))
+                                     .toString().isEmpty(),
+                              realExt
+                                  ? "hidden writeText rejects typed "
+                                    "— Chrome parity (unfocused)"
+                                  : "clipboard.writeText rejects "
+                                    "typed without the grant");
+                        qInfo() << "extension-host-smoke: hidden"
+                                   " write rejection:"
+                                << o.value(QLatin1String("err"))
+                                       .toString();
+                        check(clip != sentinel,
+                              "rejected writeText never reached the "
+                              "clipboard");
+                        // execCommand('copy') — Bitwarden's textarea
+                        // fallback verbatim.
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__clipE={done:false};"
+                            "(function(){var o={};"
+                            " o.supported=('queryCommandSupported' in"
+                            "  document?document"
+                            "   .queryCommandSupported('copy'):null);"
+                            " var ta=document.createElement('textarea');"
+                            " ta.textContent='arktos-clip-bw13-exec';"
+                            " ta.style.position='fixed';"
+                            " (document.body||document.documentElement)"
+                            "  .appendChild(ta);ta.select();"
+                            " try{o.ret=document.execCommand('copy');}"
+                            " catch(e){o.err=String(e);}"
+                            " if(ta.parentNode)ta.parentNode"
+                            "  .removeChild(ta);"
+                            " self.__clipE.out=o;self.__clipE.done=true;"
+                            "})()"),
+                            [](const QVariant &) {});
+                        *clipStep = 3;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                if (*clipStep == 3) {   // execCommand('copy') outcome
+                    ++*probeTicks;
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__clipE?JSON.stringify(self.__clipE)"
+                        ":'missing'"),
+                        [&, host](const QVariant &v) {
+                        if (*probeTicks > 240) {
+                            die(QStringLiteral(
+                                "clipboard execCommand leg timed "
+                                "out: %1").arg(v.toString()));
+                            return;
+                        }
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool())
+                            return;
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        const QString clip =
+                            QGuiApplication::clipboard()->text();
+                        const QString sentinel = QStringLiteral(
+                            "arktos-clip-bw13-exec");
+                        if (realExt) {
+                            if (!o.value(QLatin1String("ret")).toBool()
+                                || clip != sentinel) {
+                                if (*probeTicks > 200) {
+                                    hostPoll->stop();
+                                    check(o.value(QLatin1String("ret"))
+                                              .toBool(),
+                                          "execCommand('copy') "
+                                          "fallback succeeds with "
+                                          "the grant");
+                                    check(clip == sentinel,
+                                          "execCommand copy observed "
+                                          "on the real clipboard");
+                                    qInfo() << "extension-host-smoke:"
+                                               " exec outcome:"
+                                            << v.toString()
+                                            << "clipboard:" << clip;
+                                    clipDone();
+                                }
+                                return;
+                            }
+                            hostPoll->stop();
+                            check(true, "execCommand('copy') fallback "
+                                        "succeeds with the grant");
+                            check(true, "execCommand copy observed on "
+                                        "the real clipboard");
+                        } else {
+                            hostPoll->stop();
+                            check(!o.value(QLatin1String("ret"))
+                                      .toBool(),
+                                  "execCommand('copy') refused "
+                                  "without the grant");
+                            check(clip != sentinel,
+                                  "denied execCommand copy never "
+                                  "reached the clipboard");
+                        }
+                        // navigator.clipboard.readText — same focus
+                        // gate as writeText; the hidden host rejects
+                        // typed for BOTH flavors (Chrome parity).
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__clipR={done:false};"
+                            "(async function(){var o={};"
+                            " try{o.text=await navigator.clipboard"
+                            "  .readText();o.ok=true;}"
+                            " catch(e){o.err=String(e&&e.name||e)"
+                            "  +'|'+String(e&&e.message||e);}"
+                            " self.__clipR.out=o;self.__clipR.done=true;"
+                            "})().catch(function(e){self.__clipR.err="
+                            " String(e);self.__clipR.done=true;});"),
+                            [](const QVariant &) {});
+                        *clipStep = 4;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                if (*clipStep == 4) {   // readText outcome
+                    ++*probeTicks;
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__clipR?JSON.stringify(self.__clipR)"
+                        ":'missing'"),
+                        [&, host](const QVariant &v) {
+                        if (*probeTicks > 240) {
+                            die(QStringLiteral(
+                                "clipboard readText leg timed out: %1")
+                                    .arg(v.toString()));
+                            return;
+                        }
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool())
+                            return;
+                        hostPoll->stop();
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        // Same focus gate as writeText — hidden reads
+                        // reject typed for grant-holders too; Chrome
+                        // parity (extension reads happen in focused
+                        // surfaces, measured in the popup leg next).
+                        check(!o.value(QLatin1String("ok")).toBool()
+                              && !o.value(QLatin1String("err"))
+                                     .toString().isEmpty(),
+                              realExt
+                                  ? "hidden readText rejects typed "
+                                    "— Chrome parity (unfocused)"
+                                  : "clipboard.readText rejects "
+                                    "typed without the grant");
+                        qInfo() << "extension-host-smoke: hidden"
+                                   " read rejection:"
+                                << o.value(QLatin1String("err"))
+                                       .toString();
+                        // The popup leg: the copy-password surface is
+                        // the action popup — an ExtensionChromePage
+                        // on a shown view (focused under xvfb), a
+                        // different page class than the host — so
+                        // both the grant wiring and the focused
+                        // denial are proven there.  The fixture ships
+                        // a popup too, so both flavors run it.
+                        QUrl popupUrl;
+                        for (const ExtensionManager::ExtensionInfo
+                                 &ei : extensions->extensions()) {
+                            if (ei.id == extensionId) {
+                                popupUrl = ei.actionPopupUrl;
+                                break;
+                            }
+                        }
+                        if (popupUrl.scheme()
+                                != QLatin1String("chrome-extension")) {
+                            qInfo() << "extension-host-smoke: popup"
+                                       " clipboard leg skipped — no"
+                                       " popup url";
+                            clipDone();
+                            return;
+                        }
+                        popupView = new QWebEngineView;
+                        popupPage = new ExtensionChromePage(
+                            host->page()->profile(), extensionId,
+                            popupView);
+                        popupPage->settings()->setAttribute(
+                            QWebEngineSettings::JavascriptEnabled,
+                            true);
+                        popupView->setPage(popupPage);
+                        // The popup legs need a FOCUSED document —
+                        // navigator.clipboard's Blink focus gate —
+                        // so the view is raised/activated like a
+                        // real action popup (which Chrome always
+                        // opens focused).
+                        popupView->show();
+                        popupView->raise();
+                        popupView->activateWindow();
+                        popupView->setFocus(Qt::OtherFocusReason);
+                        popupPage->load(popupUrl);
+                        *clipStep = 5;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                if (*clipStep == 5) {   // popup bridge + focus wait
+                    ++*probeTicks;
+                    if (!popupPage || !popupView) {
+                        die(QStringLiteral(
+                            "popup page died before the clipboard "
+                            "leg"));
+                        return;
+                    }
+                    // The popup legs need a FOCUSED document —
+                    // Blink gates navigator.clipboard on it before
+                    // permissions — so the view is driven like a real
+                    // action popup (raised, activated, focused).
+                    // Under a WM-less Xvfb that can still leave
+                    // document.hasFocus() false (no compositor answers
+                    // _NET_ACTIVE_WINDOW and QtWebEngine forwards web
+                    // contents focus only from OS-level activation) —
+                    // the grant-holder waits a bounded while, then the
+                    // leg proceeds and the OUTCOME is judged against
+                    // whatever the document actually reported.
+                    popupView->raise();
+                    popupView->activateWindow();
+                    QWidget *proxy = popupView->focusProxy()
+                        ? popupView->focusProxy() : popupView;
+                    proxy->setFocus(Qt::OtherFocusReason);
+                    popupPage->runJavaScript(QStringLiteral(
+                        "window.focus();JSON.stringify({"
+                        "b:!!(window.__arktosHost"
+                        "&&__arktosHost.bridgeUp),"
+                        "f:document.hasFocus(),"
+                        "v:document.visibilityState})"),
+                        [&](const QVariant &v) {
+                        const QJsonObject s = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        const bool bridgeUp =
+                            s.value(QLatin1String("b")).toBool();
+                        if (!bridgeUp) {
+                            if (*probeTicks > 160)
+                                die(QStringLiteral(
+                                    "popup bridge never came up for "
+                                    "the clipboard leg"));
+                            return;
+                        }
+                        // Grant-holder: give focus a bounded window
+                        // (~60 ticks) to land before measuring the
+                        // call — the fixture proceeds at the bridge.
+                        if (realExt
+                            && !s.value(QLatin1String("f")).toBool()
+                            && *probeTicks <= 60)
+                            return;
+                        hostPoll->stop();
+                        popupPage->runJavaScript(QStringLiteral(
+                            "self.__clipP={done:false};"
+                            "(async function(){var o={};"
+                            " window.focus();o.f=document.hasFocus();"
+                            " try{await navigator.clipboard.writeText"
+                            "  ('arktos-clip-bw13-popup');o.ok=true;}"
+                            " catch(e){o.err=String(e&&e.name||e)"
+                            "  +'|'+String(e&&e.message||e);}"
+                            " self.__clipP.out=o;"
+                            " self.__clipP.done=true;})()"
+                            ".catch(function(e){self.__clipP.err="
+                            " String(e);self.__clipP.done=true;});"),
+                            [](const QVariant &) {});
+                        *clipStep = 6;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                if (*clipStep == 6) {   // popup write outcome
+                    ++*probeTicks;
+                    if (!popupPage) {
+                        die(QStringLiteral(
+                            "popup page gone mid-clipboard-leg"));
+                        return;
+                    }
+                    popupPage->runJavaScript(QStringLiteral(
+                        "self.__clipP?JSON.stringify(self.__clipP)"
+                        ":'missing'"),
+                        [&](const QVariant &v) {
+                        if (*probeTicks > 240) {
+                            die(QStringLiteral(
+                                "popup clipboard leg timed out: %1")
+                                    .arg(v.toString()));
+                            return;
+                        }
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool())
+                            return;
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        const QString clip =
+                            QGuiApplication::clipboard()->text();
+                        const QString sentinel = QStringLiteral(
+                            "arktos-clip-bw13-popup");
+                        if (!realExt) {
+                            hostPoll->stop();
+                            // Focused but grantless: the request
+                            // reaches resolveExtensionChromePermission
+                            // which denies — typed rejection, and
+                            // nothing lands on the clipboard.
+                            check(!o.value(QLatin1String("ok")).toBool()
+                                  && !o.value(QLatin1String("err"))
+                                         .toString().isEmpty(),
+                                  "popup clipboard.writeText rejects "
+                                  "typed without the grant");
+                            qInfo() << "extension-host-smoke: popup"
+                                       " write denial:"
+                                    << o.value(QLatin1String("err"))
+                                           .toString();
+                            check(clip != sentinel,
+                                  "denied popup copy never reached "
+                                  "the clipboard");
+                            if (popupView) {
+                                popupView->deleteLater();
+                                popupView.clear();
+                                popupPage.clear();
+                            }
+                            clipDone();
+                            return;
+                        }
+                        if (!o.value(QLatin1String("f")).toBool()) {
+                            hostPoll->stop();
+                            // Environment honesty: a WM-less display
+                            // cannot OS-activate the popup window, so
+                            // the document stays unfocused and Blink's
+                            // focus gate rejects BEFORE the grant is
+                            // consulted — the same typed answer any
+                            // unfocused context gets, on real Chrome
+                            // too (crbug.com/1404835).  The granted
+                            // write path itself is proven end-to-end
+                            // by the execCommand leg above.
+                            check(!o.value(QLatin1String("ok")).toBool()
+                                  && !o.value(QLatin1String("err"))
+                                         .toString().isEmpty()
+                                  && clip != sentinel,
+                                  "popup writeText rejects typed while "
+                                  "unfocused — focus gate precedes "
+                                  "the grant (Chrome parity)");
+                            qInfo() << "extension-host-smoke: popup"
+                                       " could not be OS-focused in"
+                                       " this env; outcome:"
+                                    << v.toString()
+                                    << "clipboard:" << clip;
+                            if (popupView) {
+                                popupView->deleteLater();
+                                popupView.clear();
+                                popupPage.clear();
+                            }
+                            clipDone();
+                            return;
+                        }
+                        if (!o.value(QLatin1String("ok")).toBool()
+                            || clip != sentinel) {
+                            if (*probeTicks > 200) {
+                                hostPoll->stop();
+                                check(o.value(QLatin1String("ok"))
+                                          .toBool(),
+                                      "popup clipboard.writeText "
+                                      "resolves (the copy-password "
+                                      "surface)");
+                                check(clip == sentinel,
+                                      "popup copy observed on the "
+                                      "real clipboard");
+                                qInfo() << "extension-host-smoke:"
+                                           " popup write outcome:"
+                                        << v.toString()
+                                        << "clipboard:" << clip;
+                                if (popupView) {
+                                    popupView->deleteLater();
+                                    popupView.clear();
+                                    popupPage.clear();
+                                }
+                                clipDone();
+                            }
+                            return;
+                        }
+                        hostPoll->stop();
+                        check(true, "popup clipboard.writeText "
+                                    "resolves (the copy-password "
+                                    "surface)");
+                        check(true, "popup copy observed on the real "
+                                    "clipboard");
+                        // clipboardRead, focused: readText must
+                        // return what the popup write committed.
+                        popupPage->runJavaScript(QStringLiteral(
+                            "self.__clipPR={done:false};"
+                            "(async function(){var o={};"
+                            " try{o.text=await navigator.clipboard"
+                            "  .readText();o.ok=true;}"
+                            " catch(e){o.err=String(e&&e.name||e)"
+                            "  +'|'+String(e&&e.message||e);}"
+                            " self.__clipPR.out=o;"
+                            " self.__clipPR.done=true;})()"
+                            ".catch(function(e){self.__clipPR.err="
+                            " String(e);self.__clipPR.done=true;});"),
+                            [](const QVariant &) {});
+                        *clipStep = 7;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                if (*clipStep == 7) {   // realExt popup read outcome
+                    ++*probeTicks;
+                    if (!popupPage) {
+                        die(QStringLiteral(
+                            "popup page gone before the clipboard "
+                            "read leg"));
+                        return;
+                    }
+                    popupPage->runJavaScript(QStringLiteral(
+                        "self.__clipPR?JSON.stringify(self.__clipPR)"
+                        ":'missing'"),
+                        [&](const QVariant &v) {
+                        if (*probeTicks > 240) {
+                            die(QStringLiteral(
+                                "popup clipboard read leg timed "
+                                "out: %1").arg(v.toString()));
+                            return;
+                        }
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool())
+                            return;
+                        hostPoll->stop();
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        check(o.value(QLatin1String("ok")).toBool()
+                              && o.value(QLatin1String("text"))
+                                     .toString()
+                                     == QLatin1String(
+                                         "arktos-clip-bw13-popup"),
+                              "popup clipboard.readText round-trips "
+                              "the real clipboard (clipboardRead "
+                              "grant)");
+                        if (!o.value(QLatin1String("ok")).toBool())
+                            qInfo() << "extension-host-smoke: popup"
+                                       " read outcome:"
+                                    << v.toString();
+                        if (popupView) {
+                            popupView->deleteLater();
+                            popupView.clear();
+                            popupPage.clear();
+                        }
+                        clipDone();
+                    });
+                    return;
+                }
+                clipDone();
             } else {  // phase 1 — teardown
                 if (!host) {
                     check(true, "disable tears the hosted view down");

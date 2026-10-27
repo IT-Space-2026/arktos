@@ -33,6 +33,7 @@
 #include <qstringlist.h>
 #include <qurl.h>
 #include <qwebenginepage.h>
+#include <qwebenginesettings.h>
 
 #include "browserprofile.h"
 
@@ -237,6 +238,27 @@ private:
     QPointer<QWebEnginePage> m_contextPage;
 };
 
+// BW13: whether the extension's REVIEWED manifest granted the
+// clipboard — REQUIRED permissions declaring clipboardRead or
+// clipboardWrite.  Qt merges Chrome's two grants into the single
+// ClipboardReadWrite permission type and the single
+// JavascriptCanAccessClipboard attribute — the read/write split is
+// not enforceable at engine level.
+bool extensionChromeClipboardGranted(const QString &extensionId);
+
+// BW13: one permission verdict for every extension-chrome page —
+// SEC05's site broker (WebPermissionManager) never sees these
+// pages' requests and an unanswered one hangs.  The extension's
+// consent surface is its REVIEWED manifest, not a site prompt:
+// ClipboardReadWrite grants iff extensionChromeClipboardGranted
+// holds; every other feature denies, which still produces the real
+// Chromium answer — navigator.clipboard rejects with
+// NotAllowedError, execCommand returns false — a typed failure,
+// never a silent no-op.
+void resolveExtensionChromePermission(
+        const QString &extensionId,
+        const QWebEnginePermission &permission);
+
 // SEC26: extension chrome that is not the hosted background (the
 // action popup, the health-probe page) gets the QUAL03 navigation
 // lock the host page already had: the main frame may only ever hold
@@ -259,6 +281,26 @@ public:
         // so this is a no-op today; the self-registering rule keeps
         // every QWebEnginePage subclass covered if that ever changes.
         BrowserProfile::trackPrivateProfilePage(this);
+        // BW13: extension chrome resolves its own permission
+        // requests — see the comment above.
+        connect(this, &QWebEnginePage::permissionRequested, this,
+                [this](const QWebEnginePermission &permission) {
+            resolveExtensionChromePermission(m_extensionId,
+                                             permission);
+        });
+        // BW13: Chrome wires an extension's declared clipboardRead/
+        // clipboardWrite to the renderer's AllowReadFromClipboard/
+        // AllowWriteToClipboard content-settings hooks; Qt's per-page
+        // attribute is the same switch.  Grant-holders' chrome gets
+        // it so execCommand('copy') — the offscreen-document path
+        // Bitwarden actually uses — reaches the real clipboard and a
+        // FOCUSED extension page (the popup) auto-grants
+        // navigator.clipboard.  navigator.clipboard in a hidden
+        // context still hits Blink's focus gate — Chrome parity
+        // (crbug.com/1404835), never silently faked.
+        settings()->setAttribute(
+            QWebEngineSettings::JavascriptCanAccessClipboard,
+            extensionChromeClipboardGranted(m_extensionId));
     }
 
     static bool navigationAllowed(const QUrl &url,
