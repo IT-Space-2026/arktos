@@ -774,6 +774,12 @@ UI:
   a real checkbox widget in every row instead of a style-painted
   indicator, so the toggle cannot disappear under platform-style
   quirks (MAC04).
+- The bundled Bitwarden package now actually ships inside the macOS
+  .app (Contents/Resources/share/arktos/extensions), and profiles that
+  recorded a bundled install without the extension ever landing — or
+  that lost it afterwards — now retry the install instead of staying
+  bare; a deliberate uninstall is still remembered and never
+  resurrected (MAC06).
 - Extensions can now drive the real tab strip through chrome.tabs:
   remove, reload, duplicate, move, highlight, goBack/goForward and
   discard (which parks the tab into the same sleeping state the

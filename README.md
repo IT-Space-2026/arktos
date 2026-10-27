@@ -616,7 +616,10 @@ Chrome build, `src/data/extensions/` — provenance and checksums in
   extensions it is installed but left disabled — flip it on from
   Settings → Extensions.
 - It installs exactly once: uninstalling is never undone, and it is
-  never loaded into private or Tor profiles.
+  never loaded into private or Tor profiles. If a profile recorded
+  the install but the extension never actually landed (or its files
+  were lost), the next start retries the install once it is missing —
+  only a deliberate uninstall suppresses that.
 - The bundled build cannot self-update (no `update_url`); updates
   arrive with Arktos releases.
 

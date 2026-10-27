@@ -5,6 +5,17 @@ mac {
     TARGET = Arktos
     ICON = $$PWD/../BuildProcess/browser.icns
     QMAKE_INFO_PLIST = $$PWD/../BuildProcess/Info_mac.plist
+
+    # EXT07/MAC06: the vendored default extensions ride inside the
+    # .app — the !mac INSTALLS path never runs on macOS, so without
+    # bundle data the dmg ships no share/arktos/extensions and
+    # bundledExtensionsPath() can never resolve.  QMAKE_BUNDLE_DATA
+    # copies at build time, so macdeployqt -dmg carries it.
+    bundledext.path = Contents/Resources/share/arktos/extensions
+    bundledext.files = $$PWD/data/extensions/bitwarden-*.zip \
+                       $$PWD/data/extensions/bitwarden-LICENSE*.txt \
+                       $$PWD/data/extensions/PROVENANCE.txt
+    QMAKE_BUNDLE_DATA += bundledext
 }
 
 DEFINES += \

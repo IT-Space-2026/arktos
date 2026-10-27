@@ -767,13 +767,22 @@ void tst_ExtensionManager::bundledInstall()
     // Drop both so the leg is idempotent outside the runTests.sh HOME
     // sandbox.
     {
+        const QString storage = profile->storageName();
         const QString key = QStringLiteral("extensions/bundled/")
-            + profile->storageName();
+            + storage;
+        const QString removedKey =
+            QStringLiteral("extensions/bundled-removed/") + storage;
         ProfileSettings settings;
         QStringList consumed = settings.value(key).toStringList();
         consumed.removeAll(QLatin1String("tst-bundle"));
         consumed.removeAll(QLatin1String("tst-bundle-zip.zip"));
+        consumed.removeAll(QLatin1String("tst-bundle-ghost.zip"));
         settings.setValue(key, consumed);
+        QStringList removed = settings.value(removedKey).toStringList();
+        removed.removeAll(QLatin1String("tst-bundle"));
+        removed.removeAll(QLatin1String("tst-bundle-zip.zip"));
+        removed.removeAll(QLatin1String("tst-bundle-ghost.zip"));
+        settings.setValue(removedKey, removed);
     }
     for (const ExtensionManager::ExtensionInfo &info
          : manager->extensions()) {
@@ -857,6 +866,72 @@ void tst_ExtensionManager::bundledInstall()
     manager->installBundledExtensions(profile);
     QTest::qWait(500);
     QCOMPARE(manager->extensions().size(), listedBefore);
+
+    // MAC06: a consumed marker is proof of a past install, not a
+    // present one — a name recorded as consumed whose extension is
+    // absent retries the install (heals profiles that ran a build
+    // whose bundled path never resolved, or that lost the tree).
+    const QByteArray ghostPackage = makeZip({
+        {QByteArray("manifest.json"), QByteArray(
+            "{\"manifest_version\":3,\"name\":\"tst-bundle-ghost\","
+            "\"version\":\"1.0.0\",\"background\":{\"service_worker\":"
+            "\"sw.js\"}}")},
+        {QByteArray("sw.js"), QByteArray(
+            "chrome.runtime.onInstalled.addListener(function(){});\n")},
+    });
+    QFile ghostFile(root + QLatin1String("/tst-bundle-ghost.zip"));
+    QVERIFY(ghostFile.open(QIODevice::WriteOnly));
+    QCOMPARE(ghostFile.write(ghostPackage), qint64(ghostPackage.size()));
+    ghostFile.close();
+    {
+        const QString key = QStringLiteral("extensions/bundled/")
+            + profile->storageName();
+        ProfileSettings settings;
+        QStringList list = settings.value(key).toStringList();
+        if (!list.contains(QLatin1String("tst-bundle-ghost.zip")))
+            list.append(QLatin1String("tst-bundle-ghost.zip"));
+        settings.setValue(key, list);
+    }
+    manager->installBundledExtensions(profile);
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        const QList<ExtensionManager::ExtensionInfo> listed =
+            manager->extensions();
+        for (const ExtensionManager::ExtensionInfo &info : listed) {
+            if (info.name == QLatin1String("tst-bundle-ghost")
+                    && info.installed)
+                return true;
+        }
+        return false;
+    }(), 30000);
+
+    // A real user uninstall of a bundle-supplied row is recorded
+    // under extensions/bundled-removed/ — the retry then leaves it
+    // gone instead of resurrecting a decision.
+    QString ghostId;
+    const QList<ExtensionManager::ExtensionInfo> withGhost =
+        manager->extensions();
+    for (const ExtensionManager::ExtensionInfo &info : withGhost) {
+        if (info.name == QLatin1String("tst-bundle-ghost"))
+            ghostId = info.id;
+    }
+    QVERIFY(!ghostId.isEmpty());
+    const QString removedKey =
+        QStringLiteral("extensions/bundled-removed/")
+        + profile->storageName();
+    manager->removeExtension(ghostId);
+    QTRY_VERIFY_WITH_TIMEOUT(ProfileSettings().value(removedKey)
+        .toStringList().contains(QLatin1String("tst-bundle-ghost.zip")),
+        10000);
+    auto ghostInstalls = std::make_shared<int>(0);
+    QObject::connect(manager, &ExtensionManager::extensionInstalled,
+                     this, [ghostInstalls](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-bundle-ghost"))
+            ++*ghostInstalls;
+    });
+    manager->installBundledExtensions(profile);
+    QTest::qWait(2500);
+    QCOMPARE(*ghostInstalls, 0);
 
     // The off-the-record profile refuses bundled installs outright.
     QWebEngineProfile *otr = BrowserProfile::privateProfile();

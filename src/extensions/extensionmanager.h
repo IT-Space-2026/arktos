@@ -316,9 +316,15 @@ public:
     // bundledExtensionsPath() is installed onto each prepared
     // non-off-the-record profile exactly once.  The per-profile
     // QSettings list "extensions/bundled/<storageName>" records the
-    // basenames already consumed — a user uninstall is never
-    // resurrected, and a same-named extension already present
-    // (manual install or an older bundle) counts as satisfied.
+    // basenames already consumed — but the marker is proof of a past
+    // install, not a present one: a consumed name whose extension is
+    // absent from the registry AND from installPath retries (MAC06,
+    // heals profiles that ran a build whose bundle path never
+    // resolved).  A same-named extension still present (manual
+    // install or an older bundle) counts as satisfied, and a
+    // deliberate user uninstall is recorded under
+    // "extensions/bundled-removed/<storageName>" so the retry never
+    // resurrects it.
     // On an extension-fresh profile (nothing in installPath yet)
     // the bundle is enabled as part of the install; profiles that
     // already carry extensions get it installed-but-disabled —
@@ -331,9 +337,12 @@ public:
     void installBundledExtensions(QWebEngineProfile *profile);
     // Directory scanned by installBundledExtensions():
     // ARKTOS_BUNDLED_EXTENSIONS_DIR wins (tests/dev overrides), then
-    // <installedDataDirectory>/extensions, then the in-tree
-    // data/extensions for uninstalled builds (the binary links into
-    // src/ or the repository root).  Empty when none exists.
+    // <installedDataDirectory>/extensions, then the bundle roots
+    // probed directly (<bindir>/../[Resources/]share/arktos/
+    // extensions — inside a .app that is Contents/Resources/share/
+    // arktos/extensions), then the in-tree data/extensions for
+    // uninstalled builds (the binary links into src/ or the
+    // repository root).  Empty when none exists.
     static QString bundledExtensionsPath();
 
     // Reads <extensionDir>/manifest.json; path may point at the

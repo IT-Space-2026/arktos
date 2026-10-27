@@ -385,7 +385,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC03 | macOS verify: reader button presence + glyph — now eligibility-gated in 37ea0aaf (was permanently visible); if "looks wrong" persists compare glyph vs Safari/Firefox on Retina — details below | done | 0 | Blind fix: presence stomped by updateReaderState — action stayed setVisible(readerUsable) + trailing widget setVisible undid refresh() gate on every tab switch, and unified NSToolbar ignores widget hide() entirely (item latched on). Now action+widget gated on readerUsable && isAvailable(); glyph engine already matches ChromeIconEngine contract (DPR pixmap, pinned Accent, 1.35 stroke) — no further blind geometry guess. Verified: rewritten tst readerModeButton PASS + reader/theme suite green offscreen; mac runtime verify still owed |
 | MAC04 | macOS fix: extension settings page shows no enable tick boxes — details below | done | 0 | Blind fix: per-row enable control is now a real QCheckBox index widget (rendered via standalone-control path, not the style-painted item-view indicator that failed on the macOS dmg); item keeps CheckStateRole so toggling still routes itemChanged->setExtensionEnabled, and a column-0 delegate drops the painted indicator/text so nothing double-draws. Verified: tst_settingsdialog 59/59 incl. new box legs, clean pixel render, --quit-after-load exit 0; mac runtime verify still owed |
 | MAC05 | macOS fix: search/url bar renders a stray mini close/clear button — details below | done | 0 | Blind fix: clear (x) affordance is now gated on a live user edit (focus + non-baseline text via SRCH10 pristine bookkeeping), not bare hasFocus() — a programmatic url write always re-baselines and re-hides it even under stuck Qt focus in the native NSToolbar; ToolbarSearch opts into the same gate (was ungated entirely), dialog/find fields keep the always-on-text affordance; qApp focusChanged covers undelivered FocusOut. Verified: tst_locationbar 58/58 + tst_toolbarsearch 13/13 incl. new gate legs, searchlineedit 4/4, tabwidget 46/46, --quit-after-load exit 0; chromeSlots SIGSEGV reproduces on unmodified HEAD (pre-existing). mac runtime verify still owed |
-| MAC06 | macOS fix: bundled Bitwarden never installs — details below | pending | 0 | USER-CONFIRMED on v1.0 dmg: Bitwarden does not appear/work. Audit installBundledExtensions on macOS: bundledExtensionsPath() must resolve Contents/Resources/share/arktos/extensions inside the .app; also the one-shot extensions/bundled/ consumed marker means a profile that ran a broken earlier build never retries — add retry when zip present but extension absent. Fix blind, runtime mac-verify owed |
+| MAC06 | macOS fix: bundled Bitwarden never installs — details below | done | 0 | Blind fix: .app now ships the bundle via QMAKE_BUNDLE_DATA -> Contents/Resources/share/arktos/extensions (was never installed on mac — !mac gated the INSTALLS entry), bundledExtensionsPath also probes both bundle roots directly. consumed marker no longer veto-only: consumed-but-absent retries install (presence = registry OR manifest-bearing tree under installPath incl. staged pkg-/ext- names); deliberate uninstall recorded under extensions/bundled-removed/ and stays honored. Verified: tst_extensionmanager bundledInstall PASS incl. new retry+removed-marker legs, --bitwarden-smoke 0 failures, --quit-after-load exit 0 offscreen; chromePageChurn SIGSEGV identical on unmodified HEAD (pre-existing). mac runtime verify still owed |
 
 ## Task details
 
@@ -3998,3 +3998,54 @@ macOS runtime verification is still owed — if a glyph still lingers
 in the field on hardware, the remaining leads are NSToolbar-item
 child-view compositing and full first-responder desync, in that
 order.
+
+### MAC06
+
+User report (v1.0 dmg): bundled Bitwarden does not appear/work.
+Audit installBundledExtensions on macOS: bundledExtensionsPath()
+must resolve Contents/Resources/share/arktos/extensions inside the
+.app; also the one-shot extensions/bundled/ consumed marker means a
+profile that ran a broken earlier build never retries — add retry
+when zip present but extension absent.  Fix blind, runtime
+mac-verify owed.
+
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Audit conclusion — two independent defects:
+
+- The dmg can ship no share/arktos payload at all: src.pro gates
+  every INSTALLS entry behind `!mac`, so nothing copied
+  data/extensions into the .app and installedDataDirectory() fell
+  through to Contents/MacOS — bundledExtensionsPath() then resolved
+  empty and installBundledExtensions() hard-returned.  Fixed by a
+  QMAKE_BUNDLE_DATA entry copying bitwarden-*.zip + licenses +
+  PROVENANCE.txt into Contents/Resources/share/arktos/extensions at
+  build time (macdeployqt -dmg carries it).  bundledExtensionsPath()
+  also now probes the bundle roots directly
+  (<bindir>/../[Resources/]share/arktos/extensions) so a partially
+  populated or asymmetric bundle still resolves.
+- The one-shot extensions/bundled/<storage> consumed marker skipped
+  a file forever once written — proof of a past install, not of a
+  present one.  installBundledExtensions() now treats "present" as
+  registry-listed OR a manifest-bearing tree under installPath
+  (bundledExtensionPresent; dir-name "<pkgbase>_<rand>" match with a
+  manifest-name fallback for hosted-runtime pkg-*/ext-* staged
+  trees), so a consumed-but-absent name retries the install and the
+  extension-fresh enable lands for healed profiles.  A deliberate
+  user uninstall is recorded by the uninstallFinished hook under
+  extensions/bundled-removed/<storage> (only for files the bundle
+  already claimed) and still suppresses the retry — a decision, not
+  a state to repair.
+
+Linux verification: tst_extensionmanager bundledInstall PASS incl.
+new legs — consumed-but-absent zip retries and lands installed; a
+real removeExtension writes the removed marker and the retry then
+leaves it gone (0 installs over 2.5s).  integrityPin + consentGate
+PASS.  --bitwarden-smoke 0 failures end-to-end (dir resolves,
+package verifies, install+enable on fresh profile, popup loads,
+content-script handshake, consent gate).  --quit-after-load exit 0
+offscreen.  chromePageChurn SIGSEGVs identically on unmodified HEAD
+(pre-existing offscreen WebEngine crash, not this change).  macOS
+runtime verification still owed: on the next dmg, Bitwarden must
+appear enabled on a fresh profile and appear (toggleable) on an
+existing one.

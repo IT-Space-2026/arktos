@@ -127,6 +127,11 @@ static QWebEngineExtensionInfo findById(
     return QWebEngineExtensionInfo();
 }
 
+// EXT07 helpers live beside installBundledExtensions() below; the
+// uninstallFinished hook needs the declarations up here.
+static QString bundledStem(const QString &fileName);
+static QStringList bundledFileNames(const QDir &dir);
+
 #endif // QT_CONFIG(webengine_extensions)
 
 // EXTEXIT01: quitting once an extension was enabled in-session traps
@@ -476,6 +481,42 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
             ->dropExtensionGrants(plain.id);
         ExtensionBackgroundRuntime::instance()
             ->dropRegisteredScripts(plain.id);
+        // MAC06: removing a bundle-supplied extension is a user
+        // decision — record the file under
+        // extensions/bundled-removed/<storage> so the
+        // absent-but-consumed retry in installBundledExtensions()
+        // does not resurrect it.  Only files the bundle already
+        // claimed (the consumed list) get a record, so removing an
+        // unrelated same-stem extension never blacklists the bundle.
+        const QString bundleDir = bundledExtensionsPath();
+        if (!bundleDir.isEmpty()) {
+            const QString storage = profile->storageName().isEmpty()
+                ? QStringLiteral("default") : profile->storageName();
+            ProfileSettings bundleSettings(
+                BrowserProfile::profileIdFor(profile));
+            const QStringList consumedBundled = bundleSettings.value(
+                QLatin1String("extensions/bundled/") + storage)
+                .toStringList();
+            const QStringList bundledNames =
+                bundledFileNames(QDir(bundleDir));
+            for (const QString &fileName : bundledNames) {
+                const QString stem = bundledStem(fileName);
+                if (stem.isEmpty()
+                        || !consumedBundled.contains(fileName)
+                        || !plain.name.contains(stem,
+                                                Qt::CaseInsensitive))
+                    continue;
+                const QString removedKey =
+                    QLatin1String("extensions/bundled-removed/")
+                    + storage;
+                QStringList removedList =
+                    bundleSettings.value(removedKey).toStringList();
+                if (!removedList.contains(fileName)) {
+                    removedList.append(fileName);
+                    bundleSettings.setValue(removedKey, removedList);
+                }
+            }
+        }
         m_tamperedIds.remove(plain.id);
         // EXT12: its health verdict too.
         m_healthVerdicts.remove(plain.id);
@@ -922,12 +963,22 @@ QString ExtensionManager::bundledExtensionsPath()
         + QLatin1String("/extensions");
     if (QFileInfo(installed).isDir())
         return installed;
-    // Uninstalled build: the binary links into either src/ or the
-    // repository root depending on the qmake target layout.
+    // Probe the payload roots directly too: installedDataDirectory()
+    // returns the first share/arktos ROOT that exists, which a
+    // partially-populated bundle (root present, extensions absent — or
+    // the payload under the other macOS root) can leave pointing at
+    // the wrong tree.  On macOS these resolve to
+    // Contents/Resources/share/arktos/extensions and
+    // Contents/share/arktos/extensions inside the .app; the remaining
+    // candidates are the in-tree layout for uninstalled builds (the
+    // binary links into src/ or the repository root).
     const QString appDir = QCoreApplication::applicationDirPath();
-    for (const QString &rel : {QStringLiteral("/data/extensions"),
-                               QStringLiteral("/src/data/extensions")}) {
-        const QString candidate = appDir + rel;
+    for (const QString &rel : {
+             QStringLiteral("/../Resources/share/arktos/extensions"),
+             QStringLiteral("/../share/arktos/extensions"),
+             QStringLiteral("/data/extensions"),
+             QStringLiteral("/src/data/extensions")}) {
+        const QString candidate = QDir(appDir + rel).absolutePath();
         if (QFileInfo(candidate).isDir())
             return candidate;
     }
@@ -948,6 +999,79 @@ static QString bundledStem(const QString &fileName)
         QStringLiteral("[-_][0-9][0-9.]*(-[A-Za-z0-9.]+)?$")));
     return stem;
 }
+
+// Candidate basenames inside the bundled dir: every *.zip package plus
+// every unpacked subdir carrying manifest.json.  Shared by the install
+// pass and the uninstall hook that maps a removal back to the bundle
+// file it came from.
+static QStringList bundledFileNames(const QDir &dir)
+{
+    QStringList names = dir.entryList(
+        QStringList() << QLatin1String("*.zip"), QDir::Files, QDir::Name);
+    const QFileInfoList subdirs = dir.entryInfoList(
+        QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &sub : subdirs) {
+        if (QFileInfo::exists(sub.absoluteFilePath()
+                + QLatin1String("/manifest.json")))
+            names.append(sub.fileName());
+    }
+    return names;
+}
+
+// "Present" = the registry lists an installed same-stem extension OR
+// installPath already holds its tree — the registry fills in
+// asynchronously, and disk is the state it enumerates from, so the
+// tree check keeps a not-yet-listed install from reading as absent.
+// An on-disk dir counts only with manifest.json inside: a torn
+// mid-install leftover must not suppress the retry.  Installed dirs
+// are named "<package base>_<random>" (e.g. bitwarden-2026.9.3_2QIFbk).
+static bool bundledExtensionPresent(QWebEngineExtensionManager *manager,
+                                    const QString &fileName,
+                                    const QString &stem)
+{
+    if (!stem.isEmpty()) {
+        const QList<QWebEngineExtensionInfo> existing =
+            manager->extensions();
+        for (const QWebEngineExtensionInfo &info : existing) {
+            if (info.isInstalled()
+                    && info.name().contains(stem, Qt::CaseInsensitive))
+                return true;
+        }
+    }
+    const QString installPath = manager->installPath();
+    if (installPath.isEmpty())
+        return false;
+    QString base = fileName;
+    if (base.endsWith(QLatin1String(".zip"), Qt::CaseInsensitive))
+        base.chop(4);
+    const QFileInfoList trees = QDir(installPath)
+        .entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo &tree : trees) {
+        const QString dirName = tree.fileName();
+        const QString manifestPath = tree.absoluteFilePath()
+            + QLatin1String("/manifest.json");
+        const bool nameMatch = dirName == base
+            || dirName.startsWith(base + QLatin1Char('_'))
+            || (!stem.isEmpty()
+                && dirName.contains(stem, Qt::CaseInsensitive));
+        if (nameMatch && QFileInfo::exists(manifestPath))
+            return true;
+        // Hosted-runtime staging renames the tree the engine installs
+        // (pkg-*/ext-* under the staging root), so the package-base
+        // match misses it — fall back to the manifest's declared name.
+        if (!nameMatch && !stem.isEmpty()
+                && QFileInfo::exists(manifestPath)) {
+            const ExtensionManager::Manifest manifest =
+                ExtensionManager::inspectManifest(
+                    tree.absoluteFilePath());
+            if (manifest.valid
+                    && manifest.name.contains(stem,
+                                              Qt::CaseInsensitive))
+                return true;
+        }
+    }
+    return false;
+}
 #endif
 
 void ExtensionManager::installBundledExtensions(QWebEngineProfile *profile)
@@ -962,46 +1086,37 @@ void ExtensionManager::installBundledExtensions(QWebEngineProfile *profile)
     if (dirPath.isEmpty())
         return;
     const QDir dir(dirPath);
-    QStringList names = dir.entryList(
-        QStringList() << QLatin1String("*.zip"), QDir::Files, QDir::Name);
-    const QFileInfoList subdirs = dir.entryInfoList(
-        QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
-    for (const QFileInfo &sub : subdirs) {
-        if (QFileInfo::exists(sub.absoluteFilePath()
-                + QLatin1String("/manifest.json")))
-            names.append(sub.fileName());
-    }
+    const QStringList names = bundledFileNames(dir);
     if (names.isEmpty())
         return;
 
-    // The consumed marker is one-shot per profile: once a bundled
-    // file has installed (or been satisfied by a same-named existing
-    // extension) it never installs again — a user's uninstall or
-    // disable is a decision, not a state to repair.
+    // The consumed marker records that the bundle file was once
+    // installed — it is not proof the extension is still there.  A
+    // profile that ran a build whose bundle path never resolved, or
+    // that lost the tree afterwards, must retry rather than stay bare
+    // (MAC06).  A deliberate user uninstall is recorded under
+    // extensions/bundled-removed/ by the uninstall hook and still
+    // suppresses the retry: a decision, not a state to repair.
+    const QString storage = profile->storageName().isEmpty()
+        ? QStringLiteral("default") : profile->storageName();
     const QString settingsKey = QLatin1String("extensions/bundled/")
-        + (profile->storageName().isEmpty()
-           ? QStringLiteral("default") : profile->storageName());
+        + storage;
+    const QString removedKey =
+        QLatin1String("extensions/bundled-removed/") + storage;
     ProfileSettings settings(BrowserProfile::profileIdFor(profile));
     const QStringList consumed = settings.value(settingsKey).toStringList();
+    const QStringList removed = settings.value(removedKey).toStringList();
     QStringList satisfied;
 
     for (const QString &name : names) {
-        if (consumed.contains(name))
-            continue;
         const QString stem = bundledStem(name);
-        if (!stem.isEmpty()) {
-            const QList<QWebEngineExtensionInfo> existing =
-                extensions->extensions();
-            for (const QWebEngineExtensionInfo &info : existing) {
-                if (info.isInstalled()
-                        && info.name().contains(stem, Qt::CaseInsensitive)) {
-                    satisfied.append(name);
-                    break;
-                }
-            }
-            if (satisfied.contains(name))
-                continue;
+        if (bundledExtensionPresent(extensions, name, stem)) {
+            if (!consumed.contains(name))
+                satisfied.append(name);
+            continue;
         }
+        if (removed.contains(name))
+            continue;
 
         // "Extension-fresh" = the profile's installPath holds nothing
         // yet.  Fresh profiles get the bundle enabled as part of the
