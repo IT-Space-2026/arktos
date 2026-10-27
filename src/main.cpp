@@ -16802,6 +16802,12 @@ int main(int argc, char **argv)
         const QString storDirB = putStorFixture(
             QStringLiteral("arktos-extstore-b"),
             QStringLiteral("\"storage\",\"unlimitedStorage\""));
+        // BW11: the content-script fixture's dir — the children
+        // write its manifest/scripts themselves; the parent just
+        // stages and cleans the stable path.
+        const QString storDirC = QDir::temp().filePath(
+            QStringLiteral("arktos-extstore-c"));
+        QDir().mkpath(storDirC);
 
         const auto runStorChild = [](const QString &flag) {
             QProcess child;
@@ -16832,6 +16838,7 @@ int main(int argc, char **argv)
                 << "failures:" << storFailures;
         QDir(storDirA).removeRecursively();
         QDir(storDirB).removeRecursively();
+        QDir(storDirC).removeRecursively();
         return storFailures ? 1 : 0;
     }
 
@@ -16928,6 +16935,63 @@ int main(int argc, char **argv)
             QStringLiteral("arktos-extstore-b"),
             QStringLiteral("\"storage\",\"unlimitedStorage\""));
 
+        // BW11: a third fixture carries host_permissions + a declared
+        // content script so storage.onChanged delivery is measured
+        // through the real page-agent path — the worker records every
+        // event its own context sees, the content script does the
+        // same on a loopback page, and the legs below prove the
+        // change record's (changes, areaName) shape crosses contexts
+        // in both directions.  Same idempotent-write contract: the
+        // stable path keeps the extension id stable across children.
+        const QString storDirC = [&sdie]() {
+            const QString dir = QDir::temp().filePath(
+                QStringLiteral("arktos-extstore-c"));
+            QDir().mkpath(dir);
+            QFile manifestFile(dir + QLatin1String("/manifest.json"));
+            if (!manifestFile.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write extstore-c "
+                                    "manifest"));
+            manifestFile.write(
+                "{\"manifest_version\":3,"
+                "\"name\":\"arktos-extstore-c\",\"version\":\"1.0\","
+                "\"permissions\":[\"storage\"],"
+                "\"host_permissions\":[\"http://127.0.0.1/*\","
+                "\"http://localhost/*\"],"
+                "\"content_scripts\":[{\"matches\":"
+                "[\"http://127.0.0.1/*\",\"http://localhost/*\"],"
+                "\"js\":[\"cs.js\"],\"run_at\":\"document_start\","
+                "\"all_frames\":false}],"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+            manifestFile.close();
+            QFile worker(dir + QLatin1String("/sw.js"));
+            if (!worker.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write extstore-c sw.js"));
+            worker.write(
+                "self.__swStore={events:[],areaEv:0};"
+                "chrome.storage.onChanged.addListener("
+                "function(ch,a){self.__swStore.events.push("
+                "{area:a,ch:ch});});"
+                "chrome.storage.local.onChanged.addListener("
+                "function(){++self.__swStore.areaEv;});"
+                "chrome.runtime.onInstalled.addListener("
+                "function(){});\n");
+            worker.close();
+            QFile cs(dir + QLatin1String("/cs.js"));
+            if (!cs.open(QIODevice::WriteOnly))
+                sdie(QStringLiteral("cannot write extstore-c cs.js"));
+            cs.write(
+                "window.__csStore={events:[],areaEv:0};"
+                "chrome.storage.onChanged.addListener("
+                "function(ch,a){window.__csStore.events.push("
+                "{area:a,ch:ch});});"
+                "chrome.storage.local.onChanged.addListener("
+                "function(){++window.__csStore.areaEv;});"
+                "window.__csWrite=function(items){"
+                "return chrome.storage.local.set(items);};\n");
+            cs.close();
+            return dir;
+        }();
+
         // The seed script is vault-shaped: 64 keys of multi-KB JSON
         // records written in one call, then a 40-op interleaved
         // set/get burst on shared keys, then the quota leg — a
@@ -17010,12 +17074,66 @@ int main(int argc, char **argv)
             " __stor.out=o;__stor.done=true;"
             "})().catch(function(e){__stor.err=String(e&&e.stack||e);"
             "__stor.done=true;});";
+        // BW11 seed legs on ext C: the worker writes __bw11_sw twice
+        // so the second event's oldValue proves the change-record
+        // shape, and drops a session sentinel for the verify child.
+        const char *const kSeedCSw =
+            "self.__bw11leg={done:false};"
+            "(async function(){"
+            " self.__swStore.events=[];self.__swStore.areaEv=0;"
+            " await chrome.storage.local.remove('__bw11_sw');"
+            " await chrome.storage.local.set({__bw11_sw:'from-sw'});"
+            " await chrome.storage.local.set({__bw11_sw:'to-sw'});"
+            " await chrome.storage.session.set({__bw11_s:'run'});"
+            " self.__bw11leg={done:true};"
+            "})().catch(function(e){self.__bw11leg={done:true,"
+            "err:String(e&&e.stack||e)};});";
+        // Semantics leg: managed empty + Chrome-shaped (no set
+        // member), sync writable profile-local, session live in-run.
+        const char *const kSeedCSem =
+            "self.__bw11sem={done:false};"
+            "(async function(){var o={};"
+            " try{var m=await chrome.storage.managed.get(null);"
+            "  o.managedKeys=Object.keys(m).length;}catch(e){"
+            "  o.mErr=String(e&&e.message||e);}"
+            " o.managedSet=typeof chrome.storage.managed.set;"
+            " await chrome.storage.sync.set({__bw11_sync:'roams'});"
+            " o.sync=(await chrome.storage.sync.get('__bw11_sync'))"
+            "  .__bw11_sync;"
+            " o.sess=(await chrome.storage.session.get('__bw11_s'))"
+            "  .__bw11_s;"
+            " __bw11sem.out=o;__bw11sem.done=true;"
+            "})().catch(function(e){__bw11sem={done:true,"
+            "err:String(e&&e.stack||e)};});";
+        const char *const kVerifyC =
+            "self.__stor={done:false};"
+            "(async function(){var o={};"
+            " var all=await chrome.storage.local.get(null);"
+            " o.swKey=all.__bw11_sw;o.csKey=all.__bw11_cs;"
+            " var sess=await chrome.storage.session.get(null);"
+            " o.sessionKeys=Object.keys(sess).length;"
+            " o.sync=(await chrome.storage.sync.get('__bw11_sync'))"
+            "  .__bw11_sync;"
+            " o.managedKeys=Object.keys("
+            "  await chrome.storage.managed.get(null)).length;"
+            " __stor.out=o;__stor.done=true;"
+            "})().catch(function(e){__stor.err=String(e&&e.stack||e);"
+            "__stor.done=true;});";
 
-        QString storIdA, storIdB;
+        QString storIdA, storIdB, storIdC;
         auto phase = std::make_shared<int>(0);
         auto ticks = std::make_shared<int>(0);
         QPointer<QWebEngineView> popupView;
         QPointer<QWebEnginePage> popupPage;
+        // BW11: the content-script leg's loopback server + real tab,
+        // and the two cross-world snapshots the cs legs collect.
+        QTcpServer *csServer = nullptr;
+        QPointer<BrowserMainWindow> csWindow;
+        QPointer<WebView> csView;
+        auto csDrove = std::make_shared<bool>(false);
+        auto swSnap = std::make_shared<QJsonObject>();
+        auto csSnap = std::make_shared<QJsonObject>();
+        auto gotSnaps = std::make_shared<int>(0);
         QTimer *storPoll = new QTimer(&application);
         storPoll->setInterval(250);
 
@@ -17077,7 +17195,7 @@ int main(int argc, char **argv)
                            QStringLiteral(
                                "extA: session area cleared on "
                                "restart"));
-                } else {
+                } else if (name == QLatin1String("b")) {
                     scheck(o.value(QLatin1String("keys")).toInt()
                                == 14,
                            QStringLiteral(
@@ -17098,8 +17216,67 @@ int main(int argc, char **argv)
                            QStringLiteral(
                                "extB: session area cleared on "
                                "restart"));
+                } else {
+                    // BW11: ext C's cross-context writes persisted,
+                    // session cleared, sync profile-local, managed
+                    // still empty.
+                    scheck(o.value(QLatin1String("swKey"))
+                               .toString()
+                               == QLatin1String("to-sw"),
+                           QStringLiteral(
+                               "extC: sw write survived the restart"));
+                    scheck(o.value(QLatin1String("csKey"))
+                               .toString()
+                               == QLatin1String("from-cs"),
+                           QStringLiteral(
+                               "extC: content-script write survived "
+                               "the restart"));
+                    scheck(o.value(QLatin1String("sessionKeys"))
+                               .toInt() == 0,
+                           QStringLiteral(
+                               "extC: session area cleared on "
+                               "restart"));
+                    scheck(o.value(QLatin1String("sync"))
+                               .toString()
+                               == QLatin1String("roams"),
+                           QStringLiteral(
+                               "extC: sync area persists "
+                               "profile-local (no roam service)"));
+                    scheck(o.value(QLatin1String("managedKeys"))
+                               .toInt() == 0,
+                           QStringLiteral(
+                               "extC: managed area stays empty "
+                               "(no policy infra)"));
                 }
             }
+        };
+
+        // BW11: does the recorded event list carry the expected
+        // change record — an entry on 'local' whose changes dict has
+        // the key's newValue (and oldValue when checkOld).
+        const auto hasRecord = [](const QJsonArray &events,
+                                  const QString &key,
+                                  const QString &newValue,
+                                  bool checkOld,
+                                  const QString &oldValue) {
+            for (const QJsonValue &e : events) {
+                const QJsonObject ev = e.toObject();
+                if (ev.value(QLatin1String("area")).toString()
+                        != QLatin1String("local"))
+                    continue;
+                const QJsonObject rec = ev.value(QLatin1String("ch"))
+                    .toObject().value(key).toObject();
+                if (rec.isEmpty()
+                        || rec.value(QLatin1String("newValue"))
+                               .toString() != newValue)
+                    continue;
+                if (checkOld
+                        && rec.value(QLatin1String("oldValue"))
+                               .toString() != oldValue)
+                    continue;
+                return true;
+            }
+            return false;
         };
 
         const auto runStorProbe = [&](ExtensionBackgroundHost *host,
@@ -17134,8 +17311,10 @@ int main(int argc, char **argv)
                 storIdA.isEmpty() ? nullptr : runtime->host(storIdA);
             ExtensionBackgroundHost *hostB =
                 storIdB.isEmpty() ? nullptr : runtime->host(storIdB);
+            ExtensionBackgroundHost *hostC =
+                storIdC.isEmpty() ? nullptr : runtime->host(storIdC);
             if (*phase == 0) {
-                if (!hostA || !hostB) {
+                if (!hostA || !hostB || !hostC) {
                     if (++*ticks > 160)
                         sdie(QStringLiteral("hosts never spawned"));
                     return;
@@ -17143,20 +17322,25 @@ int main(int argc, char **argv)
                 if (hostA->state()
                         == ExtensionBackgroundHost::State::Failed
                     || hostB->state()
+                           == ExtensionBackgroundHost::State::Failed
+                    || hostC->state()
                            == ExtensionBackgroundHost::State::Failed)
-                    sdie(QStringLiteral("host failed: %1 / %2")
+                    sdie(QStringLiteral("host failed: %1 / %2 / %3")
                              .arg(hostA->lastError(),
-                                  hostB->lastError()));
+                                  hostB->lastError(),
+                                  hostC->lastError()));
                 if (hostA->state()
                         != ExtensionBackgroundHost::State::Ready
                     || hostB->state()
+                           != ExtensionBackgroundHost::State::Ready
+                    || hostC->state()
                            != ExtensionBackgroundHost::State::Ready) {
                     if (++*ticks > 160)
                         sdie(QStringLiteral(
                                  "hosts never reached Ready"));
                     return;
                 }
-                scheck(true, QStringLiteral("both hosts Ready"));
+                scheck(true, QStringLiteral("all hosts Ready"));
                 *ticks = 0;
                 runStorProbe(hostA,
                              seedPhase ? kSeedA : kVerifyA);
@@ -17175,26 +17359,21 @@ int main(int argc, char **argv)
                 if (hostB)
                     pollProbe(hostB, QStringLiteral("b"));
             } else if (*phase == 4) {
-                storPoll->stop();
                 if (!seedPhase) {
-                    // Disk-level proof: the canonical store file
-                    // exists and carries the seeded keys — the write
-                    // path is ours, not the engine's leveldb.
-                    const QString file = BrowserPaths::dataFilePath(
-                        QStringLiteral("extstorage")) + QLatin1Char('/')
-                        + storIdA + QLatin1String("/local.json");
-                    QFile f(file);
-                    QJsonObject disk;
-                    if (f.open(QIODevice::ReadOnly))
-                        disk = QJsonDocument::fromJson(f.readAll())
-                                   .object();
-                    scheck(disk.contains(QLatin1String("vault_k0")),
-                           QStringLiteral(
-                               "extstorage/<id>/local.json holds the "
-                               "seeded vault keys"));
-                    finish();
+                    // BW11: ext C's verify probe — cross-context
+                    // writes persisted, session cleared, sync
+                    // profile-local, managed empty.
+                    if (!hostC) {
+                        sdie(QStringLiteral("host C gone for "
+                                            "verify leg"));
+                        return;
+                    }
+                    runStorProbe(hostC, kVerifyC);
+                    *phase = 5;
+                    *ticks = 0;
                     return;
                 }
+                storPoll->stop();
                 // Seed-only leg: the action popup — a real sibling
                 // extension page — must read the same canonical
                 // store the hosted background wrote to.
@@ -17217,6 +17396,11 @@ int main(int argc, char **argv)
                 *ticks = 0;
                 storPoll->start();
             } else if (*phase == 5) {
+                if (!seedPhase) {
+                    if (hostC)
+                        pollProbe(hostC, QStringLiteral("c"));
+                    return;
+                }
                 if (!popupPage) {
                     sdie(QStringLiteral("popup page died"));
                     return;
@@ -17251,8 +17435,348 @@ int main(int argc, char **argv)
                         popupView.clear();
                         popupPage.clear();
                     }
-                    finish();
+                    *phase = 6;
+                    *ticks = 0;
+                    storPoll->start();
                 });
+            } else if (*phase == 6) {
+                if (!seedPhase) {
+                    storPoll->stop();
+                    // Disk-level proof: the canonical store file
+                    // exists and carries the seeded keys — the write
+                    // path is ours, not the engine's leveldb.
+                    const QString file = BrowserPaths::dataFilePath(
+                        QStringLiteral("extstorage")) + QLatin1Char('/')
+                        + storIdA + QLatin1String("/local.json");
+                    QFile f(file);
+                    QJsonObject disk;
+                    if (f.open(QIODevice::ReadOnly))
+                        disk = QJsonDocument::fromJson(f.readAll())
+                                   .object();
+                    scheck(disk.contains(QLatin1String("vault_k0")),
+                           QStringLiteral(
+                               "extstorage/<id>/local.json holds the "
+                               "seeded vault keys"));
+                    finish();
+                    return;
+                }
+                // BW11 seed leg: a covered loopback page whose
+                // declared content script records storage.onChanged.
+                ++*ticks;
+                if (!*csDrove) {
+                    *csDrove = true;
+                    csServer = new QTcpServer(&application);
+                    if (!csServer->listen(QHostAddress::LocalHost)) {
+                        sdie(QStringLiteral(
+                                 "BW11 leg: loopback cannot listen"));
+                        return;
+                    }
+                    QObject::connect(csServer,
+                        &QTcpServer::newConnection, &application,
+                        [csServer]() {
+                        QTcpSocket *socket =
+                            csServer->nextPendingConnection();
+                        QObject::connect(socket,
+                            &QTcpSocket::readyRead, socket,
+                            [socket]() {
+                            socket->readAll();
+                            const QByteArray body =
+                                "<html><body><h1>bw11 cs "
+                                "page</h1></body></html>";
+                            socket->write("HTTP/1.1 200 OK\r\n"
+                                "Content-Type: text/html\r\n"
+                                "Content-Length: "
+                                + QByteArray::number(body.size())
+                                + "\r\nConnection: close\r\n\r\n"
+                                + body);
+                            socket->disconnectFromHost();
+                            });
+                    });
+                    csWindow = application.newMainWindow();
+                    if (!csWindow || !csWindow->tabWidget()) {
+                        sdie(QStringLiteral(
+                                 "BW11 leg: no cs window"));
+                        return;
+                    }
+                    TabWidget *tw = csWindow->tabWidget();
+                    tw->newTab();
+                    csView = tw->webView(tw->currentIndex());
+                    if (!csView) {
+                        sdie(QStringLiteral("BW11 leg: no cs tab"));
+                        return;
+                    }
+                    csView->load(QUrl(QStringLiteral(
+                        "http://127.0.0.1:%1/")
+                        .arg(csServer->serverPort())));
+                    return;
+                }
+                if (!csView || !csView->page()) {
+                    sdie(QStringLiteral("BW11 leg: cs tab died"));
+                    return;
+                }
+                if (!hostC || !hostC->page()) {
+                    if (*ticks > 160)
+                        sdie(QStringLiteral("BW11 leg: host C gone"));
+                    return;
+                }
+                WebView *bwView = csView;
+                bwView->page()->runJavaScript(QStringLiteral(
+                    "window.__csStore?'yes':'no'"),
+                    ExtensionBackgroundRuntime::AgentWorldId,
+                    [&, hostC](const QVariant &v) {
+                    if (v.toString() != QLatin1String("yes")) {
+                        if (*ticks > 160)
+                            sdie(QStringLiteral(
+                                     "BW11 leg: covered page's "
+                                     "content script never armed"));
+                        return;
+                    }
+                    scheck(true, QStringLiteral(
+                               "covered page's content script armed "
+                               "its storage listeners"));
+                    runStorProbe(hostC, kSeedCSw);
+                    *phase = 7;
+                    *ticks = 0;
+                });
+            } else if (*phase == 7) {   // BW11: sw writes observed
+                ++*ticks;
+                if (!hostC) {
+                    if (*ticks > 160)
+                        sdie(QStringLiteral("BW11 leg: host C gone"));
+                    return;
+                }
+                hostC->page()->runJavaScript(QStringLiteral(
+                    "JSON.stringify({d:!!(self.__bw11leg"
+                    "&&self.__bw11leg.done),"
+                    "err:(self.__bw11leg&&self.__bw11leg.err)||null,"
+                    "ev:self.__swStore.events,"
+                    "aev:self.__swStore.areaEv})"),
+                    [&, hostC](const QVariant &v) {
+                    if (*ticks > 160) {
+                        sdie(QStringLiteral(
+                                 "BW11 sw-write leg timed out: %1")
+                                 .arg(v.toString()));
+                        return;
+                    }
+                    const QJsonObject o = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (!o.value(QLatin1String("d")).toBool())
+                        return;
+                    scheck(o.value(QLatin1String("err")).isNull(),
+                           QStringLiteral(
+                               "sw-side storage writes ran clean"));
+                    const QJsonArray ev =
+                        o.value(QLatin1String("ev")).toArray();
+                    scheck(hasRecord(ev,
+                                     QLatin1String("__bw11_sw"),
+                                     QLatin1String("to-sw"), true,
+                                     QLatin1String("from-sw")),
+                           QStringLiteral(
+                               "sw's own storage.onChanged fired "
+                               "with the (changes, areaName) shape"));
+                    scheck(o.value(QLatin1String("aev")).toInt() >= 2,
+                           QStringLiteral(
+                               "sw's storage.local.onChanged "
+                               "fired"));
+                    // Arm the reverse direction: clear both listener
+                    // logs, then a write the content script itself
+                    // makes must fan back out to every context.
+                    hostC->page()->runJavaScript(QStringLiteral(
+                        "self.__swStore.events=[];"
+                        "self.__swStore.areaEv=0;'reset'"),
+                        [](const QVariant &) {});
+                    if (csView && csView->page())
+                        csView->page()->runJavaScript(QStringLiteral(
+                            "window.__csStore.events=[];"
+                            "window.__csStore.areaEv=0;"
+                            "window.__csWrite({__bw11_cs:'from-cs'});"
+                            "'sent'"),
+                            ExtensionBackgroundRuntime::AgentWorldId,
+                            [](const QVariant &) {});
+                    *phase = 8;
+                    *ticks = 0;
+                });
+            } else if (*phase == 8) {   // BW11: cs write fanned out
+                ++*ticks;
+                if (*gotSnaps == 0) {
+                    if (hostC && hostC->page())
+                        hostC->page()->runJavaScript(QStringLiteral(
+                            "JSON.stringify({ev:self.__swStore.events,"
+                            "aev:self.__swStore.areaEv})"),
+                            [&](const QVariant &v) {
+                            *swSnap = QJsonDocument::fromJson(
+                                v.toString().toUtf8()).object();
+                            ++*gotSnaps;
+                        });
+                    if (csView && csView->page())
+                        csView->page()->runJavaScript(QStringLiteral(
+                            "JSON.stringify({ev:window.__csStore"
+                            ".events,aev:window.__csStore.areaEv})"),
+                            ExtensionBackgroundRuntime::AgentWorldId,
+                            [&](const QVariant &v) {
+                            *csSnap = QJsonDocument::fromJson(
+                                v.toString().toUtf8()).object();
+                            ++*gotSnaps;
+                        });
+                    return;
+                }
+                if (*gotSnaps < 2) {
+                    if (*ticks > 160)
+                        sdie(QStringLiteral(
+                                 "BW11 cs-write leg: probes lost"));
+                    return;
+                }
+                const QJsonArray swEv =
+                    swSnap->value(QLatin1String("ev")).toArray();
+                const QJsonArray csEv =
+                    csSnap->value(QLatin1String("ev")).toArray();
+                const bool swSaw = hasRecord(
+                    swEv, QLatin1String("__bw11_cs"),
+                    QLatin1String("from-cs"), false, QString());
+                const bool csSaw = hasRecord(
+                    csEv, QLatin1String("__bw11_cs"),
+                    QLatin1String("from-cs"), false, QString());
+                if (!swSaw || !csSaw) {
+                    *gotSnaps = 0;
+                    if (*ticks <= 160)
+                        return;
+                    // Timed out — record the honest misses and move
+                    // to the semantics leg anyway.
+                    scheck(swSaw, QStringLiteral(
+                               "content script's storage write "
+                               "reached the hosted background's "
+                               "onChanged"));
+                    scheck(csSaw, QStringLiteral(
+                               "content script's own write echoed "
+                               "to its onChanged"));
+                } else {
+                    scheck(true, QStringLiteral(
+                               "content script's storage write "
+                               "reached the hosted background's "
+                               "onChanged"));
+                    scheck(true, QStringLiteral(
+                               "content script's own write echoed "
+                               "to its onChanged"));
+                    scheck(swSnap->value(QLatin1String("aev"))
+                               .toInt() >= 1,
+                           QStringLiteral(
+                               "sw's storage.local.onChanged saw "
+                               "the cs write"));
+                    scheck(csSnap->value(QLatin1String("aev"))
+                               .toInt() >= 1,
+                           QStringLiteral(
+                               "cs's storage.local.onChanged saw "
+                               "its own write"));
+                }
+                *gotSnaps = 0;
+                // Semantics leg: managed/sync/session probes on the
+                // worker + the agent's managed read on the page.
+                if (hostC)
+                    runStorProbe(hostC, kSeedCSem);
+                if (csView && csView->page())
+                    csView->page()->runJavaScript(QStringLiteral(
+                        "(function(){var a=window.__arktosExtAgents"
+                        "&&window.__arktosExtAgents['%1'];"
+                        "if(!a||!a.chrome||!a.chrome.storage){"
+                        "window.__csManaged={gone:true};return;}"
+                        "var m=a.chrome.storage.managed;"
+                        "window.__csManagedSet=typeof m.set;"
+                        "m.get(null).then(function(v){"
+                        "window.__csManaged=v;},function(e){"
+                        "window.__csManaged={err:String(e)};});})();"
+                        "'ok'").arg(storIdC),
+                        ExtensionBackgroundRuntime::AgentWorldId,
+                        [](const QVariant &) {});
+                *phase = 9;
+                *ticks = 0;
+            } else if (*phase == 9) {   // BW11: semantics poll
+                ++*ticks;
+                if (*gotSnaps == 0) {
+                    if (hostC && hostC->page())
+                        hostC->page()->runJavaScript(QStringLiteral(
+                            "self.__bw11sem"
+                            "?JSON.stringify(self.__bw11sem)"
+                            ":'missing'"),
+                            [&](const QVariant &v) {
+                            *swSnap = QJsonDocument::fromJson(
+                                v.toString().toUtf8()).object();
+                            ++*gotSnaps;
+                        });
+                    if (csView && csView->page())
+                        csView->page()->runJavaScript(QStringLiteral(
+                            "window.__csManaged!==undefined"
+                            "?JSON.stringify({m:window.__csManaged,"
+                            "set:window.__csManagedSet}):'{}'"),
+                            ExtensionBackgroundRuntime::AgentWorldId,
+                            [&](const QVariant &v) {
+                            *csSnap = QJsonDocument::fromJson(
+                                v.toString().toUtf8()).object();
+                            ++*gotSnaps;
+                        });
+                    return;
+                }
+                if (*gotSnaps < 2) {
+                    if (*ticks > 160)
+                        sdie(QStringLiteral(
+                                 "BW11 semantics leg: probes lost"));
+                    return;
+                }
+                const QJsonObject sem = *swSnap;
+                if (!sem.value(QLatin1String("done")).toBool()
+                        || csSnap->isEmpty()) {
+                    *gotSnaps = 0;
+                    if (*ticks > 160)
+                        sdie(QStringLiteral(
+                                 "BW11 semantics probe timed out"));
+                    return;
+                }
+                const QJsonObject o =
+                    sem.value(QLatin1String("out")).toObject();
+                scheck(sem.value(QLatin1String("err")).toString()
+                           .isEmpty()
+                       && o.value(QLatin1String("mErr")).toString()
+                              .isEmpty(),
+                       QStringLiteral(
+                           "managed/sync/session probes ran clean"));
+                scheck(o.value(QLatin1String("managedKeys")).toInt()
+                           == 0,
+                       QStringLiteral(
+                           "managed area answers empty (no policy "
+                           "infra)"));
+                scheck(o.value(QLatin1String("managedSet")).toString()
+                           == QLatin1String("undefined"),
+                       QStringLiteral(
+                           "managed has no set member (Chrome "
+                           "shape)"));
+                scheck(o.value(QLatin1String("sync")).toString()
+                           == QLatin1String("roams"),
+                       QStringLiteral(
+                           "sync area writable (profile-local, "
+                           "no roam service)"));
+                scheck(o.value(QLatin1String("sess")).toString()
+                           == QLatin1String("run"),
+                       QStringLiteral(
+                           "session area live within the run"));
+                const QJsonObject csOut = *csSnap;
+                // m must be exactly {} — an empty store; a 'gone'
+                // or 'err' payload carries keys and fails.
+                scheck(csOut.value(QLatin1String("m")).isObject()
+                       && csOut.value(QLatin1String("m"))
+                              .toObject().isEmpty(),
+                       QStringLiteral(
+                           "content-script managed.get answered "
+                           "the empty store"));
+                scheck(csOut.value(QLatin1String("set")).toString()
+                           == QLatin1String("undefined"),
+                       QStringLiteral(
+                           "content-script managed has no set "
+                           "member (Chrome shape)"));
+                if (csWindow) {
+                    csWindow->deleteLater();
+                    csWindow.clear();
+                    csView.clear();
+                }
+                finish();
             }
         });
 
@@ -17268,8 +17792,14 @@ int main(int argc, char **argv)
                        QStringLiteral("fixture B loaded"));
                 storIdB = info.id;
                 extensions->setExtensionEnabled(storIdB, true);
+            } else if (info.name == QLatin1String("arktos-extstore-c")) {
+                scheck(info.loaded && info.error.isEmpty(),
+                       QStringLiteral("fixture C loaded"));
+                storIdC = info.id;
+                extensions->setExtensionEnabled(storIdC, true);
             }
-            if (!storIdA.isEmpty() && !storIdB.isEmpty())
+            if (!storIdA.isEmpty() && !storIdB.isEmpty()
+                    && !storIdC.isEmpty())
                 storPoll->start();
         });
         QObject::connect(extensions, &ExtensionManager::errorOccurred,
@@ -17281,8 +17811,10 @@ int main(int argc, char **argv)
         });
         extensions->grantConsent(storDirA);
         extensions->grantConsent(storDirB);
+        extensions->grantConsent(storDirC);
         extensions->loadExtension(storDirA);
         extensions->loadExtension(storDirB);
+        extensions->loadExtension(storDirC);
         return application.exec();
     }
 

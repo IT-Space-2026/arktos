@@ -2546,7 +2546,8 @@ int ExtensionBackgroundRuntime::deliverEvent(
 
 void ExtensionBackgroundRuntime::fanOutStorageChanged(
         const QString &extensionId, const QString &area,
-        const QJsonObject &changes, ChromeBridge *exclude)
+        const QJsonObject &changes, ChromeBridge *exclude,
+        ExtensionPageBridge *excludePage)
 {
     const QJsonObject payload{
         {QStringLiteral("__args"), QJsonArray{changes, area}}};
@@ -2556,6 +2557,31 @@ void ExtensionBackgroundRuntime::fanOutStorageChanged(
                  QStringLiteral("storage.") + area
                      + QStringLiteral(".onChanged"),
                  payload, exclude);
+    // BW11: Chrome fires chrome.storage.onChanged in the content
+    // scripts too — the same change record reaches every live page
+    // agent of this extension through '__arktos.storageChanged'.
+    // Coverage is re-proved at emit: the registry is a hello-time
+    // hint, so a page that navigated off the extension's grants is
+    // skipped here, and 'ext' in the payload scopes the repost to
+    // this extension's agent on multi-extension documents.
+    const QList<QPointer<ExtensionPageBridge>> agents =
+        m_pageAgents.value(extensionId);
+    if (agents.isEmpty())
+        return;
+    const QJsonObject pagePayload{
+        {QStringLiteral("ext"), extensionId},
+        {QStringLiteral("changes"), changes},
+        {QStringLiteral("areaName"), area}};
+    for (const QPointer<ExtensionPageBridge> &agent : agents) {
+        ExtensionPageBridge *page = agent.data();
+        if (!page || page == excludePage)
+            continue;
+        if (!agentCovers(extensionId,
+                         page->page() ? page->page()->url() : QUrl()))
+            continue;
+        emit page->extEvent(
+            QStringLiteral("__arktos.storageChanged"), pagePayload);
+    }
 }
 
 // -------------------------------------------------------------------
@@ -4941,11 +4967,37 @@ QJsonObject ExtensionBackgroundRuntime::tabPortConnect(
         page->page() ? page->page()->url().toString() : QString()));
 }
 
+void ExtensionBackgroundRuntime::registerPageAgent(
+        const QString &extensionId, ExtensionPageBridge *page)
+{
+    if (extensionId.isEmpty() || !page)
+        return;
+    QList<QPointer<ExtensionPageBridge>> &agents =
+        m_pageAgents[extensionId];
+    for (const QPointer<ExtensionPageBridge> &agent : agents) {
+        if (agent.data() == page)
+            return;
+    }
+    agents.append(QPointer<ExtensionPageBridge>(page));
+}
+
 void ExtensionBackgroundRuntime::unregisterPageContext(
         ExtensionPageBridge *page)
 {
     if (!page)
         return;
+    // Drop the BW11 storage-event registration wherever it sits.
+    for (auto it = m_pageAgents.begin(); it != m_pageAgents.end();) {
+        QList<QPointer<ExtensionPageBridge>> &agents = it.value();
+        for (int i = agents.size() - 1; i >= 0; --i) {
+            if (agents.at(i).data() == page)
+                agents.removeAt(i);
+        }
+        if (agents.isEmpty())
+            it = m_pageAgents.erase(it);
+        else
+            ++it;
+    }
     // Pending sends this page originated die with it — the hosted
     // replies that arrive later find no slot (the page side is gone
     // anyway).

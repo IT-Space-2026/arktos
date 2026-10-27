@@ -2363,19 +2363,31 @@
         // is no cloud sync in Arktos, so the honest answer is a
         // profile-local store, not the volatile session map.
         bridgeSyncRef = storageAreaSwap('sync');
-        if (!chrome.storage.managed) {
-            safeSet(chrome.storage, 'managed', {
-                get: function (keys, cb) {
-                    touch('chrome.storage.managed.get');
-                    return okCall({}, cb);
-                },
-                getKeys: function (cb) {
-                    touch('chrome.storage.managed.getKeys');
-                    return okCall([], cb);
-                },
-                onChanged: makeEvent('storage.managed.onChanged')
-            }, 'chrome.storage.managed');
-        }
+        // BW11: managed is read-only-and-empty under Arktos — no
+        // policy infra exists, so the empty store IS the honest
+        // answer.  Install the stub unconditionally: where the
+        // engine exposes a native managed area it both carries
+        // mutator members Chrome never shows and rejects get(null)
+        // outright — the stub out-truths it on shape and behavior.
+        if (chrome.storage.managed)
+            note('chrome.storage.managed: native area replaced — '
+                 + 'empty read-only stub matches Arktos (no policy '
+                 + 'infra)');
+        defineMember(chrome.storage, 'managed', {
+            get: function (keys, cb) {
+                touch('chrome.storage.managed.get');
+                return okCall({}, cb);
+            },
+            getKeys: function (cb) {
+                touch('chrome.storage.managed.getKeys');
+                return okCall([], cb);
+            },
+            getBytesInUse: function (keys, cb) {
+                touch('chrome.storage.managed.getBytesInUse');
+                return okCall(0, cb);
+            },
+            onChanged: makeEvent('storage.managed.onChanged')
+        }, 'chrome.storage.managed');
         var topChanged = null;
         try { topChanged = chrome.storage.onChanged; } catch (e) {}
         if (!topChanged) {

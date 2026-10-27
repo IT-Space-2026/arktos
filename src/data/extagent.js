@@ -591,17 +591,20 @@
             return;
         }
         if (name === '__arktos.storageChanged') {
-            // A mutation this page made echoes back so onChanged
-            // fires here too (other contexts' writes don't reach
-            // the page yet — noted gap, ER05 territory).
-            if (payload) {
-                var area = agent.chrome.storage[payload.areaName];
-                if (area && area.onChanged)
-                    area.onChanged.__fire([payload.changes,
-                                           payload.areaName]);
-                agent.chrome.storage.onChanged
-                    .__fire([payload.changes, payload.areaName]);
-            }
+            // BW11: every context's mutation now reaches the page —
+            // the runtime fans the change record out to each live
+            // agent and this page's own writes echo back through the
+            // same push.  'ext' scopes it like __arktos.portConnect:
+            // the repost reaches every agent on the document, and
+            // only the addressed extension's listeners may fire.
+            if (!payload || payload.ext !== cfg.id)
+                return;
+            var area = agent.chrome.storage[payload.areaName];
+            if (area && area.onChanged)
+                area.onChanged.__fire([payload.changes,
+                                       payload.areaName]);
+            agent.chrome.storage.onChanged
+                .__fire([payload.changes, payload.areaName]);
             return;
         }
     }
@@ -821,10 +824,17 @@
             onChanged: makeEvent()
         };
     }
+    var managedArea = storageArea('managed');
+    // Chrome shape: managed is read-only, so its mutator members are
+    // absent — not present-but-erroring (a feature-detecting script
+    // sees Chrome's answer).
+    delete managedArea.set;
+    delete managedArea.remove;
+    delete managedArea.clear;
     var storage = {
         local: storageArea('local'),
         session: storageArea('session'),
-        managed: storageArea('managed'),
+        managed: managedArea,
         sync: storageArea('sync'),
         onChanged: makeEvent()
     };

@@ -137,6 +137,11 @@ QJsonObject ExtensionPageBridge::invoke(const QString &op,
                          QStringLiteral("not-hosted"));
             return reply;
         }
+        // BW11: the handshake doubles as the storage.onChanged
+        // delivery registration — the coverage check above already
+        // proved this extension's grants cover the page, and each
+        // emit re-proves it against the live url.
+        runtime->registerPageAgent(extensionId, this);
         reply.insert(QStringLiteral("ok"), true);
         reply.insert(QStringLiteral("id"), extensionId);
         return reply;
@@ -234,7 +239,11 @@ QJsonObject ExtensionPageBridge::invoke(const QString &op,
         // Mutations fan the change record out: the extension's
         // other contexts see a real storage.onChanged plus the
         // per-area event (the shim fires them via __args), this
-        // page's agent gets the push on its own event name.
+        // page's agent gets the push on its own event name.  BW11:
+        // the fan-out reaches other pages' agents too — this page is
+        // excluded there since the direct emit below is its
+        // writer-echo, and 'ext' scopes the repost on multi-
+        // extension documents.
         if (reply.value(QLatin1String("ok")).toBool()) {
             const QJsonObject result =
                 reply.value(QLatin1String("result")).toObject();
@@ -244,10 +253,11 @@ QJsonObject ExtensionPageBridge::invoke(const QString &op,
                 const QString area =
                         method.section(QLatin1Char('.'), 0, 0);
                 runtime->fanOutStorageChanged(extensionId, area,
-                                              changes);
+                                              changes, nullptr, this);
                 emit extEvent(
                     QStringLiteral("__arktos.storageChanged"),
-                    QJsonObject{{QStringLiteral("changes"), changes},
+                    QJsonObject{{QStringLiteral("ext"), extensionId},
+                                {QStringLiteral("changes"), changes},
                                 {QStringLiteral("areaName"), area}});
             }
         }

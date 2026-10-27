@@ -529,11 +529,16 @@ public:
     // chrome.storage.<area>.onChanged — each fired with the
     // (changes, areaName) listener arguments Chrome passes.
     // 'exclude' skips the posting context: its shim already fired
-    // the event locally when the mutation resolved.
+    // the event locally when the mutation resolved.  BW11: the same
+    // record also reaches the extension's live page agents (content
+    // scripts observe chrome.storage.onChanged like Chrome) —
+    // 'excludePage' skips the page bridge whose own emit already
+    // echoes the write back to its agent.
     void fanOutStorageChanged(const QString &extensionId,
                               const QString &area,
                               const QJsonObject &changes,
-                              ChromeBridge *exclude = nullptr);
+                              ChromeBridge *exclude = nullptr,
+                              ExtensionPageBridge *excludePage = nullptr);
 
     // Whether url-bearing fields may reach this extension ('tabs'
     // permission or a host permission covering the url).  Public so
@@ -679,6 +684,12 @@ public:
     // The page (or its bridge) died — drop its pending sends and port
     // ends; surviving ends get the honest portDisconnect push.
     void unregisterPageContext(ExtensionPageBridge *page);
+    // BW11: a covered page agent's 'hello' handshake registers the
+    // bridge so storage.onChanged fan-outs reach its content-script
+    // listeners — coverage is re-proved per emit, so the entry is
+    // only ever a delivery candidate, never a grant.
+    void registerPageAgent(const QString &extensionId,
+                           ExtensionPageBridge *page);
     // ER02 seam — push a host->page message ('__arktos.deliver');
     // the agent's 'respond' op resolves it back to 'waiter' as
     // '__arktos.deliverResponse'.  False when the mid collides with a
@@ -857,6 +868,13 @@ private:
     };
     QHash<QString, PendingPageDelivery> m_pageDeliveries;
     QHash<QString, QTimer *> m_pageDeliveryTimers;
+
+    // BW11: live page agents per extension — the delivery set
+    // storage.onChanged fan-outs enumerate so content-script
+    // listeners see other contexts' writes.  Entries are
+    // registration hints only: emit re-proves agentCovers and
+    // unregisterPageContext drops the bridge on page death.
+    QHash<QString, QList<QPointer<ExtensionPageBridge>>> m_pageAgents;
 
     // EXT17: sibling-page bridges keyed by their page so an open
     // popup's channel is unregistered when the view goes away.
