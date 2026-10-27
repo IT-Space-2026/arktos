@@ -1105,13 +1105,27 @@
         catch (e) { return String(msg).slice(0, 512); }
     }
 
-    function markDelivery(key) {
+    // Delivery dedupe is per-transport: sendMessage rides BOTH the
+    // native binding (realSend reaches every real extension context
+    // — the hosted background and our offscreen documents are real
+    // chrome-extension:// pages) AND the relay.  Chrome fires
+    // onMessage once per sendMessage, so the second transport's
+    // copy of the same content must be dropped.  Marks are keyed by
+    // transport ('native'/'relay') so sibling listener wrappers in
+    // the SAME native dispatch never dedupe each other — Chromium
+    // invokes each wrapper separately and all of them must fire.
+    function markDelivery(key, via) {
         var now = Date.now();
-        shim.recentDeliveries[key] = now;
+        var d = shim.recentDeliveries[key];
+        if (!d || (now - d.t) >= 3000)
+            d = {};
+        d.t = now;
+        d[via] = true;
+        shim.recentDeliveries[key] = d;
         var keys = Object.keys(shim.recentDeliveries);
         if (keys.length > 200) {
             for (var i = 0; i < keys.length; ++i) {
-                if (now - shim.recentDeliveries[keys[i]] > 3000)
+                if (now - shim.recentDeliveries[keys[i]].t > 3000)
                     delete shim.recentDeliveries[keys[i]];
             }
             keys = Object.keys(shim.recentDeliveries);
@@ -1120,9 +1134,9 @@
         }
     }
 
-    function seenDelivery(key) {
-        var t = shim.recentDeliveries[key];
-        return t !== undefined && (Date.now() - t) < 3000;
+    function seenDelivery(key, via) {
+        var d = shim.recentDeliveries[key];
+        return !!d && !!d[via] && (Date.now() - d.t) < 3000;
     }
 
     function seenMid(mid) {
@@ -1162,8 +1176,19 @@
         var mid = payload.mid;
         var msg = env ? env.msg : payload.msg;
         if (seenMid(mid))
-            return;   // already delivered (native won the race)
-        markDelivery(contentKey(msg));
+            return;   // already delivered
+        if (seenDelivery(contentKey(msg), 'native')) {
+            // The native binding already fired this message at this
+            // context's listeners — dropping the relay copy keeps
+            // Chrome's fire-once semantic.  Still answer the relay so
+            // the sender's peer count drains promptly; the real
+            // response already rode back on the native channel.
+            call('relay', 'respond',
+                 { mid: mid, response: null, hadListeners: true })
+                .catch(function () {});
+            return;
+        }
+        markDelivery(contentKey(msg), 'relay');
         var responded = false;
         var listeners = shim.messageListeners.slice();
         function respond(value) {
@@ -1338,11 +1363,13 @@
                         if (env) {
                             if (seenMid(env.mid))
                                 return false;
-                            markDelivery(contentKey(env.msg));
+                            markDelivery(contentKey(env.msg), 'native');
                             sender = { id: env.extId || cfg.id };
                             msg = env.msg;
                         } else {
-                            markDelivery(contentKey(msg));
+                            if (seenDelivery(contentKey(msg), 'relay'))
+                                return false;  // relay copy already fired
+                            markDelivery(contentKey(msg), 'native');
                         }
                         return fn.call(this, msg, sender, respond);
                     };

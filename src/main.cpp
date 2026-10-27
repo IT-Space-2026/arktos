@@ -13450,7 +13450,7 @@ int main(int argc, char **argv)
                 "\"version\":\"0.1\","
                 "\"description\":\"EXT14 hosted-runtime fixture\","
                 "\"permissions\":[\"storage\",\"tabs\",\"alarms\","
-                "\"webNavigation\",\"contextMenus\","
+                "\"webNavigation\",\"contextMenus\",\"offscreen\","
                 "\"notifications\"],"
                 "\"host_permissions\":[\"http://127.0.0.1/*\","
                 "\"http://localhost/*\"],"
@@ -13537,6 +13537,37 @@ int main(int argc, char **argv)
             popupJs.write(
                 "self.__popupBootRan = (typeof chrome !== 'undefined'"
                 " && chrome.runtime) ? 'ok' : 'no';\n");
+            // BW07: the offscreen document — createDocument loads it
+            // inside the extension's origin; the same sibling shim
+            // must land there so its own script sees chrome.runtime
+            // and its onMessage listener can answer the hosted
+            // background over the relay.
+            QFile offHtml(extDir + QLatin1String("/off.html"));
+            if (!offHtml.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-host-smoke: FAIL"
+                           " (cannot write off.html)";
+                return 1;
+            }
+            offHtml.write(
+                "<!doctype html><html><body>"
+                "<div id=\"off\">smoke offscreen</div>"
+                "<script src=\"off.js\"></script>"
+                "</body></html>");
+            offHtml.close();
+            QFile offJs(extDir + QLatin1String("/off.js"));
+            if (!offJs.open(QIODevice::WriteOnly)) {
+                qInfo() << "extension-host-smoke: FAIL"
+                           " (cannot write off.js)";
+                return 1;
+            }
+            offJs.write(
+                "self.__offBootRan = (typeof chrome !== 'undefined'"
+                " && chrome.runtime) ? 'ok' : 'no';\n"
+                "chrome.runtime.onMessage.addListener("
+                "function(m,s,r){ if(m&&m.offPing){"
+                " r({offPong:true,from:'offscreen-doc'});"
+                " return true; } return false; });\n");
+            offJs.close();
             QFile worker(extDir + QLatin1String("/sw.js"));
             if (!worker.open(QIODevice::WriteOnly)) {
                 qInfo() << "extension-host-smoke: FAIL"
@@ -13638,6 +13669,11 @@ int main(int argc, char **argv)
         auto afDrove = std::make_shared<bool>(false);
         auto afStep = std::make_shared<int>(0);
         auto afStable = std::make_shared<int>(0);
+        // BW07: the offscreen leg's sub-step + the resolved
+        // bundle-relative document url (fixture 'off.html'; a real
+        // extension's declared document).
+        auto offStep = std::make_shared<int>(0);
+        auto offRel = std::make_shared<QString>();
         BrowserMainWindow *smokeWindow = nullptr;
         // Never destruct a WebEngine page/view inside a runJavaScript
         // result callback — the IPC teardown can deadlock the channel
@@ -13668,9 +13704,45 @@ int main(int argc, char **argv)
         // issued them) never call a dead stack lambda.
         const auto afFinish = [&]() {
             closeSmokeWindow();
-            *phase = 1;
-            *hostTicks = 0;
-            extensions->setExtensionEnabled(extensionId, false);
+            // BW07: only the real extension still owes the
+            // offscreen leg at this point — it runs next with the
+            // host still up, and its completion performs the
+            // disable + teardown handoff phase 1 expects.  The
+            // fixture already ran that leg between the popup legs
+            // and the BW05 port legs, so an afFinish here is a
+            // port-leg wrap-up — disable and hand to phase 1
+            // directly (routing it back to phase 16 loops the leg).
+            if (realExt) {
+                *phase = 16;
+                *offStep = 0;
+                *probeTicks = 0;
+            } else {
+                *phase = 1;
+                *hostTicks = 0;
+                extensions->setExtensionEnabled(extensionId, false);
+            }
+            hostPoll->start();
+        };
+        // BW07: the offscreen leg's exit — hoisted out of the
+        // phase-16 block for the same reason afFinish lives here:
+        // the leg's runJavaScript callbacks call it after the tick
+        // that created it has returned, so a block-local lambda is
+        // a dead stack object the moment its result callback fires
+        // (observed: dangling captures took the realExt branch and
+        // segfaulted inside setExtensionEnabled).
+        const auto offDone = [&]() {
+            if (realExt) {
+                extensions->setExtensionEnabled(extensionId, false);
+                *phase = 1;
+                *hostTicks = 0;
+            } else {
+                // Fixture: the BW05 port legs follow — they need
+                // the extension still enabled and a fresh drive
+                // flag.
+                *phase = 11;
+                *afDrove = false;
+                *probeTicks = 0;
+            }
             hostPoll->start();
         };
         hostPoll->setInterval(250);
@@ -14135,10 +14207,18 @@ int main(int argc, char **argv)
                             || !liveHost->page()->profile()) {
                         check(realExt,
                               "popup leg skipped — no action popup");
-                        *phase = 1;
-                        *hostTicks = 0;
-                        extensions->setExtensionEnabled(
-                            extensionId, false);
+                        // BW07: a live host still runs the offscreen
+                        // leg before the disable.
+                        if (liveHost) {
+                            *phase = 16;
+                            *offStep = 0;
+                            *probeTicks = 0;
+                        } else {
+                            *phase = 1;
+                            *hostTicks = 0;
+                            extensions->setExtensionEnabled(
+                                extensionId, false);
+                        }
                         hostPoll->start();
                         return;
                     }
@@ -15078,11 +15158,12 @@ int main(int argc, char **argv)
                             popupView.clear();
                             popupPage.clear();
                         }
-                        // BW05: the fixture's declared content
-                        // script drives the real-page Port legs
-                        // next; the disable moves to phase 13.
-                        *phase = 11;
-                        *afDrove = false;
+                        // BW07: the offscreen leg runs before the
+                        // BW05 port legs — its document must be
+                        // closed again before the disable/teardown
+                        // phases measure the port disconnect.
+                        *phase = 16;
+                        *offStep = 0;
                         *probeTicks = 0;
                         hostPoll->start();
                         return;
@@ -15588,6 +15669,440 @@ int main(int argc, char **argv)
                     *phase = 1;
                     *hostTicks = 0;
                     hostPoll->start();
+                });
+            } else if (*phase == 16) {  // BW07: chrome.offscreen
+                // The leg's steps are driven sequentially because
+                // each polls a different page's globals: 0 = kick
+                // off hasDocument + createDocument in the sw; 1 =
+                // poll the create outcome + probe the document page
+                // and fire its ->sw sendMessage; 2 = poll the
+                // document's answer and send sw->doc; 3 = poll the
+                // sw->doc response and launch the typed-error +
+                // closeDocument sweep; 4 = poll the sweep outcome.
+                if (!host) {
+                    // The host died between phases — the fixture
+                    // never loses it here; a real extension's host
+                    // can die on its own shutdown path.
+                    check(realExt,
+                          "offscreen leg skipped — host gone");
+                    offDone();
+                    return;
+                }
+                if (*offStep == 0) {
+                    *offStep = 1;
+                    *probeTicks = 0;
+                    if (!realExt) {
+                        *offRel = QStringLiteral("off.html");
+                    } else {
+                        // A real extension: its declared offscreen
+                        // document when the bundle ships one under a
+                        // known name, else its action popup (any
+                        // same-origin document is a legal url).
+                        const QStringList cands{
+                            QStringLiteral(
+                                "offscreen-document/index.html"),
+                            QStringLiteral("offscreen.html"),
+                            QStringLiteral("offscreen/index.html")};
+                        for (const QString &cand : cands) {
+                            if (QFileInfo(extDir + QLatin1Char('/')
+                                          + cand).isFile()) {
+                                *offRel = cand;
+                                break;
+                            }
+                        }
+                        if (offRel->isEmpty()) {
+                            for (const ExtensionManager::ExtensionInfo
+                                     &ei : extensions->extensions()) {
+                                if (ei.id != extensionId)
+                                    continue;
+                                if (ei.actionPopupUrl.scheme()
+                                        == QLatin1String(
+                                            "chrome-extension")) {
+                                    const QString p =
+                                        ei.actionPopupUrl.path();
+                                    if (p.size() > 1)
+                                        *offRel = p.mid(1);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    const bool declared = !realExt
+                        || manifest.permissions.contains(
+                               QLatin1String("offscreen"));
+                    if (!declared || offRel->isEmpty()) {
+                        qInfo() << "extension-host-smoke: offscreen"
+                                   " leg skipped —"
+                                << (declared
+                                        ? QLatin1String(
+                                              "no document candidate")
+                                        : QLatin1String(
+                                              "no offscreen "
+                                              "permission"));
+                        offDone();
+                        return;
+                    }
+                    // The sw-side half: a probe listener answering
+                    // the document's {offToSw} (sender.url recorded
+                    // for the log), then the real createDocument.
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__offA={done:false};"
+                        "self.__offSwSeen=[];"
+                        "chrome.runtime.onMessage.addListener("
+                        "function(m,s,r){ if(m&&m.offToSw){"
+                        " self.__offSwSeen.push({v:m.offToSw,"
+                        " url:(s&&s.url)||null});"
+                        " r({pong:true,from:'sw'}); return true; }"
+                        " return false; });"
+                        "(async function(){var o={};"
+                        " o.had0=await chrome.offscreen.hasDocument();"
+                        " await chrome.offscreen.createDocument({"
+                        "  url:'%1',reasons:['TESTING'],"
+                        "  justification:'arktos smoke'});"
+                        " o.had1=await chrome.offscreen.hasDocument();"
+                        " var c=await chrome.runtime.getContexts();"
+                        " o.offCtx=c.filter(function(x){return "
+                        "  x.contextType==='OFFSCREEN_DOCUMENT';})"
+                        "  .length;"
+                        " self.__offA.out=o;self.__offA.done=true;})()"
+                        ".catch(function(e){self.__offA.err="
+                        " String(e&&e.stack||e);self.__offA.done=true;"
+                        "});").arg(*offRel),
+                        [](const QVariant &) {});
+                    return;
+                }
+                if (*offStep == 1) {   // createDocument outcome
+                    ++*probeTicks;
+                    host->page()->runJavaScript(QStringLiteral(
+                        "self.__offA?JSON.stringify(self.__offA)"
+                        ":'missing'"),
+                        [&, host](const QVariant &v) {
+                        if (*probeTicks > 240) {
+                            die(QStringLiteral(
+                                "offscreen createDocument timed "
+                                "out: %1").arg(v.toString()));
+                            return;
+                        }
+                        const QJsonObject r = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!r.value(QLatin1String("done")).toBool())
+                            return;
+                        hostPoll->stop();
+                        const QString err =
+                            r.value(QLatin1String("err")).toString();
+                        check(err.isEmpty(),
+                              "offscreen.createDocument resolved");
+                        if (!err.isEmpty()) {
+                            qInfo() << "extension-host-smoke:"
+                                       " offscreen create error:"
+                                    << err;
+                            offDone();
+                            return;
+                        }
+                        const QJsonObject o =
+                            r.value(QLatin1String("out")).toObject();
+                        check(o.value(QLatin1String("had0")).toBool()
+                                  == false,
+                              "hasDocument false before create");
+                        check(o.value(QLatin1String("had1")).toBool(),
+                              "hasDocument true after create");
+                        check(o.value(QLatin1String("offCtx")).toInt()
+                                  >= 1,
+                              "getContexts lists OFFSCREEN_DOCUMENT");
+                        // Host-side honesty: the recorded create
+                        // parameters echo the call, and the page is
+                        // really there.
+                        const QJsonObject info =
+                            runtime->offscreenInfo(extensionId);
+                        check(info.value(QLatin1String("url"))
+                                  .toString().endsWith(*offRel),
+                              "offscreenInfo records the declared "
+                              "url");
+                        check(info.value(QLatin1String("reasons"))
+                                  .toArray().contains(
+                                      QLatin1String("TESTING"))
+                                  && info.value(QLatin1String(
+                                                "justification"))
+                                         .toString()
+                                         == QLatin1String(
+                                                "arktos smoke"),
+                              "offscreenInfo records reasons + "
+                              "justification");
+                        QWebEnginePage *docPage =
+                            runtime->offscreenPage(extensionId);
+                        if (!docPage) {
+                            check(false, "offscreen page object "
+                                         "exists host-side");
+                            offDone();
+                            return;
+                        }
+                        // Probe the document page: shim + bridge up,
+                        // own script ran, right url — then install
+                        // the echo listener a real extension's
+                        // document does not carry and fire the
+                        // document->sw sendMessage.
+                        docPage->runJavaScript(QStringLiteral(
+                            "(function(){var o={shim:"
+                            "!!window.__arktosShim,"
+                            "up:!!(window.__arktosHost&&"
+                            "__arktosHost.bridgeUp),"
+                            "href:String(location.href),"
+                            "ran:self.__offBootRan||null};"
+                            "chrome.runtime.onMessage.addListener("
+                            "function(m,s,r){ if(m&&m.offPing){"
+                            " r({offPong:true,"
+                            "  from:'offscreen-injected'});"
+                            " return true; } return false; });"
+                            "self.__offResp='pending';"
+                            "chrome.runtime.sendMessage({offToSw:"
+                            "'doc-to-sw'},function(resp){"
+                            " self.__offResp=chrome.runtime.lastError"
+                            "  ?('err:'+chrome.runtime.lastError"
+                            "       .message):resp;});"
+                            "return JSON.stringify(o);})()"),
+                            [&, host](const QVariant &v) {
+                            const QJsonObject o =
+                                QJsonDocument::fromJson(
+                                    v.toString().toUtf8()).object();
+                            check(o.value(QLatin1String("shim"))
+                                      .toBool(),
+                                  "offscreen document carries the "
+                                  "shim");
+                            check(o.value(QLatin1String("up"))
+                                      .toBool(),
+                                  "offscreen chromeBridge handshake "
+                                  "completed");
+                            check(o.value(QLatin1String("href"))
+                                      .toString().endsWith(*offRel),
+                                  "offscreen document loaded the "
+                                  "declared url");
+                            if (!realExt)
+                                check(o.value(QLatin1String("ran"))
+                                          .toString()
+                                          == QLatin1String("ok"),
+                                      "offscreen document's own "
+                                      "script ran with "
+                                      "chrome.runtime");
+                            else
+                                qInfo() << "extension-host-smoke:"
+                                           " offscreen doc:"
+                                        << v.toString();
+                            *offStep = 2;
+                            *probeTicks = 0;
+                            hostPoll->start();
+                        });
+                    });
+                    return;
+                }
+                if (*offStep == 2) {   // doc->sw answer + sw->doc send
+                    ++*probeTicks;
+                    QWebEnginePage *docPage =
+                        runtime->offscreenPage(extensionId);
+                    if (!docPage) {
+                        hostPoll->stop();
+                        check(false, "offscreen page survives the "
+                                     "messaging legs");
+                        offDone();
+                        return;
+                    }
+                    docPage->runJavaScript(QStringLiteral(
+                        "JSON.stringify({resp:self.__offResp})"),
+                        [&, host, docPage](const QVariant &v) {
+                        const QJsonObject o = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        const QJsonValue resp =
+                            o.value(QLatin1String("resp"));
+                        if (resp.isNull()
+                                || resp.toString()
+                                       == QLatin1String("pending")) {
+                            if (*probeTicks > 160) {
+                                hostPoll->stop();
+                                check(false, "offscreen->sw "
+                                             "sendMessage answered");
+                                offDone();
+                            }
+                            return;
+                        }
+                        const QJsonObject rr = resp.toObject();
+                        check(rr.value(QLatin1String("pong")).toBool()
+                                  && rr.value(QLatin1String("from"))
+                                         .toString()
+                                         == QLatin1String("sw"),
+                              "offscreen->sw sendMessage round "
+                              "trip");
+                        // sw->doc: send the {offPing} the document's
+                        // listener answers.
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__offSwResp='pending';"
+                            "chrome.runtime.sendMessage({offPing:"
+                            "true},function(r){ self.__offSwResp="
+                            " chrome.runtime.lastError?('err:'+"
+                            "  chrome.runtime.lastError.message):r;"
+                            "});"),
+                            [](const QVariant &) {});
+                        *offStep = 3;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                if (*offStep == 3) {   // sw->doc answer, then close
+                    ++*probeTicks;
+                    host->page()->runJavaScript(QStringLiteral(
+                        "JSON.stringify({resp:self.__offSwResp,"
+                        "seen:self.__offSwSeen})"),
+                        [&, host](const QVariant &v) {
+                        const QJsonObject o = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        const QJsonValue resp =
+                            o.value(QLatin1String("resp"));
+                        if (resp.isNull()
+                                || resp.toString()
+                                       == QLatin1String("pending")) {
+                            if (*probeTicks > 160) {
+                                hostPoll->stop();
+                                check(false, "sw->offscreen "
+                                             "sendMessage answered");
+                                offDone();
+                            }
+                            return;
+                        }
+                        const QJsonObject rr = resp.toObject();
+                        check(rr.value(QLatin1String("offPong"))
+                                  .toBool(),
+                              "sw->offscreen sendMessage round "
+                              "trip");
+                        bool sawDoc = false;
+                        int docSends = 0;
+                        const QJsonArray seen =
+                            o.value(QLatin1String("seen")).toArray();
+                        for (const QJsonValue &e : seen) {
+                            if (e.toObject()
+                                    .value(QLatin1String("v"))
+                                    .toString()
+                                    == QLatin1String("doc-to-sw")) {
+                                sawDoc = true;
+                                ++docSends;
+                            }
+                        }
+                        check(sawDoc,
+                              "sw onMessage saw the offscreen "
+                              "document's send");
+                        // BW07: one sendMessage = one onMessage
+                        // firing — the send rides the native binding
+                        // AND the relay (both reach real
+                        // chrome-extension:// contexts), so the
+                        // shim's per-transport content dedupe is
+                        // what keeps this at 1.
+                        check(docSends == 1,
+                              "offscreen sendMessage fired sw "
+                              "onMessage exactly once "
+                              "(native+relay dedupe)");
+                        qInfo() << "extension-host-smoke: offscreen"
+                                   " answer from:"
+                                << rr.value(QLatin1String("from"))
+                                       .toString()
+                                << "doc->sw senders:"
+                                << QString::fromUtf8(QJsonDocument(
+                                       seen)
+                                       .toJson(QJsonDocument::Compact));
+                        // Negative + teardown sweep: Chrome's
+                        // single-document rule verbatim, a bogus
+                        // reason, a foreign url — then close and
+                        // confirm the context is gone.
+                        host->page()->runJavaScript(QStringLiteral(
+                            "self.__offB={done:false};"
+                            "(async function(){var o={};"
+                            " try{await chrome.offscreen"
+                            "  .createDocument({url:'%1',"
+                            "   reasons:['BLOBS'],justification:"
+                            "   'x'});o.second='resolved';}"
+                            " catch(e){o.second=String(e.message||e);}"
+                            " try{await chrome.offscreen"
+                            "  .createDocument({url:'%1',"
+                            "   reasons:['BOGUS'],justification:"
+                            "   'x'});o.badReason='resolved';}"
+                            " catch(e){o.badReason=String(e.code"
+                            "   ||e.message||e);}"
+                            " try{await chrome.offscreen"
+                            "  .createDocument({url:'https://evil"
+                            "   .invalid/x.html',reasons:['BLOBS'],"
+                            "   justification:'x'});"
+                            "  o.badUrl='resolved';}"
+                            " catch(e){o.badUrl=String(e.code"
+                            "   ||e.message||e);}"
+                            " await chrome.offscreen.closeDocument();"
+                            " o.hadAfter=await chrome.offscreen"
+                            "  .hasDocument();"
+                            " var c=await chrome.runtime.getContexts();"
+                            " o.offCtxAfter=c.filter(function(x){"
+                            "  return x.contextType==="
+                            "  'OFFSCREEN_DOCUMENT';}).length;"
+                            " self.__offB.out=o;self.__offB.done=true;"
+                            "})().catch(function(e){self.__offB.err="
+                            " String(e&&e.stack||e);"
+                            " self.__offB.done=true;});")
+                            .arg(*offRel),
+                            [](const QVariant &) {});
+                        *offStep = 4;
+                        *probeTicks = 0;
+                        hostPoll->start();
+                    });
+                    return;
+                }
+                // offStep == 4: teardown outcome
+                ++*probeTicks;
+                host->page()->runJavaScript(QStringLiteral(
+                    "self.__offB?JSON.stringify(self.__offB)"
+                    ":'missing'"),
+                    [&, host](const QVariant &v) {
+                    if (*probeTicks > 240) {
+                        die(QStringLiteral(
+                            "offscreen close sweep timed out: %1")
+                                .arg(v.toString()));
+                        return;
+                    }
+                    const QJsonObject r = QJsonDocument::fromJson(
+                        v.toString().toUtf8()).object();
+                    if (!r.value(QLatin1String("done")).toBool())
+                        return;
+                    hostPoll->stop();
+                    check(r.value(QLatin1String("err")).toString()
+                              .isEmpty(),
+                          "offscreen close sweep ran clean");
+                    const QJsonObject o =
+                        r.value(QLatin1String("out")).toObject();
+                    check(o.value(QLatin1String("second")).toString()
+                              == QLatin1String(
+                                  "Only a single offscreen document "
+                                  "may be created."),
+                          "second createDocument rejected with "
+                          "Chrome's verbatim message");
+                    qInfo() << "extension-host-smoke: offscreen"
+                               " typed errors:"
+                            << o.value(QLatin1String("badReason"))
+                                   .toString()
+                            << "|"
+                            << o.value(QLatin1String("badUrl"))
+                                   .toString();
+                    check(o.value(QLatin1String("badReason")).toString()
+                              .contains(QLatin1String(
+                                            "invalid-argument")),
+                          "unknown reason rejected typed");
+                    check(o.value(QLatin1String("badUrl")).toString()
+                              .contains(QLatin1String("bad-path")),
+                          "foreign url rejected typed");
+                    check(o.value(QLatin1String("hadAfter")).toBool()
+                              == false,
+                          "closeDocument dropped the document");
+                    check(o.value(QLatin1String("offCtxAfter")).toInt()
+                              == 0,
+                          "getContexts no longer lists the "
+                          "document");
+                    check(runtime->offscreenPage(extensionId)
+                              == nullptr,
+                          "offscreen page torn down host-side");
+                    offDone();
                 });
             } else {  // phase 1 — teardown
                 if (!host) {
