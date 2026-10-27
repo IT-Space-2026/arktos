@@ -531,9 +531,13 @@
                 if (responded)
                     return;
                 responded = true;
+                // hadListeners rides along: a respond() call can only
+                // come from a fired listener — without it the answer
+                // reads as 'receiving end does not exist'.
                 rpc('respond', { mid: mid,
                                  response: value === undefined
-                                     ? null : value })
+                                     ? null : value,
+                                 hadListeners: true })
                     .catch(function (e) {
                         record('respond: ' + String(e && e.message || e));
                     });

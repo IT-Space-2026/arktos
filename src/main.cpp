@@ -13637,6 +13637,7 @@ int main(int argc, char **argv)
         auto smokeDrove = std::make_shared<bool>(false);
         auto afDrove = std::make_shared<bool>(false);
         auto afStep = std::make_shared<int>(0);
+        auto afStable = std::make_shared<int>(0);
         BrowserMainWindow *smokeWindow = nullptr;
         // Never destruct a WebEngine page/view inside a runJavaScript
         // result callback — the IPC teardown can deadlock the channel
@@ -13662,6 +13663,16 @@ int main(int argc, char **argv)
         QPointer<QWebEnginePage> popupPage;
         QTcpServer *afServer = nullptr;
         QTimer *hostPoll = new QTimer(&application);
+        // Phase-10 leg teardown — defined once at this scope so the
+        // async runJavaScript callbacks (which outlive the tick that
+        // issued them) never call a dead stack lambda.
+        const auto afFinish = [&]() {
+            closeSmokeWindow();
+            *phase = 1;
+            *hostTicks = 0;
+            extensions->setExtensionEnabled(extensionId, false);
+            hostPoll->start();
+        };
         hostPoll->setInterval(250);
 
         const auto finish = [&]() {
@@ -14658,11 +14669,12 @@ int main(int argc, char **argv)
                     *probeTicks = 0;
                     hostPoll->start();
                 });
-            } else if (*phase == 10) {  // autofill attempt leg
+            } else if (*phase == 10) {  // autofill E2E leg (BW06)
                 if (!host)
                     return;
                 if (!*afDrove) {
                     *afDrove = true;
+                    *afStep = -1;
                     // A login form over loopback — content scripts
                     // cannot run on data: pages, so serve real http.
                     afServer = new QTcpServer(&application);
@@ -14727,31 +14739,159 @@ int main(int argc, char **argv)
                             "===null)window.__afHs=false;},5000);"),
                             [](const QVariant &) {});
                     });
-                    view->load(QUrl(QStringLiteral(
-                        "http://127.0.0.1:%1/")
-                        .arg(afServer->serverPort())));
+                    // BW06: seed a synthetic account through the
+                    // extension's own chrome.storage.local so its
+                    // auth stream leaves LoggedOut — Bitwarden only
+                    // starts autofill monitors (and therefore answers
+                    // collectPageDetails/fillForm) for an account
+                    // that exists.  The page loads AFTER the seed so
+                    // the declared trigger script's
+                    // triggerAutofillScriptInjection lands on a
+                    // signed-in background.  Fixture strings only —
+                    // the public SDK test account shape, never real
+                    // credentials.
+                    host->page()->runJavaScript(QStringLiteral(
+                        "(function(){"
+                        "var uid='060000fb-0922-4dd3-b170-6e15cb5df8c8'"
+                        ",email='test@bitwarden.com';"
+                        "var wrap=function(v){return{__json__:true,"
+                        "value:JSON.stringify(v)};};"
+                        "var b64=function(s){return btoa(s)"
+                        ".replace(/\\+/g,'-').replace(/\\//g,'_')"
+                        ".replace(/=+$/,'');};"
+                        "var jwt=b64('{\"alg\":\"none\",\"typ\":\"JWT\"}')"
+                        "+'.'+b64(JSON.stringify({exp:4102444800,"
+                        "sub:uid,email:email,name:'Arktos Smoke'}))"
+                        "+'.e30';"
+                        "var items={},acc={};"
+                        "acc[uid]={email:email,name:'Arktos Smoke',"
+                        "emailVerified:true};"
+                        "items['global_account_accounts']=wrap(acc);"
+                        "items['user_'+uid+'_token_accessToken']="
+                        "wrap(jwt);"
+                        "items['global_account_activeAccountId']="
+                        "wrap(uid);"
+                        "self.__afSeed={done:false};"
+                        "self.__afArmT=0;"
+                        "var keys=Object.keys(items),i=0;"
+                        "function next(){if(i>=keys.length){"
+                        "self.__afSeed={done:true,err:null};return;}"
+                        "var o={};o[keys[i]]=items[keys[i]];i++;"
+                        "chrome.storage.local.set(o,function(){"
+                        "var e=chrome.runtime.lastError;"
+                        "if(e){self.__afSeed={done:true,"
+                        "err:e.message||String(e)};return;}next();});}"
+                        "next();"
+                        // Observe the real auth stream: >=1 (Locked)
+                        // means the seeded account registered.  Arm
+                        // alongside the writes — bitwardenMain is
+                        // already up in phase 10, but retry anyway so
+                        // a service-init hiccup can't stall the leg.
+                        "var arm=function(){var m=self.bitwardenMain;"
+                        "if(m&&m.authService"
+                        "&&m.authService.activeAccountStatus$){"
+                        "if(self.__afStatusSub)return true;"
+                        "self.__afStatusSub=1;self.__afStatus=-1;"
+                        "self.__afStatusHist=[];"
+                        "m.authService.activeAccountStatus$.subscribe("
+                        "function(v){self.__afStatus=v;"
+                        "if(self.__afStatusHist.length<40)"
+                        "self.__afStatusHist.push(v);});"
+                        "return true;}return false;};"
+                        "if(!arm()){var iv=setInterval(function(){"
+                        "if(arm()||++self.__afArmT>200)"
+                        "clearInterval(iv);},250);}"
+                        "return 0;})()"),
+                        [](const QVariant &) {});
                     return;
                 }
                 if (!smokeWindow || !smokeWindow->tabWidget()
                         || !smokeWindow->tabWidget()->webView(0)) {
                     hostPoll->stop();
                     check(false, "autofill page survives the leg");
-                    *phase = 1;
-                    *hostTicks = 0;
-                    extensions->setExtensionEnabled(extensionId, false);
-                    hostPoll->start();
+                    afFinish();
                     return;
                 }
                 ++*probeTicks;
                 WebView *afView =
                     smokeWindow->tabWidget()->webView(0);
-                if (*afStep == 0) {
+                if (*afStep == -1) {   // seed + auth-status gate
+                    host->page()->runJavaScript(QStringLiteral(
+                        "JSON.stringify({seed:self.__afSeed||null,"
+                        "status:(self.__afStatus===undefined"
+                        "?'pending':self.__afStatus),"
+                        "hist:self.__afStatusHist||[]})"),
+                        [&, afView](const QVariant &v) {
+                        const QJsonObject o = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        const QJsonObject seed =
+                            o.value(QLatin1String("seed")).toObject();
+                        if (!seed.value(QLatin1String("done")).toBool()) {
+                            if (*probeTicks > 80) {
+                                hostPoll->stop();
+                                check(false, "account seed writes "
+                                             "settled");
+                                qInfo() << "extension-host-smoke:"
+                                           " autofill seed:" << v;
+                                afFinish();
+                            }
+                            return;
+                        }
+                        check(seed.value(QLatin1String("err"))
+                                  .toVariant().isNull(),
+                              "account seed accepted by "
+                              "chrome.storage.local");
+                        const QVariant status =
+                            o.value(QLatin1String("status")).toVariant();
+                        // The status must SETTLE non-LoggedOut — the
+                        // background's own startMonitoringFrame takes
+                        // the stream's first emission, and an early
+                        // LoggedOut (pre-hydration or a mid-seed
+                        // re-grade) silently retires the whole leg.
+                        // Four consecutive non-LoggedOut reads (~1s)
+                        // prove it held.
+                        if (status.toString() == QLatin1String("pending")
+                                || status.toInt() < 1) {
+                            *afStable = 0;
+                            if (*probeTicks > 120) {
+                                hostPoll->stop();
+                                check(false, "seeded account reached "
+                                             "non-LoggedOut on "
+                                             "activeAccountStatus$");
+                                qInfo() << "extension-host-smoke:"
+                                           " autofill auth status:"
+                                        << v;
+                                afFinish();
+                            }
+                            return;
+                        }
+                        if (++*afStable < 4)
+                            return;
+                        qInfo() << "extension-host-smoke: autofill"
+                                   " auth status settled:"
+                                << status
+                                << "hist:"
+                                << o.value(QLatin1String("hist"));
+                        // A signed-in background — now the fixture
+                        // page's declared trigger script injects the
+                        // autofill world for real.
+                        afView->load(QUrl(QStringLiteral(
+                            "http://127.0.0.1:%1/")
+                            .arg(afServer->serverPort())));
+                        *afStep = 0;
+                        *probeTicks = 0;
+                    });
+                } else if (*afStep == 0) {   // cs handshake wait
+                    // Re-post every tick — the agent-world content
+                    // script's window-message listener attaches when
+                    // its DocumentCreation wrapper's agent wait
+                    // resolves, which can outlive the page's own
+                    // loadFinished.  The listener stays armed; a late
+                    // reply flips __afHs true whenever it lands.
                     afView->page()->runJavaScript(QStringLiteral(
-                        "JSON.stringify({hs:window.__afHs,"
-                        "user:(document.querySelector("
-                        " 'input[name=username]')||{}).value||'',"
-                        "pass:(document.querySelector("
-                        " 'input[name=password]')||{}).value||''})"),
+                        "window.postMessage({command:"
+                        "'checkIfBWExtensionInstalled'},'*');"
+                        "JSON.stringify({hs:window.__afHs})"),
                         [&, host](const QVariant &v) {
                         const QJsonObject o = QJsonDocument::fromJson(
                             v.toString().toUtf8()).object();
@@ -14760,70 +14900,129 @@ int main(int argc, char **argv)
                                 hostPoll->stop();
                                 check(false, "content-script "
                                              "handshake resolved");
-                                closeSmokeWindow();
-                                *phase = 1;
-                                *hostTicks = 0;
-                                extensions->setExtensionEnabled(
-                                    extensionId, false);
-                                hostPoll->start();
+                                afFinish();
                             }
                             return;
                         }
-                        check(o.value(QLatin1String("hs")).toBool(),
-                              "content script answered "
+                        if (!o.value(QLatin1String("hs")).toBool()) {
+                            if (*probeTicks > 120) {
+                                hostPoll->stop();
+                                check(false, "declared content script "
+                                             "answered hasBwInstalled "
+                                             "on the login page");
+                                afFinish();
+                            }
+                            return;
+                        }
+                        check(true,
+                              "declared content script answered "
                               "hasBwInstalled on the login page");
-                        // The autofill attempt: route the command a
-                        // real Bitwarden background would send to the
-                        // tab — through OUR hosted background's tabs
-                        // API, recording whatever comes back.
-                        host->page()->runJavaScript(QStringLiteral(
-                            "self.__af={sent:false};"
-                            "chrome.tabs.query({active:true},"
-                            "function(tabs){var t=tabs&&tabs[0];"
-                            "self.__af={sent:true,tab:t&&t.id};"
-                            "if(t){try{chrome.tabs.sendMessage(t.id,"
-                            "{command:'autofillPage',"
-                            "fillScript:{script:[]},"
-                            "pageDetailsUuid:'arktos-smoke'},"
-                            "function(r){self.__af.resp=(r===undefined)"
-                            "?null:String(r);self.__af.le="
-                            "(chrome.runtime.lastError?String("
-                            "chrome.runtime.lastError.message):null);}"
-                            ");}catch(e){self.__af.le='threw:'"
-                            "+String(e);}}});"),
-                            [](const QVariant &) {});
-                        *afStep = 1;
+                        *afStep = 2;
                         *probeTicks = 0;
                     });
-                } else {    // afStep == 1: collect the outcome
+                } else if (*afStep == 2) {   // monitors-armed wait
+                    // The agent world owns bitwardenAutofillInit:
+                    // isMonitoring flips when the background's
+                    // startMonitoringFrame -> 'startAutofillMonitors'
+                    // one-shot lands — proof the trigger message
+                    // carried sender.tab, injectAutofillScripts ran
+                    // chrome.scripting.executeScript for real, and
+                    // the injected bootstrap answered.
+                    afView->page()->runJavaScript(QStringLiteral(
+                        "JSON.stringify({has:!!window"
+                        ".bitwardenAutofillInit,mon:!!(window"
+                        ".bitwardenAutofillInit&&window"
+                        ".bitwardenAutofillInit.isMonitoring===true)})"),
+                        ExtensionBackgroundRuntime::AgentWorldId,
+                        [&, host](const QVariant &v) {
+                        const QJsonObject o = QJsonDocument::fromJson(
+                            v.toString().toUtf8()).object();
+                        if (!o.value(QLatin1String("mon")).toBool()) {
+                            if (*probeTicks > 120) {
+                                hostPoll->stop();
+                                check(false, "sw injected "
+                                             "bootstrap-autofill and "
+                                             "armed its monitors");
+                                qInfo() << "extension-host-smoke:"
+                                           " autofill init probe:"
+                                        << v;
+                                afFinish();
+                            }
+                            return;
+                        }
+                        check(true, "sw received the trigger, injected "
+                                    "bootstrap-autofill via "
+                                    "chrome.scripting, and armed "
+                                    "monitors");
+                        // The scripted fill: collect real page details
+                        // (the cs answers with viewable fields +
+                        // opids), build Bitwarden's own op triplets,
+                        // then fillForm — the exact message contract
+                        // the background uses, issued through OUR
+                        // tabs.sendMessage.
+                        host->page()->runJavaScript(QStringLiteral(
+                            "(function(){self.__afFill={step:'q'};"
+                            "chrome.tabs.query({},function(tabs){"
+                            "var t=(tabs||[]).filter(function(x){"
+                            "return x.url&&x.url.indexOf("
+                            "'http://127.0.0.1:%1/')===0;})[0];"
+                            "if(!t){self.__afFill={done:true,"
+                            "err:'no-fixture-tab',"
+                            "n:tabs&&tabs.length};return;}"
+                            "self.__afFill={step:'collect',tab:t.id,"
+                            "url:t.url};"
+                            "chrome.tabs.sendMessage(t.id,{command:"
+                            "'collectPageDetailsImmediately',"
+                            "sender:'arktos-smoke'},function(d){"
+                            "self.__afFill.le1=chrome.runtime"
+                            ".lastError?String(chrome.runtime.lastError"
+                            ".message):null;"
+                            "var fs=(d&&d.fields)||[];"
+                            "self.__afFill.fields=fs.map(function(f){"
+                            "return{ty:f.type,op:f.opid,"
+                            "nm:f.htmlName,vw:f.viewable};});"
+                            "var ops=[];"
+                            "fs.forEach(function(f){"
+                            "if(!f||!f.opid)return;var v="
+                            "(f.type==='password')?'Sm0ke-Pass!x9':"
+                            "(f.type==='text'||f.type==='email'"
+                            "?'smoke-user@arktos.test':null);"
+                            "if(!v)return;"
+                            "ops.push(['click_on_opid',f.opid],"
+                            "['focus_by_opid',f.opid],"
+                            "['fill_by_opid',f.opid,v]);});"
+                            "self.__afFill.ops=ops.length;"
+                            "self.__afFill.step='fill';"
+                            "chrome.tabs.sendMessage(t.id,{command:"
+                            "'fillForm',fillScript:{script:ops},"
+                            "pageDetailsUrl:String((d&&d.url)||t.url)},"
+                            "function(r){self.__afFill.le2=chrome"
+                            ".runtime.lastError?String(chrome.runtime"
+                            ".lastError.message):null;"
+                            "self.__afFill.resp=(r===undefined?null:r);"
+                            "self.__afFill.done=true;});});});"
+                            "return 0;})()")
+                            .arg(afServer->serverPort()),
+                            [](const QVariant &) {});
+                        *afStep = 3;
+                        *probeTicks = 0;
+                    });
+                } else {    // afStep == 3: collect the fill outcome
                     host->page()->runJavaScript(QStringLiteral(
-                        "self.__af?JSON.stringify(self.__af):'null'"),
+                        "JSON.stringify(self.__afFill||null)"),
                         [&, afView](const QVariant &v) {
                         const QJsonObject af =
                             QJsonDocument::fromJson(
                                 v.toString().toUtf8()).object();
-                        const bool resolved =
-                            af.value(QLatin1String("sent")).toBool()
-                            && (af.contains(QLatin1String("resp"))
-                                || af.contains(QLatin1String("le"))
-                                || af.value(QLatin1String("tab"))
-                                       .isNull());
-                        if (!resolved) {
-                            if (*probeTicks > 80) {
-                                // Never hang the harness — record
-                                // and fall through to teardown.
+                        if (!af.value(QLatin1String("done")).toBool()) {
+                            if (*probeTicks > 120) {
                                 hostPoll->stop();
-                                check(false, "autofill command "
-                                             "resolved");
+                                check(false, "collect+fill commands "
+                                             "settled");
                                 qInfo() << "extension-host-smoke:"
-                                           " autofill unresolved:"
-                                        << v.toString();
-                                closeSmokeWindow();
-                                *phase = 1;
-                                *hostTicks = 0;
-                                extensions->setExtensionEnabled(
-                                    extensionId, false);
-                                hostPoll->start();
+                                           " autofill chain state:"
+                                        << v;
+                                afFinish();
                             }
                             return;
                         }
@@ -14838,37 +15037,28 @@ int main(int argc, char **argv)
                             const QJsonObject f =
                                 QJsonDocument::fromJson(
                                     fv.toString().toUtf8()).object();
-                            const bool filled =
-                                !f.value(QLatin1String("pass"))
-                                     .toString().isEmpty();
-                            // Honest accounting: a fill is a real
-                            // form fill; anything else (typed
-                            // lastError, silent no-op, locked vault)
-                            // is recorded verbatim — autofill is
-                            // unreachable without unlock regardless.
-                            if (filled)
-                                check(true, "autofill wrote the "
-                                            "password field");
-                            else
-                                check(true, "autofill attempt "
-                                            "recorded (no fill)");
                             qInfo() << "extension-host-smoke:"
-                                       " autofill outcome: fill="
-                                    << filled
-                                    << "resp=" << af.value(
-                                           QLatin1String("resp"))
-                                           .toVariant()
-                                    << "lastError=" << af.value(
-                                           QLatin1String("le"))
+                                       " autofill chain:"
+                                    << QString::fromUtf8(QJsonDocument(
+                                           af).toJson(
+                                           QJsonDocument::Compact))
+                                    << "fields: user="
+                                    << f.value(QLatin1String("user"))
                                            .toString()
-                                    << "(clipboard fill not"
-                                       " observed; vault locked)";
-                            closeSmokeWindow();
-                            *phase = 1;
-                            *hostTicks = 0;
-                            extensions->setExtensionEnabled(
-                                extensionId, false);
-                            hostPoll->start();
+                                    << "pass="
+                                    << f.value(QLatin1String("pass"))
+                                           .toString();
+                            check(f.value(QLatin1String("user"))
+                                          .toString()
+                                      == QLatin1String(
+                                          "smoke-user@arktos.test")
+                                  && f.value(QLatin1String("pass"))
+                                             .toString()
+                                         == QLatin1String(
+                                             "Sm0ke-Pass!x9"),
+                                  "scripted fillForm wrote the "
+                                  "fixture fields");
+                            afFinish();
                         });
                     });
                 }
@@ -14983,12 +15173,7 @@ int main(int argc, char **argv)
                             hostPoll->stop();
                             check(false, "cs echo-port round trip "
                                         "settled");
-                            closeSmokeWindow();
-                            *phase = 1;
-                            *hostTicks = 0;
-                            extensions->setExtensionEnabled(
-                                extensionId, false);
-                            hostPoll->start();
+                            afFinish();
                         }
                         return;
                     }

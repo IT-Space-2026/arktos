@@ -1400,12 +1400,32 @@ bool ExtensionManager::isHostedOnlyBackground(const QString &dirPath)
 // still declaring `background` simply keeps the old behavior.
 static bool doctorExtensionDir(const QString &dirPath)
 {
-    const QByteArray declared = manifestFileBytes(dirPath);
-    if (declared.isEmpty())
+    const QByteArray visible = manifestFileBytes(dirPath);
+    if (visible.isEmpty())
         return false;
-    QJsonObject root = QJsonDocument::fromJson(declared).object();
-    if (!root.contains(QLatin1String("background")))
-        return false;
+    // A marker can mean this tree was doctored before — but only when
+    // the visible manifest is a doctored OUTPUT of the sidecar's
+    // declared manifest (identical after the strips).  A pair an
+    // extension merely ships fails that check — the visible manifest
+    // stays the truth and the planted record is overwritten below.
+    const bool haveMarker = QFileInfo::exists(
+        dirPath + QLatin1Char('/') + QLatin1String(kHostedBgMarker));
+    const QJsonObject visObj =
+        QJsonDocument::fromJson(visible).object();
+    QJsonObject root = visObj;
+    bool markerOurs = false;
+    if (haveMarker) {
+        const QJsonObject claimed =
+            ExtensionManager::declaredManifestJson(dirPath);
+        QJsonObject strip = claimed;
+        strip.remove(QStringLiteral("background"));
+        strip.remove(QStringLiteral("content_scripts"));
+        QJsonObject oldStrip = claimed;
+        oldStrip.remove(QStringLiteral("background"));
+        markerOurs = (visObj == strip || visObj == oldStrip);
+        if (markerOurs)
+            root = claimed;
+    }
     const QJsonObject background =
         root.value(QLatin1String("background")).toObject();
     // A `background` block that names no script carries nothing for
@@ -1415,32 +1435,71 @@ static bool doctorExtensionDir(const QString &dirPath)
                    .toString().isEmpty())
         return false;
     root.remove(QStringLiteral("background"));
+    // BW06: `content_scripts` goes too.  The engine's own injection
+    // ran the declared scripts beside the hosted runtime's
+    // AgentWorldId copies, and the native copy's sendMessage reaches
+    // the hosted background through the NATIVE channel with a sender
+    // that carries no tab — Bitwarden's triggerAutofillScriptInjection
+    // handler dereferences sender.tab.id, throws, and
+    // injectAutofillScripts never runs.  The hosted runtime injects
+    // the declared set itself (manifestJson() reads the sidecar), so
+    // the engine-visible tree keeps none.
+    root.remove(QStringLiteral("content_scripts"));
 
-    const QString declaredName = QLatin1String(kDeclaredManifestName);
-    QSaveFile sidecar(dirPath + QLatin1Char('/') + declaredName);
-    if (!sidecar.open(QIODevice::WriteOnly))
-        return false;
-    sidecar.write(declared);
-    if (!sidecar.commit())
-        return false;
-    const QJsonObject marker{
-        {QStringLiteral("declared"), declaredName},
-        {QStringLiteral("sha256"), QString::fromLatin1(
-            QCryptographicHash::hash(declared, QCryptographicHash::Sha256)
-                .toHex())},
-    };
-    QSaveFile markerFile(dirPath + QLatin1Char('/')
-                         + QLatin1String(kHostedBgMarker));
-    if (!markerFile.open(QIODevice::WriteOnly))
-        return false;
-    markerFile.write(QJsonDocument(marker).toJson(QJsonDocument::Compact));
-    if (!markerFile.commit())
-        return false;
+    if (markerOurs && visObj == root)
+        return true;   // already fully doctored
+
+    if (!markerOurs) {
+        const QString declaredName = QLatin1String(kDeclaredManifestName);
+        QSaveFile sidecar(dirPath + QLatin1Char('/') + declaredName);
+        if (!sidecar.open(QIODevice::WriteOnly))
+            return false;
+        sidecar.write(visible);
+        if (!sidecar.commit())
+            return false;
+        const QJsonObject marker{
+            {QStringLiteral("declared"), declaredName},
+            {QStringLiteral("sha256"), QString::fromLatin1(
+                QCryptographicHash::hash(visible,
+                                         QCryptographicHash::Sha256)
+                    .toHex())},
+        };
+        QSaveFile markerFile(dirPath + QLatin1Char('/')
+                             + QLatin1String(kHostedBgMarker));
+        if (!markerFile.open(QIODevice::WriteOnly))
+            return false;
+        markerFile.write(
+            QJsonDocument(marker).toJson(QJsonDocument::Compact));
+        if (!markerFile.commit())
+            return false;
+    }
     QSaveFile manifest(dirPath + QLatin1String("/manifest.json"));
     if (!manifest.open(QIODevice::WriteOnly))
         return false;
     manifest.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
     return manifest.commit();
+}
+
+// BW06: an older doctored tree still carries `content_scripts` in the
+// engine-visible manifest — doctoring is owed whenever the declared
+// set has entries the visible manifest hasn't shed yet.
+static bool hostedTreeNeedsDoctoring(const QString &dirPath)
+{
+    const QJsonObject visible = QJsonDocument::fromJson(
+        manifestFileBytes(dirPath)).object();
+    const QJsonObject background =
+        visible.value(QLatin1String("background")).toObject();
+    if (!background.value(QLatin1String("scripts")).toArray().isEmpty()
+            || !background.value(QLatin1String("service_worker"))
+                    .toString().isEmpty())
+        return true;                     // never doctored
+    if (!ExtensionManager::isHostedOnlyBackground(dirPath))
+        return false;                    // no declared truth to strip
+    const QJsonObject declared =
+        ExtensionManager::declaredManifestJson(dirPath);
+    return !declared.value(QLatin1String("content_scripts"))
+                .toArray().isEmpty()
+        && visible.contains(QLatin1String("content_scripts"));
 }
 
 // Stages a doctored copy of a user extension dir under the cache —
@@ -1557,7 +1616,10 @@ QString ExtensionManager::hostedEnginePath(const QString &path)
     } else {
         return path;
     }
-    const Manifest manifest = inspectManifest(sourceDir);
+    // The DECLARED manifest decides — an already-doctored managed
+    // tree shows the engine no background yet must still pass
+    // through here so newer strips (BW06's content_scripts) land.
+    const Manifest manifest = inspectDeclaredManifest(sourceDir);
     if (!manifest.valid || manifest.backgroundScripts.isEmpty())
         return path;
     if (oursInPlace)
@@ -1965,9 +2027,12 @@ void ExtensionManager::verifyInstalledIntegrity(QWebEngineProfile *profile)
         // and re-pin so the sweep doesn't flag our own rewrite.  A
         // running extension reloads so the hosted host is the only
         // background this session too, not just next launch.
+        // BW06: trees doctored before the `content_scripts` strip get
+        // re-doctored the same way — the engine keeps dual-injecting
+        // until their visible manifest sheds the declared set.
         if (!qEnvironmentVariableIsSet("ARKTOS_EXTHOST_OFF")
-                && !isHostedOnlyBackground(info.path())) {
-            const Manifest manifest = inspectManifest(info.path());
+                && hostedTreeNeedsDoctoring(info.path())) {
+            const Manifest manifest = inspectDeclaredManifest(info.path());
             if (manifest.valid
                     && !manifest.backgroundScripts.isEmpty()
                     && doctorExtensionDir(info.path())) {
@@ -2445,6 +2510,18 @@ QString ExtensionManager::healthProbeDetail(const QString &id) const
                     : isHostedOnlyBackground(info.path)
                         ? QStringLiteral("hosted-pending")
                         : QStringLiteral("native");
+                // BW06: the declared content scripts ride the hosted
+                // runtime's injections for a doctored tree — the
+                // detail says so rather than implying the engine's.
+                if (m.contentScriptCount > 0)
+                    detail += (detail.isEmpty() ? QString()
+                                                  : QLatin1String("; "))
+                        + QStringLiteral("contentScripts=")
+                        + (isHostedOnlyBackground(info.path)
+                               && !qEnvironmentVariableIsSet(
+                                   "ARKTOS_EXTHOST_OFF")
+                               ? QStringLiteral("hosted")
+                               : QStringLiteral("native"));
             }
             break;
         }
