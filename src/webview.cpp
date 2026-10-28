@@ -1773,6 +1773,30 @@ void WebView::allowScriptsOnThisSite(bool persistent)
     reload();
 }
 
+void WebView::showEvent(QShowEvent *event)
+{
+    QWebEngineView::showEvent(event);
+#if defined(Q_OS_MACOS)
+    // MAC15: a view whose first commit painted before the widget's real
+    // geometry landed can keep a stale viewport on macOS — the grown
+    // part of the layer shows the window's white base while the painted
+    // surface stays anchored top-left (Qt pins layer contents on
+    // resize).  A one-time ±1px bounce after the first show makes the
+    // delegate re-push the widget's real size to the renderer, so the
+    // page relayouts and the repaint covers the whole view.
+    if (m_macSizeBounceDone)
+        return;
+    m_macSizeBounceDone = true;
+    QTimer::singleShot(0, this, [this]() {
+        const QSize size = this->size();
+        if (size.isEmpty())
+            return;
+        resize(size + QSize(0, 1));
+        resize(size);
+    });
+#endif
+}
+
 void WebView::resizeEvent(QResizeEvent *event)
 {
     QWebEngineView::resizeEvent(event);

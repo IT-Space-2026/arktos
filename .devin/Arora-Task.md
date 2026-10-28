@@ -394,7 +394,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC12 | macOS fix: Bitwarden popup renders but right edge truncated/clipped — details below | done | 0 | needs:task:MAC11 — blind fix: doc-fit read documentElement.scrollWidth, clamped under Bitwarden html/body{overflow:hidden} so bubble never reached content size and the page clipped at the window edge; now max(de/body scroll size, body rect), initial bubble 400x620; actionPopupDocFit FAILs old/PASSes new + real-Bitwarden grab clean; mac verify owed |
 | MAC13 | macOS fix: Profile Manager dialog buttons/text truncated on right edge — details below | done | 0 | Blind fix: action-column buttons floored at widest runtime label via font metrics + em bezel allowance (qmacstyle CT_PushButton hint under-measures the Aqua bezel/focus ring it paints -> centered text clipped at both edges); column equalized to one width; initial size content-derived instead of fixed 640x360. Verified: new tst_profilemanager::buttonColumnFitsLabels FAILs unmodified/PASSes fixed, tst_profilemanager 10/10 + tst_profilemanagers 20/20 offscreen, --quit-after-load exit 0; deleteRefusesWithBoundWindow flakes identically on unmodified HEAD (pre-existing); mac runtime verify still owed |
 | MAC14 | macOS fix: Tor window new-tab (+) button misplaced/wrong — details below | done | 0 | Blind fix: the in-strip + parked over the last tabs trailing edge is only honest while the covered widget yields — on macOS close sits on the tabs left edge so the covered edge is bare face; + now hides rather than cover a tab (same rule the rail already uses) and its glyph is pinned to the parked slot instead of PM_ToolBarIconSize. Verified: new tst_tabbar::newTabButtonNoChromeHide leg (QProxyStyle LeftSide close simulating macOS) PASS, suite 33/33, tst_tabwidget newTabButton PASS, tor chrome legs PASS, --quit-after-load exit 0 offscreen; mac runtime verify owed |
-| MAC15 | macOS fix: Tor start page background doesn't fill the window — details below | pending | 0 | needs:task:MAC11 — aurora gradient covers only the top band, rest renders white; page bg doesn't stretch to viewport height on macOS |
+| MAC15 | macOS fix: Tor start page background doesn't fill the window — details below | done | 0 | Blind fix: start-page bg relied on root->canvas propagation which only covers the renderer-believed viewport — body now paints the same gradient at min-height:100vh (all 4 variants + dark), and WebView gets a macOS-only one-time ±1px size-reassert bounce at first show for a stale reported viewport. Verified: new tst_webpage::startPageViewportCoverage FAILs unmodified (body bg: none) + PASSes fixed on all 4 pages, suite green to documented pre-existing OTR trap, --startpage-smoke 50/50, --quit-after-load exit 0 on tor page; mac runtime verify owed |
 | SYNC01 | Serverless sync: engine core — device identity (Ed25519), sync store, per-store op-log tailing, sync-group membership state — details below | done | 0 | rustcore sync engine core: Ed25519 identity (sync/device.key, never synced), members+oplog sync.db, content-addressed signed ops (op_id=sha256 frame), canonical (lamport,device_id,op_id) apply + dedup, deferred drain seam for SYNC04 adapters; mw domain 19 envelope-only (identity/members/append/export/import/stats/drain) + MW-ARCH §8.19. Verified: cargo test 492/492 incl. two-device loopback + tamper/unknown-signer rejects, acprobe --bridge OK, sync.rs 86% lines (>85% gate), make -j2 green, --quit-after-load exit 0 offscreen |
 | SYNC02 | Serverless sync: Tor transport — embedded Arti, v3 onion service per device, authorized-client gating, outbound circuits — details below | pending | 0 | needs:task:SYNC01 |
 | SYNC03 | Serverless sync: pairing — QR payload, Noise_XX mutual auth, group-secret join, emoji/word fingerprint verify UI — details below | pending | 0 | needs:task:SYNC02 |
@@ -4577,3 +4577,44 @@ background-size / html-height issue that Linux tolerates but macOS
 WebEngine view exposes (or the page sizes to initial smaller viewport
 and never relayouts). Check the start-page CSS/document sizing path.
 Blind fix + document.
+
+
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Diagnosis — the start-page gradient lived ONLY on <html>, relying on
+root->canvas propagation to cover the window.  Blink always paints the
+propagated canvas over the viewport the RENDERER believes in — so a
+white band below can only mean the rendered viewport was genuinely
+shorter than the widget, not a CSS coverage bug.  Two macOS-specific
+feeders make that plausible: (a) the unified-chrome path hands out
+stub/late widget geometry (MAC01/MAC14 hit the same "real size ~0 at
+setup" platform behavior), and (b) Qt's cocoa layer pins contents
+top-left when a layer is sized up before the renderer commits the new
+size, so the grown region shows the window's white base while the
+painted surface stays anchored at its old bounds.  Either way the fix
+is two-layered:
+
+- CSS (src/htmls/startpage{,-tor,-private,-servo}.css): body now
+  paints the SAME gradient as html at min-height:100vh — a viewport
+  unit, so it resolves where a % height cannot — giving the page a
+  self-owned full-viewport painted layer instead of relying on canvas
+  propagation alone.  html.arktos-dark body gets the dark gradients.
+  No visual change on a healthy engine (body >= viewport overlays
+  identical colors).
+- src/webview.cpp showEvent (Q_OS_MACOS only): one-time ±1px resize
+  bounce at first show re-pushes the widget's real size to the
+  RenderWidgetHostView, kicking a stale reported viewport — the same
+  re-assert pattern Qt's own simplebrowser uses for QTBUG-61770.
+
+Verification: new tst_webpage::startPageViewportCoverage loads all
+four start pages in a hidden 900x1100 view and asserts body reaches
+window.innerHeight AND carries a gradient — FAILs unmodified
+("body bg: none"), PASSes fixed; sized-but-never-shown view avoids
+the native-surface mojo trap that kills visible-view fixtures in
+this headless env (torStartPage/servoStartPage crash identically on
+unmodified HEAD — pre-existing).  tst_webpage legs pass up to the
+documented pre-existing OTR autofill trap; --startpage-smoke 50/50
+loads PASS, --quit-after-load exit 0 on qrc:/startpage-tor.html.
+Residual risk: if the real cause is a view whose widget itself never
+gets the correct size (layout-level), only the bounce layer helps —
+macOS runtime verify still owed.

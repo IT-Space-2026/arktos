@@ -4997,3 +4997,15 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   tab face — the same rule the vertical rail already followed — and
   its glyph is pinned to the parked slot size instead of the
   platform's fixed toolbar icon size.
+- The Tor start page's violet aurora gradient no longer stops partway
+  down the window leaving a white band below: the page background
+  relied entirely on the root element's canvas propagation, which
+  only covers the viewport the renderer believes in — and a
+  WebEngine view that reports a stale, smaller size at first paint
+  paints the gradient over just that region while the rest of the
+  window shows the white base. Every start page (default, tor,
+  private, servo) now also paints the gradient on the body element,
+  sized to the viewport in viewport units, so the page itself covers
+  the full window, and on macOS each web view re-asserts its real
+  size once at first show so a stale reported size gets corrected.
+  (Most visible on macOS.)

@@ -82,6 +82,7 @@ private slots:
     void linkedResources();
     void javaScriptObjects();
     void webChannelStartPage();
+    void startPageViewportCoverage();
     void webChannelForgedAutofillReport();
     void webChannelAddSearchProviderConsent();
     void webChannelAutofillCapture();
@@ -978,6 +979,83 @@ void tst_WebPage::webChannelStartPage()
     QTest::qWait(300);
     QVERIFY2(page.execCallbackErrors() == 0,
              qPrintable(page.consoleMessages.join(QLatin1Char('\n'))));
+}
+
+// MAC15: every start-page variant must paint its own viewport-height
+// background layer — the page cannot rely on root->canvas propagation
+// alone, because that canvas only covers the viewport the RENDERER
+// believes in.  On macOS the WebEngine view's reported size can lag
+// the widget (the unified-chrome setup hands out stub geometry
+// first), which is how the tor screenshot ended up with the gradient
+// on the top band and the window's white base below.  The probe
+// asserts <body> itself reaches the viewport height AND carries the
+// page gradient — fails on a body that ends at content height.
+void tst_WebPage::startPageViewportCoverage()
+{
+    const QUrl pages[] = {
+        QUrl(QLatin1String("qrc:/startpage.html")),
+        QUrl(QLatin1String("qrc:/startpage-tor.html")),
+        QUrl(QLatin1String("qrc:/startpage-private.html")),
+        QUrl(QLatin1String("qrc:/startpage-servo.html")),
+    };
+
+    const QString probe = QStringLiteral(
+        "(function(){"
+        "  var b = document.body;"
+        "  if (!b) return '';"
+        "  var r = b.getBoundingClientRect();"
+        "  var de = document.documentElement.getBoundingClientRect();"
+        "  return [Math.round(r.height), window.innerHeight,"
+        "      getComputedStyle(b).backgroundImage,"
+        "      Math.round(de.height)].join('|');"
+        "})()");
+
+    for (const QUrl &url : pages) {
+        SubWebPage page;
+        // setPage does not take ownership — the stack view dies
+        // first (declared after the page, so destroyed first).
+        QWebEngineView view;
+        view.setPage(&page);
+        // A viewport taller than the page's ~700px of content — the
+        // body must still reach the bottom edge.  No show(): the
+        // widget's size feeds the page's viewport either way, and a
+        // never-shown view avoids the native-surface trap that kills
+        // WebEngine fixtures in this headless env.
+        view.resize(900, 1100);
+        QSignalSpy loaded(&page, SIGNAL(loadFinished(bool)));
+        page.load(url);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !loaded.isEmpty() && loaded.last().at(0).toBool(), 15000);
+
+        // loadFinished can precede the stylesheet's effect — re-issue
+        // the probe until the document answers.
+        QString result;
+        for (int i = 0; i < 100 && result.isEmpty(); ++i) {
+            result = evalSync(&page, probe).toString();
+            if (result.isEmpty())
+                QTest::qWait(50);
+        }
+        QVERIFY2(!result.isEmpty(), qPrintable(url.toString()));
+
+        const QStringList parts = result.split(QLatin1Char('|'));
+        const double bodyHeight = parts.value(0).toDouble();
+        const double innerHeight = parts.value(1).toDouble();
+        const QString bodyBackground = parts.value(2);
+        const double docHeight = parts.value(3).toDouble();
+        QVERIFY2(docHeight >= innerHeight - 2,
+                 qPrintable(QStringLiteral("%1 doc %2 < viewport %3")
+                            .arg(url.toString())
+                            .arg(docHeight)
+                            .arg(innerHeight)));
+        QVERIFY2(bodyHeight >= innerHeight - 2,
+                 qPrintable(QStringLiteral("%1 body %2 < viewport %3")
+                            .arg(url.toString())
+                            .arg(bodyHeight)
+                            .arg(innerHeight)));
+        QVERIFY2(bodyBackground.contains(QLatin1String("gradient")),
+                 qPrintable(QStringLiteral("%1 body bg: %2")
+                            .arg(url.toString(), bodyBackground)));
+    }
 }
 
 // SEC24: a hostile page used to be able to open its own QWebChannel

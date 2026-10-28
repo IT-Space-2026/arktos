@@ -22,6 +22,15 @@ html {
 
 body {
     margin-top: 0;
+    /* MAC15: self-painted viewport-height layer — same belt as the
+       tor variant. */
+    min-height: 100vh;
+    background:
+        radial-gradient(120% 55% at 50% -8%,
+            rgba(63, 210, 240, 0.20) 0%,
+            rgba(162, 78, 245, 0.10) 45%,
+            rgba(162, 78, 245, 0) 75%),
+        linear-gradient(to bottom, #ccc 0%, #fff 50%, #fff 100%);
 }
 
 /* Aurora stage: same wave composition as startpage.css — the
@@ -133,6 +142,13 @@ html.arktos-dark {
 }
 html.arktos-dark body {
     color: #e4e4e8;
+    background:
+        radial-gradient(130% 60% at 50% -10%,
+            rgba(34, 245, 154, 0.14) 0%,
+            rgba(63, 210, 240, 0.12) 35%,
+            rgba(162, 78, 245, 0.16) 60%,
+            rgba(162, 78, 245, 0) 80%),
+        linear-gradient(to bottom, #151820 0%, #101218 55%, #0c0e13 100%);
 }
 html.arktos-dark #header {
     background:

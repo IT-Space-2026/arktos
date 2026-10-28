@@ -22,6 +22,16 @@ html {
 body {
     margin-top: 0;
     color: #efe9f7;
+    /* MAC15: the page also paints its own viewport-height layer.  The
+       <html> gradient relies on root->canvas propagation, which only
+       covers the viewport the RENDERER believes in — when the
+       WebEngine view's reported size lags the widget (the macOS
+       unified-chrome path hands out stub geometry first), that canvas
+       stops short and the window's white base shows below.  100vh is
+       a viewport unit, so it resolves even where a % height cannot,
+       and the body's own painted box backs the same gradient. */
+    min-height: 100vh;
+    background: linear-gradient(to bottom, #5d4491 0%, #3a2a55 55%, #2c1f42 100%);
 }
 
 /* Aurora stage: violet-shifted wave band whose crest passes behind
@@ -117,6 +127,7 @@ html.arktos-dark {
 }
 html.arktos-dark body {
     color: #ece5f7;
+    background: linear-gradient(to bottom, #2c2144 0%, #1b1429 60%, #160f22 100%);
 }
 html.arktos-dark #search {
     background: linear-gradient(to right, #3d2f5e 0%, #4d3b73 50%, #3d2f5e 100%);

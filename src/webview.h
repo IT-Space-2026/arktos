@@ -219,6 +219,7 @@ protected:
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private:
     int levelForZoom(int zoom);
@@ -350,6 +351,8 @@ private:
     // connections it survives a manager swap, hence its own flag.
     bool m_torWarmWakeupArmed = false;
     QTimer *m_torQueueGrace = nullptr;
+    // MAC15: one-shot guard for the macOS first-show size bounce.
+    bool m_macSizeBounceDone = false;
 };
 
 #endif

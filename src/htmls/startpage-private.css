@@ -22,6 +22,10 @@ html {
 body {
     margin-top: 0;
     color: #e9effc;
+    /* MAC15: self-painted viewport-height layer — same belt as the
+       tor variant (MAC15). */
+    min-height: 100vh;
+    background: linear-gradient(to bottom, #2c4d8f 0%, #16294f 55%, #0f1d3d 100%);
 }
 
 /* Aurora stage: navy-shifted wave band whose crest passes behind
@@ -117,6 +121,7 @@ html.arktos-dark {
 }
 html.arktos-dark body {
     color: #e5ecfa;
+    background: linear-gradient(to bottom, #1a2a52 0%, #101a33 60%, #0b1327 100%);
 }
 html.arktos-dark #search {
     background: linear-gradient(to right, #24355e 0%, #31467a 50%, #24355e 100%);
