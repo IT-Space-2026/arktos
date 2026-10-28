@@ -234,7 +234,18 @@ void LineEdit::updateSideWidgetLocations()
 
 void LineEdit::resizeEvent(QResizeEvent *event)
 {
-    updateSideWidgetLocations();
+    // MAC16: a real resize re-derives the margins AND the cluster
+    // positions, not just the positions.  The margin value is
+    // normally pushed by SideWidget::sizeHintChanged (LayoutRequest)
+    // — inside the macOS unified NSToolbar that delivery is the flaky
+    // edge, so a side widget whose sizeHint only resolves late (icon
+    // or font metrics settling after the toolbar item's first layout)
+    // can leave the applied margins and the painted cluster one
+    // derivation behind the live metrics.  updateTextMargins() is
+    // idempotent — it re-reads the live sizeHints, reapplies the same
+    // margins when nothing changed, and already calls
+    // updateSideWidgetLocations() itself.
+    updateTextMargins();
     QLineEdit::resizeEvent(event);
 }
 

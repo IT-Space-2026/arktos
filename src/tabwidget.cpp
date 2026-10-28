@@ -1025,9 +1025,43 @@ void TabWidget::wireLocationBar(QLineEdit *bar)
 {
     ensureLineEditCompleter();
     bar->setCompleter(m_lineEditCompleter);
+    // MAC16: the completer's widget() must be the bar the user is
+    // actually driving — QCompleter::showPopup() reads the dropdown's
+    // width and anchor point off it.  FocusIn rebinding (eventFilter
+    // below, same as Qt's own focusInEvent path) covers the normal
+    // case; a real user edit is the honest signal when focus-event
+    // delivery into an NSToolbar item view is missed on macOS — a
+    // hidden stack child keeps stale geometry there, which is how the
+    // suggestion dropdown ended up visibly narrower than the field.
+    bar->installEventFilter(this);
+    connect(bar, &QLineEdit::textEdited, this, [this, bar]() {
+        if (m_lineEditCompleter && m_lineEditCompleter->widget() != bar)
+            m_lineEditCompleter->setWidget(bar);
+    });
+    // A bar that dies while bound would leave completer()->widget()
+    // dangling — drop the binding outright.  Never probe the bar
+    // stack from here: during TabWidget teardown m_locationBars'
+    // QStackedLayout is already gone while later bars die, so
+    // currentLocationBar() would dereference freed layout items.
+    // widget()==nullptr is a safe resting state — every complete()
+    // gate checks it first, and the next FocusIn/edit rebinds.
+    connect(bar, &QObject::destroyed, this, [this, bar]() {
+        if (m_lineEditCompleter && m_lineEditCompleter->widget() == bar)
+            m_lineEditCompleter->setWidget(nullptr);
+    });
     connect(bar, &QLineEdit::textEdited,
             m_omniboxSuggestions, &OmniboxSuggestions::scheduleSuggestions);
     connect(bar, &QLineEdit::returnPressed, this, &TabWidget::lineEditReturnPressed);
+}
+
+bool TabWidget::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() == QEvent::FocusIn && m_lineEditCompleter) {
+        if (QLineEdit *bar = qobject_cast<QLineEdit*>(watched))
+            if (m_lineEditCompleter->widget() != bar)
+                m_lineEditCompleter->setWidget(bar);
+    }
+    return QTabWidget::eventFilter(watched, event);
 }
 
 // The engine-page/webview signal set every hosted view needs — shared

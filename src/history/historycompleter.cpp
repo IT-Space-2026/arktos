@@ -745,7 +745,13 @@ QStringList HistoryCompleter::splitPath(const QString &path) const
     // forward edit, so held/repeated Backspace can't fight a fresh
     // completion popup.  setValid(false) below hides the dropdown for
     // the burst; the timer only re-arms on growth.
-    const bool deleting = widget() && widget()->hasFocus()
+    // MAC16: the gate reads the bound bar's VISIBILITY, not its
+    // hasFocus() — the completer is shared across the location-bar
+    // stack, and under the macOS unified toolbar a stuck true lands
+    // on a hidden bar (missed FocusOut) while a missed FocusIn never
+    // raises the bar being edited.  isVisible() is true for exactly
+    // the bar the user can be typing in.
+    const bool deleting = widget() && widget()->isVisible()
         && path.size() < m_searchString.size();
     if (!deleting)
         m_filterTimer.start(150);
@@ -822,7 +828,8 @@ void HistoryCompleter::updateFilter()
     completionModel->setValid(true);
 
     // and now update the QCompleter widget, but only if the user is still
-    // typing a url
-    if (widget() && widget()->hasFocus())
+    // typing a url.  MAC16: bound-bar visibility, not hasFocus() —
+    // same shared-completer/stuck-focus reasoning as splitPath().
+    if (widget() && widget()->isVisible())
         complete();
 }

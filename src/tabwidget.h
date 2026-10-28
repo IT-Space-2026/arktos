@@ -392,6 +392,16 @@ public:
 
 protected:
     void changeEvent(QEvent *event) override;
+    // MAC16: the omnibox completer is one shared object across the
+    // whole location-bar stack, but QCompleter::showPopup() derives
+    // the dropdown's size and position from its bound widget() — the
+    // bars' wiring only re-points it on delivered FocusIn, and under
+    // the macOS unified NSToolbar focus-event delivery into toolbar
+    // item views is the flaky edge (a missed FocusIn leaves the
+    // completer on a hidden bar with stale geometry — the dropdown
+    // shows narrower than the field / anchored wrong).  FocusIn here
+    // is the belt to wireLocationBar()'s textEdited suspenders.
+    bool eventFilter(QObject *watched, QEvent *event) override;
     // OMNI01: the routing decision is split so the autotest can
     // corpus-diff the implementations — under CONFIG+=rustcore
     // guessUrlFromString() resolves the rustcore verdict first and

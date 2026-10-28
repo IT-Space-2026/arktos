@@ -201,8 +201,11 @@ void OmniboxSuggestions::newSuggestions(const QStringList &suggestions)
 
     // The history block may have produced no rows for this prefix, so
     // the popup may not be open yet — nudge the completer like
-    // HistoryCompleter::updateFilter() does.
+    // HistoryCompleter::updateFilter() does.  MAC16: bound-bar
+    // visibility, not hasFocus() — the shared completer can sit on a
+    // stuck-focus hidden bar under the macOS unified toolbar while
+    // the real edit lands in the visible one.
     if (m_completer && m_completer->widget()
-        && m_completer->widget()->hasFocus())
+        && m_completer->widget()->isVisible())
         m_completer->complete();
 }

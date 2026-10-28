@@ -5025,3 +5025,13 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   QR payload or manual code, Noise_XX mutual authentication over the
   embedded Tor transport, word/emoji fingerprint verification, and
   encrypted group-secret handoff (SYNC03).
+- The address bar's autocomplete dropdown no longer opens visibly
+  narrower than the field on macOS: the shared completer could stay
+  bound to a hidden per-tab bar whose width was a stale pre-layout
+  stub, and Qt sizes the popup from the bound widget — the binding
+  now follows the bar that actually gains focus or receives the edit,
+  so the dropdown always tracks the live field's width and anchor.
+  The urlbar's domain-emphasis repaint and side-icon margins also now
+  read the field's applied margins instead of re-deriving them from
+  live size hints, keeping the overlay and the icon cluster aligned
+  where toolbar-hosted metrics resolve late. (Most visible on macOS.)

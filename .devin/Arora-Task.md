@@ -395,7 +395,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC13 | macOS fix: Profile Manager dialog buttons/text truncated on right edge — details below | done | 0 | Blind fix: action-column buttons floored at widest runtime label via font metrics + em bezel allowance (qmacstyle CT_PushButton hint under-measures the Aqua bezel/focus ring it paints -> centered text clipped at both edges); column equalized to one width; initial size content-derived instead of fixed 640x360. Verified: new tst_profilemanager::buttonColumnFitsLabels FAILs unmodified/PASSes fixed, tst_profilemanager 10/10 + tst_profilemanagers 20/20 offscreen, --quit-after-load exit 0; deleteRefusesWithBoundWindow flakes identically on unmodified HEAD (pre-existing); mac runtime verify still owed |
 | MAC14 | macOS fix: Tor window new-tab (+) button misplaced/wrong — details below | done | 0 | Blind fix: the in-strip + parked over the last tabs trailing edge is only honest while the covered widget yields — on macOS close sits on the tabs left edge so the covered edge is bare face; + now hides rather than cover a tab (same rule the rail already uses) and its glyph is pinned to the parked slot instead of PM_ToolBarIconSize. Verified: new tst_tabbar::newTabButtonNoChromeHide leg (QProxyStyle LeftSide close simulating macOS) PASS, suite 33/33, tst_tabwidget newTabButton PASS, tor chrome legs PASS, --quit-after-load exit 0 offscreen; mac runtime verify owed |
 | MAC15 | macOS fix: Tor start page background doesn't fill the window — details below | done | 0 | Blind fix: start-page bg relied on root->canvas propagation which only covers the renderer-believed viewport — body now paints the same gradient at min-height:100vh (all 4 variants + dark), and WebView gets a macOS-only one-time ±1px size-reassert bounce at first show for a stale reported viewport. Verified: new tst_webpage::startPageViewportCoverage FAILs unmodified (body bg: none) + PASSes fixed on all 4 pages, suite green to documented pre-existing OTR trap, --startpage-smoke 50/50, --quit-after-load exit 0 on tor page; mac runtime verify owed |
-| MAC16 | macOS fix: urlbar renders badly + suggestion dropdown truncated — details below | pending | 0 | needs:task:MAC15 — screenshot: autocomplete dropdown narrower than the urlbar/clipped, urlbar text styling looks off (hostname weight, icon cluster). Check dropdown popup width = urlbar width on mac, and the segment style code |
+| MAC16 | macOS fix: urlbar renders badly + suggestion dropdown truncated — details below | done | 0 | completer rebinds to focused/edited bar (stale NSToolbar binding showed dropdown at a hidden bar stub width); emphasis overlay + margins read applied metrics, gates use isVisible(); completerTracksFocusedBar + suites green; mac verify owed |
 | MAC17 | macOS fix: extension popup still right-truncated AND draggable like a window — details below | pending | 0 | needs:task:MAC15 — MAC12 was incomplete: locked-vault popup still clips right edge, and the frameless window is user-movable instead of an anchored popover. Size to content AND make it non-movable (locked frameless, or NSPopover-class window) |
 | SYNC01 | Serverless sync: engine core — device identity (Ed25519), sync store, per-store op-log tailing, sync-group membership state — details below | done | 0 | rustcore sync engine core: Ed25519 identity (sync/device.key, never synced), members+oplog sync.db, content-addressed signed ops (op_id=sha256 frame), canonical (lamport,device_id,op_id) apply + dedup, deferred drain seam for SYNC04 adapters; mw domain 19 envelope-only (identity/members/append/export/import/stats/drain) + MW-ARCH §8.19. Verified: cargo test 492/492 incl. two-device loopback + tamper/unknown-signer rejects, acprobe --bridge OK, sync.rs 86% lines (>85% gate), make -j2 green, --quit-after-load exit 0 offscreen |
 | SYNC02 | Serverless sync: Tor transport — embedded Arti, v3 onion service per device, authorized-client gating, outbound circuits — details below | done | 2 | embedded-Arti tor transport + mem loopback behind the SyncTransport seam: v3 onion stable across restarts (keystore hsid), restricted-discovery x25519 gating refuses unpaired peers at the Tor layer, backoffd outbound links, sync.transport_* mw ops (domain 19, since:2). Verified: tools/synctor-e2e.sh ALL LEGS PASS on real Tor (authorized PING->PONG, unauthorized refused pre-app-layer, endpoint stable across restart), cargo test 501/501 incl mw envelope e2e, acprobe --bridge OK, rustcore 91.10% lines (>85% gate), check-supplychain clean (audit.toml mirrors deny.toml ignores; rustdl webpki bumped for new advisories), make -j2 green, --quit-after-load exit 0 offscreen |
@@ -4687,6 +4687,63 @@ weight and the icon cluster look wrong vs Linux). Check the completer
 popup: width should track the urlbar's width (DPR-aware on Retina), and
 audit the segment/style code for a mac-path divergence. Blind fix +
 document.
+
+
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Diagnosis — three mac-visible defects, all in the NSToolbar-hosting
+fragility class documented by MAC01/05/14/15 (missed event delivery +
+late-resolving metrics):
+
+- Dropdown narrower than the field: the omnibox completer is ONE
+  shared QCompleter across the location-bar stack, and
+  QCompleterPrivate::showPopup() takes the popup's width and anchor
+  straight off its bound widget().  Qt only rebinds widget() on
+  delivered FocusIn (QLineEdit::focusInEvent -> setWidget(this);
+  setCompleter binds solely when widget()==nullptr), and focus
+  delivery into/out of toolbar item views is the flaky edge — a
+  missed FocusIn leaves the binding on a hidden stack child whose
+  width is the pre-layout stub, so the dropdown shows visibly
+  narrower than the field and clips right.
+- Urlbar text renders oddly: the SAFE03 domain-emphasis overlay
+  aligned to textMargin() — a LIVE sizeHint recompute — while
+  QLineEdit paints the text at the APPLIED textMargins(); a skipped
+  margin re-derivation shifts the overlay, double-drawing the domain
+  run (reads as wrong emphasis weight) and fading the wrong split.
+- Icon cluster wrong: margins + side-widget positions refreshed only
+  via SideWidget::sizeHintChanged (LayoutRequest) — same lag class.
+
+Fixes:
+- src/tabwidget.cpp: wireLocationBar() installs an eventFilter plus a
+  textEdited lambda that rebinds completer()->setWidget() to the bar
+  gaining focus / receiving the real edit — textEdited is the honest
+  signal when focus delivery is missed.  A destroyed() guard drops
+  the binding to nullptr rather than probe the dying stack
+  (m_locationBars' QStackedLayout is already gone mid-teardown —
+  probing it crashed tst_tabwidget::closeTab in the first version;
+  widget()==nullptr is gated everywhere and self-heals on the next
+  FocusIn/edit).
+- src/history/historycompleter.cpp + src/locationbar/
+  omniboxsuggestions.cpp: the complete() gates read the bound bar's
+  isVisible(), not hasFocus() — a stuck-true hidden bar can no longer
+  pop, and the visible editing bar pops even on a missed FocusIn.
+- src/locationbar/locationbar.cpp: the overlay aligns to the applied
+  textMargins(); qApp focusChanged now also update()s so a late
+  FocusIn/Out repaints the emphasis gate.
+- src/utils/lineedit.cpp: resizeEvent re-derives margins AND cluster
+  positions (idempotent updateTextMargins) on every real geometry
+  change — covers late metric resolution under toolbar hosting.
+
+Verification: new tst_tabwidget::completerTracksFocusedBar pins the
+stale-bound hidden bar at a stub width and drives the real legs —
+delivered FocusIn rebind, user-edit rebind, popup width==field width
++ anchor x at the bar's left edge, teardown to nullptr then rebind —
+PASS fixed (the edit/popup legs fail unmodified).  tst_tabwidget 22
+legs PASS (closeTab caught the first guard version's stack-probe
+crash), tst_locationbar 59/59 incl. domainEmphasisPaint +
+fieldFillUntinted, tst_searchlineedit 4/4, tst_toolbarsearch 13/13,
+tst_omnibox 88/88, --quit-after-load exit 0 offscreen.  macOS runtime
+verify still owed.
 
 ### MAC17
 MAC12's fix was incomplete — real-Mac screenshot shows the Bitwarden

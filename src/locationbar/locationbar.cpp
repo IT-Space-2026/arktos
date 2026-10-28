@@ -98,8 +98,16 @@ LocationBar::LocationBar(QWidget *parent)
     // on macOS (unified title+toolbar), where focus transitions out
     // of toolbar item views are the flaky path — a blur Qt tracked
     // but could not deliver as a widget event still recomputes here.
+    // MAC16: the same transition also repaints — a FocusIn/Out that
+    // arrives late at the widget leaves the SAFE03 domain-emphasis
+    // gate reading the pre-transition focus state until the next
+    // repaint; an explicit update() ties the repaint to the app-level
+    // signal cocoa does deliver.
     connect(qApp, &QApplication::focusChanged, this,
-            [this](QWidget *, QWidget *) { updateClearButtonVisibility(); });
+            [this](QWidget *, QWidget *) {
+                updateClearButtonVisibility();
+                update();
+            });
     addWidget(m_clearButton, RightSide);
 
     updateTextMargins();
@@ -323,8 +331,14 @@ void LocationBar::paintEvent(QPaintEvent *event)
         style()->subElementRect(QStyle::SE_LineEditContents, &panel, this);
     // same text area LineEdit::paintEvent uses for inactiveText.
     textRect.adjust(2, 0, -2, 0);
-    textRect.adjust(textMargin(LineEdit::LeftSide), 0,
-                    -textMargin(LineEdit::RightSide), 0);
+    // MAC16: align to the margins the field APPLIED (textMargins()),
+    // not the side widgets' live sizeHint — the two diverge whenever
+    // a margin re-derivation is skipped over a late-resolving metric,
+    // and an overlay drawn at the stale offset double-draws the
+    // domain run (reads as a wrong emphasis weight) and fades the
+    // wrong split point.  QLineEdit painted the text at the applied
+    // margins, so the overlay must use the same.
+    textRect.adjust(textMargins().left(), 0, -textMargins().right(), 0);
     if (textRect.isEmpty())
         return;
 

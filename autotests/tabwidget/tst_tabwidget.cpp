@@ -46,6 +46,7 @@
 #include <containermanager.h>
 #include <historymanager.h>
 
+#include <qabstractitemview.h>
 #include <qcompleter.h>
 #include <qdir.h>
 #include <qfile.h>
@@ -122,6 +123,7 @@ private slots:
     void omnibox();
     void omniboxEnterDispatch();
     void omniboxTabScope();
+    void completerTracksFocusedBar();
     void tabGroups();
     void closeTabGroup();
     void closeOtherTabsCollapsedGroup();
@@ -4962,6 +4964,83 @@ void tst_TabWidget::tabButtonBandAnchor()
                          + QLatin1String("/band-anchor.png"));
 
     settings.remove(QLatin1String("tabs/containerDisplay"));
+}
+
+// MAC16: the omnibox completer is shared across the location-bar
+// stack — QCompleter::showPopup() takes the dropdown's width and
+// anchor off its bound widget(), so the binding must follow the bar
+// the user is editing.  Under the macOS unified NSToolbar a missed
+// FocusIn leaves the completer on a hidden stack child with stale
+// (stub) geometry — the dropdown showed visibly narrower than the
+// field.  The legs pin that stale state by hand and drive the real
+// rebind paths (delivered FocusIn, a user edit, bar teardown).
+void tst_TabWidget::completerTracksFocusedBar()
+{
+    SubTabWidget widget;
+    widget.newTab();
+    widget.makeNewTab(false); // background tab — its bar stays hidden
+    widget.resize(800, 600);
+    widget.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&widget));
+
+    QLineEdit *frontBar = widget.currentLocationBar();
+    QVERIFY(frontBar);
+    QLineEdit *backBar = widget.locationBar(1);
+    QVERIFY(backBar);
+    QVERIFY(backBar != frontBar);
+    QVERIFY(!backBar->isVisible());
+
+    QCompleter *completer = frontBar->completer();
+    QVERIFY(completer);
+    QVERIFY(backBar->completer() == completer);
+
+    // Pin the hidden bar to a stub width — stands in for the narrow
+    // geometry an NSToolbar item view reports before its first real
+    // layout (QStackedLayout would otherwise size both bars equal).
+    const int stubWidth = frontBar->width() / 2;
+    QVERIFY(stubWidth > 0);
+    backBar->setGeometry(backBar->x(), backBar->y(),
+                       stubWidth, backBar->height());
+
+    // Stale binding (the missed-FocusIn residue), then a delivered
+    // FocusIn: the binding must move to the live bar.
+    completer->setWidget(backBar);
+    frontBar->setFocus();
+    QTest::qWait(50);
+    QCOMPARE(completer->widget(), frontBar);
+
+    // Stale again, then a real user edit — textEdited is the honest
+    // signal that fires even when focus-event delivery does not.
+    completer->setWidget(backBar);
+    QTest::keyClicks(frontBar, QLatin1String("ex"));
+    QCOMPARE(completer->widget(), frontBar);
+
+    // The dropdown then sizes and anchors to the field being edited,
+    // not the stale child.  A suggestion row gives the completer
+    // something to show.
+    OmniboxCompletionModel *omni =
+        qobject_cast<OmniboxCompletionModel*>(completer->model());
+    QVERIFY(omni);
+    omni->setSuggestions(QStringList()
+        << QLatin1String("example suggestion"));
+    completer->complete();
+    QAbstractItemView *popup = completer->popup();
+    QVERIFY(popup);
+    QTRY_VERIFY(popup->isVisible());
+    QCOMPARE(popup->width(), frontBar->width());
+    QCOMPARE(popup->x(),
+             frontBar->mapToGlobal(QPoint(0, frontBar->height())).x());
+    popup->hide();
+
+    // A bound bar that dies must not leave widget() dangling — the
+    // teardown guard drops the binding rather than probe the dying
+    // stack, and the next edit rebinds to the live bar.
+    completer->setWidget(backBar);
+    widget.closeTab(1);
+    QTRY_VERIFY(completer->widget() == nullptr);
+    QTest::keyClicks(frontBar, QLatin1String("y"));
+    QCOMPARE(completer->widget(), frontBar);
+    widget.closeTab();
 }
 
 QTEST_MAIN(tst_TabWidget)
