@@ -155,6 +155,7 @@ private slots:
     void gpcSignalToggle();
     void appearanceFieldBounds();
     void capsAnnotations();
+    void enableCheckboxesDriveFields();
 };
 
 // Every re-arming modal driver below stamps itself with this counter
@@ -4848,6 +4849,67 @@ void tst_SettingsDialog::capsAnnotations()
     }
 
     dialog.close();
+}
+
+// MAC10: the checkable-group-box indicator is a style-painted
+// affordance — the render step that drops out under the macOS style
+// stack (sheet -> ChromeProxy -> QMacStyle), same class as MAC04.
+// Every group that gates its fields on a checked state now hosts a
+// real QCheckBox driving a fields container, so no enable affordance
+// anywhere depends on the style painting an indicator.
+void tst_SettingsDialog::enableCheckboxesDriveFields()
+{
+    SettingsDialog dialog;
+
+    // No checkable QGroupBox may remain in the dialog.
+    const QList<QGroupBox *> groups = dialog.findChildren<QGroupBox *>();
+    for (QGroupBox *box : groups)
+        QVERIFY2(!box->isCheckable(), qPrintable(box->objectName()));
+
+    QVERIFY(qobject_cast<QCheckBox *>(dialog.proxySupport));
+    QVERIFY(qobject_cast<QCheckBox *>(dialog.networkCache));
+    QVERIFY(dialog.proxySupport->isEnabled());
+    QVERIFY(dialog.networkCache->isEnabled());
+
+    // An unchecked box keeps the container and every field inside
+    // effectively disabled; checking it brings them live without the
+    // style being involved.  (Persisted state varies with test
+    // order, so drive both directions explicitly.)
+    dialog.proxySupport->setChecked(false);
+    QVERIFY(!dialog.proxyFields->isEnabled());
+    QVERIFY(!dialog.proxyHostName->isEnabledTo(&dialog));
+    dialog.proxySupport->setChecked(true);
+    QVERIFY(dialog.proxyFields->isEnabled());
+    QVERIFY(dialog.proxyHostName->isEnabledTo(&dialog));
+    QVERIFY(dialog.proxyType->isEnabledTo(&dialog));
+    QVERIFY(dialog.proxyPort->isEnabledTo(&dialog));
+    QVERIFY(dialog.proxyUserName->isEnabledTo(&dialog));
+    QVERIFY(dialog.proxyPassword->isEnabledTo(&dialog));
+    dialog.proxySupport->setChecked(false);
+    QVERIFY(!dialog.proxyHostName->isEnabledTo(&dialog));
+
+    dialog.networkCache->setChecked(false);
+    QVERIFY(!dialog.networkCacheFields->isEnabled());
+    QVERIFY(!dialog.networkCacheMaximumSizeSpinBox->isEnabledTo(&dialog));
+    dialog.networkCache->setChecked(true);
+    QVERIFY(dialog.networkCacheMaximumSizeSpinBox->isEnabledTo(&dialog));
+
+    dialog.close();
+
+    // The ad-block rules viewer took the same conversion — its
+    // fields track a real checkbox the same way.
+    AdBlockDialog adblock;
+    QVERIFY(qobject_cast<QCheckBox *>(adblock.rulesGroup));
+    const QList<QGroupBox *> adblockGroups =
+        adblock.findChildren<QGroupBox *>();
+    for (QGroupBox *box : adblockGroups)
+        QVERIFY2(!box->isCheckable(), qPrintable(box->objectName()));
+    QVERIFY(!adblock.rulesFields->isEnabled());
+    QVERIFY(!adblock.rulesView->isEnabledTo(&adblock));
+    adblock.rulesGroup->setChecked(true);
+    QVERIFY(adblock.rulesView->isEnabledTo(&adblock));
+    QVERIFY(adblock.search->isEnabledTo(&adblock));
+    adblock.close();
 }
 
 QTEST_MAIN(tst_SettingsDialog)

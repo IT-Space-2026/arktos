@@ -37,6 +37,7 @@
 #include "safetext.h"
 #include "searchlineedit.h"
 
+#include <qcheckbox.h>
 #include <qdesktopservices.h>
 #include <qfontdatabase.h>
 #include <qinputdialog.h>
@@ -100,7 +101,13 @@ AdBlockDialog::AdBlockDialog(QWidget *parent)
     const QFont fixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     rulesView->setFont(fixed);
     customRulesEdit->setFont(fixed);
-    connect(rulesGroup, &QGroupBox::toggled,
+    // MAC10: the checkable-group-box indicator is a style-painted
+    // affordance — the render step that drops out under the macOS
+    // style stack (sheet -> ChromeProxy -> QMacStyle), same class as
+    // MAC04.  A real checkbox drives the viewer fields instead.
+    connect(rulesGroup, &QCheckBox::toggled,
+            rulesFields, &QWidget::setEnabled);
+    connect(rulesGroup, &QCheckBox::toggled,
             this, [this](bool) { fillRulesView(); });
     connect(search, &SearchLineEdit::textChanged,
             this, [this](const QString &) { fillRulesView(); });

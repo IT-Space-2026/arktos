@@ -3268,14 +3268,36 @@
      <widget class="QWidget" name="tab_4">
       <layout class="QVBoxLayout" name="verticalLayout">
        <item>
-        <widget class="QGroupBox" name="proxySupport">
+        <widget class="QGroupBox" name="proxyGroup">
          <property name="title">
-          <string>Use proxy server</string>
+          <string>Proxy server</string>
          </property>
-         <property name="checkable">
-          <bool>true</bool>
-         </property>
-         <layout class="QGridLayout" name="gridLayout_6">
+         <layout class="QVBoxLayout" name="proxyGroupLayout">
+          <item>
+           <widget class="QCheckBox" name="proxySupport">
+            <property name="text">
+             <string>Use proxy server</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QWidget" name="proxyFields" native="true">
+            <property name="enabled">
+             <bool>false</bool>
+            </property>
+            <layout class="QGridLayout" name="gridLayout_6">
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
           <item row="0" column="0">
            <widget class="QLabel" name="label_9">
             <property name="text">
@@ -3435,6 +3457,9 @@
             <property name="echoMode">
              <enum>QLineEdit::Password</enum>
             </property>
+           </widget>
+          </item>
+            </layout>
            </widget>
           </item>
          </layout>
@@ -3650,52 +3675,74 @@
         </layout>
        </item>
        <item row="1" column="0" colspan="4">
-        <widget class="QGroupBox" name="networkCache">
+        <widget class="QGroupBox" name="networkCacheGroup">
          <property name="title">
-          <string>Enable network cache</string>
+          <string>Network cache</string>
          </property>
-         <property name="checkable">
-          <bool>true</bool>
-         </property>
-         <property name="checked">
-          <bool>true</bool>
-         </property>
-         <layout class="QGridLayout" name="gridLayout_7">
-          <item row="0" column="0">
-           <widget class="QLabel" name="label_15">
+         <layout class="QVBoxLayout" name="networkCacheGroupLayout">
+          <item>
+           <widget class="QCheckBox" name="networkCache">
             <property name="text">
-             <string>Maximum Size:</string>
+             <string>Enable network cache</string>
             </property>
-            <property name="buddy">
-             <cstring>networkCacheMaximumSizeSpinBox</cstring>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="1">
-           <widget class="QSpinBox" name="networkCacheMaximumSizeSpinBox">
-            <property name="suffix">
-             <string> MB</string>
-            </property>
-            <property name="minimum">
-             <number>0</number>
-            </property>
-            <property name="maximum">
-             <number>9999999</number>
+            <property name="checked">
+             <bool>true</bool>
             </property>
            </widget>
           </item>
-          <item row="0" column="2">
-           <spacer name="horizontalSpacer_5">
-            <property name="orientation">
-             <enum>Qt::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
+          <item>
+           <widget class="QWidget" name="networkCacheFields" native="true">
+            <layout class="QGridLayout" name="gridLayout_7">
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item row="0" column="0">
+              <widget class="QLabel" name="label_15">
+               <property name="text">
+                <string>Maximum Size:</string>
+               </property>
+               <property name="buddy">
+                <cstring>networkCacheMaximumSizeSpinBox</cstring>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="QSpinBox" name="networkCacheMaximumSizeSpinBox">
+               <property name="suffix">
+                <string> MB</string>
+               </property>
+               <property name="minimum">
+                <number>0</number>
+               </property>
+               <property name="maximum">
+                <number>9999999</number>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="2">
+              <spacer name="horizontalSpacer_5">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>40</width>
+                 <height>20</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
+           </widget>
           </item>
          </layout>
         </widget>

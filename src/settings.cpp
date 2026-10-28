@@ -354,6 +354,16 @@ SettingsDialog::SettingsDialog(QWidget *parent)
                 ArktosStyle::Spacing::Medium, ArktosStyle::Spacing::Medium);
     }
 
+    // MAC10: the checkable-group-box indicator is a style-painted
+    // affordance — the render step that drops out under the macOS
+    // style stack (sheet -> ChromeProxy -> QMacStyle), same class as
+    // MAC04.  The proxy and network-cache groups now host a real
+    // QCheckBox whose toggled signal enables the fields container.
+    connect(proxySupport, &QCheckBox::toggled,
+            proxyFields, &QWidget::setEnabled);
+    connect(networkCache, &QCheckBox::toggled,
+            networkCacheFields, &QWidget::setEnabled);
+
     connect(exceptionsButton, &QPushButton::clicked, this, &SettingsDialog::showExceptions);
     connect(setHomeToCurrentPageButton, &QPushButton::clicked, this, &SettingsDialog::setHomeToCurrentPage);
     // PREF04: the URL field only edits under Specific Page, and the
@@ -1650,12 +1660,14 @@ void SettingsDialog::loadFromSettings()
     // BrowserProfile::applySettings().
     settings.beginGroup(QLatin1String("network"));
     networkCache->setChecked(settings.value(QLatin1String("cacheEnabled"), true).toBool());
+    networkCacheFields->setEnabled(networkCache->isChecked());
     networkCacheMaximumSizeSpinBox->setValue(settings.value(QLatin1String("maximumCacheSize"), 50).toInt());
     settings.endGroup();
 
     // Proxy
     settings.beginGroup(QLatin1String("proxy"));
     proxySupport->setChecked(settings.value(QLatin1String("enabled"), false).toBool());
+    proxyFields->setEnabled(proxySupport->isChecked());
     proxyType->setCurrentIndex(settings.value(QLatin1String("type"), 0).toInt());
     proxyHostName->setText(settings.value(QLatin1String("hostName")).toString());
     proxyPort->setValue(settings.value(QLatin1String("port"), 1080).toInt());

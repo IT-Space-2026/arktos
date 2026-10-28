@@ -389,7 +389,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC07 | macOS fix: crash on quit — BrowserApplication::~BrowserApplication SIGSEGV — details below | done | 0 | Blind fix: EXTEXIT01 quick_exit sat at the END of ~BrowserApplication, but the macOS trap fires INSIDE the dtor (+124) during qDeleteAll window/page teardown — normal quit path (main.cpp return sessionRc) reaches the dtor. sessionSawEnabledExtension gate hoisted to the top of dtor + shutdownAndQuickExit + quitBrowser exit(0); extension-tainted lane flushes autosave/session state, runs non-engine cleanup only (wipe/lock/tor stop/vault seal), then quick_exit before any engine-descendant destructor. Verified: clean qmake6+make, disasm confirms gate-first layout, --quit-after-load exit 0, --extension-smoke + --bitwarden-smoke exit 0 offscreen, tst_browserapp 11/11; mac runtime verify still owed |
 | MAC08 | macOS fix: Bitwarden welcome screen Skip button unreachable — details below | done | 0 | Blind fix: click-outside dismissal read the QWindow event pass as outside (a QWidgetWindow is no QWidget) and closed the popup on its first click — dead buttons. Now a global-rect hit test, same verdict on both passes + both popup shapes. Also repaired the stale health-probe leg (hosted trees never mint probe pages — leg now uses an ARKTOS_EXTHOST_OFF native fixture). Verified: chromePageChurn PASS incl. inside/outside press + probe legs, actionPopupSelfWires + extensionPopupContext PASS, --quit-after-load exit 0 offscreen; mac runtime verify still owed |
 | MAC09 | macOS fix: URL/search bar renders wrong — yellow tint + still buggy — details below | done | 0 | Blind fix: urlbar yellow was ArktosStyle::secureFieldColor — the 2008-Chrome https "secure" tint applied from LocationBar::paintEvent via setPalette-during-paint (the latch mechanism on the native NSToolbar field; light palettes only, why Linux read fine). Removed the tint + the dead mid-load gradient Base write entirely — paintEvent never mutates the palette now; padlock owns trust, NAVB01 strip owns loading. secureFieldColor() deleted; also fixed 2 pre-existing no-rust warnings blocking check-warnings. Verified: tst_locationbar 59/59 incl. new fieldFillUntinted, tst_downloadmanager 46/46, check-warnings PASS, --quit-after-load exit 0 offscreen; groupBoxTitleWeight+flatGroupSection fail identically on unmodified HEAD (pre-existing); mac runtime verify still owed |
-| MAC10 | macOS fix: Proxy settings page controls unselectable — details below | pending | 0 | Screenshot: "Use proxy server" checkbox + type/hostname/port fields all greyed/non-interactive on macOS — likely the same QCheckBox/item-render issue class as MAC04 or a disabled-state leak from settings load |
+| MAC10 | macOS fix: Proxy settings page controls unselectable — details below | done | 0 | Checkable-QGroupBox enable affordance is the MAC04 style-painted-indicator class — converted proxy/networkCache groups + adblock rulesGroup to real QCheckBox driving a fields container; tst_settingsdialog 60/60 incl. new leg, tst_adblockmanager 15/15, --quit-after-load exit 0 offscreen; mac verify owed |
 | MAC11 | macOS fix: extension list names render garbled/double-drawn — details below | pending | 0 | REGRESSION from MAC04: name column shows overlapping corrupted text ("BitwardenPa?awocMdbteager") — the column-0 delegate that was supposed to drop painted indicator/text is double-drawing or the index widget overlaps item text. Check delegate paint logic + widget geometry |
 
 ## Task details
@@ -4227,6 +4227,32 @@ cannot enable or select anything. Check whether the enable checkbox is
 rendered but disabled due to a state leak from settings load, or whether
 it's the same item-view/delegate render class as MAC04 (controls that rely
 on style painting invisible under qmacstyle). Blind fix + document.
+
+
+Findings: the page's "Use proxy server" control was a checkable
+QGroupBox — its only toggle affordance is the style-painted
+PE_IndicatorCheckBox drawn (and hit-tested) through the app style
+stack (qApp stylesheet -> ChromeProxyStyle -> platform style).  That
+indicator primitive is the same platform-dependent render step MAC04
+removed from the extensions list: under sheet-style -> ChromeProxy ->
+QMacStyle it never reaches the user, so the group could never be
+checked and Qt kept every child disabled — the reported "all greyed,
+cannot enable or select anything".  Two other checkable group boxes
+shared the defect class: networkCache in the same dialog and
+rulesGroup in AdBlockDialog — the only checkable QGroupBoxes in the
+tree; both converted too, closing the class outright.
+
+Fix: each group is now a plain titled QGroupBox hosting a real
+QCheckBox (keeping the old object names proxySupport / networkCache /
+rulesGroup, so load/save code and tests are unchanged) whose toggled
+signal enables a sibling fields container (proxyFields /
+networkCacheFields / rulesFields) — no style-painted indicator
+anywhere in the enable path.  loadFromSettings syncs the container
+explicitly so re-loads (reset buttons) can't drift.  Verified:
+tst_settingsdialog 60/60 incl. new enableCheckboxesDriveFields leg
+(no checkable QGroupBox remains; toggling drives isEnabledTo both
+directions), tst_adblockmanager 15/15, --quit-after-load exit 0
+offscreen.  macOS runtime verify still owed.
 
 ### MAC11
 Regression from MAC04: the extension list now shows garbled, overlapping,

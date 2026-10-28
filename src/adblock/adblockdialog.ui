@@ -128,32 +128,54 @@
        </widget>
       </item>
       <item>
-       <widget class="QGroupBox" name="rulesGroup">
+       <widget class="QGroupBox" name="rulesViewerGroup">
         <property name="title">
-         <string>Show rules in the selected list</string>
+         <string>Rules viewer</string>
         </property>
-        <property name="checkable">
-         <bool>true</bool>
-        </property>
-        <property name="checked">
-         <bool>false</bool>
-        </property>
-        <layout class="QVBoxLayout" name="rulesLayout">
+        <layout class="QVBoxLayout" name="rulesViewerLayout">
          <item>
-          <widget class="SearchLineEdit" name="search">
-           <property name="accessibleName">
-            <string>Filter displayed rules</string>
+          <widget class="QCheckBox" name="rulesGroup">
+           <property name="text">
+            <string>Show rules in the selected list</string>
            </property>
           </widget>
          </item>
          <item>
-          <widget class="QPlainTextEdit" name="rulesView">
-           <property name="accessibleName">
-            <string>Rules in the selected subscription</string>
+          <widget class="QWidget" name="rulesFields" native="true">
+           <property name="enabled">
+            <bool>false</bool>
            </property>
-           <property name="readOnly">
-            <bool>true</bool>
-           </property>
+           <layout class="QVBoxLayout" name="rulesLayout">
+            <property name="leftMargin">
+             <number>0</number>
+            </property>
+            <property name="topMargin">
+             <number>0</number>
+            </property>
+            <property name="rightMargin">
+             <number>0</number>
+            </property>
+            <property name="bottomMargin">
+             <number>0</number>
+            </property>
+            <item>
+             <widget class="SearchLineEdit" name="search">
+              <property name="accessibleName">
+               <string>Filter displayed rules</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPlainTextEdit" name="rulesView">
+              <property name="accessibleName">
+               <string>Rules in the selected subscription</string>
+              </property>
+              <property name="readOnly">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </widget>
          </item>
         </layout>

@@ -4942,3 +4942,12 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   connection's trust state. The loading indicator strip along the
   field's bottom edge is unchanged. (Most visible on macOS, where the
   tint sat permanently over the whole field.)
+- The Proxy settings page can be configured again: the "Use proxy
+  server" group and its type/host/port/user/password fields no longer
+  sit greyed-out and unclickable — the enable switch is now a real
+  checkbox inside the group instead of the group box's style-painted
+  title checkbox, which could never be hit under the macOS widget
+  style stack (the same class of fix the extension list toggles got
+  earlier). The "Enable network cache" group and the ad-block rules
+  viewer used the same pattern and are fixed the same way. (Most
+  visible on macOS, where the painted checkbox was unusable.)
