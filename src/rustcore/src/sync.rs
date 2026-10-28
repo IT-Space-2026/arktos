@@ -1362,8 +1362,10 @@ mod tests {
     #[test]
     fn tampered_and_unknown_signers_rejected() {
         let _g = guard();
+        // "passwords" — a synced store with no adapter yet, so the
+        // deferred-count legs below can't leak a neighbour's applier.
         let a = SyncEngine::open(&tmpdir("tA")).unwrap();
-        a.append("settings", "", &serde_json::json!({"k": 1})).unwrap();
+        a.append("passwords", "", &serde_json::json!({"k": 1})).unwrap();
         let wire: Vec<Value> =
             a.export(None, 0).unwrap().iter().map(|o| o.to_json()).collect();
 

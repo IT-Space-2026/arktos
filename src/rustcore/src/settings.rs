@@ -40,6 +40,7 @@
 use crate::error::{fail, Fail, RcResult, RcStatus};
 use crate::inifmt;
 use crate::store;
+use crate::syncsettings;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -237,29 +238,83 @@ impl RcSettings {
     pub fn set(&self, key: &str, value: Value) -> RcResult<()> {
         let key = check_key(key)?;
         check_value(&value)?;
+        if self.set_apply(&key, &value)? {
+            self.emit_after(&key, Some(&value));
+        }
+        Ok(())
+    }
+
+    /// SYNC07's apply lane — set() minus the op emission, so a
+    /// merged remote op can never echo back onto the log.
+    /// Returns whether the store actually moved (a replay applying
+    /// the same value persists nothing).
+    pub(crate) fn set_applied(&self, key: &str, value: Value) -> RcResult<bool> {
+        let key = check_key(key)?;
+        check_value(&value)?;
+        self.set_apply(&key, &value)
+    }
+
+    /// The shared mutation half — insert + persist, reporting
+    /// whether the map actually moved (no-op writes persist
+    /// nothing and emit nothing).
+    fn set_apply(&self, key: &str, value: &Value) -> RcResult<bool> {
         let mut state = self.lock();
         if state.values.len() >= MAX_ENTRIES
-            && !state.values.contains_key(&key)
+            && !state.values.contains_key(key)
         {
             return fail(
                 RcStatus::InvalidArgument,
                 "settings store entry bound reached",
             );
         }
-        if state.values.get(&key) == Some(&value) {
-            return Ok(());
+        if state.values.get(key) == Some(value) {
+            return Ok(false);
         }
-        state.values.insert(key, value);
-        persist(&state)
+        state.values.insert(key.to_string(), value.clone());
+        persist(&state)?;
+        Ok(true)
     }
 
     pub fn remove(&self, key: &str) -> RcResult<()> {
         let key = check_key(key)?;
-        let mut state = self.lock();
-        if state.values.remove(&key).is_none() {
-            return Ok(());
+        if self.remove_apply(&key)? {
+            self.emit_after(&key, None);
         }
-        persist(&state)
+        Ok(())
+    }
+
+    /// SYNC07's apply lane — remove() minus the op emission.
+    /// Returns whether the store actually moved.
+    pub(crate) fn remove_applied(&self, key: &str) -> RcResult<bool> {
+        let key = check_key(key)?;
+        self.remove_apply(&key)
+    }
+
+    /// The shared mutation half — drop + persist, reporting
+    /// whether the map actually moved.
+    fn remove_apply(&self, key: &str) -> RcResult<bool> {
+        let mut state = self.lock();
+        if state.values.remove(key).is_none() {
+            return Ok(false);
+        }
+        persist(&state)?;
+        Ok(true)
+    }
+
+    /// SYNC07's post-mutation hook — sign the change onto the
+    /// profile's sync op-log (best-effort; the write is already
+    /// durable).  Runs after the store lock drops; the global
+    /// scope and excluded keys never emit.
+    fn emit_after(&self, key: &str, value: Option<&Value>) {
+        let (file, local) = {
+            let state = self.lock();
+            let local = match state.values.get(syncsettings::EXCLUDE_KEY) {
+                Some(Value::List(l)) => l.clone(),
+                _ => Vec::new(),
+            };
+            (state.file.clone(), local)
+        };
+        syncsettings::emit_local(&file, key, &local, value);
     }
 
     /// Keys under `prefix` — a boundary match: `prefix` itself and
@@ -327,7 +382,7 @@ fn check_profile_id(id: &str) -> RcResult<()> {
     Ok(())
 }
 
-fn check_key(key: &str) -> RcResult<String> {
+pub(crate) fn check_key(key: &str) -> RcResult<String> {
     let key = inifmt::normalize_key(key);
     if key.is_empty() || key.len() > MAX_KEY_LEN {
         return fail(RcStatus::InvalidArgument, "invalid settings key");

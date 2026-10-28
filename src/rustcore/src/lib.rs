@@ -232,6 +232,7 @@ mod store;
 mod sync;
 mod syncbookmarks;
 mod synchistory;
+mod syncsettings;
 mod synctabs;
 pub mod syncpair;
 pub mod synctransport;

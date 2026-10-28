@@ -177,6 +177,13 @@ pub static EVENT_TOPICS: &[EventTopic] = &[
         produced: false,
     },
     EventTopic {
+        topic: "settings/changed",
+        summary: "a settings key moved under a merged sync op; \
+                  op names the mutation: set|del",
+        fields: &["op"],
+        produced: true,
+    },
+    EventTopic {
         topic: "session/saved",
         summary: "a session file was persisted — the save lifecycle, \
                   not the emit-silent per-op store lane",

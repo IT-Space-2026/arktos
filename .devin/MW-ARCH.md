@@ -738,6 +738,35 @@ url.
 | `sync.tabs_publish` | C | `{profile?, windows:[…]}` — publish this device's open tabs as one presence doc; `since: 4` |
 | `sync.tabs_peers` | Q | `{profile?}` → `{devices:[{device_id, updated_ms, windows}]}` — newest presence doc per OTHER device |
 
+The settings adapter (SYNC07, `syncsettings.rs`) rides the same
+domain — the only new op is the exclusion read model; mutations
+emit by themselves.  `RcSettings::set`/`remove` — the funnel every
+mutation lane already shares — sign `{t:"set"|"del", key, val?}`
+ops onto the profile scope's log post-persist, best-effort (a
+failed append leaves a durable local change the next advertise
+re-offers).  Semantics: a per-key LWW map — strictly newer
+(lamport, device) moves the key, stale drops, concurrent writes
+converge to the higher stamp.  The device-local exclusion list is
+raw key-prefix rules that never emit AND never apply: built-ins
+cover `sync` (engine config + the list itself), `sessions` and
+`BrowserMainWindow` (window geometry/session blobs), `proxy`
+(per-machine network config), and the downloadmanager path/
+in-flight-record leaves; the profile's own `sync/localExclude`
+string-list extends it — under the excluded `sync` prefix, so the
+list can never sync into changing itself.  An excluded remote op
+is consumed-and-dropped (counts applied, writes nothing); lifting
+a rule lets the next op through, never resurrects skipped ones.
+The first emit or apply per scope also advertises every present
+non-excluded key the frontier doesn't know — pre-sync prefs (incl.
+ini-imported values, which never emit per-key) flow to the group
+once.  Global-scope settings never sync.  Apply writes through
+`set_applied`/`remove_applied` so a merged op can't echo, and a
+real change emits `settings` + `settings/changed` for the Qt side.
+
+| Op | Class | Notes |
+|----|-------|-------|
+| `sync.settings_excludes` | Q | `{profile?}` → `{defaults:[…], local:[…]}` — the effective LWW-map exclusion prefixes; `since: 5` |
+
 The transport half (SYNC02) shares the same envelope and the
 `synctransport` notify topic — a pull-drain wake-up shaped like
 `torctl`'s: inbound links and frames land in a queue drained by

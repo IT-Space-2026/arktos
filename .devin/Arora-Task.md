@@ -403,7 +403,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | SYNC04 | Serverless sync: bookmarks adapter — OR-Set CRDT, tombstoned deletes, causal folder ordering — details below | done | 0 | bookmarks CRDT adapter: OR-set guids (XBEL id), observed-stamp tombstones, causal pending, fractional ranks, LWW fields; cargo test 521/521 incl. concurrent add/remove/move convergence + mw e2e; make -j2 green; --quit-after-load exit 0 offscreen |
 | SYNC05 | Serverless sync: history adapter — append-only union set, per-device retention — details below | done | 0 | history CRDT adapter: synchistory.rs union-set per deterministic visit-id (url,ts sha256 — pre-sync dup merges), title LWW by (lamport,device), deletes/retention device-local (expire_older_than records meta cutoff, applier re-prunes after merge); history.rs outbox+apply lane; mw sync_engine installs applier; verified: cargo test 527/527 incl. union/dedup/deletes-local/retention/LWW legs + mw e2e; acprobe --bridge OK; rustcov 90.7%; make -j2 green; --quit-after-load exit 0 |
 | SYNC06 | Serverless sync: open-tabs presence — ephemeral per-device doc, read-only "tabs on my other devices" view — details below | done | 0 | open-tabs presence: ephemeral per-device doc on tabs store (whole-doc LWW by lamport,device — closes propagate by absence, empty=wipe); apply lane in-memory only, writes NO store (peer tabs = read-only view, never history); mw tabs_publish/tabs_peers since:4; Qt: TabWidget::presenceWindowJson (OTR dropped), SyncTabPresence debounced publisher (paired scopes only, doc-hash dedup), SyncTabsMenu "Tabs from Other Devices" in History menu; MW-ARCH §8.19 + topics updated. Verified: cargo test 533/533 incl propagation/closes/LWW/no-writes + mw e2e; acprobe --bridge OK; rustcov 90.72%; make -j2 green; --quit-after-load exit 0 offscreen |
-| SYNC07 | Serverless sync: settings/profile adapter — LWW map with device-local exclusions — details below | pending | 0 | needs:task:SYNC04 |
+| SYNC07 | Serverless sync: settings/profile adapter — LWW map with device-local exclusions — details below | done | 0 | settings CRDT adapter: per-key LWW map (set/del ops carrying typed-value docs), device-local exclusion prefixes gating emit+apply (defaults: sync/sessions/BrowserMainWindow/proxy/downloadmanager paths+records + profile sync/localExclude which cannot sync itself), emit rides RcSettings::set/remove, apply via non-emitting set_applied/remove_applied, first-touch advertise incl ini-imported keys, global scope never syncs; mw sync.settings_excludes (since:5) + settings/changed topic + MW-ARCH 8.19. Verified: cargo test 542/542 incl LWW/del-vs-set/converge/exclusion/advertise legs + mw e2e; acprobe --bridge OK; rustcov 90.81% (>85%); make -j2 green; --quit-after-load exit 0 offscreen |
 | SYNC08 | Serverless sync: passwords — E2E per-entry encrypted records, vault key, passphrase gate, strictly opt-in — details below | pending | 0 | needs:task:SYNC07 |
 | SYNC09 | Serverless sync: revocation + device management — paired-device list UI, fingerprint display, unpair, group-key rotation — details below | pending | 0 | needs:task:SYNC03 |
 | SYNC10 | Serverless sync: LAN fast path — mDNS discovery + direct QUIC when co-located, Tor fallback unchanged — details below | pending | 0 | needs:task:SYNC03 |
@@ -4531,6 +4531,60 @@ peer. Verify: presence update propagates, closes propagate, no writes.
 Settings/profile adapter: LWW map over synced preference keys with an
 explicit device-local exclusion list (paths, window geometry, proxy,
 per-machine prefs). Verify: change propagates, excluded keys never move.
+
+
+Landed (this run):
+- src/rustcore/src/syncsettings.rs — the settings CRDT adapter:
+  a per-key LWW map over synced preference keys.  Two op types on
+  the "settings" store — {"t":"set","key","val":<typed-value-doc>}
+  and {"t":"del","key"} — carrying the store's own {"t","v"} value
+  encoding (value_to_json).  Resolution is per-key (lamport,
+  device_id): strictly newer moves the key, stale drops; equal
+  stamp can only be the same op (stamps are unique per op — the
+  log already holds it when hydrate replays), so equality is the
+  first apply or a drain's idempotent re-delivery.  Frontier
+  rebuilds by replaying the op-log; no adapter db.
+- Device-local exclusion list — raw key-prefix rules gating BOTH
+  emit and apply: built-ins cover sync/ (engine config + the list
+  itself), sessions/ + BrowserMainWindow/ (window geometry +
+  session blobs), proxy/ (per-machine network config), and the
+  downloadmanager path + download_N_* in-flight-record leaves;
+  the profile's own "sync/localExclude" string-list extends it —
+  under the excluded "sync" prefix, so the list can never sync
+  into changing itself.  Excluded remote ops are consumed-and-
+  dropped (count applied, write nothing, leave no frontier entry).
+- Emission rides RcSettings::set/remove — the funnel the flat
+  rc_* lane, the mw lane and in-process callers already share, so
+  no outbox: persist first, then best-effort append (a failed
+  append leaves a durable local change the next advertise
+  re-offers).  Apply writes through new set_applied/remove_applied
+  (mutation-minus-emission) so a merged op can never echo.
+- First-touch advertise per (root,scope) on first emit or apply:
+  every present non-excluded key whose frontier is empty emits
+  once — pre-sync prefs AND ini-imported values (merge_ini never
+  emits per-key) reach the group.  Global scope never syncs
+  (binding_scope only matches profiles/<id>/settings.json).
+- settings.rs: set/remove refactored onto shared set_apply/
+  remove_apply halves; emit_after reads file+localExclude under
+  the lock and emits post-lock.  check_key now pub(crate) for the
+  adapter's op validation.
+- mw: sync_engine() installs the settings applier; new
+  sync.settings_excludes query (id 0x001d, since:5) returns
+  {defaults, local} for a profile.  settings/changed added to
+  EVENT_TOPICS (produced:true, field "op").
+- sync.rs test tampered_and_unknown_signers_rejected + mw
+  sync_domain_end_to_end moved their deferred-count legs off
+  "settings" onto "passwords" — the last still-unadapted store
+  (SYNC08 note: revisit when passwords wires its adapter).
+- MW-ARCH §8.19 documents the adapter + the new op.
+Verify: cargo test 542/542 — set propagation + LWW ordering
+(stale drops), del-vs-set both orders, concurrent-write
+convergence, excluded keys never emit AND never apply (built-in
+and user-listed rules, list itself unsyncable), pre-sync +
+ini-import advertise, global-scope silence, malformed-op refusal,
+mw envelope e2e (set -> export -> pair -> import -> peer store,
+excludes read model, del propagation).  acprobe --bridge OK;
+make -j2 green; arktos --quit-after-load exit 0 offscreen.
 
 ### SYNC08
 Passwords: strictly opt-in. Per-entry encrypted records — vault key

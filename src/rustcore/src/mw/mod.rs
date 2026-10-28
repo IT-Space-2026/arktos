@@ -62,7 +62,7 @@ use crate::facade::{self, AcCore};
 use crate::{
     blocklist, bookmarks, containers, cookies, extverify, history, icons, notes, notify,
     omnibox, opensearch, profiles, profilevault, session, settings, sitedecisions,
-    sitetrust, store, sync, syncbookmarks, synchistory, syncpair, synctabs, synctransport, tlsprobe, tranco, updates, util,
+    sitetrust, store, sync, syncbookmarks, synchistory, syncpair, syncsettings, synctabs, synctransport, tlsprobe, tranco, updates, util,
 };
 
 /// The envelope schema version — the frame's `version` byte and the
@@ -2573,10 +2573,11 @@ const VAULT_OPS: &[Op] = &[
 // (SYNC09) hang off it.
 
 fn sync_engine(ctx: &MwCtx) -> Result<sync::SyncEngine, OpErr> {
-    // SYNC04/05/06: keep the store-adapter apply lanes bound to the
+    // SYNC04/05/06/07: keep the store-adapter apply lanes bound to the
     // core this call is for — the applier seam is process-global.
     syncbookmarks::install(ctx.core.data_root());
     synchistory::install(ctx.core.data_root());
+    syncsettings::install(ctx.core.data_root());
     synctabs::install(ctx.core.data_root());
     sync::SyncEngine::open(ctx.core.data_root()).map_err(OpErr::from)
 }
@@ -2967,6 +2968,20 @@ fn op_sync_tabs_peers(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
     Ok(json!({ "devices": devices }))
 }
 
+// SYNC07: the settings adapter rides the same domain — local
+// set/remove emit signed ops by themselves (no publish op needed).
+// settings_excludes is the exclusion-list read model: the built-in
+// per-machine prefixes plus the profile's own sync/localExclude
+// rules — device-local by contract, so the list is inspectable but
+// never travels.
+//
+//   settings_excludes {profile?} — {defaults:[prefix…],
+//                  local:[prefix…]} the effective LWW-map exclusions
+fn op_sync_settings_excludes(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let scope = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    Ok(syncsettings::excludes(ctx.core.data_root(), &scope)?)
+}
+
 const SYNC_OPS: &[Op] = &[
     Op { id: 0x0001, name: "identity", class: OpClass::Query,
          profile_scoped: false, since: 1, handler: op_sync_identity },
@@ -3024,6 +3039,8 @@ const SYNC_OPS: &[Op] = &[
          profile_scoped: false, since: 4, handler: op_sync_tabs_publish },
     Op { id: 0x001c, name: "tabs_peers", class: OpClass::Query,
          profile_scoped: false, since: 4, handler: op_sync_tabs_peers },
+    Op { id: 0x001d, name: "settings_excludes", class: OpClass::Query,
+         profile_scoped: false, since: 5, handler: op_sync_settings_excludes },
 ];
 
 // ---- registry ------------------------------------------------------------------
@@ -4820,10 +4837,11 @@ mod tests {
         let r = call(core_a.0, &query(7, 19, 0x0002, ""));
         assert_eq!(r.ok()["members"][0]["last_seen_ms"], 99);
 
-        // A appends a settings op; the export carries the signed wire doc.
+        // A appends a passwords op (the one synced store still
+        // without an adapter); the export carries the signed wire doc.
         let r = call(
             core_a.0,
-            &command(8, 19, 0x0006, r#"{"store":"settings","body":{"set":{"k":1}}}"#),
+            &command(8, 19, 0x0006, r#"{"store":"passwords","body":{"set":{"k":1}}}"#),
         );
         assert_eq!(r.ok()["lamport"], 1);
         let r = call(core_a.0, &query(9, 19, 0x0007, ""));
@@ -4869,7 +4887,7 @@ mod tests {
         assert_eq!(r.ok()["duplicates"], 1);
         let r = call(
             core_b.0,
-            &command(15, 19, 0x000a, r#"{"store":"settings"}"#),
+            &command(15, 19, 0x000a, r#"{"store":"passwords"}"#),
         );
         assert_eq!(r.ok()["pending_before"], 1);
         assert_eq!(r.ok()["deferred"], 1);
@@ -4879,7 +4897,7 @@ mod tests {
         let p = r.ok();
         assert_eq!(p["ops"], 1);
         assert_eq!(p["members"], 1);
-        assert_eq!(p["stores"]["settings"]["pending_apply"], 1);
+        assert_eq!(p["stores"]["passwords"]["pending_apply"], 1);
 
         // member_remove answers honestly both ways.
         let r = call(
@@ -5277,6 +5295,170 @@ mod tests {
             b_ops.iter().all(|o| o["device_id"].as_str().unwrap() != b_id),
             "a local delete must never emit an op: {b_ops:?}"
         );
+        let _ = dir_b;
+    }
+
+    /// SYNC07: the settings adapter over the real envelope — a
+    /// settings.set on core A signs a "set" op; importing on B moves
+    /// B's profile store; excluded keys emit nothing and apply
+    /// nothing; a remove propagates as a "del".
+    #[test]
+    fn sync_settings_adapter_end_to_end() {
+        let _g = guard();
+        let dir_a = tmpdir("ssyA");
+        let dir_b = tmpdir("ssyB");
+        let core_a = TestCore::new(&dir_a);
+        let core_b = TestCore::new(&dir_b);
+
+        // Pair each device into the other's "default" sync group.
+        let a_pk = call(core_a.0, &query(1, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let b_pk = call(core_b.0, &query(2, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let r = call(
+            core_a.0,
+            &command(
+                3,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{b_pk}","scope":"default"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_b.0,
+            &command(
+                4,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{a_pk}","scope":"default"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+
+        // A sets one synced pref and one device-local key through the
+        // settings domain — only the synced one emits.
+        let r = call(
+            core_a.0,
+            &command(
+                5,
+                1,
+                0x0004,
+                r#"{"profile":"default","key":"browser/foo","value":{"t":"s","v":"hello"}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true, "{:?}", r.err());
+        let r = call(
+            core_a.0,
+            &command(
+                6,
+                1,
+                0x0004,
+                r#"{"profile":"default","key":"proxy/hostName","value":{"t":"s","v":"10.0.0.1"}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true, "{:?}", r.err());
+        let r = call(
+            core_a.0,
+            &query(7, 19, 0x0007, r#"{"store":"settings"}"#),
+        );
+        let ops = r.ok()["ops"].clone();
+        assert_eq!(ops.as_array().unwrap().len(), 1, "{ops}");
+        assert_eq!(ops[0]["scope"], "default");
+        assert_eq!(ops[0]["body"]["t"], "set");
+        assert_eq!(ops[0]["body"]["key"], "browser/foo");
+
+        // B imports — the adapter lands the value in B's profile
+        // settings store.
+        let r = call(
+            core_b.0,
+            &command(
+                8,
+                19,
+                0x0008,
+                &serde_json::to_string(&json!({"ops": ops})).unwrap(),
+            ),
+        );
+        let p = r.ok();
+        assert_eq!(p["accepted"], 1, "{p}");
+        assert_eq!(p["applied"], 1, "{p}");
+        let r = call(
+            core_b.0,
+            &query(9, 1, 0x0001, r#"{"profile":"default","key":"browser/foo"}"#),
+        );
+        assert_eq!(r.ok()["v"], "hello");
+        // The excluded key stayed local — B never even saw an op.
+        let r = call(
+            core_b.0,
+            &query(10, 1, 0x0006, r#"{"profile":"default","key":"proxy/hostName"}"#),
+        );
+        assert_eq!(r.ok()["present"], false);
+
+        // The exclusion read model reports the built-ins and no
+        // device-local additions.
+        let r = call(
+            core_b.0,
+            &query(11, 19, 0x001d, r#"{"profile":"default"}"#),
+        );
+        let p = r.ok();
+        assert!(p["defaults"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("proxy")), "{p}");
+        assert_eq!(p["local"].as_array().unwrap().len(), 0);
+
+        // B removes the key — a "del" op signs onto B's log and A's
+        // copy disappears on the next exchange.
+        let r = call(
+            core_b.0,
+            &command(
+                12,
+                1,
+                0x0005,
+                r#"{"profile":"default","key":"browser/foo"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_b.0,
+            &query(13, 19, 0x0007, r#"{"store":"settings"}"#),
+        );
+        let ops = r.ok()["ops"].clone();
+        let b_id = call(core_b.0, &query(14, 19, 0x0001, "")).ok()["device_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let del: Vec<Value> = ops
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|o| {
+                o["device_id"].as_str() == Some(b_id.as_str())
+                    && o["body"]["t"] == "del"
+            })
+            .cloned()
+            .collect();
+        assert_eq!(del.len(), 1, "{ops}");
+        let r = call(
+            core_a.0,
+            &command(
+                15,
+                19,
+                0x0008,
+                &serde_json::to_string(&json!({"ops": del})).unwrap(),
+            ),
+        );
+        let p = r.ok();
+        assert_eq!(p["applied"], 1, "{p}");
+        let r = call(
+            core_a.0,
+            &query(16, 1, 0x0006, r#"{"profile":"default","key":"browser/foo"}"#),
+        );
+        assert_eq!(r.ok()["present"], false);
         let _ = dir_b;
     }
 
