@@ -407,7 +407,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | SYNC08 | Serverless sync: passwords — E2E per-entry encrypted records, vault key, passphrase gate, strictly opt-in — details below | done | 0 | passwords CRDT adapter: opt-in E2E vault — Argon2id vault key from sync passphrase salted by group secret, ciphertext-only ops (pwv/set/del), field-level LWW + entry tombstones, locked=deferred drain-on-unlock, emit rides autofill_set, mw passwords_enable/lock/status (since:6) + autofill/changed topic; sync.rs/mw deferred legs moved to unregister/apply_errors. Verified: cargo test 553/553 incl. encrypted-sync, wrong-passphrase ciphertext-only, concurrent field merge, stale/del no-resurrect, mw e2e; acprobe --bridge OK; rustcov 90.88%; make -j2 green; --quit-after-load exit 0 offscreen |
 | SYNC09 | Serverless sync: revocation + device management — paired-device list UI, fingerprint display, unpair, group-key rotation — details below | done | 0 | syncmeta store + device_revoke/device_list mw ops (since:7): per-profile device list w/ fingerprint+last-seen, unpair rotates group secret (per-recipient ed→x25519 wrapped rekey op, marker-ordered concurrent rotations), drops member+onion grant+presence, vault re-wrap; propagation cuts revoked device group-wide — verified: cargo test 565/565 incl revoke/rekey/no-connect/disjoint-profiles/vault legs + mw e2e, make -j2 green 0 warnings, tst_settingsdialog 61/61 (fixed 2 stale count asserts), --quit-after-load exit 0 offscreen, no-rust TU compile fixed (pre-existing SYNC06 break) |
 | SYNC10 | Serverless sync: LAN fast path — mDNS discovery + direct QUIC when co-located, Tor fallback unchanged — details below | done | 0 | lan+auto backends: mDNS discovery + QUIC device-cert mTLS sync behind SyncTransport; cargo test 584/584, make green, quit-after-load 0 |
-| SYNC11 | Serverless sync: integration verification — two-profile loopback sync over in-process circuits, conflict-merge legs, honest docs — details below | pending | 0 | needs:task:SYNC08,SYNC09,SYNC10 |
+| SYNC11 | Serverless sync: integration verification — two-profile loopback sync over in-process circuits, conflict-merge legs, honest docs — details below | done | 0 | integration legs in mw tests: real pairing + all 5 stores over mem frames both ways, offline-conflict LWW convergence, mid-session revocation cut, real ops over LAN QUIC+mDNS, full pair+sync over live Tor (#[ignore] leg green ~110s); SYNC-DESIGN.md written; fixed real tor bug — parse_hsid strips :14430 port so discovery-key rotate/import/keystore ops stop silently failing (member grant was authorized with a malformed key on real Tor). Verify: cargo test 588/588, synctor-e2e.sh ALL LEGS PASS, acprobe --bridge OK, make -j2 green, --quit-after-load exit 0 offscreen |
 
 ## Task details
 
@@ -4670,6 +4670,68 @@ end-to-end (bookmarks+history+tabs+settings+passwords), conflict-merge
 legs (offline edits both sides), revocation leg, LAN+Tor legs. Write
 SYNC-DESIGN.md capturing the transport tiers, CRDT semantics, pairing
 flow, and the recorded limitations. No fake passes.
+
+
+SYNC11 implementation notes (2026-10-28):
+
+- New mw test legs in src/rustcore/src/mw/mod.rs — the first tests
+  that drive the WHOLE path through domain-19 ops over live
+  transport links, not per-adapter shortcuts: real pair_begin/
+  pair_join/pair_poll/pair_confirm ceremony, then signed ops
+  riding transport_send frames ({"ops":[...]} docs) both
+  directions, polled + imported on the peer.
+- sync_full_stack_over_mem_circuits: two cores paired over the
+  mem loopback; A writes into all five synced stores, the export
+  frame is scanned for plaintext vault leaks, and B converges —
+  bookmarks/history/settings/tabs merge, the sealed vault entry
+  defers while locked then drains on passwords_enable; B->A
+  round proves bidirectionality.
+- sync_conflicts_converge_over_mem: baseline synced, then
+  OFFLINE edits on both sides to the same bookmark title,
+  settings key and password field; after a two-way exchange
+  both sides hold the value computed from the ops' own
+  (lamport,device_id) stamps — the winner is asserted, not
+  guessed.  Identical (url,ts) visits on both dedup to one row.
+- sync_revocation_cuts_peer_over_mem: A revokes B mid-session;
+  the rekey op rides the still-open link, B's membership+grant
+  die symmetrically on apply, a fresh dial is refused at the
+  gate, and every post-revoke op is rejected "not a sync
+  member" in BOTH directions — refused by signature, not
+  silence.
+- sync_ops_over_lan_circuit: real ops over real mDNS+QUIC —
+  member rows + member-<id16> grants, discovery on a test
+  multicast group, lan:// dial by device id, a bookmark op
+  lands in the peer's xbel.  Honest skip without a multicast
+  iface.
+- sync_full_stack_over_tor_live (#[ignore], run explicitly):
+  the same ceremony + bidirectional op sync over REAL Tor —
+  embedded Arti on both cores.  PASSED in ~110s.
+- REAL BUG found by the live leg and fixed in
+  synctransport/tor.rs: hello-carried peer endpoints keep the
+  ":14430" port, which HsId::from_str rejected —
+  rotate_discovery_key failed into unwrap_or_default() "", the
+  empty dkey then hit the mem-parity fallback that authorizes
+  the member grant with the grant NICKNAME as the key, and
+  tor's authorize refused it ("Invalid key format").  mem
+  ignores discovery keys entirely, so the hermetic legs could
+  never see it.  Fix: parse_hsid() strips the optional :port
+  before parsing — applied at all six peer_onion parse sites.
+- member_link retries the connect inside its deadline: right
+  after pairing the member grant's descriptor republish lags
+  the first dial (HSDir propagation), so a dial that races it
+  sees transient WrongClientAuth refusals — retrying is the
+  app's real behavior, not a fake pass.
+- .devin/SYNC-DESIGN.md: transport tiers (tor/lan/auto/mem)
+  with each admission gate, op wire format + canonical apply
+  order, the Noise_XX pairing flow, per-store CRDT semantics,
+  revocation propagation, the verification map, and the
+  recorded limitations (vault passphrase forks, eid probing,
+  live-link revoke caveat, device-local history deletes,
+  LAN-only-members dial rule, no scheduler).
+Verify: cargo test 588/588 (1 ignored — ran green live in
+~110s), tools/synctor-e2e.sh ALL LEGS PASS on real Tor,
+acprobe --bridge OK, make -j2 green, ./arktos
+--quit-after-load exit 0 offscreen.
 
 ### MAC12
 Real-Mac screenshot: Bitwarden extension popup works end-to-end (login

@@ -6204,4 +6204,1097 @@ mod tests {
             "presence apply must never mint a history row");
         let _ = dir_b;
     }
+
+    // ---- SYNC11: full-stack integration -------------------------------------
+    //
+    // The legs above prove each adapter and each transport on its
+    // own.  These prove the whole path end to end: the REAL pairing
+    // ceremony over a live circuit, then signed ops riding
+    // transport frames (export -> send -> poll -> import) in BOTH
+    // directions across every synced store, offline conflict merges
+    // converging to the computed winner, and a revocation cutting a
+    // peer mid-session.  The wire shape one frame carries is the
+    // {"ops":[...]} doc sync.import takes — the exact exchange the
+    // domain-19 ops exist for, no test-only shortcut.
+
+    /// This core's sync device id.
+    fn dev_id(core: *mut AcCore) -> String {
+        call(core, &query(1, 19, 0x0001, "")).ok()["device_id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    /// The "member-<id16>" grant nickname pairing installs and
+    /// revocation strips for `device_id`.
+    fn member_nick(device_id: &str) -> String {
+        format!("member-{}", &device_id[..16.min(device_id.len())])
+    }
+
+    /// The real pairing ceremony over the running transports:
+    /// invite -> Noise_XX -> identical fingerprints -> mutual
+    /// confirm -> done.  `wait_ms` bounds the whole ritual — mem
+    /// finishes in milliseconds, a live Tor circuit needs minutes.
+    fn mw_pair(a: *mut AcCore, b: *mut AcCore, scope: &str, wait_ms: u64) {
+        let r = call(
+            a,
+            &command(
+                2,
+                19,
+                0x0015,
+                &serde_json::to_string(&json!({"profile": scope})).unwrap(),
+            ),
+        );
+        let inv = r.ok().clone();
+        let id_a = inv["pair_id"].as_u64().unwrap();
+        let code = inv["code"].as_str().unwrap().to_string();
+        let mut joined = false;
+        let mut id_b = 0u64;
+        // A cold transport may refuse the first dial; the ceremony
+        // retries the join, never fakes it.
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_millis(wait_ms);
+        while std::time::Instant::now() < deadline && !joined {
+            let r = call(
+                b,
+                &command(
+                    3,
+                    19,
+                    0x0016,
+                    &serde_json::to_string(&json!({"payload": code})).unwrap(),
+                ),
+            );
+            if r.msg_type == TY_OK {
+                id_b = r.ok()["pair_id"].as_u64().unwrap();
+                joined = true;
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+        }
+        assert!(joined, "pair_join never succeeded");
+        let poll = |c: *mut AcCore, id: u64| -> Value {
+            call(
+                c,
+                &command(
+                    4,
+                    19,
+                    0x0017,
+                    &serde_json::to_string(&json!({"pair_id": id})).unwrap(),
+                ),
+            )
+            .ok()
+            .clone()
+        };
+        let (mut sa, mut sb);
+        loop {
+            sa = poll(a, id_a);
+            sb = poll(b, id_b);
+            if sa["state"] == "fingerprint" && sb["state"] == "fingerprint" {
+                break;
+            }
+            assert!(
+                sa["state"] != "failed" && sb["state"] != "failed",
+                "pairing failed: {sa} / {sb}"
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "pairing never reached fingerprint: {sa} / {sb}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // The out-of-band compare both users perform must be
+        // byte-identical — that equality IS the MITM check.
+        assert_eq!(sa["fingerprint"], sb["fingerprint"]);
+        for (c, id) in [(a, id_a), (b, id_b)] {
+            let r = call(
+                c,
+                &command(
+                    5,
+                    19,
+                    0x0018,
+                    &serde_json::to_string(&json!({"pair_id": id, "ok": true}))
+                        .unwrap(),
+                ),
+            );
+            assert_eq!(r.ok()["ok"], true);
+        }
+        loop {
+            sa = poll(a, id_a);
+            sb = poll(b, id_b);
+            if sa["state"] == "done" && sb["state"] == "done" {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "pairing never finished: {sa} / {sb}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// Dial `dialer`'s grant into `listener`'s endpoint and wait
+    /// for the Incoming event; returns (link_on_dialer,
+    /// link_on_listener).  `wait_ms` bounds the WHOLE dial,
+    /// including retries: right after pairing or a grant change a
+    /// real descriptor's republish can lag the dial by minutes —
+    /// the refusal is transient, so the dial retries like an app
+    /// sync retry would (mem/lan succeed on the first attempt).
+    fn member_link(
+        dialer: *mut AcCore,
+        listener: *mut AcCore,
+        endpoint: &str,
+        nick: &str,
+        wait_ms: u64,
+    ) -> (u64, u64) {
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
+        let out = loop {
+            let r = call(
+                dialer,
+                &command(
+                    6,
+                    19,
+                    0x0011,
+                    &serde_json::to_string(
+                        &json!({"endpoint": endpoint, "nickname": nick}),
+                    )
+                    .unwrap(),
+                ),
+            );
+            if r.msg_type == TY_OK {
+                break r.ok()["link_id"].as_u64().unwrap();
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "member dial never succeeded: {:?}",
+                r.err()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        };
+        let mut inc = None;
+        while std::time::Instant::now() < deadline {
+            let r = call(listener, &query(7, 19, 0x0014, ""));
+            for ev in r.ok()["events"].as_array().unwrap() {
+                if ev["type"] == "incoming" {
+                    inc = ev["link_id"].as_u64();
+                }
+            }
+            if inc.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        (out, inc.expect("listener never saw the member link"))
+    }
+
+    /// One exchange over live links: every op `src` logged rides a
+    /// transport frame to `dst`'s import lane (dedup makes resends
+    /// free).  Returns dst's import report.
+    fn sync_round(
+        src: *mut AcCore,
+        src_link: u64,
+        dst: *mut AcCore,
+        dst_link: u64,
+        wait_ms: u64,
+    ) -> Value {
+        let ops = call(src, &query(8, 19, 0x0007, "")).ok()["ops"].clone();
+        assert!(!ops.as_array().unwrap().is_empty(), "nothing to sync");
+        let frame = b64_encode(
+            serde_json::to_string(&json!({"ops": ops}))
+                .unwrap()
+                .as_bytes(),
+        );
+        let r = call(
+            src,
+            &command(
+                9,
+                19,
+                0x0012,
+                &serde_json::to_string(
+                    &json!({"link_id": src_link, "payload_b64": frame}),
+                )
+                .unwrap(),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
+        let mut doc = None;
+        while std::time::Instant::now() < deadline {
+            let r = call(dst, &query(10, 19, 0x0014, ""));
+            for ev in r.ok()["events"].as_array().unwrap() {
+                if ev["type"] == "frame" && ev["link_id"] == dst_link {
+                    let bytes =
+                        b64_decode(ev["payload_b64"].as_str().unwrap()).unwrap();
+                    doc = Some(serde_json::from_slice::<Value>(&bytes).unwrap());
+                }
+            }
+            if doc.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let doc = doc.expect("peer never received the ops frame");
+        call(dst, &command(11, 19, 0x0008, &doc.to_string()))
+            .ok()
+            .clone()
+    }
+
+    /// A profile's merged bookmark doc for `url` — reads the real
+    /// xbel the apply lane wrote, not a test mirror.
+    fn bm_json(dir: &str, url: &str) -> Option<Value> {
+        let xbel = Path::new(dir).join("profiles/default/bookmarks.xbel");
+        bookmarks::with(|b| {
+            b.ensure_path(&xbel).unwrap();
+            b.find_url(url)
+                .and_then(|h| b.get_json(h))
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        })
+    }
+
+    /// A profile's autofill records — the vault's plaintext view.
+    fn autofill_forms(dir: &str) -> Vec<crate::autofill::FormRecord> {
+        let mut st = store::lock();
+        st.set_data_dir(&format!("{dir}/profiles/default"))
+            .unwrap();
+        st.autofill_data().unwrap().forms.clone()
+    }
+
+    fn save_login(dir: &str, pass: &str) {
+        let mut st = store::lock();
+        st.set_data_dir(&format!("{dir}/profiles/default"))
+            .unwrap();
+        st.autofill_set(vec![crate::autofill::FormRecord {
+            url: "https://cf/login".into(),
+            name: "login".into(),
+            has_password: true,
+            elements: vec![
+                ("user".into(), "u".into()),
+                ("pass".into(), pass.into()),
+            ],
+        }])
+        .unwrap();
+    }
+
+    /// SYNC11 leg 1: two isolated profiles, one sync group, every
+    /// synced store — the REAL ceremony over mem circuits, then ops
+    /// riding transport frames in both directions.
+    #[test]
+    fn sync_full_stack_over_mem_circuits() {
+        let _g = guard();
+        let dir_a = tmpdir("fsA");
+        let dir_b = tmpdir("fsB");
+        let core_a = TestCore::new(&dir_a);
+        let core_b = TestCore::new(&dir_b);
+        let id_a = dev_id(core_a.0);
+        let id_b = dev_id(core_b.0);
+
+        let r = call(
+            core_a.0,
+            &command(20, 19, 0x000b, r#"{"backend":"mem","name":"fsA"}"#),
+        );
+        assert_eq!(r.ok()["endpoint"], "mem:fsA");
+        let r = call(
+            core_b.0,
+            &command(21, 19, 0x000b, r#"{"backend":"mem","name":"fsB"}"#),
+        );
+        assert_eq!(r.ok()["endpoint"], "mem:fsB");
+        mw_pair(core_a.0, core_b.0, "default", 15_000);
+
+        // Pairing's durable effects: mutual member rows bound to
+        // the scope, member-* grants on both listeners.
+        let r = call(core_a.0, &query(22, 19, 0x0002, ""));
+        assert_eq!(r.ok()["members"].as_array().unwrap().len(), 1);
+        let r = call(core_b.0, &query(23, 19, 0x0002, ""));
+        assert_eq!(r.ok()["members"].as_array().unwrap().len(), 1);
+        let r = call(core_a.0, &query(24, 19, 0x000d, ""));
+        assert!(
+            r.ok()["authorized"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(member_nick(&id_b))),
+            "{:?}",
+            r.ok()
+        );
+        let r = call(core_b.0, &query(25, 19, 0x000d, ""));
+        assert!(
+            r.ok()["authorized"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(member_nick(&id_a))),
+            "{:?}",
+            r.ok()
+        );
+
+        // B dials the grant pairing installed.
+        let (b_link, a_link) =
+            member_link(core_b.0, core_a.0, "mem:fsA", &member_nick(&id_b), 5_000);
+
+        // A writes into all five synced stores.
+        let r = call(
+            core_a.0,
+            &command(
+                26,
+                4,
+                0x0002,
+                r#"{"profile":"default","node":{"type":2,"title":"fsbm","url":"http://fs/"},"row":-1}"#,
+            ),
+        );
+        assert!(r.ok()["id"].as_u64().unwrap() > 1, "{:?}", r.err());
+        let r = call(
+            core_a.0,
+            &command(
+                27,
+                3,
+                0x0002,
+                r#"{"profile":"default","url":"http://fs/","title":"fs","ts_ms":777}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_a.0,
+            &command(
+                28,
+                1,
+                0x0004,
+                r#"{"profile":"default","key":"integ11/k","value":{"t":"s","v":"v0"}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true, "{:?}", r.err());
+        let r = call(
+            core_a.0,
+            &command(
+                29,
+                19,
+                0x001e,
+                r#"{"profile":"default","passphrase":"vaultpw"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true, "{:?}", r.err());
+        save_login(&dir_a, "p@ss");
+        let r = call(
+            core_a.0,
+            &command(
+                30,
+                19,
+                0x001b,
+                r#"{"profile":"default","windows":[{"current":0,"tabs":[
+                    {"url":"http://fs/","title":"fs"}]}]}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true, "{:?}", r.err());
+
+        // The wire NEVER carries the vault in the clear — the
+        // exported frame is scanned for both plaintext halves.
+        let ops = call(core_a.0, &query(31, 19, 0x0007, "")).ok()["ops"].clone();
+        let wire = ops.to_string();
+        for needle in ["p@ss", "u@fs"] {
+            assert!(!wire.contains(needle), "plaintext leaked: {needle}");
+        }
+
+        // A -> B over the live link.
+        let rep = sync_round(core_a.0, a_link, core_b.0, b_link, 5_000);
+        assert!(rep["accepted"].as_u64().unwrap() >= 5, "{rep}");
+        assert_eq!(rep["rejected"].as_array().unwrap().len(), 0, "{rep}");
+        // The only apply miss allowed is the sealed vault entry
+        // deferring while B is locked — it drains at enable below.
+        assert!(
+            rep["apply_errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r["reason"].as_str().unwrap().contains("vault")),
+            "{rep}"
+        );
+
+        // Every store landed on B.
+        let bm = bm_json(&dir_b, "http://fs/").expect("bookmark missing on B");
+        assert_eq!(bm["title"], "fsbm");
+        let r = call(
+            core_b.0,
+            &query(32, 3, 0x0003, r#"{"profile":"default","spec":{}}"#),
+        );
+        let rows = r.ok().as_array().unwrap().clone();
+        assert!(
+            rows.iter()
+                .any(|r| r["url"] == "http://fs/" && r["ts"] == 777),
+            "{rows:?}"
+        );
+        let r = call(
+            core_b.0,
+            &query(33, 1, 0x0001, r#"{"profile":"default","key":"integ11/k"}"#),
+        );
+        assert_eq!(r.ok()["v"], "v0");
+        let r = call(
+            core_b.0,
+            &query(34, 19, 0x001c, r#"{"profile":"default"}"#),
+        );
+        let devs = r.ok()["devices"].as_array().unwrap().clone();
+        assert_eq!(devs.len(), 1, "{devs:?}");
+        assert_eq!(devs[0]["device_id"], id_a);
+        // The vault ciphertext is in B's log but still locked —
+        // the group passphrase unlocks and drains it.
+        let r = call(
+            core_b.0,
+            &query(35, 19, 0x0020, r#"{"profile":"default"}"#),
+        );
+        assert_eq!(r.ok()["unlocked"], false);
+        let r = call(
+            core_b.0,
+            &command(
+                36,
+                19,
+                0x001e,
+                r#"{"profile":"default","passphrase":"vaultpw"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true, "{:?}", r.err());
+        let forms = autofill_forms(&dir_b);
+        assert!(
+            forms.iter().any(|f| f.url == "https://cf/login"
+                && f.elements
+                    .iter()
+                    .any(|(k, v)| k == "pass" && v == "p@ss")),
+            "{forms:?}"
+        );
+
+        // B -> A on the same link pair: sync is bidirectional.
+        let r = call(
+            core_b.0,
+            &command(
+                37,
+                3,
+                0x0002,
+                r#"{"profile":"default","url":"http://from-b/","title":"b","ts_ms":888}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let rep = sync_round(core_b.0, b_link, core_a.0, a_link, 5_000);
+        assert!(rep["accepted"].as_u64().unwrap() >= 1, "{rep}");
+        let r = call(
+            core_a.0,
+            &query(38, 3, 0x0003, r#"{"profile":"default","spec":{}}"#),
+        );
+        assert!(
+            r.ok()
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["url"] == "http://from-b/"),
+            "{:?}",
+            r.ok()
+        );
+        let _ = (dir_a, dir_b);
+    }
+
+    /// SYNC11 conflict legs: both devices edit the same entities
+    /// while unlinked, then converge — the winner computed from
+    /// the ops' own (lamport, device_id) stamps, never arrival
+    /// order or a guessed side.
+    #[test]
+    fn sync_conflicts_converge_over_mem() {
+        let _g = guard();
+        let dir_a = tmpdir("cfA");
+        let dir_b = tmpdir("cfB");
+        let core_a = TestCore::new(&dir_a);
+        let core_b = TestCore::new(&dir_b);
+        let id_a = dev_id(core_a.0);
+        let id_b = dev_id(core_b.0);
+        let r = call(
+            core_a.0,
+            &command(40, 19, 0x000b, r#"{"backend":"mem","name":"cfA"}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_b.0,
+            &command(41, 19, 0x000b, r#"{"backend":"mem","name":"cfB"}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        mw_pair(core_a.0, core_b.0, "default", 15_000);
+        let (b_link, a_link) =
+            member_link(core_b.0, core_a.0, "mem:cfA", &member_nick(&id_b), 5_000);
+
+        // Baseline: one bookmark, one setting, one vault entry —
+        // all on the wire to B BEFORE the split.
+        let r = call(
+            core_a.0,
+            &command(
+                42,
+                4,
+                0x0002,
+                r#"{"profile":"default","node":{"type":2,"title":"orig","url":"http://cf/"},"row":-1}"#,
+            ),
+        );
+        assert!(r.ok()["id"].as_u64().unwrap() > 1, "{:?}", r.err());
+        let r = call(
+            core_a.0,
+            &command(
+                43,
+                1,
+                0x0004,
+                r#"{"profile":"default","key":"integ11/conflict","value":{"t":"s","v":"v0"}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_a.0,
+            &command(
+                44,
+                19,
+                0x001e,
+                r#"{"profile":"default","passphrase":"vaultpw"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true, "{:?}", r.err());
+        save_login(&dir_a, "p0");
+        let rep = sync_round(core_a.0, a_link, core_b.0, b_link, 5_000);
+        assert!(rep["accepted"].as_u64().unwrap() >= 4, "{rep}");
+        let r = call(
+            core_b.0,
+            &command(
+                45,
+                19,
+                0x001e,
+                r#"{"profile":"default","passphrase":"vaultpw"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true, "{:?}", r.err());
+        assert_eq!(
+            bm_json(&dir_b, "http://cf/").unwrap()["title"],
+            "orig"
+        );
+
+        // OFFLINE phase — no exchange: same node title, same
+        // settings key, same password field, one identical visit.
+        for (dir, title) in [(&dir_a, "titleA"), (&dir_b, "titleB")] {
+            let xbel = Path::new(dir).join("profiles/default/bookmarks.xbel");
+            bookmarks::with(|b| {
+                b.ensure_path(&xbel).unwrap();
+                let h = b.find_url("http://cf/").unwrap();
+                b.set_str(h, "title", title).unwrap();
+            });
+        }
+        let r = call(
+            core_a.0,
+            &command(
+                46,
+                1,
+                0x0004,
+                r#"{"profile":"default","key":"integ11/conflict","value":{"t":"s","v":"vA"}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        save_login(&dir_a, "pA");
+        let r = call(
+            core_b.0,
+            &command(
+                47,
+                1,
+                0x0004,
+                r#"{"profile":"default","key":"integ11/conflict","value":{"t":"s","v":"vB"}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        save_login(&dir_b, "pB");
+        // An identical visit on both — the deterministic visit-id
+        // makes it ONE union element, not a conflict at all.
+        for c in [core_a.0, core_b.0] {
+            let r = call(
+                c,
+                &command(
+                    48,
+                    3,
+                    0x0002,
+                    r#"{"profile":"default","url":"http://both/","title":"x","ts_ms":999}"#,
+                ),
+            );
+            assert_eq!(r.ok()["ok"], true);
+        }
+
+        // Two-way exchange — both devices now hold every op.
+        let rep_ab = sync_round(core_a.0, a_link, core_b.0, b_link, 5_000);
+        let rep_ba = sync_round(core_b.0, b_link, core_a.0, a_link, 5_000);
+        assert_eq!(rep_ab["rejected"].as_array().unwrap().len(), 0, "{rep_ab}");
+        assert_eq!(rep_ba["rejected"].as_array().unwrap().len(), 0, "{rep_ba}");
+
+        // The expected winner falls out of the ops' own stamps:
+        // the highest (lamport, device_id) owns the LWW field.
+        let ops_a = call(core_a.0, &query(49, 19, 0x0007, "")).ok()["ops"].clone();
+        let ops_b = call(core_b.0, &query(50, 19, 0x0007, "")).ok()["ops"].clone();
+        let all: Vec<Value> = ops_a
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(ops_b.as_array().unwrap().iter())
+            .cloned()
+            .collect();
+        let key_of = |o: &Value| -> (u64, String) {
+            (
+                o["lamport"].as_u64().unwrap(),
+                o["device_id"].as_str().unwrap().to_string(),
+            )
+        };
+        let winner = |pred: &dyn Fn(&Value) -> bool| -> Value {
+            all.iter()
+                .filter(|o| pred(o))
+                .max_by_key(|o| key_of(o))
+                .expect("no op matched")
+                .clone()
+        };
+        let win_title = winner(&|o| {
+            o["store"] == "bookmarks"
+                && o["body"]["t"] == "set"
+                && o["body"]["f"] == "title"
+        })["body"]["v"]
+            .clone();
+        let win_set = winner(&|o| {
+            o["store"] == "settings"
+                && o["body"]["t"] == "set"
+                && o["body"]["key"] == "integ11/conflict"
+        })["body"]["val"]["v"]
+            .clone();
+        // The vault's fields are sealed; the STAMP is in the clear.
+        // The newest passwords.set op decides "pass" — its author's
+        // plaintext is the expected value.
+        let pw_win_dev = winner(&|o| {
+            o["store"] == "passwords" && o["body"]["t"] == "set"
+        })["device_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let expected_pass = if pw_win_dev == id_a { "pA" } else { "pB" };
+
+        // Both sides converged to the computed winners.
+        let ta = bm_json(&dir_a, "http://cf/").unwrap()["title"].clone();
+        let tb = bm_json(&dir_b, "http://cf/").unwrap()["title"].clone();
+        assert_eq!(ta, tb, "titles diverged: {ta} vs {tb}");
+        assert_eq!(ta, win_title);
+        let va = call(
+            core_a.0,
+            &query(51, 1, 0x0001, r#"{"profile":"default","key":"integ11/conflict"}"#),
+        )
+        .ok()["v"]
+            .clone();
+        let vb = call(
+            core_b.0,
+            &query(52, 1, 0x0001, r#"{"profile":"default","key":"integ11/conflict"}"#),
+        )
+        .ok()["v"]
+            .clone();
+        assert_eq!(va, vb, "settings diverged: {va} vs {vb}");
+        assert_eq!(va, win_set);
+        for dir in [&dir_a, &dir_b] {
+            let forms = autofill_forms(dir);
+            let f = forms
+                .iter()
+                .find(|f| f.url == "https://cf/login")
+                .unwrap_or_else(|| panic!("{dir}: entry missing: {forms:?}"));
+            assert!(
+                f.elements
+                    .iter()
+                    .any(|(k, v)| k == "pass" && v == expected_pass),
+                "{dir}: converged pass is not the computed winner {expected_pass}: {forms:?}"
+            );
+        }
+        for c in [core_a.0, core_b.0] {
+            let r = call(
+                c,
+                &query(53, 3, 0x0003, r#"{"profile":"default","spec":{}}"#),
+            );
+            let n = r
+                .ok()
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| r["url"] == "http://both/")
+                .count();
+            assert_eq!(n, 1, "identical visit did not dedup: {:?}", r.ok());
+        }
+        let _ = (id_a, id_b, dir_a, dir_b);
+    }
+
+    /// SYNC11 revocation leg: a live pair cut mid-session — the
+    /// rekey op rides the still-open link, the revoked side tears
+    /// down symmetrically, new dials die at the gate, and every
+    /// post-revoke op fails the signature gate loud.
+    #[test]
+    fn sync_revocation_cuts_peer_over_mem() {
+        let _g = guard();
+        let dir_a = tmpdir("rvA");
+        let dir_b = tmpdir("rvB");
+        let core_a = TestCore::new(&dir_a);
+        let core_b = TestCore::new(&dir_b);
+        let id_b = dev_id(core_b.0);
+        let id_a = dev_id(core_a.0);
+        let r = call(
+            core_a.0,
+            &command(60, 19, 0x000b, r#"{"backend":"mem","name":"rvA"}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_b.0,
+            &command(61, 19, 0x000b, r#"{"backend":"mem","name":"rvB"}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        mw_pair(core_a.0, core_b.0, "default", 15_000);
+        let (b_link, a_link) =
+            member_link(core_b.0, core_a.0, "mem:rvA", &member_nick(&id_b), 5_000);
+
+        // Baseline proves the link pair carries ops.
+        let r = call(
+            core_a.0,
+            &command(
+                62,
+                1,
+                0x0004,
+                r#"{"profile":"default","key":"integ11/base","value":{"t":"s","v":"b0"}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let rep = sync_round(core_a.0, a_link, core_b.0, b_link, 5_000);
+        assert!(rep["accepted"].as_u64().unwrap() >= 1, "{rep}");
+        let r = call(
+            core_b.0,
+            &query(63, 1, 0x0001, r#"{"profile":"default","key":"integ11/base"}"#),
+        );
+        assert_eq!(r.ok()["v"], "b0");
+
+        // A unpairs B: member row + grant die locally; the rekey op
+        // is on the wire for the surviving group — and the cut
+        // device, whose link is still open.
+        let r = call(
+            core_a.0,
+            &command(
+                64,
+                19,
+                0x0022,
+                &serde_json::to_string(
+                    &json!({"profile": "default", "device_id": id_b}),
+                )
+                .unwrap(),
+            ),
+        );
+        let rep = r.ok().clone();
+        assert_eq!(rep["member_removed"], true, "{rep}");
+        assert_eq!(rep["grant_revoked"], true, "{rep}");
+        let r = call(core_a.0, &query(65, 19, 0x0002, ""));
+        assert_eq!(r.ok()["members"].as_array().unwrap().len(), 0);
+
+        // The cut reaches B on the same wire — its own membership
+        // and grant die symmetrically on apply.
+        let rep = sync_round(core_a.0, a_link, core_b.0, b_link, 5_000);
+        assert!(rep["accepted"].as_u64().unwrap() >= 1, "{rep}");
+        let r = call(core_b.0, &query(66, 19, 0x0002, ""));
+        assert_eq!(
+            r.ok()["members"].as_array().unwrap().len(),
+            0,
+            "revoked device kept a member row: {:?}",
+            r.ok()
+        );
+        let r = call(core_b.0, &query(67, 19, 0x000d, ""));
+        assert!(
+            !r.ok()["authorized"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(member_nick(&id_a))),
+            "{:?}",
+            r.ok()
+        );
+
+        // A fresh dial is refused at the transport gate.
+        let r = call(
+            core_b.0,
+            &command(
+                68,
+                19,
+                0x0011,
+                &serde_json::to_string(&json!({
+                    "endpoint": "mem:rvA",
+                    "nickname": member_nick(&id_b),
+                }))
+                .unwrap(),
+            ),
+        );
+        assert_eq!(r.err().0, "op_failed");
+
+        // B keeps signing locally — its ops are refused by
+        // SIGNATURE on A now, not silently dropped.
+        let r = call(
+            core_b.0,
+            &command(
+                69,
+                1,
+                0x0004,
+                r#"{"profile":"default","key":"integ11/post","value":{"t":"s","v":"b1"}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let rep = sync_round(core_b.0, b_link, core_a.0, a_link, 5_000);
+        let reasons: Vec<String> = rep["rejected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["reason"].as_str().map(String::from))
+            .collect();
+        assert!(
+            reasons.iter().any(|r| r.contains("not a sync member")),
+            "{rep}"
+        );
+        let r = call(
+            core_a.0,
+            &query(70, 1, 0x0006, r#"{"profile":"default","key":"integ11/post"}"#),
+        );
+        assert_eq!(r.ok()["present"], false);
+
+        // Symmetric: A's post-revoke writes are refused by B too.
+        let r = call(
+            core_a.0,
+            &command(
+                71,
+                1,
+                0x0004,
+                r#"{"profile":"default","key":"integ11/posta","value":{"t":"s","v":"a1"}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let rep = sync_round(core_a.0, a_link, core_b.0, b_link, 5_000);
+        let reasons: Vec<String> = rep["rejected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["reason"].as_str().map(String::from))
+            .collect();
+        assert!(
+            reasons.iter().any(|r| r.contains("not a sync member")),
+            "{rep}"
+        );
+        let r = call(
+            core_b.0,
+            &query(72, 1, 0x0006, r#"{"profile":"default","key":"integ11/posta"}"#),
+        );
+        assert_eq!(r.ok()["present"], false);
+        let _ = (id_a, dir_a, dir_b);
+    }
+
+    /// SYNC11 LAN leg: real ops ride a real QUIC link — mDNS
+    /// discovery, member-cert mTLS dial, a bookmark op landing in
+    /// the peer's xbel.  Honest skip when the host has no
+    /// multicast-capable interface.
+    #[cfg(feature = "synclan")]
+    #[test]
+    fn sync_ops_over_lan_circuit() {
+        let _g = guard();
+        if crate::synctransport::lan::mdns::bind_socket(
+            std::net::Ipv4Addr::new(239, 255, 77, 243),
+            15422,
+            std::net::Ipv4Addr::UNSPECIFIED,
+        )
+        .is_err()
+        {
+            eprintln!("SKIP sync_ops_over_lan_circuit: no multicast iface");
+            return;
+        }
+        let dir_a = tmpdir("lnA");
+        let dir_b = tmpdir("lnB");
+        let core_a = TestCore::new(&dir_a);
+        let core_b = TestCore::new(&dir_b);
+        let id_a = dev_id(core_a.0);
+        let id_b = dev_id(core_b.0);
+        let pk_a = call(core_a.0, &query(80, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let pk_b = call(core_b.0, &query(81, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let r = call(
+            core_a.0,
+            &command(
+                82,
+                19,
+                0x000b,
+                r#"{"backend":"lan","quic_port":14231,"mdns_port":15612,"mdns_group":"239.255.77.213"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["backend"], "lan", "{:?}", r.err());
+        let r = call(
+            core_b.0,
+            &command(
+                83,
+                19,
+                0x000b,
+                r#"{"backend":"lan","quic_port":14232,"mdns_port":15612,"mdns_group":"239.255.77.213"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["backend"], "lan", "{:?}", r.err());
+
+        // What pairing installs: member rows + member-* grants.
+        for (core, pk, nick) in [
+            (core_a.0, &pk_b, member_nick(&id_b)),
+            (core_b.0, &pk_a, member_nick(&id_a)),
+        ] {
+            let r = call(
+                core,
+                &command(
+                    84,
+                    19,
+                    0x0003,
+                    &serde_json::to_string(
+                        &json!({"pubkey_b64": pk, "scope": "default"}),
+                    )
+                    .unwrap(),
+                ),
+            );
+            assert_eq!(r.ok()["ok"], true, "{:?}", r.err());
+            let r = call(
+                core,
+                &command(
+                    85,
+                    19,
+                    0x000e,
+                    &serde_json::to_string(
+                        &json!({"nickname": nick, "discovery_key": "x"}),
+                    )
+                    .unwrap(),
+                ),
+            );
+            assert_eq!(r.ok()["ok"], true);
+        }
+
+        // mDNS convergence, then a member-cert dial by device id.
+        let mut seen = false;
+        for _ in 0..240 {
+            let r = call(core_b.0, &query(86, 19, 0x0023, ""));
+            if r.ok()["peers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["device_id"] == id_a)
+            {
+                seen = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(seen, "B never discovered A over mDNS");
+        let (b_link, a_link) = member_link(
+            core_b.0,
+            core_a.0,
+            &format!("lan://{id_a}"),
+            "self",
+            15_000,
+        );
+
+        // A real op batch rides the QUIC link — the peer's xbel
+        // merges it.
+        let r = call(
+            core_a.0,
+            &command(
+                87,
+                4,
+                0x0002,
+                r#"{"profile":"default","node":{"type":2,"title":"lanbm","url":"http://lan/"},"row":-1}"#,
+            ),
+        );
+        assert!(r.ok()["id"].as_u64().unwrap() > 1, "{:?}", r.err());
+        let rep = sync_round(core_a.0, a_link, core_b.0, b_link, 15_000);
+        assert!(rep["accepted"].as_u64().unwrap() >= 1, "{rep}");
+        let bm = bm_json(&dir_b, "http://lan/").expect("bookmark missing on B");
+        assert_eq!(bm["title"], "lanbm");
+
+        let r = call(core_a.0, &command(88, 19, 0x000c, ""));
+        assert_eq!(r.ok()["stopped"], true);
+        let r = call(core_b.0, &command(89, 19, 0x000c, ""));
+        assert_eq!(r.ok()["stopped"], true);
+        let _ = (dir_a, dir_b);
+    }
+
+    /// SYNC11 Tor leg: the same pair + full-stack sync over REAL
+    /// Tor — embedded Arti on both cores, live directory + onion
+    /// circuits, no loopback.  Ignored by default: it needs Tor
+    /// egress and minutes of bootstrap.  Run it explicitly:
+    ///   cargo test sync_full_stack_over_tor_live -- --ignored
+    /// The mem legs cover every step of the path hermetically;
+    /// this proves the framing holds on the real network tier.
+    #[cfg(feature = "synctor")]
+    #[test]
+    #[ignore = "needs live Tor egress — run explicitly"]
+    fn sync_full_stack_over_tor_live() {
+        let _g = guard();
+        let dir_a = tmpdir("ttA");
+        let dir_b = tmpdir("ttB");
+        let core_a = TestCore::new(&dir_a);
+        let core_b = TestCore::new(&dir_b);
+        let id_a = dev_id(core_a.0);
+        let id_b = dev_id(core_b.0);
+
+        let r = call(
+            core_a.0,
+            &command(90, 19, 0x000b, r#"{"backend":"tor"}"#),
+        );
+        let ep_a = r.ok()["endpoint"].as_str().unwrap().to_string();
+        assert!(ep_a.ends_with(".onion:14430"), "{ep_a}");
+        let r = call(
+            core_b.0,
+            &command(91, 19, 0x000b, r#"{"backend":"tor"}"#),
+        );
+        assert!(r.ok()["endpoint"].as_str().unwrap().ends_with(".onion:14430"));
+
+        // The REAL ceremony over live circuits — bootstrap plus
+        // the handshake round-trips needs minutes, not ms.
+        mw_pair(core_a.0, core_b.0, "default", 600_000);
+        // The first post-pair dial races the member grant's
+        // descriptor republish — transient refusals are retried by
+        // member_link like a real sync retry would.
+        let (b_link, a_link) = member_link(
+            core_b.0,
+            core_a.0,
+            &ep_a,
+            &member_nick(&id_b),
+            420_000,
+        );
+
+        // One op each way proves the path — the hermetic legs
+        // cover per-store semantics.
+        let r = call(
+            core_a.0,
+            &command(
+                92,
+                4,
+                0x0002,
+                r#"{"profile":"default","node":{"type":2,"title":"torbm","url":"http://tor/"},"row":-1}"#,
+            ),
+        );
+        assert!(r.ok()["id"].as_u64().unwrap() > 1, "{:?}", r.err());
+        let rep = sync_round(core_a.0, a_link, core_b.0, b_link, 120_000);
+        assert!(rep["accepted"].as_u64().unwrap() >= 1, "{rep}");
+        let bm = bm_json(&dir_b, "http://tor/").expect("bookmark missing on B");
+        assert_eq!(bm["title"], "torbm");
+
+        let r = call(
+            core_b.0,
+            &command(
+                93,
+                1,
+                0x0004,
+                r#"{"profile":"default","key":"integ11/tor","value":{"t":"s","v":"tv"}}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let rep = sync_round(core_b.0, b_link, core_a.0, a_link, 120_000);
+        assert!(rep["accepted"].as_u64().unwrap() >= 1, "{rep}");
+        let r = call(
+            core_a.0,
+            &query(94, 1, 0x0001, r#"{"profile":"default","key":"integ11/tor"}"#),
+        );
+        assert_eq!(r.ok()["v"], "tv");
+
+        let r = call(core_a.0, &command(95, 19, 0x000c, ""));
+        assert_eq!(r.ok()["stopped"], true);
+        let r = call(core_b.0, &command(96, 19, 0x000c, ""));
+        assert_eq!(r.ok()["stopped"], true);
+        let _ = (id_a, id_b, dir_a, dir_b);
+    }
 }
