@@ -396,7 +396,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC14 | macOS fix: Tor window new-tab (+) button misplaced/wrong — details below | done | 0 | Blind fix: the in-strip + parked over the last tabs trailing edge is only honest while the covered widget yields — on macOS close sits on the tabs left edge so the covered edge is bare face; + now hides rather than cover a tab (same rule the rail already uses) and its glyph is pinned to the parked slot instead of PM_ToolBarIconSize. Verified: new tst_tabbar::newTabButtonNoChromeHide leg (QProxyStyle LeftSide close simulating macOS) PASS, suite 33/33, tst_tabwidget newTabButton PASS, tor chrome legs PASS, --quit-after-load exit 0 offscreen; mac runtime verify owed |
 | MAC15 | macOS fix: Tor start page background doesn't fill the window — details below | done | 0 | Blind fix: start-page bg relied on root->canvas propagation which only covers the renderer-believed viewport — body now paints the same gradient at min-height:100vh (all 4 variants + dark), and WebView gets a macOS-only one-time ±1px size-reassert bounce at first show for a stale reported viewport. Verified: new tst_webpage::startPageViewportCoverage FAILs unmodified (body bg: none) + PASSes fixed on all 4 pages, suite green to documented pre-existing OTR trap, --startpage-smoke 50/50, --quit-after-load exit 0 on tor page; mac runtime verify owed |
 | MAC16 | macOS fix: urlbar renders badly + suggestion dropdown truncated — details below | done | 0 | completer rebinds to focused/edited bar (stale NSToolbar binding showed dropdown at a hidden bar stub width); emphasis overlay + margins read applied metrics, gates use isVisible(); completerTracksFocusedBar + suites green; mac verify owed |
-| MAC17 | macOS fix: extension popup still right-truncated AND draggable like a window — details below | pending | 0 | needs:task:MAC15 — MAC12 was incomplete: locked-vault popup still clips right edge, and the frameless window is user-movable instead of an anchored popover. Size to content AND make it non-movable (locked frameless, or NSPopover-class window) |
+| MAC17 | macOS fix: extension popup still right-truncated AND draggable like a window — details below | done | 0 | needs:task:MAC15 — doc-fit now takes max over a bounded descendant-rect walk (nested-clipped/abs-positioned content escapes every ancestor scroll size — the locked-vault case); macOS frameless bubble is anchor-locked: intended-pos property + event-filter snap-back on foreign Moves + re-anchor on host move/resize. actionPopupDocFit green: 624x800 fit on nested-clip fixture + move snap-back QCOMPARE; env trap crashes identically on HEAD; mac verify owed |
 | SYNC01 | Serverless sync: engine core — device identity (Ed25519), sync store, per-store op-log tailing, sync-group membership state — details below | done | 0 | rustcore sync engine core: Ed25519 identity (sync/device.key, never synced), members+oplog sync.db, content-addressed signed ops (op_id=sha256 frame), canonical (lamport,device_id,op_id) apply + dedup, deferred drain seam for SYNC04 adapters; mw domain 19 envelope-only (identity/members/append/export/import/stats/drain) + MW-ARCH §8.19. Verified: cargo test 492/492 incl. two-device loopback + tamper/unknown-signer rejects, acprobe --bridge OK, sync.rs 86% lines (>85% gate), make -j2 green, --quit-after-load exit 0 offscreen |
 | SYNC02 | Serverless sync: Tor transport — embedded Arti, v3 onion service per device, authorized-client gating, outbound circuits — details below | done | 2 | embedded-Arti tor transport + mem loopback behind the SyncTransport seam: v3 onion stable across restarts (keystore hsid), restricted-discovery x25519 gating refuses unpaired peers at the Tor layer, backoffd outbound links, sync.transport_* mw ops (domain 19, since:2). Verified: tools/synctor-e2e.sh ALL LEGS PASS on real Tor (authorized PING->PONG, unauthorized refused pre-app-layer, endpoint stable across restart), cargo test 501/501 incl mw envelope e2e, acprobe --bridge OK, rustcore 91.10% lines (>85% gate), check-supplychain clean (audit.toml mirrors deny.toml ignores; rustdl webpki bumped for new advisories), make -j2 green, --quit-after-load exit 0 offscreen |
 | SYNC03 | Serverless sync: pairing — QR payload, Noise_XX mutual auth, group-secret join, emoji/word fingerprint verify UI — details below | done | 0 | Noise_XX pairing w/ QR+manual code, fingerprint verify, scoped members; cargo test 513/513, make -j2 clean |
@@ -4755,3 +4755,56 @@ doc-fit change measured the wrong node — audit again), (b) make the
 window non-movable — frameless-without-drag or an NSPopover-class
 window; it must stay anchored to the action button. Blind fix +
 document.
+
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Diagnosis (a) — the MAC12 measure still read the wrong level.
+body.scrollWidth reports only the body's OWN scrollable overflow: an
+overflow clipped inside a NESTED container never propagates to any
+ancestor's scroll area (that is what clipping means), and
+absolutely/fixed-positioned chrome escapes the body flow entirely.
+Bitwarden's locked-vault popup is the nested case — the vault's
+clipped inner container makes body.scrollWidth read the viewport
+again, the bubble stayed narrow, and the page's own clip sliced the
+password field's eye affordance at the right edge.  The laid-out box
+of every descendant keeps true geometry regardless of ancestor
+clips, so the honest document extent is the farthest descendant
+edge: the doc-fit JS now also walks body.querySelectorAll('*')
+(bounded at 400 nodes — popup DOMs are small) and takes the max of
+every rect's right/bottom on top of the de/body scroll+rect reads.
+
+Diagnosis (b) — the macOS bubble is a Qt::Window +
+Qt::FramelessWindowHint, which maps to NSWindowStyleMaskBorderless,
+and AppKit defaults borderless windows to movableByWindowBackground:
+any unconsumed mouse-down could drag the popup off its button.
+There is no Qt flag for immovability (Qt only calls
+performWindowDragWithEvent from startSystemMove, so the drag is pure
+AppKit default), so the bubble is locked frameless instead: every
+placement writes its target into an arktosIntendedPos dynamic
+property BEFORE moving, and the app-wide event filter snaps any Move
+that lands away from the recorded spot back — foreign drags and
+window-manager placements included; our own placements write the
+property first, so they never fight the lock.  Anchored like a real
+popover also means following the anchor: host-window Move/Resize
+re-runs the placement thunk (stored QPointer-guarded on the bar), so
+the bubble stays under its button when the browser window moves.
+The intended position lives on the popup widget, not the bar,
+because deferred refits may outlive it.
+
+Verification: the actionPopupDocFit fixture now carries BOTH shapes
+— a 600px direct-flow div (the MAC12 regression: visible to
+body.scrollWidth) plus a 700px div clipped inside a nested
+overflow:hidden container (visible only to the descendant walk —
+old measure converges to ~viewport height, new reports 800).  Green
+runs: bubble refits to 624x800 (>=600x700 assertion), the new
+anchor-lock leg moves the bubble +30/+30 and it snaps back to the
+recorded spot synchronously (QCOMPARE), actionPopupSelfWires and
+extensionPopupContext PASS, --quit-after-load exit 0 offscreen.
+Caveat: this env's pre-existing headless-WebEngine trap (Chromium
+'Received signal 11' at ~0x0 in the popup load/measure window)
+fires at ~equal rates on unmodified HEAD — verified by running the
+same test fixture against the old src in the identical wait window
+(~5/6 crashes there); a same-view chrome-extension:// second
+navigation also hits a deterministic renderer CHECK trap here, so
+the nested-clip case is folded into the one popup's fixture instead
+of a second open.  macOS runtime verify still owed.

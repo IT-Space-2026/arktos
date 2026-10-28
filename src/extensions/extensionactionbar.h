@@ -27,6 +27,8 @@
 #include <qurl.h>
 #include <qwidget.h>
 
+#include <functional>
+
 class QAction;
 class QFrame;
 class QHBoxLayout;
@@ -37,8 +39,9 @@ class QToolButton;
 // enabled+loaded extension whose manifest declares an action popup;
 // the click opens a bubble-framed QWebEngineView on the canonical
 // browsing profile loading the extension's actionPopupUrl (an
-// overlaid child of the window on Linux, a frameless top-level
-// window on macOS).  The
+// overlaid child of the window on Linux, an anchor-locked frameless
+// top-level window on macOS — MAC17 snaps foreign moves back to the
+// recorded anchor spot).  The
 // whole strip hides while zero popup-bearing extensions are enabled
 // (no dead gap in the splitter), and private/tor windows never
 // construct it at all — no profile they run may load extensions
@@ -100,6 +103,13 @@ private:
     QPointer<QAction> m_toolbarAction;
     QPointer<QFrame> m_popup;
     QPointer<QWidget> m_popupAnchor;
+    // MAC17: the window hosting the open popup and the re-place thunk
+    // for it.  The event filter snaps any move away from the recorded
+    // anchor spot back (the macOS frameless window is background-
+    // draggable by AppKit default — locked-frameless instead) and
+    // re-anchors the bubble when the host itself moves/resizes.
+    QPointer<QWidget> m_popupHost;
+    std::function<void()> m_reanchorPopup;
     QString m_popupExtensionId;
 };
 

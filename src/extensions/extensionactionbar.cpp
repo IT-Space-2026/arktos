@@ -411,6 +411,29 @@ bool ExtensionActionBar::eventFilter(QObject *watched, QEvent *event)
         if (!inside)
             m_popup->close();
     }
+    // MAC17: the macOS bubble is a frameless NSWindow, and AppKit
+    // defaults borderless windows to movableByWindowBackground — the
+    // user could drag the popup off its anchor like a normal window.
+    // There is no Qt flag for immovability, so lock it the other way:
+    // any Move that lands away from the recorded anchor spot is a
+    // foreign move (a drag, or window-manager placement) — snap back.
+    // Our own placements write the property first, so they never
+    // fight the lock.
+    if (watched == m_popup && event->type() == QEvent::Move) {
+        const QVariant intended = m_popup->property("arktosIntendedPos");
+        if (intended.isValid() && m_popup->pos() != intended.toPoint()) {
+            m_popup->move(intended.toPoint());
+            return true;
+        }
+    }
+    // Anchored like a real popover also means following the anchor:
+    // when the host window moves or resizes, re-derive the spot from
+    // the button instead of leaving a top-level bubble where it was.
+    if (watched == m_popupHost && m_popup && m_popup->isVisible()
+            && (event->type() == QEvent::Move
+                || event->type() == QEvent::Resize)
+            && m_reanchorPopup)
+        m_reanchorPopup();
     return QWidget::eventFilter(watched, event);
 }
 
@@ -461,12 +484,17 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
                 ? anchor->mapTo(hostWindow, anchor->rect().bottomRight())
                 : QPoint(hostWindow->width() - note->width() - 8, 40);
         const QRect bounds(QPoint(0, 0), hostWindow->size());
-        note->move(clampToRect(topRight.x() - note->width(),
-                               topRight.y() + 2, note->size(), bounds));
+        const QPoint target = clampToRect(topRight.x() - note->width(),
+                                          topRight.y() + 2,
+                                          note->size(), bounds);
+        note->setProperty("arktosIntendedPos", target);
+        note->move(target);
         note->show();
         note->raise();
         m_popup = note;
         m_popupAnchor = anchor;
+        m_popupHost = hostWindow;
+        m_reanchorPopup = {};
         m_popupExtensionId = id;
         return;
     }
@@ -504,6 +532,10 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     // an alien widget chain, and neither class of surface is proven;
     // the overlay was also already measured failing under the old
     // deferred-attach ordering (white, then black once native).
+    // The frameless window class stays user-immovable via the MAC17
+    // anchor lock in eventFilter — AppKit defaults borderless
+    // NSWindows to movableByWindowBackground, which is what let the
+    // bubble be dragged away from its button.
     QFrame *popup = new QFrame(hostWindow,
                                Qt::Window | Qt::FramelessWindowHint);
 #else
@@ -585,8 +617,17 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
             anc ? anc->mapTo(host, anc->rect().bottomRight())
                 : QPoint(bounds.right() - 8, 40);
 #endif
-        pop->move(clampToRect(topRight.x() - pop->width(),
-                              topRight.y() + 2, pop->size(), bounds));
+        const QPoint target = clampToRect(topRight.x() - pop->width(),
+                                          topRight.y() + 2,
+                                          pop->size(), bounds);
+        // MAC17: record the anchored spot on the bubble itself — the
+        // macOS frameless window is movableByWindowBackground (AppKit
+        // defaults borderless NSWindows movable), so a user drag
+        // arrives as a foreign Move; the event filter snaps it back
+        // to this point.  Kept on the widget, not the bar, because
+        // deferred refits may outlive it.
+        pop->setProperty("arktosIntendedPos", target);
+        pop->move(target);
     };
 
     // Chrome resizes the bubble to the document — WebEngine cannot
@@ -603,6 +644,16 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     const QPointer<QWidget> anchorGuard(anchor);
     const QPointer<QWidget> hostGuard(hostWindow);
     const QPointer<QWebEnginePage> pageGuard(page);
+    // MAC17: the host window owns the popup (it dies with its window)
+    // and the event filter re-runs this when the host moves or resizes
+    // so a top-level bubble stays pinned under its button like a real
+    // popover instead of being left hanging where it was placed.
+    m_popupHost = hostWindow;
+    m_reanchorPopup = [popupGuard, anchorGuard, hostGuard,
+                       placePopup]() {
+        if (popupGuard && hostGuard)
+            placePopup(popupGuard, anchorGuard, hostGuard);
+    };
     const auto measure = [popupGuard, pageGuard, anchorGuard, hostGuard,
                           popupBounds, placePopup]() {
         if (!pageGuard)
@@ -617,6 +668,18 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
         // truncation report).  body's scrollWidth/scrollHeight still
         // report the true overflow, and its bounding rect catches a
         // margined body.  Take the widest honest reading of all three.
+        // MAC17: body's scroll size under-reports too — an overflow
+        // clipped inside a NESTED container never propagates to any
+        // ancestor's scroll area (that's what clipping means), and
+        // absolutely/fixed-positioned chrome escapes the body flow
+        // entirely.  Bitwarden's locked-vault popup is the nested
+        // case: the vault's clipped inner container makes
+        // body.scrollWidth read the viewport again, so the window
+        // stayed narrow and the page's own clip sliced the password
+        // field's eye affordance at the right edge.  The laid-out
+        // box of every descendant keeps true geometry regardless of
+        // ancestor clips, so the honest document extent is the
+        // farthest descendant edge — walk a bounded set of them.
         pageGuard->runJavaScript(
             QStringLiteral("(function(){"
                            "var de=document.documentElement;"
@@ -626,7 +689,13 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
                            "if(db){var r=db.getBoundingClientRect();"
                            "w=Math.max(w,db.scrollWidth,Math.ceil(r.right));"
                            "h=Math.max(h,db.scrollHeight,Math.ceil(r.bottom));"
-                           "}"
+                           "var all=db.querySelectorAll('*');"
+                           "var n=Math.min(all.length,400);"
+                           "for(var i=0;i<n;i++){"
+                           "var e=all[i].getBoundingClientRect();"
+                           "w=Math.max(w,Math.ceil(e.right));"
+                           "h=Math.max(h,Math.ceil(e.bottom));"
+                           "}}"
                            "return [w,h];})()"),
             [popupGuard, anchorGuard, hostGuard,
              popupBounds, placePopup](const QVariant &result) {

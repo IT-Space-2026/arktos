@@ -5035,3 +5035,14 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   read the field's applied margins instead of re-deriving them from
   live size hints, keeping the overlay and the icon cluster aligned
   where toolbar-hosted metrics resolve late. (Most visible on macOS.)
+- Extension action popups now size to the real document even when
+  the page clips overflow inside a nested container — the case that
+  still truncated the locked Bitwarden vault's right edge (the
+  password field's eye button): content clipped inside an inner
+  element never reaches any ancestor's scroll size, so the
+  fit-to-content measure now also reads the farthest laid-out edge
+  across the document's descendants. The popup can also no longer be
+  dragged around like a normal window on macOS: the frameless bubble
+  is locked to its anchor spot — a drag snaps straight back — and it
+  follows its button when the browser window moves or resizes, like
+  a real popover. (Most visible on macOS.)

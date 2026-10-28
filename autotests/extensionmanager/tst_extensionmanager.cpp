@@ -13265,14 +13265,23 @@ void tst_ExtensionManager::actionPopupDocFit()
         w.close();
         QFile h(dir + QLatin1String("/popup.html"));
         QVERIFY(h.open(QIODevice::WriteOnly));
-        // Bitwarden's shape: BOTH the root and the body clip — the
-        // body's box is viewport-sized while its content overflows
-        // unseen, invisible to documentElement's scroll size.
+        // Bitwarden's shape, in both of the reported incarnations:
+        // BOTH the root and the body clip — the body's box is
+        // viewport-sized while its content overflows unseen,
+        // invisible to documentElement's scroll size (the MAC12
+        // regression, carried by the 600px direct-flow div).  The
+        // locked-vault shape nests the clip one level deeper — the
+        // 700px content inside the inner clipping container never
+        // reaches ANY ancestor's scroll size, so only the
+        // descendant-walk measure (MAC17) reports it.
         h.write("<!doctype html><html style=\"overflow:hidden\">"
                 "<body style=\"margin:0;width:100%;height:100%;"
                 "overflow:hidden\">"
-                "<div style=\"min-width:600px;height:700px\">x</div>"
-                "</body></html>");
+                "<div style=\"min-width:600px;height:100px\">x</div>"
+                "<div style=\"width:100%;height:100px;"
+                "overflow:hidden\">"
+                "<div style=\"width:200px;height:700px\">y</div>"
+                "</div></body></html>");
         h.close();
     }
 
@@ -13316,6 +13325,14 @@ void tst_ExtensionManager::actionPopupDocFit()
     QTRY_VERIFY_WITH_TIMEOUT(
         popup->width() >= 600 && popup->height() >= 700,
         30000);
+
+    // MAC17: the bubble is anchor-locked — a move that lands away
+    // from the recorded spot is a foreign move (on macOS the
+    // frameless NSWindow is draggable-by-background by default) and
+    // must snap straight back.
+    const QPoint anchored = popup->pos();
+    popup->move(anchored + QPoint(30, 30));
+    QCOMPARE(popup->pos(), anchored);
 
     popup->close();
     QTRY_VERIFY_WITH_TIMEOUT(
