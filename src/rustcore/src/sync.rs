@@ -49,7 +49,7 @@ use crate::store;
 pub const SYNC_DIR: &str = "sync";
 pub const DEVICE_KEY_FILE: &str = "device.key";
 pub const DB_FILE: &str = "sync.db";
-const SCHEMA: &str = "1";
+const SCHEMA: &str = "2";
 
 /// The stores the op-log tails — SYNC04–SYNC08 land the per-store
 /// CRDT adapters that produce and consume their bodies.
@@ -142,7 +142,11 @@ fn signed_frame(
     v
 }
 
-/// A member of the sync group — one paired device.
+/// A member of the sync group — one paired device.  `scopes` lists
+/// the profile sync groups the device is bound to (SYNC03: pairing
+/// binds a peer to ONE profile's group; an empty list means a
+/// device-global member — the SYNC01 spelling, kept for ops logged
+/// before scope groups existed).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Member {
     pub device_id: String,
@@ -150,6 +154,7 @@ pub struct Member {
     pub onion_addr: String,
     pub last_seen_ms: i64,
     pub added_ms: i64,
+    pub scopes: Vec<String>,
 }
 
 /// One op on the wire — the shape export() emits and import()
@@ -402,6 +407,11 @@ impl SyncEngine {
                  onion_addr TEXT NOT NULL DEFAULT '',
                  last_seen INTEGER NOT NULL DEFAULT 0,
                  added INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE IF NOT EXISTS member_scopes(
+                 device_id TEXT NOT NULL,
+                 scope TEXT NOT NULL,
+                 added INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY(device_id, scope));
              CREATE TABLE IF NOT EXISTS oplog(
                  seq INTEGER PRIMARY KEY AUTOINCREMENT,
                  op_id TEXT NOT NULL UNIQUE,
@@ -420,9 +430,10 @@ impl SyncEngine {
                  ON oplog(store, applied);",
         )
         .map_err(|e| sql_fail("schema", e))?;
-        if meta_get(&conn, "schema")?.is_none() {
+        if meta_get(&conn, "schema")?.as_deref() != Some(SCHEMA) {
             conn.execute(
-                "INSERT INTO meta(key, value) VALUES('schema', ?1)",
+                "INSERT INTO meta(key, value) VALUES('schema', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 params![SCHEMA],
             )
             .map_err(|e| sql_fail("meta write", e))?;
@@ -449,9 +460,17 @@ impl SyncEngine {
     /// derived device id.  Upserts — re-pairing refreshes the onion
     /// address without moving `added`.  Pairing our own key is a
     /// protocol error, not a member row.
-    pub fn member_add(&self, pubkey: &[u8; 32], onion_addr: &str) -> RcResult<String> {
+    ///
+    /// `scope` binds the peer to ONE profile's sync group (SYNC03) —
+    /// "" records a device-global member (the SYNC01 spelling, used
+    /// by the loopback legs).  A scoped member signs only its own
+    /// scope's ops on import; a device-global member signs any.
+    pub fn member_add(&self, pubkey: &[u8; 32], onion_addr: &str, scope: &str) -> RcResult<String> {
         if onion_addr.len() > MAX_ONION_LEN {
             return fail(RcStatus::InvalidArgument, "onion address too long");
+        }
+        if scope.len() > MAX_SCOPE_LEN {
+            return fail(RcStatus::InvalidArgument, "scope too long");
         }
         let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let id = hex(pubkey);
@@ -468,11 +487,42 @@ impl SyncEngine {
                 params![id, &pubkey[..], onion_addr, now_ms()],
             )
             .map_err(|e| sql_fail("member add", e))?;
+        if !scope.is_empty() {
+            st.conn
+                .execute(
+                    "INSERT OR IGNORE INTO member_scopes(device_id, scope, added)
+                     VALUES(?1, ?2, ?3)",
+                    params![id, scope, now_ms()],
+                )
+                .map_err(|e| sql_fail("member scope add", e))?;
+        }
         Ok(id)
+    }
+
+    /// Drop one scope binding; the member row stays (other scopes
+    /// and the identity record survive a per-profile unpair —
+    /// SYNC09's revocation leans on this).
+    #[allow(dead_code)]
+    pub fn member_scope_remove(&self, device_id: &str, scope: &str) -> RcResult<bool> {
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let n = st
+            .conn
+            .execute(
+                "DELETE FROM member_scopes WHERE device_id=?1 AND scope=?2",
+                params![device_id, scope],
+            )
+            .map_err(|e| sql_fail("member scope remove", e))?;
+        Ok(n > 0)
     }
 
     pub fn member_remove(&self, device_id: &str) -> RcResult<bool> {
         let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        st.conn
+            .execute(
+                "DELETE FROM member_scopes WHERE device_id=?1",
+                params![device_id],
+            )
+            .map_err(|e| sql_fail("member scopes remove", e))?;
         let n = st
             .conn
             .execute("DELETE FROM members WHERE device_id=?1", params![device_id])
@@ -519,11 +569,17 @@ impl SyncEngine {
                     onion_addr: r.get(2)?,
                     last_seen_ms: r.get(3)?,
                     added_ms: r.get(4)?,
+                    scopes: Vec::new(),
                 })
             })
             .map_err(|e| sql_fail("members query", e))?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(|e| sql_fail("members read", e))
+        let mut members = rows
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| sql_fail("members read", e))?;
+        for m in &mut members {
+            m.scopes = member_scopes(&st.conn, &m.device_id)?;
+        }
+        Ok(members)
     }
 
     /// The op-log tailing seam: a synced-store adapter calls this
@@ -712,6 +768,24 @@ impl SyncEngine {
                     });
                     continue;
                 };
+                // SYNC03 scope binding: a member bound to profile
+                // groups signs only ITS groups' ops — the paired
+                // peer "sees only that profile's stores".  A member
+                // with no scope rows is device-global (SYNC01
+                // spelling) and signs any scope; our own key is
+                // unrestricted by construction.
+                if op.device_id != own_id
+                    && !member_scope_allows(&st.conn, &op.device_id, &op.scope)?
+                {
+                    report.rejected.push(Reject {
+                        op_id: op.op_id,
+                        reason: format!(
+                            "device is not a member of the \"{}\" sync group",
+                            op.scope
+                        ),
+                    });
+                    continue;
+                }
                 if UnparsedPublicKey::new(&ED25519, &pubkey)
                     .verify(&op.frame(), &op.sig)
                     .is_err()
@@ -800,6 +874,69 @@ impl SyncEngine {
             }
         }
         Ok(report)
+    }
+
+    /// Sign `data` under the device identity — SYNC03 uses it to
+    /// bind the Noise transport static to the Ed25519 identity in
+    /// the pairing handshake's signed-payload field.
+    pub fn sign(&self, data: &[u8]) -> Vec<u8> {
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        st.key.sign(data).as_ref().to_vec()
+    }
+
+    /// The 32-byte secret of `scope`'s sync group — None when the
+    /// group has no secret yet.  Minted once by the device that owns
+    /// the group (the pairing inviter), carried to joiners inside
+    /// the Noise channel (SYNC03), consumed by the SYNC04+ store
+    /// adapters.
+    #[allow(dead_code)]
+    pub fn group_secret(&self, scope: &str) -> RcResult<Option<[u8; 32]>> {
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        group_secret_read(&st.conn, scope)
+    }
+
+    /// The group's secret, minting on first ask — the inviter-side
+    /// spelling (a group exists once someone invites to it).
+    pub fn group_secret_get_or_create(&self, scope: &str) -> RcResult<[u8; 32]> {
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(k) = group_secret_read(&st.conn, scope)? {
+            return Ok(k);
+        }
+        let key = crate::noisexx::rand_bytes::<32>()?;
+        st.conn
+            .execute(
+                "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![group_secret_key(scope), hex(&key)],
+            )
+            .map_err(|e| sql_fail("group secret write", e))?;
+        Ok(key)
+    }
+
+    /// The joiner-side spelling: install the secret the inviter
+    /// sent.  Idempotent on an identical existing key; a DIFFERENT
+    /// stored key is a hard Crypto error — silently swapping group
+    /// secrets would quietly move the device into another sync
+    /// group (rotation is SYNC09's deliberate act, not a side
+    /// effect of re-pairing).
+    pub fn group_secret_install(&self, scope: &str, key: &[u8; 32]) -> RcResult<()> {
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = group_secret_read(&st.conn, scope)? {
+            if &existing == key {
+                return Ok(());
+            }
+            return fail(
+                RcStatus::Crypto,
+                format!("sync group secret for scope \"{scope}\" conflicts with the stored one"),
+            );
+        }
+        st.conn
+            .execute(
+                "INSERT INTO meta(key, value) VALUES(?1, ?2)",
+                params![group_secret_key(scope), hex(key)],
+            )
+            .map_err(|e| sql_fail("group secret write", e))?;
+        Ok(())
     }
 
     pub fn stats(&self) -> RcResult<Value> {
@@ -921,6 +1058,58 @@ fn bump_lamport(conn: &Connection, at_least: u64) -> RcResult<()> {
     Ok(())
 }
 
+/// The scopes bound to one member — empty Vec is a device-global
+/// member (pre-SYNC03 pairings) or an unknown device.
+fn member_scopes(conn: &Connection, device_id: &str) -> RcResult<Vec<String>> {
+    let mut q = st_member_scopes(conn)?;
+    let rows = q
+        .query_map(params![device_id], |r| r.get::<_, String>(0))
+        .map_err(|e| sql_fail("member scopes read", e))?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| sql_fail("member scopes read", e))
+}
+
+fn st_member_scopes(conn: &Connection) -> RcResult<rusqlite::Statement<'_>> {
+    conn.prepare("SELECT scope FROM member_scopes WHERE device_id=?1 ORDER BY scope")
+        .map_err(|e| sql_fail("member scopes query", e))
+}
+
+/// May `device_id` sign ops for `scope`?  A member with no scope
+/// rows is device-global (SYNC01 semantics — the loopback tests and
+/// any member added before scope pairing existed).  Once scope rows
+/// exist the member is bound: only its listed groups pass.
+fn member_scope_allows(conn: &Connection, device_id: &str, scope: &str) -> RcResult<bool> {
+    let scopes = member_scopes(conn, device_id)?;
+    if scopes.is_empty() {
+        return Ok(true);
+    }
+    Ok(scopes.iter().any(|s| s == scope))
+}
+
+/// The meta-table key a scope's group secret lives under.
+fn group_secret_key(scope: &str) -> String {
+    format!("gkey:{scope}")
+}
+
+fn group_secret_read(conn: &Connection, scope: &str) -> RcResult<Option<[u8; 32]>> {
+    let Some(raw) = meta_get(conn, &group_secret_key(scope))? else {
+        return Ok(None);
+    };
+    let bytes: Vec<u8> = (0..raw.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(raw.get(i..i + 2)?, 16).ok())
+        .collect();
+    if bytes.len() != 32 {
+        return fail(
+            RcStatus::Corrupt,
+            format!("stored sync group secret for scope \"{scope}\" is malformed"),
+        );
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&bytes);
+    Ok(Some(key))
+}
+
 fn member_pubkey(conn: &Connection, device_id: &str) -> RcResult<Option<[u8; 32]>> {
     conn.query_row(
         "SELECT pubkey FROM members WHERE device_id=?1",
@@ -1012,7 +1201,7 @@ mod tests {
         let other = SyncEngine::open(&tmpdir("other")).unwrap();
         let other_id = other.device_id();
         let pk = other.public_key();
-        let id = e.member_add(&pk, "abc123.onion").unwrap();
+        let id = e.member_add(&pk, "abc123.onion", "").unwrap();
         assert_eq!(id, other_id);
 
         let list = e.members_list().unwrap();
@@ -1023,7 +1212,7 @@ mod tests {
         assert!(list[0].added_ms > 0);
 
         // Upsert refreshes the onion, not the added stamp.
-        e.member_add(&pk, "def456.onion").unwrap();
+        e.member_add(&pk, "def456.onion", "").unwrap();
         let list = e.members_list().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].onion_addr, "def456.onion");
@@ -1037,7 +1226,7 @@ mod tests {
 
         let own = e.public_key();
         assert_eq!(
-            e.member_add(&own, "").unwrap_err().status,
+            e.member_add(&own, "", "").unwrap_err().status,
             RcStatus::InvalidArgument
         );
 
@@ -1105,7 +1294,7 @@ mod tests {
 
         // A peer device on its own data root consumes the same wire.
         let peer = SyncEngine::open(&tmpdir("peer")).unwrap();
-        peer.member_add(&e.public_key(), "loop.onion").unwrap();
+        peer.member_add(&e.public_key(), "loop.onion", "").unwrap();
         let rep = peer.import(&wire).unwrap();
         assert_eq!(rep.accepted, 2);
         assert_eq!(rep.applied, 2);
@@ -1157,7 +1346,7 @@ mod tests {
         );
 
         let peer = SyncEngine::open(&tmpdir("ordP")).unwrap();
-        peer.member_add(&a.public_key(), "").unwrap();
+        peer.member_add(&a.public_key(), "", "").unwrap();
         let rep = peer.import(&wire).unwrap();
         assert_eq!(rep.accepted, 3);
         assert_eq!(
@@ -1184,7 +1373,7 @@ mod tests {
         assert!(rep.rejected[0].reason.contains("member"));
 
         // Member but tampered body — content id no longer matches.
-        peer.member_add(&a.public_key(), "").unwrap();
+        peer.member_add(&a.public_key(), "", "").unwrap();
         let mut forged = wire[0].clone();
         forged["body"] = serde_json::json!({"k": "evil"});
         let rep = peer.import(&[forged]).unwrap();
@@ -1219,7 +1408,7 @@ mod tests {
             a.export(None, 0).unwrap().iter().map(|o| o.to_json()).collect();
 
         let peer = SyncEngine::open(&tmpdir("dP")).unwrap();
-        peer.member_add(&a.public_key(), "").unwrap();
+        peer.member_add(&a.public_key(), "", "").unwrap();
         let rep = peer.import(&wire).unwrap();
         assert_eq!(rep.deferred, 1);
         assert_eq!(peer.pending_apply("history").unwrap().len(), 1);
@@ -1253,7 +1442,7 @@ mod tests {
             Arc::new(|_s, _b| fail(RcStatus::Io, "adapter exploded")),
         );
         let peer = SyncEngine::open(&tmpdir("eP")).unwrap();
-        peer.member_add(&a.public_key(), "").unwrap();
+        peer.member_add(&a.public_key(), "", "").unwrap();
         let rep = peer.import(&wire).unwrap();
         assert_eq!(rep.accepted, 1);
         assert_eq!(rep.applied, 0);

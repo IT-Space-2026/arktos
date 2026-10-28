@@ -395,9 +395,11 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC13 | macOS fix: Profile Manager dialog buttons/text truncated on right edge — details below | done | 0 | Blind fix: action-column buttons floored at widest runtime label via font metrics + em bezel allowance (qmacstyle CT_PushButton hint under-measures the Aqua bezel/focus ring it paints -> centered text clipped at both edges); column equalized to one width; initial size content-derived instead of fixed 640x360. Verified: new tst_profilemanager::buttonColumnFitsLabels FAILs unmodified/PASSes fixed, tst_profilemanager 10/10 + tst_profilemanagers 20/20 offscreen, --quit-after-load exit 0; deleteRefusesWithBoundWindow flakes identically on unmodified HEAD (pre-existing); mac runtime verify still owed |
 | MAC14 | macOS fix: Tor window new-tab (+) button misplaced/wrong — details below | done | 0 | Blind fix: the in-strip + parked over the last tabs trailing edge is only honest while the covered widget yields — on macOS close sits on the tabs left edge so the covered edge is bare face; + now hides rather than cover a tab (same rule the rail already uses) and its glyph is pinned to the parked slot instead of PM_ToolBarIconSize. Verified: new tst_tabbar::newTabButtonNoChromeHide leg (QProxyStyle LeftSide close simulating macOS) PASS, suite 33/33, tst_tabwidget newTabButton PASS, tor chrome legs PASS, --quit-after-load exit 0 offscreen; mac runtime verify owed |
 | MAC15 | macOS fix: Tor start page background doesn't fill the window — details below | done | 0 | Blind fix: start-page bg relied on root->canvas propagation which only covers the renderer-believed viewport — body now paints the same gradient at min-height:100vh (all 4 variants + dark), and WebView gets a macOS-only one-time ±1px size-reassert bounce at first show for a stale reported viewport. Verified: new tst_webpage::startPageViewportCoverage FAILs unmodified (body bg: none) + PASSes fixed on all 4 pages, suite green to documented pre-existing OTR trap, --startpage-smoke 50/50, --quit-after-load exit 0 on tor page; mac runtime verify owed |
+| MAC16 | macOS fix: urlbar renders badly + suggestion dropdown truncated — details below | pending | 0 | needs:task:MAC15 — screenshot: autocomplete dropdown narrower than the urlbar/clipped, urlbar text styling looks off (hostname weight, icon cluster). Check dropdown popup width = urlbar width on mac, and the segment style code |
+| MAC17 | macOS fix: extension popup still right-truncated AND draggable like a window — details below | pending | 0 | needs:task:MAC15 — MAC12 was incomplete: locked-vault popup still clips right edge, and the frameless window is user-movable instead of an anchored popover. Size to content AND make it non-movable (locked frameless, or NSPopover-class window) |
 | SYNC01 | Serverless sync: engine core — device identity (Ed25519), sync store, per-store op-log tailing, sync-group membership state — details below | done | 0 | rustcore sync engine core: Ed25519 identity (sync/device.key, never synced), members+oplog sync.db, content-addressed signed ops (op_id=sha256 frame), canonical (lamport,device_id,op_id) apply + dedup, deferred drain seam for SYNC04 adapters; mw domain 19 envelope-only (identity/members/append/export/import/stats/drain) + MW-ARCH §8.19. Verified: cargo test 492/492 incl. two-device loopback + tamper/unknown-signer rejects, acprobe --bridge OK, sync.rs 86% lines (>85% gate), make -j2 green, --quit-after-load exit 0 offscreen |
 | SYNC02 | Serverless sync: Tor transport — embedded Arti, v3 onion service per device, authorized-client gating, outbound circuits — details below | done | 2 | embedded-Arti tor transport + mem loopback behind the SyncTransport seam: v3 onion stable across restarts (keystore hsid), restricted-discovery x25519 gating refuses unpaired peers at the Tor layer, backoffd outbound links, sync.transport_* mw ops (domain 19, since:2). Verified: tools/synctor-e2e.sh ALL LEGS PASS on real Tor (authorized PING->PONG, unauthorized refused pre-app-layer, endpoint stable across restart), cargo test 501/501 incl mw envelope e2e, acprobe --bridge OK, rustcore 91.10% lines (>85% gate), check-supplychain clean (audit.toml mirrors deny.toml ignores; rustdl webpki bumped for new advisories), make -j2 green, --quit-after-load exit 0 offscreen |
-| SYNC03 | Serverless sync: pairing — QR payload, Noise_XX mutual auth, group-secret join, emoji/word fingerprint verify UI — details below | pending | 0 | needs:task:SYNC02 |
+| SYNC03 | Serverless sync: pairing — QR payload, Noise_XX mutual auth, group-secret join, emoji/word fingerprint verify UI — details below | done | 0 | Noise_XX pairing w/ QR+manual code, fingerprint verify, scoped members; cargo test 513/513, make -j2 clean |
 | SYNC04 | Serverless sync: bookmarks adapter — OR-Set CRDT, tombstoned deletes, causal folder ordering — details below | pending | 0 | needs:task:SYNC03 |
 | SYNC05 | Serverless sync: history adapter — append-only union set, per-device retention — details below | pending | 0 | needs:task:SYNC04 |
 | SYNC06 | Serverless sync: open-tabs presence — ephemeral per-device doc, read-only "tabs on my other devices" view — details below | pending | 0 | needs:task:SYNC04 |
@@ -4430,6 +4432,14 @@ peer to THAT profile's sync group only — the peer joins the profile's
 group, sees only that profile's stores, and gets that profile's onion
 client-auth. Persist the paired peer into that profile's sync store.
 
+- Implemented Noise_XX mutual-auth handshake (`src/rustcore/src/noisexx.rs`) — x25519 statics (tor_llcrypto curve25519), ring AEAD/HKDF, transcript-hash fingerprint (6 words + 6 emoji).
+- Pairing engine (`src/rustcore/src/syncpair.rs`): one-time invite payload (QR `arktos-pair1.<b64url>` + grouped base32 manual code), invite-derived one-time restricted-discovery key, Ed25519-signed static binding, profile-scoped member binding, group-secret transfer inside the sealed channel, invite-grant → member-grant swap.
+- Sync engine (schema v2): `member_scopes` table + `group_secret` meta keys; import rejects ops from members not authorized for the op's scope.
+- Transport: `import_discovery_key`/`rotate_discovery_key` on the seam + offline grant helpers (`authorize_grant`/`deauthorize_grant`) working with or without a running transport (inert Arti client).
+- MW domain 19: `pair_begin/pair_join/pair_poll/pair_confirm/pair_cancel/pair_list` (since:3); MW-ARCH §8.19 documented.
+- Qt: `AcMw::Sync` domain + `SyncPairDialog` (invite QR/code, join paste field, fingerprint confirm/reject, poll timer, worker thread for blocking ops); appended "Sync" settings page with device id, endpoint, member list.
+- Verify: `cargo test` 513/513 incl. 7 syncpair + 5 noisexx tests (e2e invite→Noise→equal fingerprints→commit→done over mem transport, reject-abort, wrong-token refusal, payload round-trips); `make -j2` clean; headless `arktos about:home` smoke ran 25s without crash.
+
 ### SYNC04
 Bookmarks CRDT adapter: OR-Set with tombstoned deletes and causal
 ordering for folder trees; ops emitted on the existing bookmarks store,
@@ -4668,3 +4678,23 @@ loads PASS, --quit-after-load exit 0 on qrc:/startpage-tor.html.
 Residual risk: if the real cause is a view whose widget itself never
 gets the correct size (layout-level), only the bounce layer helps —
 macOS runtime verify still owed.
+
+### MAC16
+Real-Mac screenshot: the urlbar's autocomplete/suggestion dropdown is
+truncated — visibly narrower than the urlbar field, content clipped on
+the right. The urlbar text itself also renders oddly (hostname emphasis
+weight and the icon cluster look wrong vs Linux). Check the completer
+popup: width should track the urlbar's width (DPR-aware on Retina), and
+audit the segment/style code for a mac-path divergence. Blind fix +
+document.
+
+### MAC17
+MAC12's fix was incomplete — real-Mac screenshot shows the Bitwarden
+locked-vault popup STILL truncates the right edge (password field eye
+affordance clipped), AND the popup is draggable/movable like a normal
+window instead of an anchored popover under the toolbar button. Two
+fixes: (a) size the popup to the actual document size (the previous
+doc-fit change measured the wrong node — audit again), (b) make the
+window non-movable — frameless-without-drag or an NSPopover-class
+window; it must stay anchored to the action button. Blind fix +
+document.

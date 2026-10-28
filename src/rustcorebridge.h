@@ -60,6 +60,8 @@ enum Domain : quint8 {
     Session = 6,
     Icons = 8,
     OpenSearch = 12,
+    // SYNC03: the serverless sync engine + transport + pairing.
+    Sync = 19,
 };
 enum SettingsOp : quint16 {
     SettingsGet = 0x0001,
@@ -123,6 +125,22 @@ enum IconsOp : quint16 {
     IconsGet = 0x0003,
     IconsClear = 0x0004,
     IconsSweep = 0x0005,
+};
+enum SyncOp : quint16 {
+    SyncIdentity = 0x0001,
+    SyncMembersList = 0x0002,
+    SyncMemberAdd = 0x0003,
+    SyncMemberRemove = 0x0004,
+    SyncStats = 0x0009,
+    SyncTransportStart = 0x000b,
+    SyncTransportStop = 0x000c,
+    SyncTransportStatus = 0x000d,
+    SyncPairBegin = 0x0015,
+    SyncPairJoin = 0x0016,
+    SyncPairPoll = 0x0017,
+    SyncPairConfirm = 0x0018,
+    SyncPairCancel = 0x0019,
+    SyncPairList = 0x001a,
 };
 enum OpenSearchOp : quint16 {
     OseList = 0x0001,

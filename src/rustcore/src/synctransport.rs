@@ -104,6 +104,30 @@ pub trait SyncTransport: Send + Sync {
     /// on its side.  The secret half never leaves this device.
     /// Only meaningful on the tor backend.
     fn discovery_key(&self, peer_onion: &str) -> RcResult<String>;
+    /// Install a peer-supplied descriptor-encryption SECRET for
+    /// `peer_onion` into our client keystore (SYNC03): the pairing
+    /// invite's derived client-auth key — how a not-yet-authorized
+    /// joiner reaches the inviter's restricted service exactly once.
+    /// Backends without descriptor auth treat it as a no-op.
+    fn import_discovery_key(&self, peer_onion: &str, secret: &[u8; 32]) -> RcResult<()> {
+        let _ = (peer_onion, secret);
+        fail(
+            RcStatus::Unavailable,
+            "this backend has no discovery keys to import",
+        )
+    }
+    /// Rotate our discovery keypair for `peer_onion` to a fresh
+    /// permanent one (SYNC03): called after the invite-derived key
+    /// did its one-time job so the QR material's blast radius stays
+    /// the ceremony itself.  Returns the new PUBLIC key the peer
+    /// should authorize; "" on backends with name-based auth.
+    fn rotate_discovery_key(&self, peer_onion: &str) -> RcResult<String> {
+        let _ = peer_onion;
+        fail(
+            RcStatus::Unavailable,
+            "this backend has no discovery keys to rotate",
+        )
+    }
     /// Open an outbound link to `endpoint` identifying ourselves as
     /// `as_nickname` (the identity the peer authorized).  Returns
     /// the link id.  Refused when the peer's gate rejects us —
@@ -193,6 +217,84 @@ pub fn discovery_key(data_root: &Path, peer_onion: &str) -> RcResult<String> {
             "rustcore built without the synctor feature — discovery keys unavailable",
         )
     }
+}
+
+/// SYNC03: install the invite-derived discovery SECRET for
+/// `peer_onion` — the joiner half of the pairing bootstrap.  With a
+/// live transport the trait route wins (mem answers a no-op Ok);
+/// with none the tor keystore path handles it offline.
+pub fn import_discovery_key(
+    data_root: &Path,
+    peer_onion: &str,
+    secret: &[u8; 32],
+) -> RcResult<()> {
+    if let Some(t) = running(data_root) {
+        return t.import_discovery_key(peer_onion, secret);
+    }
+    #[cfg(feature = "synctor")]
+    {
+        tor::import_discovery_key(&data_root.join(SYNC_DIR), peer_onion, secret)
+    }
+    #[cfg(not(feature = "synctor"))]
+    {
+        let _ = (data_root, peer_onion, secret);
+        fail(
+            RcStatus::Unavailable,
+            "rustcore built without the synctor feature — discovery keys unavailable",
+        )
+    }
+}
+
+/// SYNC03: rotate to a fresh permanent discovery key for
+/// `peer_onion`, returning the new public half for the peer to
+/// authorize.  Empty string when the running backend is name-based
+/// (mem — nothing to rotate); tor works offline via the inert
+/// keystore when no transport runs.
+pub fn rotate_discovery_key(data_root: &Path, peer_onion: &str) -> RcResult<String> {
+    if let Some(t) = running(data_root) {
+        return t.rotate_discovery_key(peer_onion);
+    }
+    #[cfg(feature = "synctor")]
+    {
+        tor::rotate_discovery_key(&data_root.join(SYNC_DIR), peer_onion)
+    }
+    #[cfg(not(feature = "synctor"))]
+    {
+        let _ = (data_root, peer_onion);
+        fail(
+            RcStatus::Unavailable,
+            "rustcore built without the synctor feature — discovery keys unavailable",
+        )
+    }
+}
+
+/// Grant `nickname` a discovery key — on the live transport when
+/// one runs (its authorize() persists + reconfigures), otherwise
+/// straight into authorized_clients.json so the grant is replayed
+/// at the next launch (SYNC03's invite can outlive a transport
+/// restart).
+pub fn authorize_grant(data_root: &Path, nickname: &str, discovery_key: &str) -> RcResult<()> {
+    let dir = data_root.join(SYNC_DIR);
+    if let Some(t) = running(data_root) {
+        return t.authorize(nickname, discovery_key);
+    }
+    let mut set = load_authorized(&dir)?;
+    set.insert(nickname.to_string(), discovery_key.to_string());
+    save_authorized(&dir, &set)
+}
+
+/// Revoke a grant — live transport first, else the persisted file.
+pub fn deauthorize_grant(data_root: &Path, nickname: &str) -> RcResult<bool> {
+    let dir = data_root.join(SYNC_DIR);
+    if let Some(t) = running(data_root) {
+        return t.deauthorize(nickname);
+    }
+    let mut set = load_authorized(&dir)?;
+    if set.remove(nickname).is_some() {
+        save_authorized(&dir, &set)?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// Stop and deregister the transport under `data_root`.
@@ -448,6 +550,14 @@ impl SyncTransport for LoopbackTransport {
             RcStatus::Unavailable,
             "mem backend has no discovery keys — authorize is name-based",
         )
+    }
+
+    fn import_discovery_key(&self, _peer_onion: &str, _secret: &[u8; 32]) -> RcResult<()> {
+        Ok(())
+    }
+
+    fn rotate_discovery_key(&self, _peer_onion: &str) -> RcResult<String> {
+        Ok(String::new())
     }
 
     fn connect(&self, endpoint: &str, as_nickname: &str) -> RcResult<u64> {

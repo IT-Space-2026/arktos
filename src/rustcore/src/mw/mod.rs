@@ -62,7 +62,7 @@ use crate::facade::{self, AcCore};
 use crate::{
     blocklist, bookmarks, containers, cookies, extverify, history, icons, notes, notify,
     omnibox, opensearch, profiles, profilevault, session, settings, sitedecisions,
-    sitetrust, store, sync, synctransport, tlsprobe, tranco, updates, util,
+    sitetrust, store, sync, syncpair, synctransport, tlsprobe, tranco, updates, util,
 };
 
 /// The envelope schema version — the frame's `version` byte and the
@@ -2583,6 +2583,7 @@ fn member_json(m: &sync::Member) -> Value {
         "onion_addr": m.onion_addr,
         "last_seen_ms": m.last_seen_ms,
         "added_ms": m.added_ms,
+        "scopes": m.scopes,
     })
 }
 
@@ -2608,8 +2609,9 @@ fn op_sync_member_add(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
         .try_into()
         .map_err(|_| OpErr::BadPayload("\"pubkey_b64\" must decode to 32 bytes".into()))?;
     let onion = opt_str(p, "onion_addr")?.unwrap_or("");
+    let scope = opt_str(p, "scope")?.unwrap_or("");
     let e = sync_engine(ctx)?;
-    let id = e.member_add(&pk, onion)?;
+    let id = e.member_add(&pk, onion, scope)?;
     notify::emit("sync");
     Ok(json!({ "ok": true, "device_id": id }))
 }
@@ -2855,6 +2857,75 @@ fn op_sync_transport_poll(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
         .collect();
     Ok(json!({ "events": evs }))
 }
+
+// SYNC03: pairing — the ceremony that turns two devices into one
+// profile's sync group.  An invite is a compact one-time payload
+// (QR text or grouped-base32 manual code): inviter onion, invite
+// token, short device-key hash.  The token doubles as the Noise
+// prologue and the derived one-time restricted-discovery key —
+// that is how a not-yet-authorized joiner reaches the gated onion
+// exactly once.  Noise_XX then authenticates both statics, the
+// Ed25519 device signatures authenticate the statics, and the
+// transcript hash becomes the 6-word/6-emoji fingerprint both
+// users compare.  Only after BOTH confirm does the profile's
+// group secret + the inviter's discovery key cross the channel,
+// and the peer lands in member_scopes bound to that profile —
+// never a neighbour's group.
+//
+//   pair_begin   {profile?} — mint the invite + session; returns
+//                {pair_id, qr, code, endpoint, scope} (command)
+//   pair_join    {payload} — QR text or manual code; connects,
+//                starts the handshake (command)
+//   pair_poll    {pair_id?} — drain transport events, advance
+//                sessions, report state (+ fingerprint when ready)
+//                (command — it mutates the state machine)
+//   pair_confirm {pair_id, ok} — the fingerprint decision
+//                (command)
+//   pair_cancel  {pair_id} — abort best-effort (command)
+//   pair_list    — live sessions (query)
+
+fn op_sync_pair_begin(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let scope = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    let root = std::path::Path::new(ctx.core.data_root());
+    syncpair::invite_begin(root, &scope).map_err(OpErr::from)
+}
+
+fn op_sync_pair_join(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let payload = arg_str(p, "payload")?;
+    let root = std::path::Path::new(ctx.core.data_root());
+    let id = syncpair::join_begin(root, payload)?;
+    Ok(json!({ "ok": true, "pair_id": id }))
+}
+
+fn op_sync_pair_poll(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let id = opt_i64(p, "pair_id")?.unwrap_or(0) as u64;
+    let root = std::path::Path::new(ctx.core.data_root());
+    syncpair::poll(root, id).map_err(OpErr::from)
+}
+
+fn op_sync_pair_confirm(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let id = arg_i64(p, "pair_id")? as u64;
+    let ok = p
+        .get("ok")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| OpErr::BadPayload("missing \"ok\" bool".into()))?;
+    let root = std::path::Path::new(ctx.core.data_root());
+    syncpair::confirm(root, id, ok)?;
+    Ok(json!({ "ok": true }))
+}
+
+fn op_sync_pair_cancel(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let id = arg_i64(p, "pair_id")? as u64;
+    let root = std::path::Path::new(ctx.core.data_root());
+    syncpair::cancel(root, id)?;
+    Ok(json!({ "ok": true }))
+}
+
+fn op_sync_pair_list(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
+    let root = std::path::Path::new(ctx.core.data_root());
+    Ok(json!({ "sessions": syncpair::list(root) }))
+}
+
 const SYNC_OPS: &[Op] = &[
     Op { id: 0x0001, name: "identity", class: OpClass::Query,
          profile_scoped: false, since: 1, handler: op_sync_identity },
@@ -2896,6 +2967,18 @@ const SYNC_OPS: &[Op] = &[
          profile_scoped: false, since: 2, handler: op_sync_transport_close },
     Op { id: 0x0014, name: "transport_poll", class: OpClass::Query,
          profile_scoped: false, since: 2, handler: op_sync_transport_poll },
+    Op { id: 0x0015, name: "pair_begin", class: OpClass::Command,
+         profile_scoped: false, since: 3, handler: op_sync_pair_begin },
+    Op { id: 0x0016, name: "pair_join", class: OpClass::Command,
+         profile_scoped: false, since: 3, handler: op_sync_pair_join },
+    Op { id: 0x0017, name: "pair_poll", class: OpClass::Command,
+         profile_scoped: false, since: 3, handler: op_sync_pair_poll },
+    Op { id: 0x0018, name: "pair_confirm", class: OpClass::Command,
+         profile_scoped: false, since: 3, handler: op_sync_pair_confirm },
+    Op { id: 0x0019, name: "pair_cancel", class: OpClass::Command,
+         profile_scoped: false, since: 3, handler: op_sync_pair_cancel },
+    Op { id: 0x001a, name: "pair_list", class: OpClass::Query,
+         profile_scoped: false, since: 3, handler: op_sync_pair_list },
 ];
 
 // ---- registry ------------------------------------------------------------------

@@ -5020,3 +5020,8 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   the full window, and on macOS each web view re-asserts its real
   size once at first show so a stale reported size gets corrected.
   (Most visible on macOS.)
+
+- Sync: pair devices into a profile's sync group via Settings > Sync —
+  QR payload or manual code, Noise_XX mutual authentication over the
+  embedded Tor transport, word/emoji fingerprint verification, and
+  encrypted group-secret handoff (SYNC03).

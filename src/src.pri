@@ -134,6 +134,7 @@ HEADERS += \
     $$PWD/profilestore.h \
     $$PWD/profilevault.h \
     $$PWD/qrcodedialog.h \
+    $$PWD/syncpairdialog.h \
     $$PWD/qrcodegen.hpp \
     $$PWD/readermode.h \
     $$PWD/readersanitizer.h \
@@ -232,6 +233,7 @@ SOURCES += \
     $$PWD/profilestore.cpp \
     $$PWD/profilevault.cpp \
     $$PWD/qrcodedialog.cpp \
+    $$PWD/syncpairdialog.cpp \
     $$PWD/qrcodegen.cpp \
     $$PWD/readermode.cpp \
     $$PWD/readersanitizer.cpp \

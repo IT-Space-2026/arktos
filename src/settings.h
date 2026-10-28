@@ -99,7 +99,9 @@ public:
         DownloadsPage,
         // PREFUI04: appended — currentTab persists the stack index, so
         // a mid-enum insert would renumber every stored session.
-        PerformancePage
+        PerformancePage,
+        // SYNC03: appended for the same reason.
+        SyncPage
     };
 
     SettingsDialog(QWidget *parent = nullptr);
@@ -291,6 +293,12 @@ private:
     // waiting on — the mask empties when every singleton reported.
     int m_siteTrustUpdatesPending = 0;
     bool m_siteTrustUpdateFailed = false;
+    // SYNC03: the Sync page's live labels (class members — the page
+    // itself is built in code, not the .ui).
+    QLabel *m_syncStatusLabel = nullptr;
+    QLabel *m_syncMembersLabel = nullptr;
+    // SYNC03: fills the Sync page from the sync engine + transport.
+    void refreshSyncStatus();
 };
 
 #endif // SETTINGS_H

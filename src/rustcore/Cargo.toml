@@ -129,3 +129,4 @@ safelog = { version = "=0.10.0", optional = true }
 # substitutes so the renderer needs no font filesystem inside the
 # sandbox.  Exact-pinned like the rest of the reviewed tree.
 hayro = { version = "=0.8.0", features = ["embed-fonts"] }
+tor-llcrypto = "=0.47.0"

@@ -182,6 +182,7 @@ dependencies = [
  "tor-hscrypto",
  "tor-hsservice",
  "tor-keymgr",
+ "tor-llcrypto",
  "tor-proto",
  "tor-rtcompat",
  "x509-parser",

@@ -37,7 +37,8 @@ use tokio::sync::mpsc;
 use tor_cell::relaycell::msg::Connected;
 use tor_config::Reconfigure;
 use arti_client::ErrorKind;
-use tor_hscrypto::pk::HsClientDescEncKey;
+use tor_hscrypto::pk::{HsClientDescEncKey, HsClientDescEncSecretKey};
+use tor_llcrypto::pk::curve25519;
 use tor_config_path::CfgPath;
 use tor_hsservice::config::restricted_discovery::{
     DirectoryKeyProviderBuilder, HsClientNickname,
@@ -174,37 +175,127 @@ trait DiscoveryKeys {
         &self,
         hsid: HsId,
     ) -> arti_client::Result<Option<tor_hscrypto::pk::HsClientDescEncKey>>;
+    fn insert_service_discovery_key(
+        &self,
+        selector: KeystoreSelector,
+        hsid: HsId,
+        secret: HsClientDescEncSecretKey,
+    ) -> arti_client::Result<tor_hscrypto::pk::HsClientDescEncKey>;
+    fn remove_service_discovery_key(
+        &self,
+        selector: KeystoreSelector,
+        hsid: HsId,
+    ) -> arti_client::Result<Option<()>>;
+    fn rotate_service_discovery_key(
+        &self,
+        selector: KeystoreSelector,
+        hsid: HsId,
+    ) -> arti_client::Result<tor_hscrypto::pk::HsClientDescEncKey>;
 }
 
-impl DiscoveryKeys for TorClient<PreferredRuntime> {
+macro_rules! discovery_keys_impl {
+    ($ty:ty) => {
+        impl DiscoveryKeys for $ty {
+            fn generate_service_discovery_key(
+                &self,
+                selector: KeystoreSelector,
+                hsid: HsId,
+            ) -> arti_client::Result<tor_hscrypto::pk::HsClientDescEncKey> {
+                <$ty>::generate_service_discovery_key(self, selector, hsid)
+            }
+            fn get_service_discovery_key(
+                &self,
+                hsid: HsId,
+            ) -> arti_client::Result<Option<tor_hscrypto::pk::HsClientDescEncKey>> {
+                <$ty>::get_service_discovery_key(self, hsid)
+            }
+            fn insert_service_discovery_key(
+                &self,
+                selector: KeystoreSelector,
+                hsid: HsId,
+                secret: HsClientDescEncSecretKey,
+            ) -> arti_client::Result<tor_hscrypto::pk::HsClientDescEncKey> {
+                <$ty>::insert_service_discovery_key(self, selector, hsid, secret)
+            }
+            fn remove_service_discovery_key(
+                &self,
+                selector: KeystoreSelector,
+                hsid: HsId,
+            ) -> arti_client::Result<Option<()>> {
+                <$ty>::remove_service_discovery_key(self, selector, hsid)
+            }
+            fn rotate_service_discovery_key(
+                &self,
+                selector: KeystoreSelector,
+                hsid: HsId,
+            ) -> arti_client::Result<tor_hscrypto::pk::HsClientDescEncKey> {
+                <$ty>::rotate_service_discovery_key(self, selector, hsid)
+            }
+        }
+    };
+}
+
+discovery_keys_impl!(TorClient<PreferredRuntime>);
+discovery_keys_impl!(arti_client::InertTorClient);
+
+/// The live client when the transport runs, else an inert one on
+/// the same keystore — one type the pairing key ops can call
+/// without caring which.
+enum DiscClient {
+    Live(Arc<TorClient<PreferredRuntime>>),
+    Inert(arti_client::InertTorClient),
+}
+
+impl DiscoveryKeys for DiscClient {
     fn generate_service_discovery_key(
         &self,
         selector: KeystoreSelector,
         hsid: HsId,
     ) -> arti_client::Result<tor_hscrypto::pk::HsClientDescEncKey> {
-        TorClient::generate_service_discovery_key(self, selector, hsid)
+        match self {
+            DiscClient::Live(c) => c.generate_service_discovery_key(selector, hsid),
+            DiscClient::Inert(c) => c.generate_service_discovery_key(selector, hsid),
+        }
     }
     fn get_service_discovery_key(
         &self,
         hsid: HsId,
     ) -> arti_client::Result<Option<tor_hscrypto::pk::HsClientDescEncKey>> {
-        TorClient::get_service_discovery_key(self, hsid)
+        match self {
+            DiscClient::Live(c) => c.get_service_discovery_key(hsid),
+            DiscClient::Inert(c) => c.get_service_discovery_key(hsid),
+        }
     }
-}
-
-impl DiscoveryKeys for arti_client::InertTorClient {
-    fn generate_service_discovery_key(
+    fn insert_service_discovery_key(
+        &self,
+        selector: KeystoreSelector,
+        hsid: HsId,
+        secret: HsClientDescEncSecretKey,
+    ) -> arti_client::Result<tor_hscrypto::pk::HsClientDescEncKey> {
+        match self {
+            DiscClient::Live(c) => c.insert_service_discovery_key(selector, hsid, secret),
+            DiscClient::Inert(c) => c.insert_service_discovery_key(selector, hsid, secret),
+        }
+    }
+    fn remove_service_discovery_key(
+        &self,
+        selector: KeystoreSelector,
+        hsid: HsId,
+    ) -> arti_client::Result<Option<()>> {
+        match self {
+            DiscClient::Live(c) => c.remove_service_discovery_key(selector, hsid),
+            DiscClient::Inert(c) => c.remove_service_discovery_key(selector, hsid),
+        }
+    }
+    fn rotate_service_discovery_key(
         &self,
         selector: KeystoreSelector,
         hsid: HsId,
     ) -> arti_client::Result<tor_hscrypto::pk::HsClientDescEncKey> {
-        arti_client::InertTorClient::generate_service_discovery_key(self, selector, hsid)
-    }
-    fn get_service_discovery_key(
-        &self,
-        hsid: HsId,
-    ) -> arti_client::Result<Option<tor_hscrypto::pk::HsClientDescEncKey>> {
-        arti_client::InertTorClient::get_service_discovery_key(self, hsid)
+        match self {
+            DiscClient::Live(c) => c.rotate_service_discovery_key(selector, hsid),
+            DiscClient::Inert(c) => c.rotate_service_discovery_key(selector, hsid),
+        }
     }
 }
 
@@ -389,19 +480,24 @@ impl TorTransport {
         id
     }
 
+    /// The keystore-bearing client for discovery-key ops — the live
+    /// client when the transport runs, else a throwaway inert one on
+    /// the same state dir (pairing-time key ops must work before
+    /// the transport is ever started — and need no runtime).
+    fn discovery_client(&self) -> RcResult<DiscClient> {
+        let live = self.live.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(l) = live.as_ref() {
+            return Ok(DiscClient::Live(l.client.clone()));
+        }
+        let cfg = client_config(&self.dir.join(TRANSPORT_DIR))?;
+        Ok(DiscClient::Inert(inert_client(&cfg)?))
+    }
+
     /// The client handle when running, else a throwaway inert
     /// client on the same keystore (pairing-time key ops must work
     /// before the transport is ever started — and need no runtime).
     fn discovery_key_impl(&self, hsid: HsId) -> RcResult<String> {
-        let key = {
-            let live = self.live.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(l) = live.as_ref() {
-                discovery_key_get_or_gen(&*l.client, hsid)?
-            } else {
-                let cfg = client_config(&self.dir.join(TRANSPORT_DIR))?;
-                discovery_key_get_or_gen(&inert_client(&cfg)?, hsid)?
-            }
-        };
+        let key = discovery_key_get_or_gen(&self.discovery_client()?, hsid)?;
         Ok(key.to_string())
     }
 
@@ -450,6 +546,43 @@ pub fn discovery_key(dir: &Path, peer_onion: &str) -> RcResult<String> {
         .map_err(|e| bad_arg::<()>(format!("peer onion address: {e}")).unwrap_err())?;
     let cfg = client_config(&dir.join(TRANSPORT_DIR))?;
     let key = discovery_key_get_or_gen(&inert_client(&cfg)?, hsid)?;
+    Ok(key.to_string())
+}
+
+/// SYNC03: install a peer-supplied descriptor-encryption secret
+/// into our client keystore for `peer_onion` — the invite-derived
+/// bootstrap key.  Deterministic: any previous key for the hsid is
+/// removed first so a re-scanned invite reinstalls instead of
+/// colliding with the no-overwrite insert.  `dir` is the sync dir.
+pub fn import_discovery_key(dir: &Path, peer_onion: &str, secret: &[u8; 32]) -> RcResult<()> {
+    install_crypto_provider();
+    let hsid = HsId::from_str(peer_onion)
+        .map_err(|e| bad_arg::<()>(format!("peer onion address: {e}")).unwrap_err())?;
+    let cfg = client_config(&dir.join(TRANSPORT_DIR))?;
+    let client = inert_client(&cfg)?;
+    let _ = client
+        .remove_service_discovery_key(KeystoreSelector::Primary, hsid)
+        .map_err(|e| io_fail("discovery key remove", e))?;
+    let sk = HsClientDescEncSecretKey::from(curve25519::StaticSecret::from(*secret));
+    client
+        .insert_service_discovery_key(KeystoreSelector::Primary, hsid, sk)
+        .map_err(|e| io_fail("discovery key insert", e))?;
+    Ok(())
+}
+
+/// SYNC03: rotate our discovery keypair for `peer_onion` to a fresh
+/// permanent key after the invite-derived one did its one-time job.
+/// Returns the new public `descriptor:x25519:` key for the peer to
+/// authorize.  Keystore-only — works with the transport down.
+pub fn rotate_discovery_key(dir: &Path, peer_onion: &str) -> RcResult<String> {
+    install_crypto_provider();
+    let hsid = HsId::from_str(peer_onion)
+        .map_err(|e| bad_arg::<()>(format!("peer onion address: {e}")).unwrap_err())?;
+    let cfg = client_config(&dir.join(TRANSPORT_DIR))?;
+    let client = inert_client(&cfg)?;
+    let key = client
+        .rotate_service_discovery_key(KeystoreSelector::Primary, hsid)
+        .map_err(|e| io_fail("discovery key rotate", e))?;
     Ok(key.to_string())
 }
 
@@ -534,6 +667,30 @@ impl SyncTransport for TorTransport {
         let hsid = HsId::from_str(peer_onion)
             .map_err(|e| bad_arg::<()>(format!("peer onion address: {e}")).unwrap_err())?;
         self.discovery_key_impl(hsid)
+    }
+
+    fn import_discovery_key(&self, peer_onion: &str, secret: &[u8; 32]) -> RcResult<()> {
+        let hsid = HsId::from_str(peer_onion)
+            .map_err(|e| bad_arg::<()>(format!("peer onion address: {e}")).unwrap_err())?;
+        let client = self.discovery_client()?;
+        let _ = client
+            .remove_service_discovery_key(KeystoreSelector::Primary, hsid)
+            .map_err(|e| io_fail("discovery key remove", e))?;
+        let sk = HsClientDescEncSecretKey::from(curve25519::StaticSecret::from(*secret));
+        client
+            .insert_service_discovery_key(KeystoreSelector::Primary, hsid, sk)
+            .map_err(|e| io_fail("discovery key insert", e))?;
+        Ok(())
+    }
+
+    fn rotate_discovery_key(&self, peer_onion: &str) -> RcResult<String> {
+        let hsid = HsId::from_str(peer_onion)
+            .map_err(|e| bad_arg::<()>(format!("peer onion address: {e}")).unwrap_err())?;
+        let client = self.discovery_client()?;
+        let key = client
+            .rotate_service_discovery_key(KeystoreSelector::Primary, hsid)
+            .map_err(|e| io_fail("discovery key rotate", e))?;
+        Ok(key.to_string())
     }
 
     fn connect(&self, endpoint: &str, _as_nickname: &str) -> RcResult<u64> {

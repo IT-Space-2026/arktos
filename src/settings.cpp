@@ -99,6 +99,8 @@
 #include "privacyrequestinterceptor.h"
 #include "profilemanagerdialog.h"
 #include "profilestore.h"
+#include "rustcorebridge.h"
+#include "syncpairdialog.h"
 #include "profilevault.h"
 #include "safetext.h"
 #include "scopeshortcuts.h"
@@ -124,6 +126,9 @@
 #include <qformlayout.h>
 #include <qgroupbox.h>
 #include <qlabel.h>
+#include <qjsonarray.h>
+#include <qjsonobject.h>
+#include <qjsonvalue.h>
 #include <qlineedit.h>
 #include <qlistwidget.h>
 #include <qlocale.h>
@@ -222,6 +227,40 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     connect(buttonBox, &QDialogButtonBox::rejected,
             this, &SettingsDialog::reject);
 
+    // SYNC03: the Sync page — appended last so a stored "currentTab"
+    // index keeps meaning (same rule PREFUI04 used for Performance).
+    // Built in code: its contents are live sync-engine state, not
+    // persisted settings fields.  Added before the nav/index/scroll
+    // passes below so they treat it like every other page.
+    {
+        auto *syncPage = new QWidget;
+        auto *syncLay = new QVBoxLayout(syncPage);
+        auto *syncGroup = new QGroupBox(tr("Sync this profile"));
+        auto *sgLay = new QVBoxLayout(syncGroup);
+        m_syncStatusLabel = new QLabel(syncPage);
+        m_syncStatusLabel->setWordWrap(true);
+        m_syncStatusLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        auto *pairButton = new QPushButton(tr("Pair a New Device…"), syncPage);
+        auto *joinButton = new QPushButton(tr("Join a Sync Group…"), syncPage);
+        m_syncMembersLabel = new QLabel(syncPage);
+        m_syncMembersLabel->setWordWrap(true);
+        m_syncMembersLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        sgLay->addWidget(m_syncStatusLabel);
+        sgLay->addWidget(pairButton);
+        sgLay->addWidget(joinButton);
+        sgLay->addWidget(m_syncMembersLabel);
+        syncLay->addWidget(syncGroup);
+        syncLay->addStretch();
+        connect(pairButton, &QPushButton::clicked, this, [this]() {
+            SyncPairDialog::invite(ProfileStore::activeProfileId(), this);
+        });
+        connect(joinButton, &QPushButton::clicked, this, [this]() {
+            SyncPairDialog::join(ProfileStore::activeProfileId(), this);
+        });
+        pagesList->addItem(tr("Sync"));
+        tabWidget->addWidget(syncPage);
+    }
+
     // UIP03: Vivaldi-style sidebar navigation — pagesList rows mirror
     // the order the QStackedWidget pages had as QTabWidget tabs, and
     // the two stay in sync both ways so the persisted "currentTab"
@@ -274,6 +313,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         "folder-new",       // Containers
         "emblem-downloads", // Downloads
         "view-refresh",     // Performance
+        "network-server",   // Sync (SYNC03)
     };
     for (int i = 0;
          i < pagesList->count()
@@ -1784,6 +1824,10 @@ void SettingsDialog::loadFromSettings()
     // EXT03: the opt-in background update check (default off).
     extensionAutoUpdateCheck->setChecked(
         ExtensionManager::instance()->updateCheckEnabled());
+
+    // SYNC03: the Sync page is live engine state, not a stored
+    // field — refresh it with the rest of the populate.
+    refreshSyncStatus();
 }
 
 void SettingsDialog::saveToSettings()
@@ -4154,4 +4198,63 @@ void SettingsDialog::containerRemove()
         tabs->closeTabsInContainer(id);
     }
     manager->deleteContainer(id);
+}
+
+// SYNC03: the Sync page reads live engine state — this device's id,
+// the transport's endpoint/status, and the members of the ambient
+// profile's scope.  All through mw queries, safe on the GUI thread
+// (envelope round trips, no Tor blocking).
+void SettingsDialog::refreshSyncStatus()
+{
+    if (!m_syncStatusLabel)
+        return;
+    RustCoreBridge *bridge = RustCoreBridge::instance();
+    if (!bridge || !bridge->serving()) {
+        m_syncStatusLabel->setText(
+            tr("Sync is unavailable — the Rust core is not loaded."));
+        m_syncMembersLabel->clear();
+        return;
+    }
+    const QString scope = ProfileStore::activeProfileId();
+    QJsonObject err;
+    QStringList lines;
+    const QJsonValue ident = bridge->mwQuery(
+        AcMw::Sync, AcMw::SyncIdentity, QJsonObject(), &err);
+    const QString dev = ident.toObject()
+        .value(QStringLiteral("device_id")).toString();
+    lines << tr("This device: %1").arg(dev.left(24)
+        + QLatin1String("…"));
+    const QJsonValue st = bridge->mwQuery(
+        AcMw::Sync, AcMw::SyncTransportStatus, QJsonObject(), &err);
+    const QJsonObject so = st.toObject();
+    if (so.value(QStringLiteral("running")).toBool()) {
+        lines << tr("Endpoint: %1").arg(
+            so.value(QStringLiteral("endpoint")).toString());
+    } else {
+        lines << tr("Transport: not running (starts when pairing).");
+    }
+    const QJsonValue members = bridge->mwQuery(
+        AcMw::Sync, AcMw::SyncMembersList, QJsonObject(), &err);
+    QStringList memberLines;
+    for (const QJsonValue &m
+         : members.toObject().value(QStringLiteral("members")).toArray()) {
+        const QJsonObject mo = m.toObject();
+        QStringList scopes;
+        for (const QJsonValue &s
+             : mo.value(QStringLiteral("scopes")).toArray())
+            scopes << s.toString();
+        const bool mine = scopes.contains(scope);
+        memberLines << tr("%1 — %2")
+            .arg(mo.value(QStringLiteral("device_id")).toString().left(16)
+                 + QLatin1String("…"))
+            .arg(scopes.isEmpty() ? tr("all profiles")
+                 : (mine ? tr("this profile")
+                    : scopes.join(QLatin1String(", "))));
+    }
+    m_syncStatusLabel->setText(lines.join(QLatin1Char('\n')));
+    m_syncMembersLabel->setText(
+        memberLines.isEmpty()
+            ? tr("No paired devices yet — pair to start syncing.")
+            : tr("Paired devices:\n%1")
+                  .arg(memberLines.join(QLatin1Char('\n'))));
 }

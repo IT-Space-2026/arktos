@@ -703,6 +703,32 @@ keystore entries — `transport_keygen` is idempotent.
 | `sync.transport_close` | C | `{link_id}` |
 | `sync.transport_poll` | Q | drain events: ready/bootstrap/incoming/frame/closed/failed |
 
+Pairing (SYNC03) turns two devices into one profile's sync group.
+The inviter mints a one-time payload — QR text `arktos-pair1.<b64>`
+or a grouped-base32 manual code — carrying its endpoint, a 256-bit
+invite token, and an 8-byte fragment of its device-key hash.  The
+token is doubly the Noise prologue and the derived one-time
+restricted-discovery key, so an unpaired joiner reaches the gated
+onion exactly once.  Noise_XX (`noisexx.rs`) then authenticates
+both x25519 statics; signed payloads bind each static to the
+Ed25519 device identity; the transcript hash renders as the
+6-word/6-emoji fingerprint both users compare — only after BOTH
+`pair_confirm` does the profile's group secret + the inviter's
+permanent discovery key cross inside the channel, and the peer
+lands in `member_scopes` bound to that profile.  `pair_poll` drives
+the state machine (waiting → handshaking → fingerprint →
+committing → done/failed) off transport events; the UI polls it on
+a timer.
+
+| Op | Class | Notes |
+|----|-------|-------|
+| `sync.pair_begin` | C | `{profile?}` → `{pair_id, qr, code, endpoint, scope}`; `since: 3` |
+| `sync.pair_join` | C | `{payload}` (QR text or manual code) → `{pair_id}` |
+| `sync.pair_poll` | C | `{pair_id?}` — advance sessions, report state + `fingerprint` |
+| `sync.pair_confirm` | C | `{pair_id, ok}` — the fingerprint decision |
+| `sync.pair_cancel` | C | `{pair_id}` — best-effort abort |
+| `sync.pair_list` | Q | `{sessions}` — live pairing sessions |
+
 ## 9. Cutover decision table (landed — MB06/MB07)
 
 Rule restated: an `ac_*` caller moves to `ac_mw_dispatch` only where
