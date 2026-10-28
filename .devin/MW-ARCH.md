@@ -672,6 +672,23 @@ for stores with no applier stay durable in the log and report as
 | `sync.stats` | Q | device id, lamport clock, member/op counts, per-store heads |
 | `sync.drain` | C | retry ops a registered applier hasn't consumed yet |
 
+The bookmarks adapter (SYNC04, `syncbookmarks.rs`) rides the same
+domain — no new ops.  Local mutations on the canonical bookmark
+store record semantic events; `bookmarks::with` flushes them into
+signed ops scoped to the bound profile (`<root>/profiles/<id>/
+bookmarks.xbel` ⇒ scope `<id>`).  The registered applier binds that
+scope's xbel on the peer, applies, and persists the merge.
+Semantics: one OR-set element per node guid (XBEL `id` attr; random
+at create, deterministic content fingerprint for foreign-loaded
+nodes so pre-sync trees dedup), tombstoned deletes that record the
+remover's observed place stamps (un-observed placements survive),
+`link` ops that add+move by (lamport, device) LWW with fractional-
+index `pos` sibling order, per-field LWW `set` ops, causal parking
+for not-yet-known parents, deterministic stamp-ordered move-cycle
+resolution.  The op-log itself is the adapter's durable state —
+tombstones, stamps and parked ops rebuild by replaying on first
+use.
+
 The transport half (SYNC02) shares the same envelope and the
 `synctransport` notify topic — a pull-drain wake-up shaped like
 `torctl`'s: inbound links and frames land in a queue drained by

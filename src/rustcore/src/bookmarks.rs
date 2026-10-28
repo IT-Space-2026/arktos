@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::error::{Fail, RcResult, RcStatus};
 use crate::parsers::{
@@ -60,6 +61,41 @@ pub struct Node {
     pub desc: String,
     pub expanded: bool,
     pub tags: Vec<String>,
+    /// SYNC04: the CRDT element id — persisted as the XBEL `id`
+    /// attribute, minted randomly for locally created nodes and by a
+    /// deterministic content fingerprint for nodes a foreign file
+    /// brings in (so two devices' identical pre-sync trees dedup
+    /// instead of doubling).  "" while a freshly loaded node still
+    /// waits for the assign_meta pass.
+    pub guid: String,
+    /// SYNC04: the fractional-index position inside the parent —
+    /// persisted as `pos`, drives the convergent sibling order.
+    pub rank: String,
+}
+
+/// A mutation worth a sync op, recorded by the public mutators and
+/// drained by the bookmarks adapter (syncbookmarks) after the call
+/// commits.  Remote applies deliberately route around the recording
+/// mutators so a peer's op never echoes back as a local one.
+#[derive(Clone, Debug)]
+pub(crate) enum BmEvent {
+    /// Node (re)linked under a parent — create, move, undo-restore,
+    /// import insert.  Emitted as a `link` op per subtree node.
+    Link(u64),
+    /// A detached subtree was destroyed for good — (guid, parent_guid)
+    /// pairs captured before the nodes were freed, head first.
+    Remove(Vec<(String, String)>),
+    /// One field changed on a live node.
+    Set(u64, &'static str),
+}
+
+/// An outbox entry: the event plus the file binding it was recorded
+/// under — the sync adapter maps that path back to the sync scope
+/// (profile) it belongs to and drops events for non-profile files.
+#[derive(Clone, Debug)]
+pub(crate) struct OutEv {
+    pub path: Option<PathBuf>,
+    pub ev: BmEvent,
 }
 
 impl Node {
@@ -73,6 +109,8 @@ impl Node {
             desc: String::new(),
             expanded: false,
             tags: Vec::new(),
+            guid: String::new(),
+            rank: String::new(),
         }
     }
 
@@ -110,15 +148,30 @@ pub struct Bookmarks {
     /// file it was bound to (the store-level twin of the Qt layer's
     /// saveIfNeccessary before re-binding) instead of dropping them.
     dirty: bool,
+    /// SYNC04 outbox: mutations record events here; `with` hands them
+    /// to the sync adapter after the call commits.  Kept in-memory —
+    /// an op that never got emitted is at worst a missed local edit,
+    /// never a torn remote state.
+    pub(crate) outbox: Vec<OutEv>,
+    /// True while load_bytes builds the replacement tree — suppresses
+    /// guid/rank minting and event recording inside attach (the parse
+    /// is not a user mutation; assign_meta runs once after it).
+    loading: bool,
 }
 
 static BM: Mutex<Option<Bookmarks>> = Mutex::new(None);
 
 /// Runs `f` against the shared store (initialized to a lone empty
-/// root on first use), surviving a poisoned mutex.
+/// root on first use), surviving a poisoned mutex.  After the call
+/// commits, recorded mutation events flush to the sync adapter —
+/// a no-op when nothing changed or the tree isn't a synced profile
+/// file, and never echo: remote applies don't record events.
 pub fn with<R>(f: impl FnOnce(&mut Bookmarks) -> R) -> R {
     let mut guard = BM.lock().unwrap_or_else(|e| e.into_inner());
-    f(guard.get_or_insert_with(Bookmarks::new))
+    let b = guard.get_or_insert_with(Bookmarks::new);
+    let r = f(b);
+    crate::syncbookmarks::flush_local(b);
+    r
 }
 
 impl Bookmarks {
@@ -133,6 +186,8 @@ impl Bookmarks {
             loaded_path: None,
             epoch: 0,
             dirty: false,
+            outbox: Vec::new(),
+            loading: false,
         }
     }
 
@@ -152,7 +207,7 @@ impl Bookmarks {
             })
     }
 
-    fn node_mut(&mut self, h: u64) -> RcResult<&mut Node> {
+    pub(crate) fn node_mut(&mut self, h: u64) -> RcResult<&mut Node> {
         self.nodes
             .get_mut(&h)
             .ok_or_else(|| Fail {
@@ -334,6 +389,177 @@ impl Bookmarks {
         self.detached.remove(&h);
         self.node_mut(h)?.parent = Some(parent);
         self.dirty = true;
+        if !self.loading {
+            self.mint_meta(parent, at, h)?;
+            self.record(BmEvent::Link(h));
+        }
+        Ok(())
+    }
+
+    /// SYNC04: a runtime attach mints what the CRDT layer needs on the
+    /// node — a random guid when the loader didn't supply one (`id`
+    /// attr or the assign_meta fingerprint) and a fractional rank for
+    /// the slot it was inserted into.  Parse-time attaches skip this;
+    /// assign_meta fills them after the document is in.
+    fn mint_meta(&mut self, parent: u64, at: usize, h: u64) -> RcResult<()> {
+        let (prev, next) = {
+            let p = self.node(parent)?;
+            let prev = at
+                .checked_sub(1)
+                .and_then(|i| p.children.get(i))
+                .and_then(|&c| self.nodes.get(&c))
+                .map(|n| n.rank.clone())
+                .unwrap_or_default();
+            let next = p
+                .children
+                .get(at + 1)
+                .and_then(|&c| self.nodes.get(&c))
+                .map(|n| n.rank.clone())
+                .unwrap_or_default();
+            (prev, next)
+        };
+        let n = self.node_mut(h)?;
+        if n.guid.is_empty() {
+            n.guid = fresh_guid();
+        }
+        n.rank = rank_between(&prev, &next);
+        Ok(())
+    }
+
+    fn record(&mut self, ev: BmEvent) {
+        self.outbox.push(OutEv {
+            path: self.loaded_path.clone(),
+            ev,
+        });
+    }
+
+    /// The events recorded since the last drain — the sync adapter
+    /// (syncbookmarks) turns them into signed ops for the bound
+    /// profile's scope.
+    pub(crate) fn take_outbox(&mut self) -> Vec<OutEv> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// The node carrying `guid`, if it is in the tree.  O(n) — the
+    /// sync apply lane calls it per op, which is fine at bookmark
+    /// scale.
+    pub(crate) fn by_guid(&self, guid: &str) -> Option<u64> {
+        if guid.is_empty() {
+            return None;
+        }
+        self.nodes
+            .iter()
+            .find(|(_, n)| n.guid == guid)
+            .map(|(&h, _)| h)
+    }
+
+    pub(crate) fn guid_of(&self, h: u64) -> Option<&str> {
+        self.nodes.get(&h).map(|n| n.guid.as_str())
+    }
+
+    /// The guid of `h`'s parent — "" when it hangs directly under
+    /// root or has no parent.
+    pub(crate) fn parent_guid(&self, h: u64) -> String {
+        self.nodes
+            .get(&h)
+            .and_then(|n| n.parent)
+            .and_then(|p| self.nodes.get(&p))
+            .map(|pn| {
+                if pn.kind == TYPE_ROOT {
+                    String::new()
+                } else {
+                    pn.guid.clone()
+                }
+            })
+            .unwrap_or_default()
+    }
+
+    /// SYNC04 apply lane: link `h` under `parent` ordered by its
+    /// (rank, guid) — the order every replica converges to.  Detaches
+    /// a currently attached `h` first.  No guid/rank mint, no event:
+    /// the op carries both and a remote op must never echo.  Cycle
+    /// resolution is the caller's job.
+    pub(crate) fn place(&mut self, parent: u64, h: u64) -> RcResult<()> {
+        if h == self.root {
+            return Self::invalid("cannot place the root");
+        }
+        let pkind = self.node(parent)?.kind;
+        if pkind == TYPE_BOOKMARK || pkind == TYPE_SEPARATOR {
+            return Self::invalid("cannot parent under a leaf");
+        }
+        if self.node(h)?.parent.is_some() {
+            self.detach(h)?;
+        }
+        let (rank, guid) = {
+            let n = self.node(h)?;
+            (n.rank.clone(), n.guid.clone())
+        };
+        let at = {
+            let p = self.node(parent)?;
+            p.children
+                .iter()
+                .position(|&c| {
+                    self.nodes
+                        .get(&c)
+                        .map(|cn| {
+                            (cn.rank.as_str(), cn.guid.as_str())
+                                > (rank.as_str(), guid.as_str())
+                        })
+                        .unwrap_or(true)
+                })
+                .unwrap_or_else(|| self.node(parent).map(|p| p.children.len()).unwrap_or(0))
+        };
+        let p = self.node_mut(parent)?;
+        p.children.insert(at, h);
+        self.detached.remove(&h);
+        self.node_mut(h)?.parent = Some(parent);
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// SYNC04 apply lane: unlink + free a subtree silently — a remote
+    /// remove consumes the element; it must not leave an event that
+    /// would re-emit the delete as a local one.
+    pub(crate) fn erase(&mut self, h: u64) -> RcResult<()> {
+        if self.node(h)?.parent.is_some() {
+            self.detach(h)?;
+        }
+        if self.node(h)?.parent.is_some() || h == self.root {
+            return Self::invalid("cannot erase");
+        }
+        self.free_subtree(h)
+    }
+
+    /// SYNC04 apply lane: write one synced field without recording.
+    /// `url` passes the same scheme gate as a local edit.
+    pub(crate) fn set_field(&mut self, h: u64, field: &str, v: &Value) -> RcResult<()> {
+        match field {
+            "title" | "url" | "desc" => {
+                let s = v.as_str().unwrap_or("");
+                if field == "url" {
+                    crate::bookmarkhtml::check_bookmark_url(s, true)?;
+                }
+                let n = self.node_mut(h)?;
+                match field {
+                    "title" => n.title = s.into(),
+                    "url" => n.url = s.into(),
+                    _ => n.desc = s.into(),
+                }
+            }
+            "expanded" => self.node_mut(h)?.expanded = v.as_bool().unwrap_or(false),
+            "tags" => {
+                self.node_mut(h)?.tags = v
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|t| t.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+            _ => return Self::invalid("unknown synced field"),
+        }
+        self.dirty = true;
         Ok(())
     }
 
@@ -362,6 +588,42 @@ impl Bookmarks {
         if self.node(h)?.parent.is_some() {
             return Self::invalid("detach before destroy");
         }
+        // SYNC04: capture (guid, parent_guid) per node before the free
+        // — the emitted `rm` op lists them so the peer tombstones
+        // exactly what this device observed.  The head is detached so
+        // its parent_guid is "" here; the adapter substitutes the
+        // last declared placement from its own state.
+        let gone = if self.loading {
+            Vec::new()
+        } else {
+            let mut gone = Vec::new();
+            let mut stack = vec![h];
+            while let Some(x) = stack.pop() {
+                let (guid, pgu) = match self.nodes.get(&x) {
+                    Some(n) => (
+                        n.guid.clone(),
+                        n.parent
+                            .and_then(|p| self.nodes.get(&p))
+                            .map(|pn| pn.guid.clone())
+                            .unwrap_or_default(),
+                    ),
+                    None => continue,
+                };
+                gone.push((guid, pgu));
+                stack.extend(self.nodes.get(&x).map(|n| n.children.clone()).unwrap_or_default());
+            }
+            gone
+        };
+        self.free_subtree(h)?;
+        if !gone.is_empty() {
+            self.record(BmEvent::Remove(gone));
+        }
+        Ok(())
+    }
+
+    /// The shared subtree free behind destroy() and the sync lane's
+    /// erase() — no guards, no events.
+    fn free_subtree(&mut self, h: u64) -> RcResult<()> {
         let mut stack = vec![h];
         while let Some(x) = stack.pop() {
             let children = match self.nodes.remove(&x) {
@@ -376,33 +638,54 @@ impl Bookmarks {
     }
 
     pub fn set_str(&mut self, h: u64, field: &str, value: &str) -> RcResult<()> {
-        let n = self.node_mut(h)?;
-        match field {
-            "title" => n.title = value.into(),
-            "url" => {
-                // BKIMP01: same insert gate — a single deliberate url
-                // edit is the human equivalent of the import flag, so
-                // javascript: passes here; every other non-allowlist
-                // scheme (data:, file:, arktos-*) still refuses.
-                crate::bookmarkhtml::check_bookmark_url(value, true)?;
-                n.url = value.into();
+        {
+            let n = self.node_mut(h)?;
+            match field {
+                "title" => n.title = value.into(),
+                "url" => {
+                    // BKIMP01: same insert gate — a single deliberate url
+                    // edit is the human equivalent of the import flag, so
+                    // javascript: passes here; every other non-allowlist
+                    // scheme (data:, file:, arktos-*) still refuses.
+                    crate::bookmarkhtml::check_bookmark_url(value, true)?;
+                    n.url = value.into();
+                }
+                "desc" => n.desc = value.into(),
+                _ => return Self::invalid("unknown string field"),
             }
-            "desc" => n.desc = value.into(),
-            _ => return Self::invalid("unknown string field"),
         }
         self.dirty = true;
+        if !self.loading {
+            match field {
+                "title" | "url" | "desc" => {
+                    let f: &'static str = match field {
+                        "title" => "title",
+                        "url" => "url",
+                        _ => "desc",
+                    };
+                    self.record(BmEvent::Set(h, f));
+                }
+                _ => {}
+            }
+        }
         Ok(())
     }
 
     pub fn set_expanded(&mut self, h: u64, expanded: bool) -> RcResult<()> {
         self.node_mut(h)?.expanded = expanded;
         self.dirty = true;
+        if !self.loading {
+            self.record(BmEvent::Set(h, "expanded"));
+        }
         Ok(())
     }
 
     pub fn set_tags(&mut self, h: u64, tags: Vec<String>) -> RcResult<()> {
         self.node_mut(h)?.tags = tags;
         self.dirty = true;
+        if !self.loading {
+            self.record(BmEvent::Set(h, "tags"));
+        }
         Ok(())
     }
 
@@ -429,6 +712,7 @@ impl Bookmarks {
         let mut scan = Scan::new(&data);
 
         let mut fresh = Bookmarks::new();
+        fresh.loading = true;
         let mut rooted = false;
         loop {
             match scan.next()? {
@@ -449,10 +733,47 @@ impl Bookmarks {
         if !rooted {
             return corrupt("the file is not an XBEL version 1.0 file");
         }
+        fresh.loading = false;
+        fresh.assign_meta();
         let epoch = self.epoch;
         *self = fresh;
         self.epoch = epoch + 1;
         Ok(())
+    }
+
+    /// SYNC04 post-load pass: every node without an `id` gets a
+    /// deterministic fingerprint guid — same document, same ids on
+    /// every device, so pre-sync trees merge instead of doubling —
+    /// and every node without `pos` gets a sequential fractional
+    /// rank in file order.
+    fn assign_meta(&mut self) {
+        let root = self.root;
+        self.assign_meta_walk(root, "");
+    }
+
+    fn assign_meta_walk(&mut self, h: u64, parent_guid: &str) {
+        let children = self
+            .nodes
+            .get(&h)
+            .map(|n| n.children.clone())
+            .unwrap_or_default();
+        let mut prev = String::new();
+        for (i, c) in children.iter().enumerate() {
+            let guid = {
+                let Some(n) = self.nodes.get_mut(c) else {
+                    continue;
+                };
+                if n.guid.is_empty() {
+                    n.guid = fingerprint_guid(parent_guid, i, n);
+                }
+                if n.rank.is_empty() {
+                    n.rank = rank_between(&prev, "");
+                }
+                prev = n.rank.clone();
+                n.guid.clone()
+            };
+            self.assign_meta_walk(*c, &guid);
+        }
     }
 
     /// Loads from a file; a missing file is an empty store, not an
@@ -564,6 +885,12 @@ impl Bookmarks {
         match n.kind {
             TYPE_FOLDER => {
                 let mut open = format!("{pad}<folder folded=\"{}\"", if n.expanded { "no" } else { "yes" });
+                if !n.guid.is_empty() {
+                    let _ = write!(open, " id=\"{}\"", escape_attr(&n.guid));
+                }
+                if !n.rank.is_empty() {
+                    let _ = write!(open, " pos=\"{}\"", escape_attr(&n.rank));
+                }
                 if !n.tags.is_empty() {
                     let _ = write!(open, " tags=\"{}\"", escape_attr(&n.tags.join(",")));
                 }
@@ -584,6 +911,12 @@ impl Bookmarks {
             TYPE_BOOKMARK => {
                 out.push_str(&pad);
                 out.push_str("<bookmark");
+                if !n.guid.is_empty() {
+                    let _ = write!(out, " id=\"{}\"", escape_attr(&n.guid));
+                }
+                if !n.rank.is_empty() {
+                    let _ = write!(out, " pos=\"{}\"", escape_attr(&n.rank));
+                }
                 if !n.url.is_empty() {
                     let _ = write!(out, " href=\"{}\"", escape_attr(&n.url));
                 }
@@ -604,7 +937,14 @@ impl Bookmarks {
             }
             TYPE_SEPARATOR => {
                 out.push_str(&pad);
-                out.push_str("<separator/>\n");
+                out.push_str("<separator");
+                if !n.guid.is_empty() {
+                    let _ = write!(out, " id=\"{}\"", escape_attr(&n.guid));
+                }
+                if !n.rank.is_empty() {
+                    let _ = write!(out, " pos=\"{}\"", escape_attr(&n.rank));
+                }
+                out.push_str("/>\n");
             }
             _ => {}
         }
@@ -632,6 +972,121 @@ fn escape_attr(s: &str) -> String {
     escape_text(s).replace('"', "&quot;")
 }
 
+// ---- SYNC04 identity + ordering -------------------------------------
+
+/// Reads the sync attributes the writer emits (`id` = CRDT guid,
+/// `pos` = fractional rank) onto a node being parsed — bounded so a
+/// hostile document cannot inject oversized keys.
+fn sync_attrs(node: &mut Node, attrs: &[(String, String)]) {
+    if let Some(id) = attr(attrs, "id") {
+        if id.len() <= 128 {
+            node.guid = id.into();
+        }
+    }
+    if let Some(pos) = attr(attrs, "pos") {
+        if pos.len() <= 64 {
+            node.rank = pos.into();
+        }
+    }
+}
+
+fn hex_str(data: &[u8]) -> String {
+    let mut s = String::with_capacity(data.len() * 2);
+    for b in data {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// A fresh random element id for a locally created node — 16 bytes
+/// so collisions are a non-event at bookmark scale.
+fn fresh_guid() -> String {
+    match crate::noisexx::rand_bytes::<16>() {
+        Ok(b) => hex_str(&b),
+        Err(_) => {
+            // RNG failure is not fatal for an id; time+counter keeps
+            // the id unique enough for a single device.
+            static CTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0);
+            format!(
+                "t{:016x}{:08x}",
+                nanos,
+                CTR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            )
+        }
+    }
+}
+
+/// The deterministic element id for a loaded node that carries no
+/// `id` — sha256 over (parent guid, slot index, kind, fields), so
+/// the same document mints the same ids on every device and two
+/// pre-sync trees dedup instead of doubling.
+fn fingerprint_guid(parent_guid: &str, index: usize, n: &Node) -> String {
+    let mut d = Sha256::new();
+    d.update(b"ARBMG1");
+    let mut field = |bytes: &[u8]| {
+        d.update((bytes.len() as u32).to_le_bytes());
+        d.update(bytes);
+    };
+    field(parent_guid.as_bytes());
+    field(index.to_string().as_bytes());
+    field(&[n.kind]);
+    field(n.title.as_bytes());
+    field(n.url.as_bytes());
+    field(n.desc.as_bytes());
+    field(if n.expanded { b"1" } else { b"0" });
+    for t in &n.tags {
+        field(t.as_bytes());
+    }
+    hex_str(&d.finalize()[..16])
+}
+
+/// Fractional-index alphabet — ASCII order is the rank order.
+const RANK_ABC: &[u8; 62] =
+    b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+fn rank_digit(c: u8) -> u8 {
+    RANK_ABC.iter().position(|&x| x == c).unwrap_or(0) as u8
+}
+
+/// The smallest-ish rank string strictly between `prev` and `next`
+/// ("" = open end) under plain string ordering — the convergent
+/// sibling order primitive: peers insert by the op's `pos` and only
+/// ever break ties on guid, so every replica orders identically.
+pub(crate) fn rank_between(prev: &str, next: &str) -> String {
+    let lo: Vec<u8> = prev.bytes().map(rank_digit).collect();
+    let hi: Vec<u8> = next.bytes().map(rank_digit).collect();
+    let mut open_hi = next.is_empty();
+    let mut out = Vec::new();
+    for i in 0..256 {
+        let l = lo.get(i).copied().unwrap_or(0);
+        let h = if open_hi {
+            61
+        } else {
+            hi.get(i).copied().unwrap_or(0)
+        };
+        if h > l + 1 {
+            out.push(RANK_ABC[(l + (h - l) / 2) as usize]);
+            return String::from_utf8(out).unwrap_or_default();
+        }
+        out.push(RANK_ABC[l as usize]);
+        if h == l + 1 {
+            // Only room below `next` is above prev's remaining digits.
+            open_hi = true;
+        }
+        if h < l {
+            // Caller invariant (prev < next) broken — still emit a
+            // string; sorting stays defined.
+            break;
+        }
+    }
+    out.push(RANK_ABC[30]);
+    String::from_utf8(out).unwrap_or_default()
+}
+
 /// Reads one level of <folder>/<bookmark>/<separator> children into
 /// `parent`, returning on the container's End — the transliteration
 /// of XbelReader::readXBEL / readFolder (they share the same child
@@ -652,7 +1107,9 @@ fn read_container(
                 "folder" => read_folder(scan, store, parent, &attrs, depth)?,
                 "bookmark" => read_bookmark(scan, store, parent, &attrs)?,
                 "separator" => {
-                    let h = store.alloc(Node::new(TYPE_SEPARATOR));
+                    let mut n = Node::new(TYPE_SEPARATOR);
+                    sync_attrs(&mut n, &attrs);
+                    let h = store.alloc(n);
                     store.attach(parent, -1, h)?;
                     scan.next()?; // empty elements arrive as Start+End
                 }
@@ -684,6 +1141,7 @@ fn read_folder(
     }
     let mut node = Node::new(TYPE_FOLDER);
     node.expanded = attr_or_empty(attrs, "folded") == "no";
+    sync_attrs(&mut node, attrs);
     if let Some(tags) = attr(attrs, "tags") {
         node.tags = tags
             .split(',')
@@ -709,6 +1167,7 @@ fn read_bookmark(
     attrs: &[(String, String)],
 ) -> RcResult<()> {
     let mut node = Node::new(TYPE_BOOKMARK);
+    sync_attrs(&mut node, attrs);
     if let Some(u) = attr(attrs, "href") {
         node.url = u.into();
     }

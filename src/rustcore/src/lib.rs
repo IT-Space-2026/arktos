@@ -230,6 +230,7 @@ mod sitedecisions;
 mod sitetrust;
 mod store;
 mod sync;
+mod syncbookmarks;
 pub mod syncpair;
 pub mod synctransport;
 mod tlsprobe;

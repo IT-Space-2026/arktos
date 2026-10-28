@@ -62,7 +62,7 @@ use crate::facade::{self, AcCore};
 use crate::{
     blocklist, bookmarks, containers, cookies, extverify, history, icons, notes, notify,
     omnibox, opensearch, profiles, profilevault, session, settings, sitedecisions,
-    sitetrust, store, sync, syncpair, synctransport, tlsprobe, tranco, updates, util,
+    sitetrust, store, sync, syncbookmarks, syncpair, synctransport, tlsprobe, tranco, updates, util,
 };
 
 /// The envelope schema version — the frame's `version` byte and the
@@ -2573,6 +2573,9 @@ const VAULT_OPS: &[Op] = &[
 // (SYNC09) hang off it.
 
 fn sync_engine(ctx: &MwCtx) -> Result<sync::SyncEngine, OpErr> {
+    // SYNC04: keep the bookmarks apply lane bound to the core this
+    // call is for — the applier seam is process-global.
+    syncbookmarks::install(ctx.core.data_root());
     sync::SyncEngine::open(ctx.core.data_root()).map_err(OpErr::from)
 }
 
@@ -4991,5 +4994,117 @@ mod tests {
         assert_eq!(r.ok()["stopped"], false);
         let r = call(core_b.0, &command(18, 19, 0x000c, ""));
         assert_eq!(r.ok()["stopped"], true);
+    }
+
+    /// SYNC04: the bookmarks adapter over the real envelope — a
+    /// bookmarks.create on core A lands a signed link op in A's log;
+    /// importing on B applies it into B's own profile xbel.
+    #[test]
+    fn sync_bookmarks_adapter_end_to_end() {
+        let _g = guard();
+        let dir_a = tmpdir("bmsA");
+        let dir_b = tmpdir("bmsB");
+        let core_a = TestCore::new(&dir_a);
+        let core_b = TestCore::new(&dir_b);
+
+        // Pair each device into the other's "default" sync group.
+        let a_pk = call(core_a.0, &query(1, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let b_pk = call(core_b.0, &query(2, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let r = call(
+            core_a.0,
+            &command(
+                3,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{b_pk}","scope":"default"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_b.0,
+            &command(
+                4,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{a_pk}","scope":"default"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+
+        // A creates a folder + bookmark through the bookmarks
+        // domain — the store events flush into signed ops.
+        let r = call(
+            core_a.0,
+            &command(
+                5,
+                4,
+                0x0002,
+                r#"{"profile":"default","node":{"type":1,"title":"F"},"row":-1}"#,
+            ),
+        );
+        let f = r.ok()["id"].as_u64().unwrap();
+        assert!(f > 1);
+        let r = call(
+            core_a.0,
+            &command(
+                6,
+                4,
+                0x0002,
+                &format!(
+                    r#"{{"profile":"default","parent":{f},"node":{{"type":2,"title":"bm","url":"http://x/"}},"row":-1}}"#
+                ),
+            ),
+        );
+        assert!(r.ok()["id"].as_u64().unwrap() > 1);
+
+        // A's op-log now tails the store: two link ops, scope
+        // "default".
+        let r = call(
+            core_a.0,
+            &query(7, 19, 0x0007, r#"{"store":"bookmarks"}"#),
+        );
+        let ops = r.ok()["ops"].clone();
+        assert_eq!(ops.as_array().unwrap().len(), 2);
+        assert_eq!(ops[0]["scope"], "default");
+
+        // B imports — the adapter binds B's profile file and lands
+        // the subtree.
+        let r = call(
+            core_b.0,
+            &command(
+                8,
+                19,
+                0x0008,
+                &serde_json::to_string(&json!({"ops": ops})).unwrap(),
+            ),
+        );
+        let p = r.ok();
+        assert_eq!(p["accepted"], 2, "{p}");
+        assert_eq!(p["applied"], 2, "{p}");
+
+        // B's tree now shows the folder.
+        let r = call(core_b.0, &query(9, 4, 0x0001, r#"{"profile":"default"}"#));
+        assert_eq!(r.ok()["child_count"], 1);
+        // And B's op-log recorded the applied remote ops, so a
+        // re-import dedups instead of re-applying.
+        let r = call(
+            core_b.0,
+            &command(
+                10,
+                19,
+                0x0008,
+                &serde_json::to_string(&json!({"ops": ops})).unwrap(),
+            ),
+        );
+        let p = r.ok();
+        assert_eq!(p["duplicates"], 2, "{p}");
+        assert_eq!(p["applied"], 0, "{p}");
+        let _ = dir_b;
     }
 }

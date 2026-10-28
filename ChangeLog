@@ -5046,3 +5046,4 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   is locked to its anchor spot — a drag snaps straight back — and it
   follows its button when the browser window moves or resizes, like
   a real popover. (Most visible on macOS.)
+- 2026-10-28 SYNC04: serverless sync bookmarks adapter — OR-set per node guid (XBEL id attr; fingerprint ids for pre-sync trees), tombstoned deletes honoring observed placements, link ops covering add+move+undo-revive with fractional-index sibling order, per-field LWW edits, causal parking for late-arriving parents, deterministic move-cycle resolution; op-log replay rebuilds all adapter state — verified: cargo test 521/521 incl. concurrent add/remove/move convergence, out-of-order causal, undo revive, move-cycle determinism, fingerprint dedup, mw envelope e2e; make -j2 green, --quit-after-load exit 0 offscreen

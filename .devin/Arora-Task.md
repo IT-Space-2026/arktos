@@ -400,7 +400,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | SYNC01 | Serverless sync: engine core — device identity (Ed25519), sync store, per-store op-log tailing, sync-group membership state — details below | done | 0 | rustcore sync engine core: Ed25519 identity (sync/device.key, never synced), members+oplog sync.db, content-addressed signed ops (op_id=sha256 frame), canonical (lamport,device_id,op_id) apply + dedup, deferred drain seam for SYNC04 adapters; mw domain 19 envelope-only (identity/members/append/export/import/stats/drain) + MW-ARCH §8.19. Verified: cargo test 492/492 incl. two-device loopback + tamper/unknown-signer rejects, acprobe --bridge OK, sync.rs 86% lines (>85% gate), make -j2 green, --quit-after-load exit 0 offscreen |
 | SYNC02 | Serverless sync: Tor transport — embedded Arti, v3 onion service per device, authorized-client gating, outbound circuits — details below | done | 2 | embedded-Arti tor transport + mem loopback behind the SyncTransport seam: v3 onion stable across restarts (keystore hsid), restricted-discovery x25519 gating refuses unpaired peers at the Tor layer, backoffd outbound links, sync.transport_* mw ops (domain 19, since:2). Verified: tools/synctor-e2e.sh ALL LEGS PASS on real Tor (authorized PING->PONG, unauthorized refused pre-app-layer, endpoint stable across restart), cargo test 501/501 incl mw envelope e2e, acprobe --bridge OK, rustcore 91.10% lines (>85% gate), check-supplychain clean (audit.toml mirrors deny.toml ignores; rustdl webpki bumped for new advisories), make -j2 green, --quit-after-load exit 0 offscreen |
 | SYNC03 | Serverless sync: pairing — QR payload, Noise_XX mutual auth, group-secret join, emoji/word fingerprint verify UI — details below | done | 0 | Noise_XX pairing w/ QR+manual code, fingerprint verify, scoped members; cargo test 513/513, make -j2 clean |
-| SYNC04 | Serverless sync: bookmarks adapter — OR-Set CRDT, tombstoned deletes, causal folder ordering — details below | pending | 0 | needs:task:SYNC03 |
+| SYNC04 | Serverless sync: bookmarks adapter — OR-Set CRDT, tombstoned deletes, causal folder ordering — details below | done | 0 | bookmarks CRDT adapter: OR-set guids (XBEL id), observed-stamp tombstones, causal pending, fractional ranks, LWW fields; cargo test 521/521 incl. concurrent add/remove/move convergence + mw e2e; make -j2 green; --quit-after-load exit 0 offscreen |
 | SYNC05 | Serverless sync: history adapter — append-only union set, per-device retention — details below | pending | 0 | needs:task:SYNC04 |
 | SYNC06 | Serverless sync: open-tabs presence — ephemeral per-device doc, read-only "tabs on my other devices" view — details below | pending | 0 | needs:task:SYNC04 |
 | SYNC07 | Serverless sync: settings/profile adapter — LWW map with device-local exclusions — details below | pending | 0 | needs:task:SYNC04 |
@@ -4445,6 +4445,36 @@ Bookmarks CRDT adapter: OR-Set with tombstoned deletes and causal
 ordering for folder trees; ops emitted on the existing bookmarks store,
 applied idempotently on the peer. Verify: concurrent add/remove/move on
 two profiles converge to identical trees.
+
+
+Landed (this run):
+- src/rustcore/src/bookmarks.rs — Node gains guid + fractional rank
+  (persisted as XBEL `id`/`pos` attrs, foreign readers ignore them);
+  an outbox records semantic events (Link/Remove/Set) on every
+  public mutation; `bookmarks::with` flushes them to the adapter;
+  apply-lane helpers (place/erase/set_field/by_guid) mutate without
+  recording so remote ops never echo; post-load assign_meta mints
+  deterministic fingerprint guids for foreign `id`-less nodes.
+- src/rustcore/src/syncbookmarks.rs — the OR-set adapter: link
+  (add+move+revive) by (lamport,device) place stamps, rm with
+  observed-stamp tombstones (un-observed placements survive and
+  retarget up the recorded parent chain), per-field LWW set ops,
+  causal pending for late parents, stamp-ordered move-cycle
+  resolution, first-touch advertise merging pre-sync trees.
+  No adapter db — SyncEngine's op-log is the durable CRDT state,
+  replayed on first use (hydrate).
+- src/rustcore/src/sync.rs — the Applier seam now passes the whole
+  WireOp (adapters need lamport/device_id/op_id for conflict rules).
+- mw: sync_engine() installs the adapter per core; bookmarks ops
+  emit through the same outbox flush.  MW-ARCH §8.19 documents the
+  semantics.
+Verify: cargo test 521/521 — creates/sets round-trip + idempotent
+re-delivery, concurrent add/remove/move converging to identical
+canonical dumps (folder delete vs concurrent add/move-into it),
+out-of-order child parked until parent lands, undo-relink revive,
+deterministic move-cycle resolution, fingerprint dedup of identical
+files, mw envelope e2e (create -> export -> pair -> import -> peer
+tree).  make -j2 green; arktos --quit-after-load exit 0 offscreen.
 
 ### SYNC05
 History adapter: append-only union set ops, dedup by visit-id, per-device
