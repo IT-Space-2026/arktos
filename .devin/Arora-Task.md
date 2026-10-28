@@ -391,6 +391,21 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC09 | macOS fix: URL/search bar renders wrong — yellow tint + still buggy — details below | done | 0 | Blind fix: urlbar yellow was ArktosStyle::secureFieldColor — the 2008-Chrome https "secure" tint applied from LocationBar::paintEvent via setPalette-during-paint (the latch mechanism on the native NSToolbar field; light palettes only, why Linux read fine). Removed the tint + the dead mid-load gradient Base write entirely — paintEvent never mutates the palette now; padlock owns trust, NAVB01 strip owns loading. secureFieldColor() deleted; also fixed 2 pre-existing no-rust warnings blocking check-warnings. Verified: tst_locationbar 59/59 incl. new fieldFillUntinted, tst_downloadmanager 46/46, check-warnings PASS, --quit-after-load exit 0 offscreen; groupBoxTitleWeight+flatGroupSection fail identically on unmodified HEAD (pre-existing); mac runtime verify still owed |
 | MAC10 | macOS fix: Proxy settings page controls unselectable — details below | done | 0 | Checkable-QGroupBox enable affordance is the MAC04 style-painted-indicator class — converted proxy/networkCache groups + adblock rulesGroup to real QCheckBox driving a fields container; tst_settingsdialog 60/60 incl. new leg, tst_adblockmanager 15/15, --quit-after-load exit 0 offscreen; mac verify owed |
 | MAC11 | macOS fix: extension list names render garbled/double-drawn — details below | done | 0 | Blind fix: MAC04 feature-flag strip never suppressed the painted name copy — Qt6 QCommonStyle draws item text on !option->text.isEmpty(), not HasDisplay; delegate now empties text/icon/checkState for column 0 (backdrop only, QCheckBox is sole renderer; sizing unchanged). Verified: new render leg fails on unmodified HEAD + passes fixed, tst_settingsdialog 60/60, --quit-after-load exit 0 offscreen; mac verify owed |
+| MAC12 | macOS fix: Bitwarden popup renders but right edge truncated/clipped — details below | pending | 0 | needs:task:MAC11 — popup works (login+vault verified on real Mac) but content is cut off on the right; likely popup window narrower than content or sizeHint/DPR scaling wrong on Retina |
+| MAC13 | macOS fix: Profile Manager dialog buttons/text truncated on right edge — details below | pending | 0 | needs:task:MAC11 — "Set Password"/"Remove Picture"/"Open Window" clipped; dialog min-width too small for its button column or missing layout constraint |
+| MAC14 | macOS fix: Tor window new-tab (+) button misplaced/wrong — details below | pending | 0 | needs:task:MAC11 — add-tab button in the Tor window tab bar renders in the wrong place/state on macOS |
+| MAC15 | macOS fix: Tor start page background doesn't fill the window — details below | pending | 0 | needs:task:MAC11 — aurora gradient covers only the top band, rest renders white; page bg doesn't stretch to viewport height on macOS |
+| SYNC01 | Serverless sync: engine core — device identity (Ed25519), sync store, per-store op-log tailing, sync-group membership state — details below | done | 0 | rustcore sync engine core: Ed25519 identity (sync/device.key, never synced), members+oplog sync.db, content-addressed signed ops (op_id=sha256 frame), canonical (lamport,device_id,op_id) apply + dedup, deferred drain seam for SYNC04 adapters; mw domain 19 envelope-only (identity/members/append/export/import/stats/drain) + MW-ARCH §8.19. Verified: cargo test 492/492 incl. two-device loopback + tamper/unknown-signer rejects, acprobe --bridge OK, sync.rs 86% lines (>85% gate), make -j2 green, --quit-after-load exit 0 offscreen |
+| SYNC02 | Serverless sync: Tor transport — embedded Arti, v3 onion service per device, authorized-client gating, outbound circuits — details below | pending | 0 | needs:task:SYNC01 |
+| SYNC03 | Serverless sync: pairing — QR payload, Noise_XX mutual auth, group-secret join, emoji/word fingerprint verify UI — details below | pending | 0 | needs:task:SYNC02 |
+| SYNC04 | Serverless sync: bookmarks adapter — OR-Set CRDT, tombstoned deletes, causal folder ordering — details below | pending | 0 | needs:task:SYNC03 |
+| SYNC05 | Serverless sync: history adapter — append-only union set, per-device retention — details below | pending | 0 | needs:task:SYNC04 |
+| SYNC06 | Serverless sync: open-tabs presence — ephemeral per-device doc, read-only "tabs on my other devices" view — details below | pending | 0 | needs:task:SYNC04 |
+| SYNC07 | Serverless sync: settings/profile adapter — LWW map with device-local exclusions — details below | pending | 0 | needs:task:SYNC04 |
+| SYNC08 | Serverless sync: passwords — E2E per-entry encrypted records, vault key, passphrase gate, strictly opt-in — details below | pending | 0 | needs:task:SYNC07 |
+| SYNC09 | Serverless sync: revocation + device management — paired-device list UI, fingerprint display, unpair, group-key rotation — details below | pending | 0 | needs:task:SYNC03 |
+| SYNC10 | Serverless sync: LAN fast path — mDNS discovery + direct QUIC when co-located, Tor fallback unchanged — details below | pending | 0 | needs:task:SYNC03 |
+| SYNC11 | Serverless sync: integration verification — two-profile loopback sync over in-process circuits, conflict-merge legs, honest docs — details below | pending | 0 | needs:task:SYNC08,SYNC09,SYNC10 |
 
 ## Task details
 
@@ -4298,3 +4313,153 @@ and PASSES with the fix; full suite 60/60; arktos --quit-after-load
 exit 0 offscreen; 0 warnings on the touched unit.  macOS runtime
 verification still owed: the Name column must show a single clean
 label per row.
+
+### SYNC01
+Sync engine core, engine-agnostic at the MW-ARCH store boundary:
+per-PROFILE Ed25519 identity keypair (generated under the active profile
+dir, persisted, never synced) — sync is profile-scoped, not app-global:
+each profile has its OWN device identity, sync group, paired-device set,
+group secret, and onion address. Two profiles on the same machine are
+independent sync worlds (e.g. work profile != personal profile devices).
+A `sync` store per profile holding group membership (device id -> key +
+onion addr + last-seen); op-log tailing per synced store (bookmarks,
+history, tabs, settings, passwords) producing signed CRDT ops;
+deterministic op apply + dedup via op-ids; no server anywhere. Deliver
+the profile-scoped store + identity + op-log plumbing with a loopback
+self-sync leg proving ops round-trip.
+
+
+Landed (this run):
+- src/rustcore/src/sync.rs — SyncEngine: Ed25519 identity persisted
+  as PKCS#8 at <data root>/sync/device.key (0600, corrupt file =
+  hard Corrupt, never a silent re-key); device id = hex(pubkey).
+  sync.db (WAL sqlite, cookies.db pragmas): members(device_id,
+  pubkey, onion_addr, last_seen, added), oplog(seq, op_id UNIQUE,
+  origin, store, scope, device_id, lamport, wall_ms, body, sig,
+  applied), meta lamport clock.
+- Op wire doc {v:1, op_id, store, scope, device_id, lamport,
+  wall_ms, body, sig_b64}; signature covers a fixed LE frame over
+  the canonical JSON body (sorted keys — deterministic regardless
+  of serde_json preserve_order); op_id = hex(sha256(frame)) so
+  dedup is content-addressed.
+- import(): per-op pipeline parse -> op_id recompute -> synced-
+  store check -> member/self signer lookup -> Ed25519 verify ->
+  lamport merge -> INSERT OR IGNORE dedup; accepted batch applies
+  in canonical (lamport, device_id, op_id) order via the
+  register_applier seam (SYNC04+); unhandled stores stay durable
+  flagged applied=0, reported `deferred`, retry via drain_pending.
+- mw domain 19 "sync" (envelope-only, profile_scoped=false):
+  identity, members_list, member_add, member_remove, member_seen,
+  append, export, import, stats, drain; "sync" notify topic added.
+- acprobe --bridge gained sync.identity/append/stats legs; the
+  stale "all three engines" caps check was fixed to the post-
+  f593bfe1 two-engine matrix.
+- MW-ARCH.md: §5 topic row, §7 domain row, §8.19 op table.
+Verify: cargo test 492/492 (10 new sync legs incl. two-device
+loopback, canonical-order apply, tamper/unknown-signer rejects,
+deferred drain); mw sync_domain_end_to_end e2e over the envelope;
+acprobe --bridge OK; cargo build 0 warnings.
+
+### SYNC02
+Tor transport via embedded Arti: v3 onion service per device (stable
+across restarts, address persisted), authorized-client x25519 gating so
+unpaired peers are refused at the Tor layer, outbound client circuits,
+reconnect/backoff, and a transport abstraction so LAN (SYNC10) plugs in
+later. Verify: two processes, one serves a ping over its onion, other
+connects only with an authorized key; unauthorized attempt fails
+pre-app-layer.
+
+### SYNC03
+Pairing: one-time QR payload (invitation token + inviter onion addr +
+short pubkey hash), then real handshake over Tor: Noise_XX mutual auth,
+permanent identity-key exchange, sync-group-secret transfer to the
+joiner, and a 6-word/6-emoji fingerprint confirmation on BOTH sides
+(kills MITM). Manual mnemonic fallback path for no-camera. Pairing is
+initiated from a specific profile's Settings -> Sync page and binds the
+peer to THAT profile's sync group only — the peer joins the profile's
+group, sees only that profile's stores, and gets that profile's onion
+client-auth. Persist the paired peer into that profile's sync store.
+
+### SYNC04
+Bookmarks CRDT adapter: OR-Set with tombstoned deletes and causal
+ordering for folder trees; ops emitted on the existing bookmarks store,
+applied idempotently on the peer. Verify: concurrent add/remove/move on
+two profiles converge to identical trees.
+
+### SYNC05
+History adapter: append-only union set ops, dedup by visit-id, per-device
+retention applied locally after merge. Verify: two profiles exchange
+histories, union correct, deletes/retention stay local.
+
+### SYNC06
+Open-tabs presence: ephemeral per-device document (not durable CRDT) —
+each device publishes its current tab set read-only; peers render "tabs
+on <device>" and can open them locally. Must not create history on the
+peer. Verify: presence update propagates, closes propagate, no writes.
+
+### SYNC07
+Settings/profile adapter: LWW map over synced preference keys with an
+explicit device-local exclusion list (paths, window geometry, proxy,
+per-machine prefs). Verify: change propagates, excluded keys never move.
+
+### SYNC08
+Passwords: strictly opt-in. Per-entry encrypted records — vault key
+derived from user passphrase (or generated + wrapped per device);
+sync moves ciphertext only, keys never a payload. Field-level LWW with
+version vectors. Verify: entry syncs encrypted, decrypts on peer with
+passphrase, wrong-passphrase peer sees only ciphertext.
+
+### SYNC09
+Revocation + device management UI: Settings -> Sync section inside each
+profile (list shows THIS profile's paired devices: id, fingerprint,
+last-seen), add/remove flows, unpair revokes onion client-auth AND
+rotates that profile's group secret (vault re-wrap for remaining
+devices). Switching profiles shows that profile's own device set — no
+cross-profile visibility. Verify: revoked device can no longer connect
+and sees nothing new; two profiles show disjoint device lists.
+
+### SYNC10
+LAN fast path: mDNS discovery of paired devices on the local network,
+direct QUIC sync when co-located, transparent fallback to Tor when not.
+Same auth, same ops — transport swap only. Verify: LAN sync completes
+with Tor disabled; cross-check no downgrade in auth.
+
+### SYNC11
+Integration verification + honest docs: two isolated profiles syncing
+end-to-end (bookmarks+history+tabs+settings+passwords), conflict-merge
+legs (offline edits both sides), revocation leg, LAN+Tor legs. Write
+SYNC-DESIGN.md capturing the transport tiers, CRDT semantics, pairing
+flow, and the recorded limitations. No fake passes.
+
+### MAC12
+Real-Mac screenshot: Bitwarden extension popup works end-to-end (login
+form, then unlocked Vault with search/filters/identities/items) but the
+popup window truncates content on the right — the vault's bottom tab bar
+(Vault/Generator/Send/Settings) is visibly cut, popup right edge clips.
+Check popup window sizing vs content: minimumSize/sizeHint, whether the
+frameless macOS path constrains width differently, and Retina
+devicePixelRatio in the size computation. Blind fix + document.
+
+### MAC13
+Real-Mac screenshot: Profile Manager dialog clips its right-side button
+column — "Set Password." shows as "et Password.", "Remove Picture" as
+"emove Pictur", "Open Window" partially cut. Dialog/layout minimum width
+doesn't account for the button column on the mac style (qmacstyle button
+metrics differ from Linux). Check fixed/minimum sizes and whether the
+dialog was laid out against non-native metrics. Blind fix + document.
+
+### MAC14
+Real-Mac screenshot: in the Tor window's tab bar the new-tab (+) button
+renders wrong/misplaced on macOS. Check the tab-bar add button: is it a
+QToolButton in the NSToolbar-adjacent area (same class of issue as the
+MAC03 reader button and unified-toolbar widget visibility), wrong
+geometry, or a missing icon/state. Blind fix + document.
+
+### MAC15
+Real-Mac screenshot: the Tor start page's aurora-gradient background
+covers only the top portion; the lower ~60% of the viewport renders
+plain white. The page background doesn't stretch — likely a 100vh /
+background-size / html-height issue that Linux tolerates but macOS
+WebEngine view exposes (or the page sizes to initial smaller viewport
+and never relayouts). Check the start-page CSS/document sizing path.
+Blind fix + document.

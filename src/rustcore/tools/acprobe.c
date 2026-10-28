@@ -384,6 +384,15 @@ static int run_bridge(const char *root)
         {17, 0x0001, MW_TY_COMMAND, "tor", "", "", NULL, "unknown_op"},
         {18, 0x0001, MW_TY_QUERY, "bidi", "", "", NULL, "unknown_op"},
         {18, 0x0001, MW_TY_COMMAND, "bidi", "", "", NULL, "unknown_op"},
+        /* sync — the SYNC01 engine core: device-global identity +
+         * signed op-log, no profile binding. */
+        {19, 0x0001, MW_TY_QUERY, "sync", "identity", "",
+         "\"device_id\":", NULL},
+        {19, 0x0006, MW_TY_COMMAND, "sync", "append",
+         "{\"store\":\"settings\",\"body\":{\"probe\":1}}",
+         "\"op_id\":", NULL},
+        {19, 0x0009, MW_TY_QUERY, "sync", "stats", "",
+         "\"ops\":", NULL},
     };
     const char *step_payloads[3] = {vault_seal, vault_inspect,
                                     vault_verify};
@@ -540,12 +549,13 @@ static int run_bridge(const char *root)
 
     /* MB04: the capability matrix, the alias, and a refused id. */
     CHECK(ac_engine_caps(NULL, &caps) == AC_OK, "caps matrix");
+    /* The matrix covers the two live engines — the WPE WebKit row
+     * was removed (f593bfe1), an unknown "webkit" id is refused. */
     CHECK(buf_contains(caps.data, caps.len, "\"qtwebengine\"") &&
               buf_contains(caps.data, caps.len, "\"servo\"") &&
-              buf_contains(caps.data, caps.len, "\"webkit\"") &&
               buf_contains(caps.data, caps.len, "\"features\"") &&
               buf_contains(caps.data, caps.len, "\"state\""),
-          "matrix covers all three engines");
+          "matrix covers both engines");
     ac_buffer_free(caps);
     caps.data = NULL;
     caps.len = 0;

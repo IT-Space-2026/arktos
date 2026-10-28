@@ -236,6 +236,7 @@ Topics actually emitted today:
 | `autofill` | autofill store | set_forms/set_addresses/reseal |
 | `updates` | update-check state | record_check/snooze/set_* |
 | `torctl` | tor control link | reply/event/error queued for drain (a wake-up — no store mutated) |
+| `sync` | sync engine | member add/remove/seen, local op append, import accepting new ops |
 
 Session ops deliberately emit nothing — per-run scratch state, not
 shared-observable data (arktos_core.h documents this; MB03 must not
@@ -352,6 +353,7 @@ reports the live table — this doc mirrors it):
 | 16 | `vault` | rv_* archive ops |
 | 17 | `tor` | tor control client — id reserved, zero ops registered |
 | 18 | `bidi` | devtools BiDi client — id reserved, zero ops registered |
+| 19 | `sync` | serverless sync engine core — Ed25519 device identity, group membership, signed op-log (SYNC01; see §8.19) |
 
 Domains 11 and 14–18 cover rc-only surfaces: the envelope gives
 them a facade spelling without an ABI bump per op. Domains 17/18
@@ -638,6 +640,37 @@ a self-contained frame).
 | `RcBidiCallback` | E | flat — `response`/`event`/`state` kinds |
 
 Domain 18 (`bidi`) likewise: registered, zero ops.
+
+### 8.19 sync engine (SYNC01)
+
+The serverless sync core is envelope-only — there is no flat
+`rc_*`/`ac_*` surface for it.  The sync group is device-global, so
+every op is `profile_scoped=false` and the engine opens on the
+core's data root (`<root>/sync/` holds `device.key`, the Ed25519
+PKCS#8 identity at 0600, and `sync.db`, the members + oplog
+SQLite store).  Wire ops are JSON docs (`v:1`) with raw bytes on
+the `_b64` convention; `op_id` is hex-SHA-256 over the signed
+content frame, making dedup content-addressed and
+transport-agnostic.  Import verifies each op against the signer's
+member pubkey (or the local key for loopback), dedups by op_id,
+then applies the batch in canonical (lamport, device_id, op_id)
+order through per-store appliers registered via
+`sync::register_applier` — the seam SYNC04–SYNC08 plug into; ops
+for stores with no applier stay durable in the log and report as
+`deferred`.
+
+| Op | Class | Notes |
+|----|-------|-------|
+| `sync.identity` | Q | `{device_id, pubkey_b64}` — device id = hex(ed25519 pubkey) |
+| `sync.members_list` | Q | paired devices: pubkey, onion addr, last-seen, added |
+| `sync.member_add` | C | pair `{pubkey_b64, onion_addr?}`; upserts; self-pair rejected |
+| `sync.member_remove` | C | unpair; honest `removed` bool |
+| `sync.member_seen` | C | bump last-seen; unknown id → `op_failed` (NotFound) |
+| `sync.append` | C | the op-log tailing seam — sign + log a CRDT op for one synced store |
+| `sync.export` | Q | ops after `since_seq`, optional `store` filter — the transport drain |
+| `sync.import` | C | verify/dedup/apply a remote batch; per-op rejections, never a batch abort |
+| `sync.stats` | Q | device id, lamport clock, member/op counts, per-store heads |
+| `sync.drain` | C | retry ops a registered applier hasn't consumed yet |
 
 ## 9. Cutover decision table (landed — MB06/MB07)
 

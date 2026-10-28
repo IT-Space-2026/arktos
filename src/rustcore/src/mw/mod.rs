@@ -62,7 +62,7 @@ use crate::facade::{self, AcCore};
 use crate::{
     blocklist, bookmarks, containers, cookies, extverify, history, icons, notes, notify,
     omnibox, opensearch, profiles, profilevault, session, settings, sitedecisions,
-    sitetrust, store, tlsprobe, tranco, updates, util,
+    sitetrust, store, sync, tlsprobe, tranco, updates, util,
 };
 
 /// The envelope schema version — the frame's `version` byte and the
@@ -98,7 +98,7 @@ const ERROR_CODES: [&str; 6] = [
 /// Change topics the notify lane can emit today — the events array
 /// mw.describe reports (MB03 formalizes namespaced topics on top;
 /// these are the strings notify::emit sites actually fire).
-const EVENT_TOPICS: [&str; 14] = [
+const EVENT_TOPICS: [&str; 15] = [
     "autofill",
     "bookmarks",
     "containers",
@@ -111,6 +111,7 @@ const EVENT_TOPICS: [&str; 14] = [
     "searchengines",
     "settings",
     "sitedecisions",
+    "sync",
     "torctl",
     "updates",
 ];
@@ -359,7 +360,7 @@ fn profile_arg<'a>(p: &'a Value) -> Result<Option<&'a str>, OpErr> {
 const B64_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-fn b64_encode(data: &[u8]) -> String {
+pub(crate) fn b64_encode(data: &[u8]) -> String {
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -384,7 +385,7 @@ fn b64_encode(data: &[u8]) -> String {
 
 /// RFC 4648 strict decode — padding only at the tail, alphabet-only
 /// otherwise.  None on any malformed input.
-fn b64_decode(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn b64_decode(s: &str) -> Option<Vec<u8>> {
     let bytes = s.as_bytes();
     if bytes.len() % 4 != 0 {
         return None;
@@ -2545,6 +2546,192 @@ const VAULT_OPS: &[Op] = &[
     },
 ];
 
+// ---- sync (domain 19) -------------------------------------------------------------
+//
+// SYNC01: the serverless sync engine core — device-global by design
+// (the sync group spans the device, not one persona), so the engine
+// opens on the core's data root and every op is profile_scoped=false.
+// Wire ops cross the envelope as the JSON docs sync::WireOp emits;
+// raw bytes (pubkeys, signatures) ride the _b64 convention.
+//
+//   identity        — this device's id + pubkey (query)
+//   members_list    — paired devices (query)
+//   member_add      — pair a device: pubkey + onion addr (command)
+//   member_remove   — unpair (command)
+//   member_seen     — bump last-seen (command)
+//   append          — the op-log tailing seam: sign + log a CRDT op
+//                     for one synced store (command)
+//   export          — ops after a seq, the transport drain (query)
+//   import          — verify/dedup/apply a batch of remote ops
+//                     (command)
+//   stats           — engine counters incl. per-store heads (query)
+//   drain           — retry the ops a store adapter hasn't consumed
+//                     yet (command)
+//
+// "sync" emits on member changes, local appends, and imports that
+// accepted new ops — transports and the device-management UI
+// (SYNC09) hang off it.
+
+fn sync_engine(ctx: &MwCtx) -> Result<sync::SyncEngine, OpErr> {
+    sync::SyncEngine::open(ctx.core.data_root()).map_err(OpErr::from)
+}
+
+fn member_json(m: &sync::Member) -> Value {
+    json!({
+        "device_id": m.device_id,
+        "pubkey_b64": b64_encode(&m.pubkey),
+        "onion_addr": m.onion_addr,
+        "last_seen_ms": m.last_seen_ms,
+        "added_ms": m.added_ms,
+    })
+}
+
+fn op_sync_identity(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
+    let e = sync_engine(ctx)?;
+    Ok(json!({
+        "device_id": e.device_id(),
+        "pubkey_b64": b64_encode(&e.public_key()),
+    }))
+}
+
+fn op_sync_members_list(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
+    let e = sync_engine(ctx)?;
+    let members: Vec<Value> = e.members_list()?.iter().map(member_json).collect();
+    Ok(json!({ "members": members }))
+}
+
+fn op_sync_member_add(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let pk_b64 = arg_str(p, "pubkey_b64")?;
+    let pk = b64_decode(pk_b64)
+        .ok_or_else(|| OpErr::BadPayload("\"pubkey_b64\" is not valid base64".into()))?;
+    let pk: [u8; 32] = pk
+        .try_into()
+        .map_err(|_| OpErr::BadPayload("\"pubkey_b64\" must decode to 32 bytes".into()))?;
+    let onion = opt_str(p, "onion_addr")?.unwrap_or("");
+    let e = sync_engine(ctx)?;
+    let id = e.member_add(&pk, onion)?;
+    notify::emit("sync");
+    Ok(json!({ "ok": true, "device_id": id }))
+}
+
+fn op_sync_member_remove(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let id = arg_str(p, "device_id")?;
+    let e = sync_engine(ctx)?;
+    let removed = e.member_remove(id)?;
+    if removed {
+        notify::emit("sync");
+    }
+    Ok(json!({ "ok": true, "removed": removed }))
+}
+
+fn op_sync_member_seen(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let id = arg_str(p, "device_id")?;
+    let ts = opt_i64(p, "last_seen_ms")?;
+    let e = sync_engine(ctx)?;
+    e.member_seen(id, ts)?;
+    notify::emit("sync");
+    Ok(json!({ "ok": true }))
+}
+
+fn op_sync_append(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let store_name = arg_str(p, "store")?;
+    let scope = opt_str(p, "scope")?.unwrap_or("");
+    let body = p
+        .get("body")
+        .ok_or_else(|| OpErr::BadPayload("missing \"body\" doc".into()))?;
+    let e = sync_engine(ctx)?;
+    let op = e.append(store_name, scope, body)?;
+    notify::emit("sync");
+    Ok(json!({
+        "ok": true,
+        "op_id": op.op_id,
+        "lamport": op.lamport,
+    }))
+}
+
+fn op_sync_export(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let store_name = opt_str(p, "store")?;
+    let since = opt_i64(p, "since_seq")?.unwrap_or(0);
+    let e = sync_engine(ctx)?;
+    let ops: Vec<Value> = e
+        .export(store_name, since)?
+        .iter()
+        .map(|o| o.to_json())
+        .collect();
+    Ok(json!({ "ops": ops }))
+}
+
+fn op_sync_import(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let docs = match p.get("ops") {
+        Some(Value::Array(a)) => a.clone(),
+        Some(_) => return bad_payload("\"ops\" must be an array"),
+        None => return bad_payload("missing \"ops\" array"),
+    };
+    let e = sync_engine(ctx)?;
+    let rep = e.import(&docs)?;
+    if rep.accepted > 0 {
+        notify::emit("sync");
+    }
+    Ok(json!({
+        "ok": true,
+        "accepted": rep.accepted,
+        "applied": rep.applied,
+        "deferred": rep.deferred,
+        "duplicates": rep.duplicates,
+        "rejected": rep.rejected.iter().map(|r| json!({
+            "op_id": r.op_id, "reason": r.reason
+        })).collect::<Vec<_>>(),
+        "apply_errors": rep.apply_errors.iter().map(|r| json!({
+            "op_id": r.op_id, "reason": r.reason
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+/// Retry lane for ops a store adapter has not consumed yet —
+/// pending count is read first so the response can report it.
+fn op_sync_drain(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let store_name = arg_str(p, "store")?;
+    let e = sync_engine(ctx)?;
+    let pending = e.pending_apply(store_name)?.len();
+    let rep = e.drain_pending(store_name)?;
+    Ok(json!({
+        "ok": true,
+        "pending_before": pending,
+        "applied": rep.applied,
+        "deferred": rep.deferred,
+        "apply_errors": rep.apply_errors.iter().map(|r| json!({
+            "op_id": r.op_id, "reason": r.reason
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+fn op_sync_stats(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
+    sync_engine(ctx)?.stats().map_err(OpErr::from)
+}
+
+const SYNC_OPS: &[Op] = &[
+    Op { id: 0x0001, name: "identity", class: OpClass::Query,
+         profile_scoped: false, since: 1, handler: op_sync_identity },
+    Op { id: 0x0002, name: "members_list", class: OpClass::Query,
+         profile_scoped: false, since: 1, handler: op_sync_members_list },
+    Op { id: 0x0003, name: "member_add", class: OpClass::Command,
+         profile_scoped: false, since: 1, handler: op_sync_member_add },
+    Op { id: 0x0004, name: "member_remove", class: OpClass::Command,
+         profile_scoped: false, since: 1, handler: op_sync_member_remove },
+    Op { id: 0x0005, name: "member_seen", class: OpClass::Command,
+         profile_scoped: false, since: 1, handler: op_sync_member_seen },
+    Op { id: 0x0006, name: "append", class: OpClass::Command,
+         profile_scoped: false, since: 1, handler: op_sync_append },
+    Op { id: 0x0007, name: "export", class: OpClass::Query,
+         profile_scoped: false, since: 1, handler: op_sync_export },
+    Op { id: 0x0008, name: "import", class: OpClass::Command,
+         profile_scoped: false, since: 1, handler: op_sync_import },
+    Op { id: 0x0009, name: "stats", class: OpClass::Query,
+         profile_scoped: false, since: 1, handler: op_sync_stats },
+    Op { id: 0x000a, name: "drain", class: OpClass::Command,
+         profile_scoped: false, since: 1, handler: op_sync_drain },
+];
+
 // ---- registry ------------------------------------------------------------------
 //
 // Domain ids are MW-ARCH §7's, frozen here.  tor and bidi register
@@ -2572,6 +2759,7 @@ const DOMAINS: &[Domain] = &[
     Domain { id: 16, name: "vault", ops: VAULT_OPS },
     Domain { id: 17, name: "tor", ops: &[] },
     Domain { id: 18, name: "bidi", ops: &[] },
+    Domain { id: 19, name: "sync", ops: SYNC_OPS },
 ];
 
 // ---- dispatch --------------------------------------------------------------------
@@ -4279,5 +4467,136 @@ mod tests {
         assert_eq!(r.ok()["ok"], true);
         let r = call(core.0, &query(26, 12, 0x0003, ""));
         assert_eq!(r.ok()["present"], false);
+    }
+
+    /// SYNC01: the sync domain over the envelope — identity,
+    /// membership, the append/export/import plumbing, and the
+    /// two-device loopback that proves ops round-trip signed.
+    #[test]
+    fn sync_domain_end_to_end() {
+        let _g = guard();
+        let core_a = TestCore::new(&tmpdir("syncA"));
+        let core_b = TestCore::new(&tmpdir("syncB"));
+
+        // identity: a 64-hex device id + a 32-byte pubkey.
+        let r = call(core_a.0, &query(1, 19, 0x0001, ""));
+        let p = r.ok();
+        let a_id = p["device_id"].as_str().unwrap().to_string();
+        assert_eq!(a_id.len(), 64);
+        assert_eq!(b64_decode(p["pubkey_b64"].as_str().unwrap()).unwrap().len(), 32);
+
+        // Self-pairing is a protocol error.
+        let r = call(
+            core_a.0,
+            &command(
+                2,
+                19,
+                0x0003,
+                &format!(
+                    r#"{{"pubkey_b64":"{}"}}"#,
+                    p["pubkey_b64"].as_str().unwrap()
+                ),
+            ),
+        );
+        assert_eq!(r.err().0, "op_failed");
+
+        // B's pubkey pairs into A's membership and back.
+        let r = call(core_b.0, &query(3, 19, 0x0001, ""));
+        let b_pk = r.ok()["pubkey_b64"].as_str().unwrap().to_string();
+        let b_id = r.ok()["device_id"].as_str().unwrap().to_string();
+        let r = call(
+            core_a.0,
+            &command(
+                4,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{}","onion_addr":"peer.onion"}}"#, b_pk),
+            ),
+        );
+        assert_eq!(r.ok()["device_id"].as_str().unwrap(), b_id);
+        let r = call(core_a.0, &query(5, 19, 0x0002, ""));
+        let members = r.ok()["members"].as_array().unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0]["onion_addr"], "peer.onion");
+        let r = call(
+            core_a.0,
+            &command(6, 19, 0x0005, &format!(r#"{{"device_id":"{}","last_seen_ms":99}}"#, b_id)),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(core_a.0, &query(7, 19, 0x0002, ""));
+        assert_eq!(r.ok()["members"][0]["last_seen_ms"], 99);
+
+        // A appends a settings op; the export carries the signed wire doc.
+        let r = call(
+            core_a.0,
+            &command(8, 19, 0x0006, r#"{"store":"settings","body":{"set":{"k":1}}}"#),
+        );
+        assert_eq!(r.ok()["lamport"], 1);
+        let r = call(core_a.0, &query(9, 19, 0x0007, ""));
+        let ops = r.ok()["ops"].clone();
+        assert_eq!(ops.as_array().unwrap().len(), 1);
+        assert_eq!(ops[0]["device_id"].as_str().unwrap(), a_id);
+
+        // B rejects the op until it knows A (unknown member), then
+        // pairs A and applies it — the loopback round-trip.
+        let r = call(
+            core_b.0,
+            &command(10, 19, 0x0008, &serde_json::to_string(&json!({"ops": ops})).unwrap()),
+        );
+        assert_eq!(r.ok()["rejected"].as_array().unwrap().len(), 1);
+        let r = call(
+            core_b.0,
+            &command(
+                11,
+                19,
+                0x0003,
+                &format!(
+                    r#"{{"pubkey_b64":"{}"}}"#,
+                    call(core_a.0, &query(12, 19, 0x0001, "")).ok()["pubkey_b64"]
+                        .as_str()
+                        .unwrap()
+                ),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_b.0,
+            &command(13, 19, 0x0008, &serde_json::to_string(&json!({"ops": ops})).unwrap()),
+        );
+        let p = r.ok();
+        assert_eq!(p["accepted"], 1);
+        assert_eq!(p["deferred"], 1, "no adapter registered -> deferred");
+
+        // Re-import dedups; drain reports the still-pending op.
+        let r = call(
+            core_b.0,
+            &command(14, 19, 0x0008, &serde_json::to_string(&json!({"ops": ops})).unwrap()),
+        );
+        assert_eq!(r.ok()["duplicates"], 1);
+        let r = call(
+            core_b.0,
+            &command(15, 19, 0x000a, r#"{"store":"settings"}"#),
+        );
+        assert_eq!(r.ok()["pending_before"], 1);
+        assert_eq!(r.ok()["deferred"], 1);
+
+        // stats reflects the merged log on B.
+        let r = call(core_b.0, &query(16, 19, 0x0009, ""));
+        let p = r.ok();
+        assert_eq!(p["ops"], 1);
+        assert_eq!(p["members"], 1);
+        assert_eq!(p["stores"]["settings"]["pending_apply"], 1);
+
+        // member_remove answers honestly both ways.
+        let r = call(
+            core_b.0,
+            &command(17, 19, 0x0004, &format!(r#"{{"device_id":"{}"}}"#, a_id)),
+        );
+        assert_eq!(r.ok()["removed"], true);
+        let r = call(
+            core_b.0,
+            &command(18, 19, 0x0004, &format!(r#"{{"device_id":"{}"}}"#, a_id)),
+        );
+        assert_eq!(r.ok()["removed"], false);
     }
 }

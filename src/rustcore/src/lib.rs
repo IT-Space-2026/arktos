@@ -228,6 +228,7 @@ mod settings;
 mod sitedecisions;
 mod sitetrust;
 mod store;
+mod sync;
 mod tlsprobe;
 mod torctl;
 mod tranco;

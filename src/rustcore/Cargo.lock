@@ -106,6 +106,7 @@ dependencies = [
  "miniz_oxide 0.8.9",
  "qrcodegen",
  "quick-xml",
+ "ring",
  "rusqlite",
  "rustls",
  "rustls-native-certs",

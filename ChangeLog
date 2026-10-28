@@ -90,6 +90,15 @@ Core / Qt 6 port:
   printer through the existing PDF print path. Tabs already showing
   a PDF preview that document, and engines without print support
   (Servo) say so instead of opening an empty dialog (PRINT01).
+- Sync foundation (SYNC01): the rustcore `sync` engine core — a
+  per-device Ed25519 identity (sync/device.key, never synced),
+  a paired-device membership store, and a signed op-log over the
+  synced stores (bookmarks, history, tabs, settings, passwords).
+  Every op is content-addressed and Ed25519-signed; imports verify
+  against the signer's member key, dedup by op id, and apply in
+  deterministic order through per-store adapters. Exposed on the
+  middleware bridge as the `sync` envelope domain — transport (Tor)
+  and the per-store sync adapters land in later steps.
 
 UI:
 - Light/dark follows the desktop scheme; ARKTOS_COLOR_SCHEME override
