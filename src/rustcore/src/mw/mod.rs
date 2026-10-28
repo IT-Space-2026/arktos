@@ -2728,8 +2728,11 @@ fn op_sync_stats(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
 // activity lands as events drained by transport_poll, announced via
 // notify::emit("synctransport").
 //
-//   transport_start      {backend:"tor"|"mem", name?} — boot the
-//                        listener; idempotent (command)
+//   transport_start      {backend:"tor"|"mem"|"lan"|"auto", name?}
+//                        — boot the listener; idempotent (command).
+//                        "lan" is the SYNC10 QUIC+mDNS fast path;
+//                        "auto" is lan+tor with LAN-preferred
+//                        routing and Tor fallback.
 //   transport_stop       — tear it down (command)
 //   transport_status     — running/endpoint/grants/link count
 //                        (query)
@@ -2745,6 +2748,7 @@ fn op_sync_stats(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
 //                        (command)
 //   transport_close      {link_id} — drop a link (command)
 //   transport_poll       — drain the event queue (query)
+//   transport_peers      — the LAN discovery table (query, SYNC10)
 
 fn sync_transport(
     ctx: &MwCtx,
@@ -2764,7 +2768,35 @@ fn op_sync_transport_start(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
     if backend == "mem" && name.is_empty() {
         return bad_payload("\"name\" is required for the mem backend");
     }
-    let t = synctransport::start(Path::new(ctx.core.data_root()), backend, name)?;
+    let root = Path::new(ctx.core.data_root());
+    // SYNC10: the lan backend takes optional port/group knobs so two
+    // transports can co-run on one host (e2e legs, test rigs).
+    #[cfg(feature = "synclan")]
+    if backend == "lan"
+        && (p.get("quic_port").is_some() || p.get("mdns_port").is_some() || p.get("mdns_group").is_some())
+    {
+        let cfg = synctransport::lan::LanConfig {
+            quic_port: opt_i64(p, "quic_port")?.unwrap_or(0) as u16,
+            mdns_port: opt_i64(p, "mdns_port")?
+                .map(|v| v as u16)
+                .unwrap_or(synctransport::lan::mdns::MDNS_PORT),
+            mdns_group: opt_str(p, "mdns_group")?
+                .and_then(|g| g.parse().ok())
+                .unwrap_or(synctransport::lan::mdns::MDNS_GROUP),
+            mdns_iface: opt_str(p, "mdns_iface")?
+                .and_then(|g| g.parse().ok())
+                .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED),
+            ..Default::default()
+        };
+        let t = synctransport::start_lan(root, cfg)?;
+        notify::emit("sync");
+        return Ok(json!({
+            "ok": true,
+            "backend": t.backend(),
+            "endpoint": t.endpoint()?,
+        }));
+    }
+    let t = synctransport::start(root, backend, name)?;
     notify::emit("sync");
     Ok(json!({
         "ok": true,
@@ -2787,6 +2819,7 @@ fn op_sync_transport_status(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
             "endpoint": t.endpoint()?,
             "authorized": t.authorized(),
             "links": t.link_count(),
+            "peers": t.discovered_peers_json(),
         })),
         None => Ok(json!({
             "running": false,
@@ -2838,6 +2871,13 @@ fn op_sync_transport_close(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
     let link = arg_i64(p, "link_id")? as u64;
     let removed = sync_transport(ctx)?.close_link(link)?;
     Ok(json!({ "ok": true, "removed": removed }))
+}
+
+/// SYNC10: the LAN discovery read model — co-located paired devices
+/// the `lan`/`auto` backend can reach directly (empty on tor/mem).
+fn op_sync_transport_peers(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
+    let t = sync_transport(ctx)?;
+    Ok(json!({ "peers": t.discovered_peers_json() }))
 }
 
 fn op_sync_transport_poll(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
@@ -3122,6 +3162,8 @@ const SYNC_OPS: &[Op] = &[
          profile_scoped: false, since: 7, handler: op_sync_devices_list },
     Op { id: 0x0022, name: "device_revoke", class: OpClass::Command,
          profile_scoped: false, since: 7, handler: op_sync_device_revoke },
+    Op { id: 0x0023, name: "transport_peers", class: OpClass::Query,
+         profile_scoped: false, since: 8, handler: op_sync_transport_peers },
 ];
 
 // ---- registry ------------------------------------------------------------------
@@ -5245,6 +5287,199 @@ mod tests {
         assert_eq!(r.ok()["stopped"], true);
         let r = call(core_a.0, &command(17, 19, 0x000c, ""));
         assert_eq!(r.ok()["stopped"], false);
+        let r = call(core_b.0, &command(18, 19, 0x000c, ""));
+        assert_eq!(r.ok()["stopped"], true);
+    }
+
+    /// SYNC10: the lan backend over the real envelope — two cores on
+    /// scoped ports + a test multicast group: grant+member ->
+    /// mDNS discovery -> lan:// connect -> frame ping -> revoke ->
+    /// refuse.  Tor plays no part — the fast path is LAN-only.
+    #[cfg(feature = "synclan")]
+    #[test]
+    fn sync_transport_lan_end_to_end() {
+        let _g = guard();
+        // No multicast-capable iface means no LAN discovery —
+        // honest env skip, same rule the lan.rs legs use.
+        if crate::synctransport::lan::mdns::bind_socket(
+            std::net::Ipv4Addr::new(239, 255, 77, 242),
+            15402,
+            std::net::Ipv4Addr::UNSPECIFIED,
+        )
+        .is_err()
+        {
+            eprintln!("SKIP sync_transport_lan_end_to_end: no multicast iface");
+            return;
+        }
+        let core_a = TestCore::new(&tmpdir("tla"));
+        let core_b = TestCore::new(&tmpdir("tlb"));
+
+        // Identities + full pairing state (grant AND member row —
+        // the members-table pin ships in the same test).
+        let id_a = call(core_a.0, &query(1, 19, 0x0001, "")).ok()["device_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let pk_a = call(core_a.0, &query(2, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let id_b = call(core_b.0, &query(3, 19, 0x0001, "")).ok()["device_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let pk_b = call(core_b.0, &query(4, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let nick_a = format!("member-{}", &id_a[..16]);
+        let nick_b = format!("member-{}", &id_b[..16]);
+
+        // Boot both LAN listeners on scoped ports + shared test group.
+        let r = call(
+            core_a.0,
+            &command(
+                5,
+                19,
+                0x000b,
+                r#"{"backend":"lan","quic_port":14131,"mdns_port":15511,"mdns_group":"239.255.77.211"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["backend"], "lan");
+        let r = call(
+            core_b.0,
+            &command(
+                6,
+                19,
+                0x000b,
+                r#"{"backend":"lan","quic_port":14132,"mdns_port":15511,"mdns_group":"239.255.77.211"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["backend"], "lan");
+
+        // Pair each into the other: member row + grant nickname.
+        for (core, pk, nick) in [
+            (core_a.0, &pk_b, &nick_b),
+            (core_b.0, &pk_a, &nick_a),
+        ] {
+            let r = call(
+                core,
+                &command(
+                    7,
+                    19,
+                    0x0003,
+                    &format!(r#"{{"pubkey_b64":"{pk}","onion_addr":"p.onion"}}"#),
+                ),
+            );
+            assert_eq!(r.ok()["ok"], true);
+            let r = call(
+                core,
+                &command(
+                    8,
+                    19,
+                    0x000e,
+                    &format!(r#"{{"nickname":"{nick}","discovery_key":"x"}}"#),
+                ),
+            );
+            assert_eq!(r.ok()["ok"], true);
+        }
+
+        // mDNS discovery converges: B's peers table learns A.
+        let mut seen = false;
+        for _ in 0..240 {
+            let r = call(core_b.0, &query(9, 19, 0x0023, ""));
+            for p in r.ok()["peers"].as_array().unwrap() {
+                if p["device_id"] == id_a {
+                    seen = true;
+                }
+            }
+            if seen {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(seen, "B never discovered A over mDNS");
+
+        // Dial by device id — the cert mTLS + member gate admits.
+        let r = call(
+            core_b.0,
+            &command(
+                10,
+                19,
+                0x0011,
+                &format!(r#"{{"endpoint":"lan://{id_a}","nickname":"self"}}"#),
+            ),
+        );
+        let b_link = r.ok()["link_id"].as_u64().unwrap();
+        let mut a_link = None;
+        for _ in 0..100 {
+            let r = call(core_a.0, &query(11, 19, 0x0014, ""));
+            for ev in r.ok()["events"].as_array().unwrap() {
+                if ev["type"] == "incoming" {
+                    a_link = ev["link_id"].as_u64();
+                }
+            }
+            if a_link.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        let a_link = a_link.expect("A never saw the incoming link");
+
+        // Frame round-trip on the envelope, same as the mem parity.
+        let ping = b64_encode(b"PING");
+        let r = call(
+            core_b.0,
+            &command(
+                12,
+                19,
+                0x0012,
+                &format!(r#"{{"link_id":{b_link},"payload_b64":"{ping}"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let mut got = String::new();
+        for _ in 0..100 {
+            let r = call(core_a.0, &query(13, 19, 0x0014, ""));
+            for ev in r.ok()["events"].as_array().unwrap() {
+                if ev["type"] == "frame" && ev["link_id"] == a_link {
+                    got = b64_decode(ev["payload_b64"].as_str().unwrap())
+                        .map(|v| String::from_utf8_lossy(&v).into_owned())
+                        .unwrap_or_default();
+                }
+            }
+            if !got.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(got, "PING");
+
+        // Status reports the lan backend + the discovery read model.
+        let r = call(core_a.0, &query(14, 19, 0x000d, ""));
+        assert_eq!(r.ok()["backend"], "lan");
+        assert_eq!(r.ok()["links"], 1);
+        assert!(!r.ok()["peers"].as_array().unwrap().is_empty());
+
+        // Revocation refuses NEW links (the live one survives).
+        let r = call(
+            core_a.0,
+            &command(15, 19, 0x000f, &format!(r#"{{"nickname":"{nick_b}"}}"#)),
+        );
+        assert_eq!(r.ok()["removed"], true);
+        let r = call(
+            core_b.0,
+            &command(
+                16,
+                19,
+                0x0011,
+                &format!(r#"{{"endpoint":"lan://{id_a}","nickname":"self"}}"#),
+            ),
+        );
+        assert_eq!(r.err().0, "op_failed");
+
+        let r = call(core_a.0, &command(17, 19, 0x000c, ""));
+        assert_eq!(r.ok()["stopped"], true);
         let r = call(core_b.0, &command(18, 19, 0x000c, ""));
         assert_eq!(r.ok()["stopped"], true);
     }

@@ -16,6 +16,18 @@
 //!   "mem" — in-process loopback for tests: same authorize/connect/
 //!       frame semantics, no network — the parity contract the real
 //!       backend is tested against.
+//!   "lan" — SYNC10 fast path (feature `synclan`, on by default):
+//!       direct QUIC links between paired devices on the same local
+//!       network, discovered by mDNS.  TLS 1.3 inside QUIC carries a
+//!       self-signed cert bound to each device's Ed25519 sync
+//!       identity; the member grant set is the admission gate, so an
+//!       unpaired device is refused during the handshake — the same
+//!       pre-app-byte refusal tor's restricted discovery enforces.
+//!   "auto" — SYNC10 composite (needs both features): the lan leg
+//!       plus the tor leg behind one surface.  Onion endpoints
+//!       resolve through LAN discovery first (peers advertise their
+//!       onion in the mDNS TXT `on=` record) and fall back to a Tor
+//!       circuit when the peer is not co-located.
 //!
 //! Async surface (the torctl.rs convention): every backend keeps a
 //! pull queue of [`TransportEvent`]s drained by `poll()`; each push
@@ -32,7 +44,9 @@
 //! leaves this device's keystore.
 //!
 //! Endpoint strings: tor endpoints are `"<56 chars>.onion:<port>"`
-//! (port [`SYNC_ONION_PORT`]); mem endpoints are `"mem:<name>"`.
+//! (port [`SYNC_ONION_PORT`]); mem endpoints are `"mem:<name>"`;
+//! lan endpoints are `"lan://<device-id>"`, `"lan://<host>:<port>"`,
+//! or a bare `"<host>:<port>"`.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -48,6 +62,12 @@ use crate::sync::SYNC_DIR;
 
 #[cfg(feature = "synctor")]
 pub mod tor;
+
+#[cfg(feature = "synclan")]
+pub mod lan;
+
+#[cfg(all(feature = "synclan", feature = "synctor"))]
+pub mod auto;
 
 /// Directory under `<data root>/sync/` holding the transport state
 /// (Arti state+cache, authorized-clients file).
@@ -141,6 +161,12 @@ pub trait SyncTransport: Send + Sync {
     fn poll(&self) -> Vec<TransportEvent>;
     /// Count of live links (for status reporting).
     fn link_count(&self) -> usize;
+    /// SYNC10: the discovered-LAN-peer view for status reporting —
+    /// device_id/onion/port/addrs per discovered device.  Empty on
+    /// backends without discovery.
+    fn discovered_peers_json(&self) -> Vec<Value> {
+        Vec::new()
+    }
     /// Tear the transport down.  Idempotent.
     fn stop(&self);
 }
@@ -158,7 +184,7 @@ pub fn running(data_root: &Path) -> Option<Arc<dyn SyncTransport>> {
     transports().get(data_root).cloned()
 }
 
-/// Start backend `backend` ("tor" / "mem") under `data_root`.
+/// Start backend `backend` ("tor" / "mem" / "lan" / "auto") under `data_root`.
 /// Re-starting while one runs is idempotent — the live transport is
 /// returned, never a second instance racing the same state dir.
 pub fn start(data_root: &Path, backend: &str, name: &str) -> RcResult<Arc<dyn SyncTransport>> {
@@ -175,6 +201,26 @@ pub fn start(data_root: &Path, backend: &str, name: &str) -> RcResult<Arc<dyn Sy
             RcStatus::Unavailable,
             "rustcore built without the synctor feature — tor backend unavailable",
         ),
+        #[cfg(feature = "synclan")]
+        "lan" => {
+            let t = lan::LanTransport::start(&dir)?;
+            Ok(register(data_root, t))
+        }
+        #[cfg(not(feature = "synclan"))]
+        "lan" => fail(
+            RcStatus::Unavailable,
+            "rustcore built without the synclan feature — lan backend unavailable",
+        ),
+        #[cfg(all(feature = "synclan", feature = "synctor"))]
+        "auto" => {
+            let t = auto::AutoTransport::start(&dir)?;
+            Ok(register(data_root, t))
+        }
+        #[cfg(not(all(feature = "synclan", feature = "synctor")))]
+        "auto" => fail(
+            RcStatus::Unavailable,
+            "auto backend needs both synclan and synctor features built",
+        ),
         "mem" => {
             let t = LoopbackTransport::start(name);
             Ok(register(data_root, t))
@@ -184,6 +230,19 @@ pub fn start(data_root: &Path, backend: &str, name: &str) -> RcResult<Arc<dyn Sy
             format!("unknown sync transport backend \"{other}\""),
         ),
     }
+}
+
+/// SYNC10: start the "lan" backend under `data_root` on explicit
+/// ports — the mw op maps its `{quic_port, mdns_port, mdns_group}`
+/// knobs onto this; the standard `start(root,"lan")` path uses the
+/// default config.
+#[cfg(feature = "synclan")]
+pub fn start_lan(
+    data_root: &Path,
+    cfg: lan::LanConfig,
+) -> RcResult<Arc<dyn SyncTransport>> {
+    let t = lan::LanTransport::start_with(&data_root.join(SYNC_DIR), cfg)?;
+    Ok(register(data_root, t))
 }
 
 fn register(data_root: &Path, t: Arc<dyn SyncTransport>) -> Arc<dyn SyncTransport> {

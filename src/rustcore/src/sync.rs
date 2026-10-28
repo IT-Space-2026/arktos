@@ -390,7 +390,12 @@ pub struct SyncEngine {
     state: Mutex<State>,
 }
 
-fn load_or_create_identity(dir: &std::path::Path) -> RcResult<(Ed25519KeyPair, [u8; 32])> {
+/// Load (first use: mint) the profile's Ed25519 device identity —
+/// pub(crate) so the SYNC10 LAN transport can bind its QUIC device
+/// certificate to the same keypair.
+pub(crate) fn load_or_create_identity(
+    dir: &std::path::Path,
+) -> RcResult<(Ed25519KeyPair, [u8; 32])> {
     let path = dir.join(DEVICE_KEY_FILE);
     if path.exists() {
         let bytes = std::fs::read(&path)?;

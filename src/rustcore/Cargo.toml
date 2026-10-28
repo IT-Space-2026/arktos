@@ -22,13 +22,17 @@ required-features = ["synctor"]
 # embedded Arti tree (the "tor" transport backend then answers a typed
 # unavailable; the hermetic "mem" backend stays for tests).
 [features]
-default = ["synctor"]
+default = ["synctor", "synclan"]
 synctor = ["dep:arti-client", "dep:tor-hsservice",
            "dep:tor-hscrypto", "dep:tor-keymgr", "dep:tor-cell",
            "dep:tor-proto", "dep:tor-config", "dep:tor-config-path",
            "dep:tor-rtcompat",
            "dep:tokio",
            "dep:futures", "dep:safelog"]
+# SYNC10: LAN fast path — mDNS discovery + direct QUIC links for
+# co-located paired devices.  Same SyncTransport seam; without it the
+# "lan" backend answers a typed unavailable and "auto" is tor-only.
+synclan = ["dep:quinn", "dep:socket2", "dep:tokio", "dep:futures"]
 
 [dependencies]
 # Crypto crates are exact-pinned (RCORE01/SEC21 policy): a dep bump is
@@ -119,8 +123,20 @@ tor-proto = { version = "=0.47.0", optional = true }
 tor-rtcompat = { version = "=0.47.0", optional = true,
     features = ["tokio", "rustls"] }
 tokio = { version = "=1.54.1", optional = true,
-    features = ["rt-multi-thread", "sync", "time", "macros"] }
+    features = ["rt-multi-thread", "sync", "time", "macros", "io-util"] }
 futures = { version = "=0.3.34", optional = true }
+# LAN fast path (SYNC10): QUIC links over device-key-bound mTLS
+# (rustls ring provider — already the tree's reviewed crypto
+# provider).  `platform-verifier` stays off — the LAN gate is a
+# custom verifier checking the peer cert's Ed25519 device key
+# against this profile's authorized member set, not the public CA
+# web.  socket2 supplies the multicast/reuse socket options mDNS
+# needs.  Exact-pinned like the rest of the reviewed tree (SEC21).
+quinn = { version = "=0.11.12", optional = true,
+    default-features = false,
+    features = ["rustls-ring", "runtime-tokio", "log"] }
+socket2 = { version = "=0.6.5", optional = true,
+    features = ["all"] }
 safelog = { version = "=0.10.0", optional = true }
 # PDF page rasterization (PDF02): hayro is a pure-Rust PDF renderer —
 # `#![forbid(unsafe_code)]` end to end, Apache-2.0/MIT, no C++ blob to

@@ -826,9 +826,9 @@ keystore entries — `transport_keygen` is idempotent.
 
 | Op | Class | Notes |
 |----|-------|-------|
-| `sync.transport_start` | C | `{backend:"tor"|"mem", name?}` — boot the listener; idempotent; `since: 2` |
+| `sync.transport_start` | C | `{backend:"tor"|"mem"|"lan"|"auto", name?, quic_port?, mdns_port?, mdns_group?, mdns_iface?}` — boot the listener; idempotent; `since: 2` |
 | `sync.transport_stop` | C | tear down; idempotent |
-| `sync.transport_status` | Q | `{running, backend, endpoint, authorized[], links}` |
+| `sync.transport_status` | Q | `{running, backend, endpoint, authorized[], links, peers[]}` |
 | `sync.transport_authorize` | C | `{nickname, discovery_key}` — Tor-layer grant |
 | `sync.transport_deauthorize` | C | `{nickname}` — revoke |
 | `sync.transport_keygen` | C | `{onion}` → our public discovery key for a peer svc |
@@ -836,6 +836,30 @@ keystore entries — `transport_keygen` is idempotent.
 | `sync.transport_send` | C | `{link_id, payload_b64}` — one frame |
 | `sync.transport_close` | C | `{link_id}` |
 | `sync.transport_poll` | Q | drain events: ready/bootstrap/incoming/frame/closed/failed |
+| `sync.transport_peers` | Q | `{peers:[{device_id, onion, port, addrs[], age_ms}]}` — the LAN discovery table; `since: 8` |
+
+The LAN fast path (SYNC10, `synclan` cargo feature, default-on)
+adds two backends behind the same seam.  `lan` is direct QUIC links
+between paired devices on the local network — TLS 1.3 inside QUIC
+carries a self-signed Ed25519 cert bound to each device's sync
+identity (`device.key`), and each side's verifier gates on the same
+`member-<id16>` grant set tor's restricted discovery replays, plus a
+full-key pin against `sync.db`'s members table — an unpaired device
+is refused during the handshake, before a single app byte.  mDNS
+(`_arktos-sync._tcp.local`, TXT `dev=`/`on=`) discovers co-located
+peers; endpoints are `lan://<device-id>`, `lan://<host>:<port>`, or
+bare `<host>:<port>`.  Every stream opens with a 2-byte magic
+preamble — it surfaces the stream instantly (parity with the mem/tor
+Incoming contract) and gives the dialer a deterministic admission
+signal.  `auto` composites the lan + tor legs: onion endpoints
+resolve through LAN discovery first (peers advertise their onion in
+the TXT `on=` record) and fall back to a Tor circuit when the peer
+is not co-located; each leg's failure degrades rather than sinking
+the composite.  Grants persist in the shared
+`authorized_clients.json` so pairing writes once and both wires
+admit.  Honest edges: IPv4 only; `pair-*` invite grants are not
+honored on LAN — the pairing ceremony stays on Tor (stricter, never
+weaker).
 
 Pairing (SYNC03) turns two devices into one profile's sync group.
 The inviter mints a one-time payload — QR text `arktos-pair1.<b64>`
