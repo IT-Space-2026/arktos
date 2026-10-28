@@ -549,7 +549,12 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
     ExtensionBackgroundRuntime::instance()
         ->attachExtensionPage(page, id);
     layout->addWidget(view);
-    popup->resize(360, 500);
+    // The starting bubble covers the usual action-popup floor
+    // (Bitwarden's document declares html{min-height:600px} and
+    // wants ~380+ CSS px of width): if a post-load refit ever lands
+    // late or the platform drops the resize, this size is already
+    // usable rather than visibly truncating chrome.
+    popup->resize(400, 620);
 
     // Positioning space differs by platform: the Linux overlay child
     // is moved in hostWindow coordinates and clamped to the host
@@ -602,9 +607,27 @@ void ExtensionActionBar::openPopup(const QString &id, const QUrl &popupUrl,
                           popupBounds, placePopup]() {
         if (!pageGuard)
             return;
+        // MAC12: the documentElement scroll size alone under-reports —
+        // when the root element clips (Bitwarden's popup ships
+        // html{overflow:hidden}) Chromium clamps the root's
+        // scrollWidth/scrollHeight to the element's own size instead
+        // of the clipped content's, so the bubble never grew past
+        // viewport+slack and the page's own overflow:hidden sliced
+        // the content at the window edge (the real-Mac right-edge
+        // truncation report).  body's scrollWidth/scrollHeight still
+        // report the true overflow, and its bounding rect catches a
+        // margined body.  Take the widest honest reading of all three.
         pageGuard->runJavaScript(
-            QStringLiteral("[document.documentElement.scrollWidth,"
-                           "document.documentElement.scrollHeight]"),
+            QStringLiteral("(function(){"
+                           "var de=document.documentElement;"
+                           "var db=document.body;"
+                           "var w=de?de.scrollWidth:0;"
+                           "var h=de?de.scrollHeight:0;"
+                           "if(db){var r=db.getBoundingClientRect();"
+                           "w=Math.max(w,db.scrollWidth,Math.ceil(r.right));"
+                           "h=Math.max(h,db.scrollHeight,Math.ceil(r.bottom));"
+                           "}"
+                           "return [w,h];})()"),
             [popupGuard, anchorGuard, hostGuard,
              popupBounds, placePopup](const QVariant &result) {
                 if (!popupGuard || !hostGuard)

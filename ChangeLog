@@ -4967,3 +4967,13 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   The cell's background painter now draws no text or icon at all, so
   the checkbox is the only thing rendering the name. (Most visible on
   macOS; MAC04 follow-up.)
+- Extension action popups (e.g. the bundled Bitwarden vault) no
+  longer clip content at the bubble's right and bottom edges: the
+  bubble's fit-to-content size was measured from the document root's
+  scroll size, which stays clamped to the visible viewport whenever
+  the page clips overflow on both html and body — the stylesheet
+  Bitwarden's popup actually ships — so the bubble could never grow
+  to the real document size and the page's own clipping sliced the
+  content at the window edge. The fit now reads the body's true
+  scroll size as well, and the bubble starts at a size that already
+  covers the usual action-popup layout. (Most visible on macOS.)

@@ -391,7 +391,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC09 | macOS fix: URL/search bar renders wrong — yellow tint + still buggy — details below | done | 0 | Blind fix: urlbar yellow was ArktosStyle::secureFieldColor — the 2008-Chrome https "secure" tint applied from LocationBar::paintEvent via setPalette-during-paint (the latch mechanism on the native NSToolbar field; light palettes only, why Linux read fine). Removed the tint + the dead mid-load gradient Base write entirely — paintEvent never mutates the palette now; padlock owns trust, NAVB01 strip owns loading. secureFieldColor() deleted; also fixed 2 pre-existing no-rust warnings blocking check-warnings. Verified: tst_locationbar 59/59 incl. new fieldFillUntinted, tst_downloadmanager 46/46, check-warnings PASS, --quit-after-load exit 0 offscreen; groupBoxTitleWeight+flatGroupSection fail identically on unmodified HEAD (pre-existing); mac runtime verify still owed |
 | MAC10 | macOS fix: Proxy settings page controls unselectable — details below | done | 0 | Checkable-QGroupBox enable affordance is the MAC04 style-painted-indicator class — converted proxy/networkCache groups + adblock rulesGroup to real QCheckBox driving a fields container; tst_settingsdialog 60/60 incl. new leg, tst_adblockmanager 15/15, --quit-after-load exit 0 offscreen; mac verify owed |
 | MAC11 | macOS fix: extension list names render garbled/double-drawn — details below | done | 0 | Blind fix: MAC04 feature-flag strip never suppressed the painted name copy — Qt6 QCommonStyle draws item text on !option->text.isEmpty(), not HasDisplay; delegate now empties text/icon/checkState for column 0 (backdrop only, QCheckBox is sole renderer; sizing unchanged). Verified: new render leg fails on unmodified HEAD + passes fixed, tst_settingsdialog 60/60, --quit-after-load exit 0 offscreen; mac verify owed |
-| MAC12 | macOS fix: Bitwarden popup renders but right edge truncated/clipped — details below | pending | 0 | needs:task:MAC11 — popup works (login+vault verified on real Mac) but content is cut off on the right; likely popup window narrower than content or sizeHint/DPR scaling wrong on Retina |
+| MAC12 | macOS fix: Bitwarden popup renders but right edge truncated/clipped — details below | done | 0 | needs:task:MAC11 — blind fix: doc-fit read documentElement.scrollWidth, clamped under Bitwarden html/body{overflow:hidden} so bubble never reached content size and the page clipped at the window edge; now max(de/body scroll size, body rect), initial bubble 400x620; actionPopupDocFit FAILs old/PASSes new + real-Bitwarden grab clean; mac verify owed |
 | MAC13 | macOS fix: Profile Manager dialog buttons/text truncated on right edge — details below | pending | 0 | needs:task:MAC11 — "Set Password"/"Remove Picture"/"Open Window" clipped; dialog min-width too small for its button column or missing layout constraint |
 | MAC14 | macOS fix: Tor window new-tab (+) button misplaced/wrong — details below | pending | 0 | needs:task:MAC11 — add-tab button in the Tor window tab bar renders in the wrong place/state on macOS |
 | MAC15 | macOS fix: Tor start page background doesn't fill the window — details below | pending | 0 | needs:task:MAC11 — aurora gradient covers only the top band, rest renders white; page bg doesn't stretch to viewport height on macOS |
@@ -4439,6 +4439,42 @@ popup window truncates content on the right — the vault's bottom tab bar
 Check popup window sizing vs content: minimumSize/sizeHint, whether the
 frameless macOS path constrains width differently, and Retina
 devicePixelRatio in the size computation. Blind fix + document.
+
+
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Root cause (verified against the bundled bitwarden-2026.9.3.zip):
+Bitwarden's popup stylesheet sets overflow:hidden on BOTH html and
+body (html{overflow:hidden;min-height:600px;height:100%},
+body{width:100%;height:100%;overflow:hidden}).  Under a clipping
+root, Chromium clamps documentElement.scrollWidth/scrollHeight to
+the element's own box — the bubble's doc-fit measure therefore read
+the viewport, not the content, and could only creep +slack per
+measure pass, never reaching a wider document.  The page's own
+overflow:hidden then sliced content at the window edge — exactly
+the reported right-edge truncation and cut-off bottom tab bar.
+Measured live offscreen: at a 356x498 viewport a replica doc
+reported documentElement.scrollWidth=356 while body.scrollWidth=390;
+the real (unbootstrapped) Bitwarden page reported de.scrollWidth=356
+with body.scrollWidth reporting the true content extent.
+
+Fix (src/extensions/extensionactionbar.cpp):
+- The doc-fit JS now takes the max of documentElement.scroll*,
+  body.scroll* and body.getBoundingClientRect().right/bottom —
+  body's scroll size still reports overflow the root clip hides.
+- Initial bubble raised 360x500 -> 400x620 so a late or dropped
+  refit still shows a usable window (Bitwarden declares
+  min-height:600 and wants ~380+ wide).
+
+Verification: new tst_extensionmanager::actionPopupDocFit drives a
+real chrome-extension popup whose body clips a 600x700 document and
+asserts the bubble reaches >=600x700 — FAILs on the unmodified
+measure (converges only toward viewport+slack), PASSes fixed.
+actionPopupSelfWires + chromePageChurn + extensionPopupContext PASS
+offscreen; ARKTOS_DEBUG_POPUP run auto-installed the bundled
+Bitwarden and the grab shows the full login+onboarding page at
+509x509 with nothing clipped; --quit-after-load exit 0.  macOS
+runtime verify still owed.
 
 ### MAC13
 Real-Mac screenshot: Profile Manager dialog clips its right-side button

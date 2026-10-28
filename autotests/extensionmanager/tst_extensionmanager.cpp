@@ -145,6 +145,7 @@ private slots:
     void extensionOffscreen();
     void extensionIntrospection();
     void actionPopupSelfWires();
+    void actionPopupDocFit();
     void realExtensionPopup();
     void bitwardenGapBaseline();
     void bitwardenHandshakeGate();
@@ -13225,6 +13226,102 @@ void tst_ExtensionManager::actionPopupSelfWires()
     view->deleteLater();
     frame->deleteLater();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    manager->setExtensionEnabled(id, false);
+    QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
+    manager->removeExtension(id);
+    QDir(dir).removeRecursively();
+}
+
+// MAC12 regression: the action bubble's doc-fit measure must read the
+// TRUE content size, not just documentElement's scroll size — under
+// html{overflow:hidden} (Bitwarden's own popup stylesheet) Chromium
+// clamps the root's scrollWidth/scrollHeight to the element's own
+// box, so the bubble used to cap out near viewport+slack and the
+// page's own clip sliced content at the window edge.  A fixture whose
+// body carries a wider-than-viewport element forces the bubble to the
+// body's real scroll size — unreachable through the documentElement
+// reading (it converges only to viewport+slack per measure pass).
+void tst_ExtensionManager::actionPopupDocFit()
+{
+    if (!ExtensionManager::isSupported())
+        QSKIP("Qt WebEngine built without extension support");
+
+    const QString dir = QDir::temp().filePath(
+        QStringLiteral("tst-extdocfit-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(dir));
+    {
+        QFile f(dir + QLatin1String("/manifest.json"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"manifest_version\":3,\"name\":\"tst-docfit\","
+                "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+                "\"action\":{\"default_popup\":\"popup.html\"},"
+                "\"background\":{\"service_worker\":\"sw.js\"}}");
+        f.close();
+        QFile w(dir + QLatin1String("/sw.js"));
+        QVERIFY(w.open(QIODevice::WriteOnly));
+        w.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        w.close();
+        QFile h(dir + QLatin1String("/popup.html"));
+        QVERIFY(h.open(QIODevice::WriteOnly));
+        // Bitwarden's shape: BOTH the root and the body clip — the
+        // body's box is viewport-sized while its content overflows
+        // unseen, invisible to documentElement's scroll size.
+        h.write("<!doctype html><html style=\"overflow:hidden\">"
+                "<body style=\"margin:0;width:100%;height:100%;"
+                "overflow:hidden\">"
+                "<div style=\"min-width:600px;height:700px\">x</div>"
+                "</body></html>");
+        h.close();
+    }
+
+    ExtensionManager *manager = ExtensionManager::instance();
+    ExtensionBackgroundRuntime *runtime =
+        ExtensionBackgroundRuntime::instance();
+    auto loaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [loaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-docfit")
+                && info.error.isEmpty())
+            *loaded = info.id;
+    });
+    manager->grantConsent(dir);
+    manager->loadExtension(dir);
+    QElapsedTimer timer;
+    timer.start();
+    while (loaded->isEmpty() && timer.elapsed() < 30000)
+        QTest::qWait(50);
+    const QString id = *loaded;
+    QVERIFY2(!id.isEmpty(), "docfit fixture loaded");
+    manager->setExtensionEnabled(id, true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        runtime->host(id)
+            && runtime->host(id)->state()
+               == ExtensionBackgroundHost::State::Ready,
+        45000);
+
+    // Roomy host: the Linux overlay clamps to the host rect, so give
+    // the fit headroom — 600+24 wide and 700+24 tall must both fit.
+    ExtensionActionBar bar;
+    bar.resize(1200, 900);
+    bar.show();
+    QVERIFY(bar.triggerAction(id, QStringLiteral("popup.html")));
+    QFrame *popup = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (popup = bar.findChild<QFrame *>(
+             QStringLiteral("extensionActionPopup"))) != nullptr,
+        10000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        popup->width() >= 600 && popup->height() >= 700,
+        30000);
+
+    popup->close();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bar.findChild<QFrame *>(
+            QStringLiteral("extensionActionPopup")) == nullptr,
+        15000);
     manager->setExtensionEnabled(id, false);
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
     manager->removeExtension(id);
