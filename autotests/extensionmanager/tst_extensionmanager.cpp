@@ -1971,12 +1971,110 @@ void tst_ExtensionManager::chromePageChurn()
             !popupGuard && !viewGuard && !pageGuard, 15000);
     }
 
+    // --- MAC08: press routing through the dismissal filter ---------
+    // A real spontaneous press is funnelled through the app-wide
+    // filter twice — once to the receiving QWindow (QWidgetWindow)
+    // and once to the widget under the cursor.  QTest's QWindow
+    // overload injects through QWindowSystemInterface, so it drives
+    // exactly that two-pass delivery.  The dismissal logic once read
+    // the QWindow pass as "outside" (a QWidgetWindow is not a
+    // QWidget-descendant of the bubble) and closed the popup on its
+    // first inside click — the macOS dead-buttons report.  Inside
+    // must keep it open; outside must still dismiss.
+    bar.resize(640, 480);
+    QVERIFY(bar.triggerAction(id, QStringLiteral("popup.html")));
+    QFrame *pressPopup = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (pressPopup = bar.findChild<QFrame *>(
+             QStringLiteral("extensionActionPopup"))) != nullptr
+            && pressPopup->isVisible(),
+        10000);
+    QPointer<QFrame> pressPopupGuard(pressPopup);
+    // The bubble is an alien child of the bar on Linux — its own
+    // windowHandle() is null; the receiving QWindow is the top-level's
+    // QWidgetWindow.  (On macOS ->window() is the frameless bubble
+    // itself, which is a real top-level — the same expression works.)
+    QWindow *pressWindow = pressPopup->window()->windowHandle();
+    QVERIFY(pressWindow);
+    QTest::mouseClick(pressWindow, Qt::LeftButton,
+                      Qt::NoModifier,
+                      pressPopup->mapTo(pressPopup->window(),
+                                        pressPopup->rect().center()));
+    QTest::qWait(300);
+    QVERIFY2(pressPopupGuard && pressPopupGuard->isVisible(),
+             "press inside the bubble must not dismiss it");
+    // The bubble anchors off the action button at the bar's left end
+    // and clamps inside the host; the bar's bottom-right corner is
+    // guaranteed outside its rect.
+    QTest::mouseClick(pressWindow, Qt::LeftButton,
+                      Qt::NoModifier,
+                      QPoint(bar.width() - 8, bar.height() - 8));
+    QTest::qWait(300);
+    QVERIFY2(!pressPopupGuard || !pressPopupGuard->isVisible(),
+             "press outside the bubble must dismiss it");
+
     // --- health-probe mint/destroy cycles --------------------------
     // force re-measures: each pass deletes the prior verdict, mints a
     // fresh probe page, runs the ping, and finishHealthProbe deletes
     // it.  The guard asserts every minted page dies.
+    //
+    // The probe page only exists for a NATIVE background — BW02 folds
+    // hosted-only trees into the host-state verdict and
+    // requestHealthProbe returns without ever minting one.  The churn
+    // fixture above is hosted (service_worker -> doctored staging ->
+    // declared-manifest sidecar), so it can never satisfy the
+    // healthProbePage() poll; this leg loads its own fixture while
+    // ARKTOS_EXTHOST_OFF is set so hostedEnginePath keeps the tree
+    // native.  The env is read at load resolution only — restoring it
+    // before the cycles is safe and keeps the hosted runtime's view
+    // unchanged.
+    const QString probeDir = QDir::temp().filePath(
+        QStringLiteral("tst-chromeprobe-%1")
+            .arg(QCoreApplication::applicationPid()));
+    QVERIFY(QDir().mkpath(probeDir));
+    {
+        QFile manifestFile(probeDir + QLatin1String("/manifest.json"));
+        QVERIFY(manifestFile.open(QIODevice::WriteOnly));
+        manifestFile.write(
+            "{\"manifest_version\":3,\"name\":\"tst-chromeprobe\","
+            "\"version\":\"1.0\",\"permissions\":[\"storage\"],"
+            "\"background\":{\"service_worker\":\"sw.js\"}}");
+        manifestFile.close();
+        QFile worker(probeDir + QLatin1String("/sw.js"));
+        QVERIFY(worker.open(QIODevice::WriteOnly));
+        worker.write(
+            "chrome.runtime.onInstalled.addListener(function(){});\n");
+        worker.close();
+    }
+    const QByteArray savedExthost = qgetenv("ARKTOS_EXTHOST_OFF");
+    qputenv("ARKTOS_EXTHOST_OFF", "1");
+    auto probeLoaded = std::make_shared<QString>();
+    QObject::connect(manager, &ExtensionManager::extensionLoaded,
+                     this, [probeLoaded](
+                         const ExtensionManager::ExtensionInfo &info) {
+        if (info.name == QLatin1String("tst-chromeprobe")
+                && info.error.isEmpty())
+            *probeLoaded = info.id;
+    });
+    manager->grantConsent(probeDir);
+    manager->loadExtension(probeDir);
+    QTRY_VERIFY_WITH_TIMEOUT(!probeLoaded->isEmpty(), 30000);
+    if (!savedExthost.isEmpty())
+        qputenv("ARKTOS_EXTHOST_OFF", savedExthost);
+    else
+        qunsetenv("ARKTOS_EXTHOST_OFF");
+    const QString probeId = *probeLoaded;
+    const auto isEnabled = [manager](const QString &extId) {
+        for (const ExtensionManager::ExtensionInfo &info :
+                 manager->extensions())
+            if (info.id == extId)
+                return info.enabled;
+        return false;
+    };
+    manager->setExtensionEnabled(probeId, true);
+    QTRY_VERIFY_WITH_TIMEOUT(isEnabled(probeId), 30000);
     for (int cycle = 0; cycle < 3; ++cycle) {
-        manager->requestHealthProbe(id, true);
+        manager->requestHealthProbe(probeId, true);
         QWebEnginePage *probe = nullptr;
         QTRY_VERIFY_WITH_TIMEOUT(
             (probe = qobject_cast<ExtensionChromePage *>(
@@ -1987,12 +2085,12 @@ void tst_ExtensionManager::chromePageChurn()
         // JavascriptEnabled lift.
         QVERIFY(!ExtensionChromePage::navigationAllowed(
                     QUrl(QStringLiteral("https://forged.example/x")),
-                    id, true));
+                    probeId, true));
         QVERIFY(probe->settings()->testAttribute(
                     QWebEngineSettings::JavascriptEnabled));
         const QPointer<QWebEnginePage> probeGuard(probe);
         QTRY_VERIFY_WITH_TIMEOUT(
-            !manager->healthProbeDetail(id).isEmpty(), 60000);
+            !manager->healthProbeDetail(probeId).isEmpty(), 60000);
         QTRY_VERIFY_WITH_TIMEOUT(!probeGuard, 15000);
     }
 
@@ -2000,6 +2098,10 @@ void tst_ExtensionManager::chromePageChurn()
     QTRY_VERIFY_WITH_TIMEOUT(!runtime->host(id), 20000);
     manager->removeExtension(id);
     QDir(dir).removeRecursively();
+    // The probe fixture has no hosted host — a native unload needs
+    // no teardown wait, just the removal and the fixture dir.
+    manager->removeExtension(probeId);
+    QDir(probeDir).removeRecursively();
 }
 
 // MRG07 — PortEnd + pending-mid churn, the second merge seam: the

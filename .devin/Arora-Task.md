@@ -387,7 +387,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC05 | macOS fix: search/url bar renders a stray mini close/clear button — details below | done | 0 | Blind fix: clear (x) affordance is now gated on a live user edit (focus + non-baseline text via SRCH10 pristine bookkeeping), not bare hasFocus() — a programmatic url write always re-baselines and re-hides it even under stuck Qt focus in the native NSToolbar; ToolbarSearch opts into the same gate (was ungated entirely), dialog/find fields keep the always-on-text affordance; qApp focusChanged covers undelivered FocusOut. Verified: tst_locationbar 58/58 + tst_toolbarsearch 13/13 incl. new gate legs, searchlineedit 4/4, tabwidget 46/46, --quit-after-load exit 0; chromeSlots SIGSEGV reproduces on unmodified HEAD (pre-existing). mac runtime verify still owed |
 | MAC06 | macOS fix: bundled Bitwarden never installs — details below | done | 0 | Blind fix: .app now ships the bundle via QMAKE_BUNDLE_DATA -> Contents/Resources/share/arktos/extensions (was never installed on mac — !mac gated the INSTALLS entry), bundledExtensionsPath also probes both bundle roots directly. consumed marker no longer veto-only: consumed-but-absent retries install (presence = registry OR manifest-bearing tree under installPath incl. staged pkg-/ext- names); deliberate uninstall recorded under extensions/bundled-removed/ and stays honored. Verified: tst_extensionmanager bundledInstall PASS incl. new retry+removed-marker legs, --bitwarden-smoke 0 failures, --quit-after-load exit 0 offscreen; chromePageChurn SIGSEGV identical on unmodified HEAD (pre-existing). mac runtime verify still owed |
 | MAC07 | macOS fix: crash on quit — BrowserApplication::~BrowserApplication SIGSEGV — details below | done | 0 | Blind fix: EXTEXIT01 quick_exit sat at the END of ~BrowserApplication, but the macOS trap fires INSIDE the dtor (+124) during qDeleteAll window/page teardown — normal quit path (main.cpp return sessionRc) reaches the dtor. sessionSawEnabledExtension gate hoisted to the top of dtor + shutdownAndQuickExit + quitBrowser exit(0); extension-tainted lane flushes autosave/session state, runs non-engine cleanup only (wipe/lock/tor stop/vault seal), then quick_exit before any engine-descendant destructor. Verified: clean qmake6+make, disasm confirms gate-first layout, --quit-after-load exit 0, --extension-smoke + --bitwarden-smoke exit 0 offscreen, tst_browserapp 11/11; mac runtime verify still owed |
-| MAC08 | macOS fix: Bitwarden welcome screen Skip button unreachable — details below | pending | 0 | Popup renders (MAC02 confirmed) but the onboarding screen's Skip/Continue buttons don't respond — likely frameless popup window not routing mouse events to web content on macOS (firstMouse/firstResponder, or NSPanel can'tBecomeKey). Check popup view event delivery + acceptsFirstMouse |
+| MAC08 | macOS fix: Bitwarden welcome screen Skip button unreachable — details below | done | 0 | Blind fix: click-outside dismissal read the QWindow event pass as outside (a QWidgetWindow is no QWidget) and closed the popup on its first click — dead buttons. Now a global-rect hit test, same verdict on both passes + both popup shapes. Also repaired the stale health-probe leg (hosted trees never mint probe pages — leg now uses an ARKTOS_EXTHOST_OFF native fixture). Verified: chromePageChurn PASS incl. inside/outside press + probe legs, actionPopupSelfWires + extensionPopupContext PASS, --quit-after-load exit 0 offscreen; mac runtime verify still owed |
 | MAC09 | macOS fix: URL/search bar renders wrong — yellow tint + still buggy — details below | pending | 0 | Screenshot: urlbar shows persistent yellow/green tint over the whole field on macOS. Check focus/find-highlight styling — likely the search-highlight background or a stylesheet color meant for transient state left permanently applied; verify against intended Chrome-style chrome |
 | MAC10 | macOS fix: Proxy settings page controls unselectable — details below | pending | 0 | Screenshot: "Use proxy server" checkbox + type/hostname/port fields all greyed/non-interactive on macOS — likely the same QCheckBox/item-render issue class as MAC04 or a disabled-state leak from settings load |
 | MAC11 | macOS fix: extension list names render garbled/double-drawn — details below | pending | 0 | REGRESSION from MAC04: name column shows overlapping corrupted text ("BitwardenPa?awocMdbteager") — the column-0 delegate that was supposed to drop painted indicator/text is double-drawing or the index widget overlaps item text. Check delegate paint logic + widget geometry |
@@ -4139,6 +4139,53 @@ responder on the QCocoa view, whether the popup window canBecomeKey, and
 whether the QWebEngineView inside actually receives QMouseEvents. Compare
 with how DevTools/PiP frameless windows behave. Blind fix + document what
 needs mac re-verify.
+
+
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Audit conclusion — not an event-starvation problem at all: the bubble
+renders and the web view does receive input.  The app-wide
+click-outside dismissal filter (ExtensionActionBar::eventFilter)
+decided inside/outside on the RECEIVER's widget ancestry.  Every
+spontaneous press is funnelled through the app filter twice — once to
+the receiving QWindow (a QWidgetWindow is never a QWidget-descendant
+of the bubble) and once to the widget under the cursor.  The old
+qobject_cast read the QWindow pass as "outside" and closed the bubble
+on the very first click anywhere, inside included — on macOS the
+frameless top-level bubble dies instantly on any press, so the
+onboarding "Skip"/"Continue" appear dead (the report's exact
+symptom).  acceptsFirstMouse/canBecomeKey needed no change — the MAC02
+Qt::Window|FramelessWindowHint surface is the proven composite class.
+
+Fix (src/extensions/extensionactionbar.cpp): inside/outside is now a
+global-rect hit test — the press's globalPosition vs the bubble's
+rect, with the anchor button's rect kept "inside" so the Chrome
+re-click toggle still works.  Same verdict on both delivery passes and
+on both popup shapes (Linux child overlay, macOS frameless top-level).
+
+Verified while wiring the test: the health-probe leg below the new
+legs could never pass post-BW02 — requestHealthProbe skips hosted-only
+trees entirely (the host-state fold carries their verdict), so a
+service_worker fixture never mints a probe page and healthProbePage()
+stays null forever.  The leg now loads its own fixture under
+ARKTOS_EXTHOST_OFF (the env is read at hostedEnginePath load
+resolution only, so the hosted fixture above is untouched), probes
+that native id, and cleans it up.  Same crash-class flake still
+possible: an unmodified-HEAD run of this function SIGSEGVs at ~800ms
+in offscreen WebEngine teardown before reaching either leg.
+
+Linux verification: tst_extensionmanager chromePageChurn PASS —
+incl. the new press legs (QWindow-injected click at bubble center
+keeps it open; click at the bar's bottom-right dismisses it) and the
+repaired probe mint/destroy legs.  actionPopupSelfWires +
+extensionPopupContext PASS; arktos --quit-after-load exit 0
+offscreen.
+
+macOS runtime verification still owed: on the next dmg the Bitwarden
+popup's buttons must actually click.  If they still don't, the
+residual leads are QCocoa first-responder acceptance on the frameless
+window and the RWHV's input routing under a non-key NSPanel-adjacent
+window class — neither is reproducible on Linux.
 
 ### MAC09
 URL/search bar renders wrong on macOS — screenshot shows the whole field

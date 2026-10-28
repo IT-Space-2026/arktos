@@ -4924,3 +4924,13 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   window itself is simply released to the OS rather than destructed,
   which is what the Chromium-side teardown requires on that platform
   once an MV3 extension ran.
+- Extension action popups (e.g. the bundled Bitwarden sign-in and
+  onboarding screens) no longer close themselves on the first click —
+  clicking anywhere inside the bubble now reaches the page, so buttons
+  like "Skip" and "Continue" respond. The click-outside dismissal
+  check was misreading the window-level mouse event as a press outside
+  the bubble and tearing it down instantly; it now compares the click
+  position against the bubble's actual rectangle, which is correct no
+  matter which object Qt delivers the press to first. Clicks outside
+  the bubble still dismiss it, as before. (Most visible on macOS,
+  where the bubble is a separate frameless window.)

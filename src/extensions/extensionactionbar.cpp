@@ -384,15 +384,31 @@ bool ExtensionActionBar::eventFilter(QObject *watched, QEvent *event)
     // Qt::Popup — so it gets no built-in click-outside dismissal.
     // Filter app-wide instead: any press outside the bubble or its
     // button closes it, matching Chrome.
+    //
+    // MAC08: inside/outside is decided on global GEOMETRY, not on the
+    // receiver's widget ancestry.  Every spontaneous press is funnelled
+    // through the app filter twice — once to the receiving QWindow
+    // (QWidgetWindow, never a QWidget-descendant of the bubble) and
+    // once to the widget under the cursor.  The old ancestry test read
+    // the QWindow pass as "outside" and closed the bubble on the very
+    // first click anywhere, inside included — the macOS dead-buttons
+    // report (reproducible on Linux through QTest's QWindow injection).
+    // A rect test gives the same verdict on both passes, for both
+    // popup shapes.
     if (event->type() == QEvent::MouseButtonPress && m_popup
             && m_popup->isVisible()) {
-        QWidget *target = qobject_cast<QWidget *>(watched);
-        const bool onPopup = target
-                && (target == m_popup || m_popup->isAncestorOf(target));
-        const bool onAnchor = target && m_popupAnchor
-                && (target == m_popupAnchor
-                    || m_popupAnchor->isAncestorOf(target));
-        if (!onPopup && !onAnchor)
+        const QPoint global = static_cast<QMouseEvent *>(
+            event)->globalPosition().toPoint();
+        const QRect popupRect(m_popup->mapToGlobal(QPoint(0, 0)),
+                              m_popup->size());
+        bool inside = popupRect.contains(global);
+        if (!inside && m_popupAnchor) {
+            const QRect anchorRect(
+                m_popupAnchor->mapToGlobal(QPoint(0, 0)),
+                m_popupAnchor->size());
+            inside = anchorRect.contains(global);
+        }
+        if (!inside)
             m_popup->close();
     }
     return QWidget::eventFilter(watched, event);
