@@ -99,6 +99,17 @@ Core / Qt 6 port:
   deterministic order through per-store adapters. Exposed on the
   middleware bridge as the `sync` envelope domain — transport (Tor)
   and the per-store sync adapters land in later steps.
+- Sync transport (SYNC02): serverless sync traffic now runs on
+  embedded Arti inside rustcore — each device publishes a v3 onion
+  service whose address is stable across restarts (key material in
+  the Arti keystore), gated by restricted discovery so only devices
+  holding an authorized x25519 discovery key can reach the listener;
+  unpaired peers are refused at the Tor layer before any app data
+  moves. Outbound links retry transient failures on a bounded
+  backoff, and a hermetic "mem" backend implements the same
+  transport seam for tests and the future LAN fast path. Exposed as
+  `sync.transport_*` ops on the middleware bridge — pairing UI and
+  the per-store adapters land in later steps.
 
 UI:
 - Light/dark follows the desktop scheme; ARKTOS_COLOR_SCHEME override

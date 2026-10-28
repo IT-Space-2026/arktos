@@ -1,0 +1,24 @@
+# cargo-audit policy for arktos-rustcore (SEC21).
+#
+# `cargo deny check` reads deny.toml; `cargo audit` reads THIS file.
+# Ignores here mirror the reviewed-and-accepted transitive-risk
+# entries in deny.toml — both advisories ride the embedded-Arti
+# dependency tree (SYNC02) where no compatible fix exists inside
+# the arti 0.47 pin.  Re-review at every arti bump.
+[advisories]
+ignore = [
+    # rsa 0.9.10 — RUSTSEC-2023-0071 (Marvin timing oracle): an RSA
+    # DECRYPTION oracle concern.  The arti tree uses rsa only for
+    # Tor directory/relay signature VERIFICATION against public key
+    # material — no RSA private key and no decryption of attacker-
+    # chosen ciphertext exists on this device.  Advisory states no
+    # fixed upgrade is available.
+    "RUSTSEC-2023-0071",
+    # crypto-bigint 0.5.5 — RUSTSEC-2026-0387 (timing variability in
+    # operations intended constant-time): reached transitively via
+    # elliptic-curve/rsa inside the arti tree, again only on the
+    # signature-verify side over public material.  The fix (0.7.6)
+    # is a major bump the arti 0.47 dependency constraints cannot
+    # take; re-review when arti moves its crypto deps forward.
+    "RUSTSEC-2026-0387",
+]

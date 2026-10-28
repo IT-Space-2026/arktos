@@ -62,7 +62,7 @@ use crate::facade::{self, AcCore};
 use crate::{
     blocklist, bookmarks, containers, cookies, extverify, history, icons, notes, notify,
     omnibox, opensearch, profiles, profilevault, session, settings, sitedecisions,
-    sitetrust, store, sync, tlsprobe, tranco, updates, util,
+    sitetrust, store, sync, synctransport, tlsprobe, tranco, updates, util,
 };
 
 /// The envelope schema version — the frame's `version` byte and the
@@ -2709,6 +2709,152 @@ fn op_sync_stats(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
     sync_engine(ctx)?.stats().map_err(OpErr::from)
 }
 
+
+// SYNC02: the transport half of the domain — same SyncTransport
+// seam for the embedded-Arti "tor" backend (feature synctor) and the
+// hermetic "mem" loopback.  The pull model is torctl's: inbound
+// activity lands as events drained by transport_poll, announced via
+// notify::emit("synctransport").
+//
+//   transport_start      {backend:"tor"|"mem", name?} — boot the
+//                        listener; idempotent (command)
+//   transport_stop       — tear it down (command)
+//   transport_status     — running/endpoint/grants/link count
+//                        (query)
+//   transport_authorize  {nickname, discovery_key?} — grant the peer
+//                        Tor-layer client auth (command)
+//   transport_deauthorize{nickname} — revoke (command)
+//   transport_keygen     {onion} — our public discovery key for the
+//                        peer's service; keystore-only, works with
+//                        the transport down (command)
+//   transport_connect    {endpoint, nickname?} — open an outbound
+//                        link (command)
+//   transport_send       {link_id, payload_b64} — one frame
+//                        (command)
+//   transport_close      {link_id} — drop a link (command)
+//   transport_poll       — drain the event queue (query)
+
+fn sync_transport(
+    ctx: &MwCtx,
+) -> Result<std::sync::Arc<dyn synctransport::SyncTransport>, OpErr> {
+    synctransport::running(Path::new(ctx.core.data_root())).ok_or_else(|| {
+        error::Fail {
+            status: RcStatus::NotEnabled,
+            msg: "sync transport is not started".into(),
+        }
+        .into()
+    })
+}
+
+fn op_sync_transport_start(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let backend = opt_str(p, "backend")?.unwrap_or("tor");
+    let name = opt_str(p, "name")?.unwrap_or("");
+    if backend == "mem" && name.is_empty() {
+        return bad_payload("\"name\" is required for the mem backend");
+    }
+    let t = synctransport::start(Path::new(ctx.core.data_root()), backend, name)?;
+    notify::emit("sync");
+    Ok(json!({
+        "ok": true,
+        "backend": t.backend(),
+        "endpoint": t.endpoint()?,
+    }))
+}
+
+fn op_sync_transport_stop(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
+    let stopped = synctransport::stop(Path::new(ctx.core.data_root()));
+    Ok(json!({ "ok": true, "stopped": stopped }))
+}
+
+fn op_sync_transport_status(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
+    let root = Path::new(ctx.core.data_root());
+    match synctransport::running(root) {
+        Some(t) => Ok(json!({
+            "running": true,
+            "backend": t.backend(),
+            "endpoint": t.endpoint()?,
+            "authorized": t.authorized(),
+            "links": t.link_count(),
+        })),
+        None => Ok(json!({
+            "running": false,
+            "authorized": synctransport::authorized_set(&root.join(sync::SYNC_DIR))
+                .keys().cloned().collect::<Vec<_>>(),
+        })),
+    }
+}
+
+fn op_sync_transport_authorize(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let nick = arg_str(p, "nickname")?;
+    let key = opt_str(p, "discovery_key")?.unwrap_or("");
+    sync_transport(ctx)?.authorize(nick, key)?;
+    notify::emit("sync");
+    Ok(json!({ "ok": true }))
+}
+
+fn op_sync_transport_deauthorize(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let nick = arg_str(p, "nickname")?;
+    let removed = sync_transport(ctx)?.deauthorize(nick)?;
+    if removed {
+        notify::emit("sync");
+    }
+    Ok(json!({ "ok": true, "removed": removed }))
+}
+
+fn op_sync_transport_keygen(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let onion = arg_str(p, "onion")?;
+    let key = synctransport::discovery_key(Path::new(ctx.core.data_root()), onion)?;
+    Ok(json!({ "ok": true, "discovery_key": key }))
+}
+
+fn op_sync_transport_connect(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let endpoint = arg_str(p, "endpoint")?;
+    let nick = opt_str(p, "nickname")?.unwrap_or("self");
+    let id = sync_transport(ctx)?.connect(endpoint, nick)?;
+    Ok(json!({ "ok": true, "link_id": id }))
+}
+
+fn op_sync_transport_send(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let link = arg_i64(p, "link_id")? as u64;
+    let payload = b64_decode(arg_str(p, "payload_b64")?)
+        .ok_or_else(|| OpErr::BadPayload("\"payload_b64\" is not valid base64".into()))?;
+    sync_transport(ctx)?.send(link, &payload)?;
+    Ok(json!({ "ok": true }))
+}
+
+fn op_sync_transport_close(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let link = arg_i64(p, "link_id")? as u64;
+    let removed = sync_transport(ctx)?.close_link(link)?;
+    Ok(json!({ "ok": true, "removed": removed }))
+}
+
+fn op_sync_transport_poll(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
+    let evs: Vec<Value> = sync_transport(ctx)?
+        .poll()
+        .iter()
+        .map(|e| match e {
+            synctransport::TransportEvent::Ready => json!({"type": "ready"}),
+            synctransport::TransportEvent::Bootstrap(pct) => {
+                json!({"type": "bootstrap", "pct": pct})
+            }
+            synctransport::TransportEvent::Incoming { link, from } => {
+                json!({"type": "incoming", "link_id": link, "from": from})
+            }
+            synctransport::TransportEvent::Frame { link, payload } => json!({
+                "type": "frame",
+                "link_id": link,
+                "payload_b64": b64_encode(payload),
+            }),
+            synctransport::TransportEvent::LinkClosed { link, reason } => {
+                json!({"type": "closed", "link_id": link, "reason": reason})
+            }
+            synctransport::TransportEvent::Failed { reason } => {
+                json!({"type": "failed", "reason": reason})
+            }
+        })
+        .collect();
+    Ok(json!({ "events": evs }))
+}
 const SYNC_OPS: &[Op] = &[
     Op { id: 0x0001, name: "identity", class: OpClass::Query,
          profile_scoped: false, since: 1, handler: op_sync_identity },
@@ -2730,6 +2876,26 @@ const SYNC_OPS: &[Op] = &[
          profile_scoped: false, since: 1, handler: op_sync_stats },
     Op { id: 0x000a, name: "drain", class: OpClass::Command,
          profile_scoped: false, since: 1, handler: op_sync_drain },
+    Op { id: 0x000b, name: "transport_start", class: OpClass::Command,
+         profile_scoped: false, since: 2, handler: op_sync_transport_start },
+    Op { id: 0x000c, name: "transport_stop", class: OpClass::Command,
+         profile_scoped: false, since: 2, handler: op_sync_transport_stop },
+    Op { id: 0x000d, name: "transport_status", class: OpClass::Query,
+         profile_scoped: false, since: 2, handler: op_sync_transport_status },
+    Op { id: 0x000e, name: "transport_authorize", class: OpClass::Command,
+         profile_scoped: false, since: 2, handler: op_sync_transport_authorize },
+    Op { id: 0x000f, name: "transport_deauthorize", class: OpClass::Command,
+         profile_scoped: false, since: 2, handler: op_sync_transport_deauthorize },
+    Op { id: 0x0010, name: "transport_keygen", class: OpClass::Command,
+         profile_scoped: false, since: 2, handler: op_sync_transport_keygen },
+    Op { id: 0x0011, name: "transport_connect", class: OpClass::Command,
+         profile_scoped: false, since: 2, handler: op_sync_transport_connect },
+    Op { id: 0x0012, name: "transport_send", class: OpClass::Command,
+         profile_scoped: false, since: 2, handler: op_sync_transport_send },
+    Op { id: 0x0013, name: "transport_close", class: OpClass::Command,
+         profile_scoped: false, since: 2, handler: op_sync_transport_close },
+    Op { id: 0x0014, name: "transport_poll", class: OpClass::Query,
+         profile_scoped: false, since: 2, handler: op_sync_transport_poll },
 ];
 
 // ---- registry ------------------------------------------------------------------
@@ -4598,5 +4764,149 @@ mod tests {
             &command(18, 19, 0x0004, &format!(r#"{{"device_id":"{}"}}"#, a_id)),
         );
         assert_eq!(r.ok()["removed"], false);
+    }
+
+    /// SYNC02: two cores exchanging over the mem backend through the
+    /// envelope — the hermetic parity of the live-Tor e2e: grant ->
+    /// connect -> frame ping -> revoke -> refuse.
+    #[test]
+    fn sync_transport_mem_end_to_end() {
+        let _g = guard();
+        let core_a = TestCore::new(&tmpdir("tpa"));
+        let core_b = TestCore::new(&tmpdir("tpb"));
+
+        // Nothing started: ops that need a link refuse cleanly.
+        let r = call(core_a.0, &query(1, 19, 0x000d, ""));
+        assert_eq!(r.ok()["running"], false);
+
+        // Boot both listeners.
+        let r = call(
+            core_a.0,
+            &command(2, 19, 0x000b, r#"{"backend":"mem","name":"A"}"#),
+        );
+        assert_eq!(r.ok()["endpoint"], "mem:A");
+        let r = call(
+            core_b.0,
+            &command(3, 19, 0x000b, r#"{"backend":"mem","name":"B"}"#),
+        );
+        assert_eq!(r.ok()["endpoint"], "mem:B");
+
+        // Unauthorized peer refused — no link is created on A.
+        let r = call(
+            core_b.0,
+            &command(4, 19, 0x0011, r#"{"endpoint":"mem:A","nickname":"mallory"}"#),
+        );
+        assert_eq!(r.err().0, "op_failed");
+        let r = call(core_a.0, &query(5, 19, 0x000d, ""));
+        assert_eq!(r.ok()["links"], 0);
+
+        // Grant, connect, verify the incoming announcement on A.
+        let r = call(
+            core_a.0,
+            &command(6, 19, 0x000e, r#"{"nickname":"peerB"}"#),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_b.0,
+            &command(7, 19, 0x0011, r#"{"endpoint":"mem:A","nickname":"peerB"}"#),
+        );
+        let b_link = r.ok()["link_id"].as_u64().unwrap();
+
+        let mut a_link = None;
+        for _ in 0..50 {
+            let r = call(core_a.0, &query(8, 19, 0x0014, ""));
+            for ev in r.ok()["events"].as_array().unwrap() {
+                if ev["type"] == "incoming" {
+                    a_link = ev["link_id"].as_u64();
+                }
+            }
+            if a_link.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let a_link = a_link.expect("A never saw the incoming link");
+
+        // PING -> PONG over frames both ways, on the envelope.
+        let ping = b64_encode(b"PING");
+        let r = call(
+            core_b.0,
+            &command(
+                9,
+                19,
+                0x0012,
+                &format!(r#"{{"link_id":{b_link},"payload_b64":"{ping}"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let mut got = String::new();
+        for _ in 0..50 {
+            let r = call(core_a.0, &query(10, 19, 0x0014, ""));
+            for ev in r.ok()["events"].as_array().unwrap() {
+                if ev["type"] == "frame" && ev["link_id"] == a_link {
+                    got = b64_decode(ev["payload_b64"].as_str().unwrap())
+                        .map(|v| String::from_utf8_lossy(&v).into_owned())
+                        .unwrap_or_default();
+                }
+            }
+            if !got.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(got, "PING");
+
+        let pong = b64_encode(b"PONG");
+        let r = call(
+            core_a.0,
+            &command(
+                11,
+                19,
+                0x0012,
+                &format!(r#"{{"link_id":{a_link},"payload_b64":"{pong}"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let mut got = String::new();
+        for _ in 0..50 {
+            let r = call(core_b.0, &query(12, 19, 0x0014, ""));
+            for ev in r.ok()["events"].as_array().unwrap() {
+                if ev["type"] == "frame" && ev["link_id"] == b_link {
+                    got = b64_decode(ev["payload_b64"].as_str().unwrap())
+                        .map(|v| String::from_utf8_lossy(&v).into_owned())
+                        .unwrap_or_default();
+                }
+            }
+            if !got.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(got, "PONG");
+
+        // Revocation refuses NEW links (the live one survives, like
+        // restricted discovery's documented caveat).
+        let r = call(
+            core_a.0,
+            &command(13, 19, 0x000f, r#"{"nickname":"peerB"}"#),
+        );
+        assert_eq!(r.ok()["removed"], true);
+        let r = call(
+            core_b.0,
+            &command(14, 19, 0x0011, r#"{"endpoint":"mem:A","nickname":"peerB"}"#),
+        );
+        assert_eq!(r.err().0, "op_failed");
+
+        // Status reports honestly; stop is idempotent.
+        let r = call(core_a.0, &query(15, 19, 0x000d, ""));
+        assert_eq!(r.ok()["running"], true);
+        assert_eq!(r.ok()["backend"], "mem");
+        assert_eq!(r.ok()["links"], 1);
+        let r = call(core_a.0, &command(16, 19, 0x000c, ""));
+        assert_eq!(r.ok()["stopped"], true);
+        let r = call(core_a.0, &command(17, 19, 0x000c, ""));
+        assert_eq!(r.ok()["stopped"], false);
+        let r = call(core_b.0, &command(18, 19, 0x000c, ""));
+        assert_eq!(r.ok()["stopped"], true);
     }
 }

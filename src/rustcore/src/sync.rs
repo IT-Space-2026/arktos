@@ -559,8 +559,8 @@ impl SyncEngine {
                                     lamport, wall_ms, body, sig, applied)
                  VALUES(?1,'local',?2,?3,?4,?5,?6,?7,?8,1)",
                 params![
-                    op_id, store_name, scope, device_id, lamport, wall_ms,
-                    canon_body, sig
+                    op_id, store_name, scope, device_id, lamport as i64,
+                    wall_ms, canon_body, sig
                 ],
             )
             .map_err(|e| sql_fail("oplog append", e))?;

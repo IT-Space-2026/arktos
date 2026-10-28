@@ -11,7 +11,24 @@ publish = false
 # cdylib is emitted too so out-of-tree consumers get the portable
 # .so/.dylib/.dll artifact per the shared-core direction.
 [lib]
-crate-type = ["staticlib", "cdylib"]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "synctorping"
+path = "src/bin/synctorping.rs"
+required-features = ["synctor"]
+
+# SYNC02: `--no-default-features` builds a lean rustcore without the
+# embedded Arti tree (the "tor" transport backend then answers a typed
+# unavailable; the hermetic "mem" backend stays for tests).
+[features]
+default = ["synctor"]
+synctor = ["dep:arti-client", "dep:tor-hsservice",
+           "dep:tor-hscrypto", "dep:tor-keymgr", "dep:tor-cell",
+           "dep:tor-proto", "dep:tor-config", "dep:tor-config-path",
+           "dep:tor-rtcompat",
+           "dep:tokio",
+           "dep:futures", "dep:safelog"]
 
 [dependencies]
 # Crypto crates are exact-pinned (RCORE01/SEC21 policy): a dep bump is
@@ -27,7 +44,7 @@ serde_json = "1.0.151"
 # silent re-resolve.  `encoding` keeps parity with QXmlStreamReader's
 # BOM / `<?xml encoding=...?>` handling.
 quick-xml = { version = "=0.42.0", features = ["encoding"] }
-rusqlite = { version = "=0.35.0", features = ["bundled"] }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
 lopdf = "=0.45.0"
 # libc::localtime_r for the frecency bucketing's local-calendar-day
 # ages (Qt computes daysTo on the date parts, not elapsed time).
@@ -47,7 +64,7 @@ rustls = { version = "=0.23.46", default-features = false,
 # policy as the rest of the crypto deps.
 ring = "=0.17.14"
 rustls-native-certs = "=0.8.4"
-rustls-webpki = "=0.103.15"
+rustls-webpki = "=0.103.16"
 x509-parser = "=0.18.1"
 # Extension-package verification (EXT06): SHA-256 of downloaded
 # packages vs the update-manifest hash, and pure-Rust inflate for
@@ -77,6 +94,34 @@ dom_query = "=0.28.0"
 # the module matrix is bit-identical.  Exact-pinned like the rest of
 # the reviewed tree.
 qrcodegen = "=1.8.0"
+# Sync transport (SYNC02): embedded Arti carries the sync wire ops —
+# a per-device v3 onion service (hsid persisted in the Arti keystore,
+# so the address is stable across restarts) gated by restricted
+# discovery (x25519 authorized-client descriptor encryption — unpaired
+# peers are refused at the Tor layer, before any app bytes), plus the
+# client side for outbound circuits to peers' onions.  `static-sqlite`
+# keeps the dir-cache sqlite bundled (no system -lsqlite3).  Exact-
+# pinned like the rest of the reviewed tree (SEC21); `experimental-api`
+# is required for the discovery-key and restricted-discovery surface.
+arti-client = { version = "=0.47.0", default-features = false,
+    optional = true,
+    features = ["tokio", "rustls", "static-sqlite", "keymgr",
+                "onion-service-client", "onion-service-service",
+                "restricted-discovery", "experimental-api"] }
+tor-hsservice = { version = "=0.47.0", optional = true,
+    features = ["restricted-discovery", "experimental-api"] }
+tor-hscrypto = { version = "=0.47.0", optional = true }
+tor-keymgr = { version = "=0.47.0", optional = true, features = ["keymgr"] }
+tor-cell = { version = "=0.47.0", optional = true }
+tor-config = { version = "=0.47.0", optional = true }
+tor-config-path = { version = "=0.47.0", optional = true }
+tor-proto = { version = "=0.47.0", optional = true }
+tor-rtcompat = { version = "=0.47.0", optional = true,
+    features = ["tokio", "rustls"] }
+tokio = { version = "=1.54.1", optional = true,
+    features = ["rt-multi-thread", "sync", "time", "macros"] }
+futures = { version = "=0.3.34", optional = true }
+safelog = { version = "=0.10.0", optional = true }
 # PDF page rasterization (PDF02): hayro is a pure-Rust PDF renderer —
 # `#![forbid(unsafe_code)]` end to end, Apache-2.0/MIT, no C++ blob to
 # audit (pdfium-render would drag a downloaded libpdfium.so into the

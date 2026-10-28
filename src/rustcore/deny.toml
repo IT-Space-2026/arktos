@@ -9,6 +9,19 @@
 # Fail on any unpatched advisory in a dependency we ship.
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
+# Reviewed-and-accepted transitive risk (SYNC02):
+# - paste: unmaintained proc-macro crate, build-time codegen only
+#   (no runtime attack surface); rides the arti tree, upstream has
+#   not migrated off it yet.
+# - rsa: the Marvin timing sidechannel is a decryption oracle
+#   concern; arti pulls `rsa` for Tor directory/relay signature
+#   material (verify-side), not RSA decryption of attacker-chosen
+#   ciphertext, and there is no upstream fix to take.  Re-review at
+#   every arti bump.
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "build-time proc-macro only, via arti tree; no runtime surface" },
+    { id = "RUSTSEC-2023-0071", reason = "rsa timing oracle — arti uses rsa for sig verification, not decryption; no upstream fix" },
+]
 
 [licenses]
 # GPL-incompatible only in the copyleft direction matters here (the
@@ -32,6 +45,10 @@ allow = [
     "MPL-2.0",
     # the crates in this tree are part of the GPLv2+ browser itself
     "GPL-2.0-or-later",
+    # The Unlicense and Boost Software License — both permissive,
+    # GPL-compatible public-domain-equivalent/attribution licenses.
+    "Unlicense",
+    "BSL-1.0",
 ]
 
 [bans]

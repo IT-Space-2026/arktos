@@ -90,7 +90,9 @@ impl Drop for ProfileHint {
 /// Topics so far: "credentials", "bookmarks", "history", "autofill",
 /// "settings", "profiles", "sitedecisions", "searchengines",
 /// "cookies", "icons", "containers", "notes", "torctl" (RC14 — a
-/// pull-drain wake-up, no store mutated) — the string is the
+/// pull-drain wake-up, no store mutated), "synctransport" (SYNC02 —
+/// the same pull-drain wake-up shape for the sync transport event
+/// queues) — the string is the
 /// contract; later components add their own.
 pub fn emit(topic: &str) {
     let cb = *CALLBACK.lock().unwrap_or_else(|e| e.into_inner());

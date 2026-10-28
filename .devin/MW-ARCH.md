@@ -672,6 +672,37 @@ for stores with no applier stay durable in the log and report as
 | `sync.stats` | Q | device id, lamport clock, member/op counts, per-store heads |
 | `sync.drain` | C | retry ops a registered applier hasn't consumed yet |
 
+The transport half (SYNC02) shares the same envelope and the
+`synctransport` notify topic — a pull-drain wake-up shaped like
+`torctl`'s: inbound links and frames land in a queue drained by
+`transport_poll`.  The `tor` backend is embedded Arti (`synctor`
+cargo feature, default-on): a per-device v3 onion service whose hsid
+lives in the Arti keystore under `<root>/sync/tor/state` (stable
+address across restarts), gated by restricted discovery — x25519
+descriptor encryption, so unpaired peers are refused at the Tor
+layer before a single app byte.  Grants persist in
+`<root>/sync/tor/authorized_clients.json` and are replayed into the
+service config at launch and on every live `reconfigure`.  A `mem`
+loopback backend implements the same seam for hermetic tests and
+pins the contract SYNC10's LAN path must satisfy.  Outbound links
+retry transient failures on a bounded exponential backoff; a peer
+without our authorized key is refused immediately (the failure is
+Tor-layer, never retryable).  Discovery keys are per-peer-hsid
+keystore entries — `transport_keygen` is idempotent.
+
+| Op | Class | Notes |
+|----|-------|-------|
+| `sync.transport_start` | C | `{backend:"tor"|"mem", name?}` — boot the listener; idempotent; `since: 2` |
+| `sync.transport_stop` | C | tear down; idempotent |
+| `sync.transport_status` | Q | `{running, backend, endpoint, authorized[], links}` |
+| `sync.transport_authorize` | C | `{nickname, discovery_key}` — Tor-layer grant |
+| `sync.transport_deauthorize` | C | `{nickname}` — revoke |
+| `sync.transport_keygen` | C | `{onion}` → our public discovery key for a peer svc |
+| `sync.transport_connect` | C | `{endpoint, nickname?}` → `{link_id}` |
+| `sync.transport_send` | C | `{link_id, payload_b64}` — one frame |
+| `sync.transport_close` | C | `{link_id}` |
+| `sync.transport_poll` | Q | drain events: ready/bootstrap/incoming/frame/closed/failed |
+
 ## 9. Cutover decision table (landed — MB06/MB07)
 
 Rule restated: an `ac_*` caller moves to `ac_mw_dispatch` only where

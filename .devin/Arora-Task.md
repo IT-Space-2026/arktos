@@ -396,7 +396,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC14 | macOS fix: Tor window new-tab (+) button misplaced/wrong — details below | done | 0 | Blind fix: the in-strip + parked over the last tabs trailing edge is only honest while the covered widget yields — on macOS close sits on the tabs left edge so the covered edge is bare face; + now hides rather than cover a tab (same rule the rail already uses) and its glyph is pinned to the parked slot instead of PM_ToolBarIconSize. Verified: new tst_tabbar::newTabButtonNoChromeHide leg (QProxyStyle LeftSide close simulating macOS) PASS, suite 33/33, tst_tabwidget newTabButton PASS, tor chrome legs PASS, --quit-after-load exit 0 offscreen; mac runtime verify owed |
 | MAC15 | macOS fix: Tor start page background doesn't fill the window — details below | done | 0 | Blind fix: start-page bg relied on root->canvas propagation which only covers the renderer-believed viewport — body now paints the same gradient at min-height:100vh (all 4 variants + dark), and WebView gets a macOS-only one-time ±1px size-reassert bounce at first show for a stale reported viewport. Verified: new tst_webpage::startPageViewportCoverage FAILs unmodified (body bg: none) + PASSes fixed on all 4 pages, suite green to documented pre-existing OTR trap, --startpage-smoke 50/50, --quit-after-load exit 0 on tor page; mac runtime verify owed |
 | SYNC01 | Serverless sync: engine core — device identity (Ed25519), sync store, per-store op-log tailing, sync-group membership state — details below | done | 0 | rustcore sync engine core: Ed25519 identity (sync/device.key, never synced), members+oplog sync.db, content-addressed signed ops (op_id=sha256 frame), canonical (lamport,device_id,op_id) apply + dedup, deferred drain seam for SYNC04 adapters; mw domain 19 envelope-only (identity/members/append/export/import/stats/drain) + MW-ARCH §8.19. Verified: cargo test 492/492 incl. two-device loopback + tamper/unknown-signer rejects, acprobe --bridge OK, sync.rs 86% lines (>85% gate), make -j2 green, --quit-after-load exit 0 offscreen |
-| SYNC02 | Serverless sync: Tor transport — embedded Arti, v3 onion service per device, authorized-client gating, outbound circuits — details below | pending | 0 | needs:task:SYNC01 |
+| SYNC02 | Serverless sync: Tor transport — embedded Arti, v3 onion service per device, authorized-client gating, outbound circuits — details below | done | 2 | embedded-Arti tor transport + mem loopback behind the SyncTransport seam: v3 onion stable across restarts (keystore hsid), restricted-discovery x25519 gating refuses unpaired peers at the Tor layer, backoffd outbound links, sync.transport_* mw ops (domain 19, since:2). Verified: tools/synctor-e2e.sh ALL LEGS PASS on real Tor (authorized PING->PONG, unauthorized refused pre-app-layer, endpoint stable across restart), cargo test 501/501 incl mw envelope e2e, acprobe --bridge OK, rustcore 91.10% lines (>85% gate), check-supplychain clean (audit.toml mirrors deny.toml ignores; rustdl webpki bumped for new advisories), make -j2 green, --quit-after-load exit 0 offscreen |
 | SYNC03 | Serverless sync: pairing — QR payload, Noise_XX mutual auth, group-secret join, emoji/word fingerprint verify UI — details below | pending | 0 | needs:task:SYNC02 |
 | SYNC04 | Serverless sync: bookmarks adapter — OR-Set CRDT, tombstoned deletes, causal folder ordering — details below | pending | 0 | needs:task:SYNC03 |
 | SYNC05 | Serverless sync: history adapter — append-only union set, per-device retention — details below | pending | 0 | needs:task:SYNC04 |
@@ -4368,6 +4368,56 @@ reconnect/backoff, and a transport abstraction so LAN (SYNC10) plugs in
 later. Verify: two processes, one serves a ping over its onion, other
 connects only with an authorized key; unauthorized attempt fails
 pre-app-layer.
+
+
+Landed (this run, resumed from two interrupted runs):
+- src/rustcore/src/synctransport.rs — the SyncTransport seam
+  (endpoint/authorize/deauthorize/discovery_key/connect/send/
+  close_link/poll/stop) with a TransportEvent pull queue announced
+  via notify::emit("synctransport"); <u32-LE len><payload> framed
+  links bounded at MAX_FRAME=16MiB; authorized_clients.json
+  persisted atomically under <root>/sync/tor/; bounded exponential
+  connect backoff (500ms -> 30s cap, 120s deadline, auth-refusals
+  bail early); "mem" loopback backend pins the parity contract
+  SYNC10's LAN transport must satisfy.
+- src/rustcore/src/synctransport/tor.rs — embedded-Arti backend
+  (cargo feature synctor, default-on; --no-default-features builds
+  lean and "tor" answers typed unavailable): per-device v3 onion
+  service on port 14430, hsid + per-peer discovery keypairs in the
+  Arti keystore under <root>/sync/tor/state so the address is
+  stable across restarts; restricted-discovery static_keys gating —
+  a peer without an authorized x25519 descriptor key cannot decrypt
+  the descriptor and fails at the Tor layer
+  (OnionServiceMissing/WrongClientAuth -> RcStatus::Crypto, never
+  retried); grants replayed into the service config at launch and
+  on every live reconfigure; one 2-worker tokio runtime owns
+  client/service/accept/link pumps, bootstrap progress lands as
+  Bootstrap events; discovery_key works transport-down via an
+  inert keystore client (pairing-time, idempotent).
+- mw domain 19 grows transport_start/stop/status/authorize/
+  deauthorize/keygen/connect/send/close/poll (since:2) + MW-ARCH
+  op table; notify topic "synctransport" documented.
+- src/rustcore/src/bin/synctorping.rs + tools/synctor-e2e.sh —
+  the live-network verification harness (addr/genkey/serve/ping).
+- sync.rs oplog append binds lamport as i64 (rusqlite 0.40);
+  rusqlite =0.35.0 -> =0.40.2 and rustls-webpki =0.103.15 ->
+  =0.103.16 (RUSTSEC-2026-0382); deny.toml records the reviewed
+  rsa/paste transitive-risk ignores + Unlicense/BSL-1.0 allows
+  for the arti tree; .cargo/audit.toml mirrors them for cargo
+  audit (rsa is verify-side only, crypto-bigint's fix is
+  unreachable inside the arti 0.47 pin — re-review per arti bump).
+- src/rustdl/Cargo.lock: rustls-webpki 0.103.15 -> 0.103.16 and
+  webpki-root-certs 1.0.9 -> 1.0.11 for RUSTSEC-2026-0382/-0383
+  (pre-existing advisory drift unblocking check-supplychain).
+Verify: cargo test 501/501 (7 new transport legs + mw
+sync_transport_mem_end_to_end over the envelope);
+tools/synctor-e2e.sh ALL LEGS PASS on the real Tor network —
+endpoint stable across reopen + restart, authorized discovery-key
+peer completes PING->PONG, an unauthorized peer is refused
+pre-app-layer (Tor-layer client-auth failure, zero server-side
+links/frames); acprobe --bridge OK; cargo build 0 warnings;
+rustcore 91.10% lines (>85% gate); check-supplychain clean;
+make -j2 green; --quit-after-load exit 0 offscreen.
 
 ### SYNC03
 Pairing: one-time QR payload (invitation token + inviter onion addr +
