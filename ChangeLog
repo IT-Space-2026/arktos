@@ -4987,3 +4987,13 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   font metrics plus a bezel allowance, including the Lock/Unlock and
   Set/Change Password swaps — and the stack is equalized to a single
   width. (Most visible on macOS.)
+- The tab strip's new-tab "+" button no longer lands on top of the
+  last tab on macOS: once the tab run reaches the strip's far edge
+  the button was clamped onto the tab's trailing edge — a parking
+  spot that is only honest while the widget under it can yield (the
+  per-tab close button on that edge). On macOS the close button sits
+  on the tab's left edge, leaving the covered edge bare, so the "+"
+  read as misplaced. The button now hides rather than cover a bare
+  tab face — the same rule the vertical rail already followed — and
+  its glyph is pinned to the parked slot size instead of the
+  platform's fixed toolbar icon size.

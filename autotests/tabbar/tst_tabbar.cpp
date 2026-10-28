@@ -26,6 +26,7 @@
 #include <qmenu.h>
 #include <qmimedata.h>
 #include <qstyleoption.h>
+#include <qproxystyle.h>
 #include <qtoolbutton.h>
 #include <tabbar.h>
 #include <tabpreview.h>
@@ -84,6 +85,7 @@ private slots:
     void iconOnlyTabs();
     void containerBandEvents();
     void newTabButton();
+    void newTabButtonNoChromeHide();
     void verticalRowHeight();
     void firefoxTabMetrics();
     void noTabUnderlines();
@@ -2310,6 +2312,90 @@ void tst_TabBar::newTabButton()
         QApplication::processEvents();
         bar.grab().save(base + QLatin1String("/plus-right.png"));
     }
+}
+
+// macOS tab-bar conventions simulated for this leg — the close
+// affordance on the tab's LEFT edge, leaving the covered trailing
+// edge bare.
+class LeftCloseStyle : public QProxyStyle
+{
+public:
+    int styleHint(StyleHint hint, const QStyleOption *option,
+                  const QWidget *widget,
+                  QStyleHintReturn *ret) const override
+    {
+        if (hint == QStyle::SH_TabBar_CloseButtonPosition)
+            return QTabBar::LeftSide;
+        return QProxyStyle::styleHint(hint, option, widget, ret);
+    }
+};
+
+// MAC14: a '+' clamped onto the last tab's face is only honest
+// where something hosts the park — the trailing scroll chrome or a
+// widget on the covered edge that yields under it.  On macOS the
+// scroll arrows never appear (SH_TabBar_PreferNoArrows) and the
+// close button sits on the tab's left edge, so the covered right
+// edge is bare tab face — the '+' must hide rather than land on
+// the tab, the same rule the vertical rail already follows.
+void tst_TabBar::newTabButtonNoChromeHide()
+{
+    LeftCloseStyle macStyle;
+    SubTabBar bar;
+    bar.setStyle(&macStyle);
+    bar.setExpanding(false);
+    bar.setPerTabCloseButtons(true);
+    bar.show();
+    bar.addTab(QLatin1String("one"));
+    bar.addTab(QLatin1String("two"));
+    // Sanity: the style made the covered (trailing) edge the free
+    // side — nothing there can yield under a parked '+'.
+    QVERIFY(bar.freeSide() == QTabBar::RightSide);
+    // 2 x 225 = 450: the run fills the strip exactly — `last >
+    // available` is false so no scroll chrome appears, yet there is
+    // no free run left to park the '+' in either.
+    bar.resize(450, bar.sizeHint().height());
+    QApplication::processEvents();
+    QToolButton *button = bar.newTabButton();
+    QVERIFY(button);
+    const QRect last = bar.tabRect(bar.count() - 1);
+    QVERIFY(last.isValid());
+    QVERIFY(last.right() >= bar.width() - 8);
+    QVERIFY(!button->isVisible()
+            || !button->geometry().intersects(last));
+
+    // Slack brings the button back, anchored after the last tab.
+    bar.resize(560, bar.sizeHint().height());
+    QApplication::processEvents();
+    QVERIFY(button->isVisible());
+    const QRect slast = bar.tabRect(bar.count() - 1);
+    QVERIFY(button->x() >= slast.right());
+    QVERIFY(button->x() <= slast.right() + 8);
+    // The glyph is pinned to the parked slot, never the style's
+    // fixed PM_ToolBarIconSize — it must fit inside the button.
+    QVERIFY(button->iconSize().width() <= button->width());
+    QVERIFY(button->iconSize().width() >= 12);
+    QSignalSpy newTabSpy(&bar, &TabBar::newTab);
+    button->click();   // still fires newTab while visible
+    QCOMPARE(newTabSpy.count(), 1);
+
+    // A genuinely overflowing run: the hide rule holds even with
+    // scroll chrome up — the covered edge still has nothing to
+    // yield, so the '+' never lands on the bare tab face.
+    for (int i = 0; i < 8; ++i)
+        bar.addTab(QString::number(i));
+    bar.setCurrentIndex(bar.count() - 1);
+    QApplication::processEvents();
+    const QRect full = bar.tabRect(bar.count() - 1);
+    QVERIFY(!button->isVisible()
+            || !button->geometry().intersects(full));
+    QWidget *lastClose = bar.tabButton(
+        bar.count() - 1,
+        bar.freeSide() == QTabBar::LeftSide ? QTabBar::RightSide
+                                            : QTabBar::LeftSide);
+    QVERIFY(lastClose);
+    // The left-side close is never under the '+' either way.
+    QVERIFY(!lastClose->isVisible()
+            || !lastClose->geometry().intersects(button->geometry()));
 }
 
 // TABS17: a Left/Right rail's rows never render shorter than the

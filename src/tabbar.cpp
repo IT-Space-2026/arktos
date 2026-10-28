@@ -3136,6 +3136,24 @@ void TabBar::layoutNewTabButton()
                             qMax(leading, trailing - extent)),
                      band + qMax(0, (strip - extent) / 2),
                      extent, extent);
+        // MAC14: the trailing clamp can park the '+' over the last
+        // tab's trailing edge once the run reaches the strip's far
+        // end — TABS19's deliberate park, honest only because the
+        // widget parked under it (the close affordance) yields out
+        // from under the button.  macOS seats the close button on
+        // the tab's LEFT edge (SH_TabBar_CloseButtonPosition), so
+        // the covered trailing edge is bare tab face with nothing
+        // to yield — the '+' lands on top of the tab itself: the
+        // "misplaced" button in the real-Mac screenshot.  Take the
+        // rail's rule — nothing under the park that can yield, no
+        // covering a tab; hide instead.
+        if (last.isValid() && rect.intersects(last)) {
+            const QTabBar::ButtonPosition trailSide = rtl
+                ? QTabBar::LeftSide : QTabBar::RightSide;
+            if (trailSide != closeButtonSide()
+                || !tabButton(count() - 1, trailSide))
+                rect = QRect();
+        }
     }
     // TABS18: a '+' with no honest parking spot hides rather than
     // cover a tab row.
@@ -3145,6 +3163,13 @@ void TabBar::layoutNewTabButton()
     }
     if (m_newTabButton->geometry() != rect)
         m_newTabButton->setGeometry(rect);
+    // MAC14: the glyph rides the parked slot, not the style's
+    // PM_ToolBarIconSize — a platform-fixed ~24px icon inside a
+    // ~20px slot draws clipped on macOS.
+    const int iconExtent = qBound(
+        12, qMin(rect.width(), rect.height()) - 8, 22);
+    if (m_newTabButton->iconSize().width() != iconExtent)
+        m_newTabButton->setIconSize(QSize(iconExtent, iconExtent));
     // The button still shares space with the scroll chrome and tab
     // edge widgets — keep it above what it adjoins.
     m_newTabButton->raise();

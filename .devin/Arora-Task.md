@@ -393,7 +393,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC11 | macOS fix: extension list names render garbled/double-drawn — details below | done | 0 | Blind fix: MAC04 feature-flag strip never suppressed the painted name copy — Qt6 QCommonStyle draws item text on !option->text.isEmpty(), not HasDisplay; delegate now empties text/icon/checkState for column 0 (backdrop only, QCheckBox is sole renderer; sizing unchanged). Verified: new render leg fails on unmodified HEAD + passes fixed, tst_settingsdialog 60/60, --quit-after-load exit 0 offscreen; mac verify owed |
 | MAC12 | macOS fix: Bitwarden popup renders but right edge truncated/clipped — details below | done | 0 | needs:task:MAC11 — blind fix: doc-fit read documentElement.scrollWidth, clamped under Bitwarden html/body{overflow:hidden} so bubble never reached content size and the page clipped at the window edge; now max(de/body scroll size, body rect), initial bubble 400x620; actionPopupDocFit FAILs old/PASSes new + real-Bitwarden grab clean; mac verify owed |
 | MAC13 | macOS fix: Profile Manager dialog buttons/text truncated on right edge — details below | done | 0 | Blind fix: action-column buttons floored at widest runtime label via font metrics + em bezel allowance (qmacstyle CT_PushButton hint under-measures the Aqua bezel/focus ring it paints -> centered text clipped at both edges); column equalized to one width; initial size content-derived instead of fixed 640x360. Verified: new tst_profilemanager::buttonColumnFitsLabels FAILs unmodified/PASSes fixed, tst_profilemanager 10/10 + tst_profilemanagers 20/20 offscreen, --quit-after-load exit 0; deleteRefusesWithBoundWindow flakes identically on unmodified HEAD (pre-existing); mac runtime verify still owed |
-| MAC14 | macOS fix: Tor window new-tab (+) button misplaced/wrong — details below | pending | 0 | needs:task:MAC11 — add-tab button in the Tor window tab bar renders in the wrong place/state on macOS |
+| MAC14 | macOS fix: Tor window new-tab (+) button misplaced/wrong — details below | done | 0 | Blind fix: the in-strip + parked over the last tabs trailing edge is only honest while the covered widget yields — on macOS close sits on the tabs left edge so the covered edge is bare face; + now hides rather than cover a tab (same rule the rail already uses) and its glyph is pinned to the parked slot instead of PM_ToolBarIconSize. Verified: new tst_tabbar::newTabButtonNoChromeHide leg (QProxyStyle LeftSide close simulating macOS) PASS, suite 33/33, tst_tabwidget newTabButton PASS, tor chrome legs PASS, --quit-after-load exit 0 offscreen; mac runtime verify owed |
 | MAC15 | macOS fix: Tor start page background doesn't fill the window — details below | pending | 0 | needs:task:MAC11 — aurora gradient covers only the top band, rest renders white; page bg doesn't stretch to viewport height on macOS |
 | SYNC01 | Serverless sync: engine core — device identity (Ed25519), sync store, per-store op-log tailing, sync-group membership state — details below | done | 0 | rustcore sync engine core: Ed25519 identity (sync/device.key, never synced), members+oplog sync.db, content-addressed signed ops (op_id=sha256 frame), canonical (lamport,device_id,op_id) apply + dedup, deferred drain seam for SYNC04 adapters; mw domain 19 envelope-only (identity/members/append/export/import/stats/drain) + MW-ARCH §8.19. Verified: cargo test 492/492 incl. two-device loopback + tamper/unknown-signer rejects, acprobe --bridge OK, sync.rs 86% lines (>85% gate), make -j2 green, --quit-after-load exit 0 offscreen |
 | SYNC02 | Serverless sync: Tor transport — embedded Arti, v3 onion service per device, authorized-client gating, outbound circuits — details below | pending | 0 | needs:task:SYNC01 |
@@ -4512,6 +4512,62 @@ renders wrong/misplaced on macOS. Check the tab-bar add button: is it a
 QToolButton in the NSToolbar-adjacent area (same class of issue as the
 MAC03 reader button and unified-toolbar widget visibility), wrong
 geometry, or a missing icon/state. Blind fix + document.
+
+
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Audit conclusion — the '+' is a plain QToolButton child of TabBar
+(m_newTabButton), manually anchored by layoutNewTabButton() at
+`tabRect(last).right() + 4`, clamped to `[leading, trailing -
+extent]`.  When the tab run reaches the strip's far end — which is
+common on macOS because QMacStyle returns true for
+SH_TabBar_PreferNoArrows, so Qt's scroll arrows NEVER appear there
+(useScrollButtons is forced off in QTabBarPrivate) and overflowed
+tabs are compressed to fill the strip — the clamp drops the '+'
+over the LAST tab's trailing edge.  That park is only honest while
+something under it yields: on Linux/Windows the per-tab close
+button lives on the covered trailing edge and hides itself out
+from under the '+' (updateCloseButtonVisibility's `covered`
+yield).  macOS seats the close button on the tab's LEFT edge
+(SH_TabBar_CloseButtonPosition = LeftSide) — the covered right
+edge is bare tab face (favicon labels are compiled out on
+Q_OS_MACOS), so nothing yields and the '+' lands on top of the tab
+itself: the "misplaced" button in the real-Mac screenshot.
+
+Ruled out: NSToolbar-item class (the '+' is not a toolbar item —
+the MAC03 action-visibility mechanism does not apply), icon
+presence (getTinted pixmaps render on Retina via QPixmapIconEngine
+best-match scaling), stale tabRect (Qt lays out eagerly on
+insert/resize — verified empirically), and the geometry math
+itself (verified correct under a QProxyStyle forcing the macOS
+LeftSide close convention).
+
+Fix (src/tabbar.cpp, layoutNewTabButton horizontal branch): a '+'
+whose parked rect intersects the last tab now hides unless the
+widget on the covered edge can yield — i.e. the trailing side is
+the close side AND a close button is actually installed there.
+Same "no honest spot, no covering a tab" rule the vertical rail
+already enforced; the Linux park-over-edge is preserved (its
+covered edge carries the yielding close button).  Also pinned the
+button's iconSize to the parked slot (bounded 12-22px) instead of
+the platform's PM_ToolBarIconSize — a style-fixed ~24px glyph in a
+~20px slot drew clipped.
+
+Linux verification: new tst_tabbar::newTabButtonNoChromeHide leg —
+a QProxyStyle forcing SH_TabBar_CloseButtonPosition = LeftSide
+(the macOS convention) asserts the '+' hides rather than cover the
+bare trailing edge on an exactly-full strip, returns anchored
+after the last tab when slack appears, stays hidden on a genuinely
+overflowing run, never paints under the left-side close, and the
+pinned icon fits the slot.  Fails on unmodified code (button
+parked visible over the bare edge), passes with the fix.
+tst_tabbar 33/33 (incl. existing newTabButton park-over-edge +
+yield legs), tst_tabwidget newTabButton + verticalTabRowTextBounds
+PASS, tst_browsermainwindow torTabStripLayout/torChromeTheme/
+torNavIconsDarkChrome PASS, --quit-after-load exit 0 offscreen.
+(tst_tabwidget crashes in the unrelated omniboxPasteSelfXss leg —
+mojo teardown trap identical in class to the documented
+pre-existing suite crashes; macOS runtime verify is still owed.)
 
 ### MAC15
 Real-Mac screenshot: the Tor start page's aurora-gradient background
