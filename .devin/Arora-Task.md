@@ -388,7 +388,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC06 | macOS fix: bundled Bitwarden never installs — details below | done | 0 | Blind fix: .app now ships the bundle via QMAKE_BUNDLE_DATA -> Contents/Resources/share/arktos/extensions (was never installed on mac — !mac gated the INSTALLS entry), bundledExtensionsPath also probes both bundle roots directly. consumed marker no longer veto-only: consumed-but-absent retries install (presence = registry OR manifest-bearing tree under installPath incl. staged pkg-/ext- names); deliberate uninstall recorded under extensions/bundled-removed/ and stays honored. Verified: tst_extensionmanager bundledInstall PASS incl. new retry+removed-marker legs, --bitwarden-smoke 0 failures, --quit-after-load exit 0 offscreen; chromePageChurn SIGSEGV identical on unmodified HEAD (pre-existing). mac runtime verify still owed |
 | MAC07 | macOS fix: crash on quit — BrowserApplication::~BrowserApplication SIGSEGV — details below | done | 0 | Blind fix: EXTEXIT01 quick_exit sat at the END of ~BrowserApplication, but the macOS trap fires INSIDE the dtor (+124) during qDeleteAll window/page teardown — normal quit path (main.cpp return sessionRc) reaches the dtor. sessionSawEnabledExtension gate hoisted to the top of dtor + shutdownAndQuickExit + quitBrowser exit(0); extension-tainted lane flushes autosave/session state, runs non-engine cleanup only (wipe/lock/tor stop/vault seal), then quick_exit before any engine-descendant destructor. Verified: clean qmake6+make, disasm confirms gate-first layout, --quit-after-load exit 0, --extension-smoke + --bitwarden-smoke exit 0 offscreen, tst_browserapp 11/11; mac runtime verify still owed |
 | MAC08 | macOS fix: Bitwarden welcome screen Skip button unreachable — details below | done | 0 | Blind fix: click-outside dismissal read the QWindow event pass as outside (a QWidgetWindow is no QWidget) and closed the popup on its first click — dead buttons. Now a global-rect hit test, same verdict on both passes + both popup shapes. Also repaired the stale health-probe leg (hosted trees never mint probe pages — leg now uses an ARKTOS_EXTHOST_OFF native fixture). Verified: chromePageChurn PASS incl. inside/outside press + probe legs, actionPopupSelfWires + extensionPopupContext PASS, --quit-after-load exit 0 offscreen; mac runtime verify still owed |
-| MAC09 | macOS fix: URL/search bar renders wrong — yellow tint + still buggy — details below | pending | 0 | Screenshot: urlbar shows persistent yellow/green tint over the whole field on macOS. Check focus/find-highlight styling — likely the search-highlight background or a stylesheet color meant for transient state left permanently applied; verify against intended Chrome-style chrome |
+| MAC09 | macOS fix: URL/search bar renders wrong — yellow tint + still buggy — details below | done | 0 | Blind fix: urlbar yellow was ArktosStyle::secureFieldColor — the 2008-Chrome https "secure" tint applied from LocationBar::paintEvent via setPalette-during-paint (the latch mechanism on the native NSToolbar field; light palettes only, why Linux read fine). Removed the tint + the dead mid-load gradient Base write entirely — paintEvent never mutates the palette now; padlock owns trust, NAVB01 strip owns loading. secureFieldColor() deleted; also fixed 2 pre-existing no-rust warnings blocking check-warnings. Verified: tst_locationbar 59/59 incl. new fieldFillUntinted, tst_downloadmanager 46/46, check-warnings PASS, --quit-after-load exit 0 offscreen; groupBoxTitleWeight+flatGroupSection fail identically on unmodified HEAD (pre-existing); mac runtime verify still owed |
 | MAC10 | macOS fix: Proxy settings page controls unselectable — details below | pending | 0 | Screenshot: "Use proxy server" checkbox + type/hostname/port fields all greyed/non-interactive on macOS — likely the same QCheckBox/item-render issue class as MAC04 or a disabled-state leak from settings load |
 | MAC11 | macOS fix: extension list names render garbled/double-drawn — details below | pending | 0 | REGRESSION from MAC04: name column shows overlapping corrupted text ("BitwardenPa?awocMdbteager") — the column-0 delegate that was supposed to drop painted indicator/text is double-drawing or the index widget overlaps item text. Check delegate paint logic + widget geometry |
 
@@ -4193,6 +4193,32 @@ with a persistent yellow/green tint. Audit the urlbar styling: find/search
 highlight background, focus-ring stylesheet, or a color meant for a
 transient state left permanently applied under the mac style. Cross-check
 against Linux where it renders correctly. Blind fix + document.
+
+Findings: the yellow/green field fill was `ArktosStyle::secureFieldColor()`
+(248,248,210) — the 2008-Chrome https "secure" cue, applied from
+`LocationBar::paintEvent` whenever the page scheme was https and the
+field text was dark (light palettes only — which is why dark-scheme
+Linux runs read correctly).  Both that tint and the mid-load progress
+gradient were written into the widget's *persistent* palette via
+`setPalette()` inside `paintEvent` — the mechanism class that latches
+a fill on a field hosted in the native unified NSToolbar.  Fix:
+`paintEvent` never mutates the palette; the https tint is removed
+outright (modern Chrome-style chrome — the SitePadlockButton already
+carries the connection trust verdict), and the dead gradient path
+went with it (Qt6 `loadProgress` reports only 0/100 per NAVB01; the
+bottom strip is the loading cue).  `secureFieldColor()` deleted;
+`tst_arktosstyle` fixedFamilies leg updated; new
+`tst_locationbar::fieldFillUntinted` asserts the palette survives a
+paint and no tint/gradient pixels appear.  Residual lead if the mac
+build still shows color: the qmacstyle focus ring — not reproducible
+on Linux.
+
+Also fixed two pre-existing no-rust build warnings the check-warnings
+gate flagged (unrelated files, HEAD was already failing):
+`DownloadManager::load`'s `havePolicy` moved inside the
+`#if defined(ARKTOS_RUSTCORE)` block that is its only use, and the
+unused `EvalInput &in` parameter was dropped from the file-local
+`ruleMatchesRequest` (both call sites updated).
 
 ### MAC10
 Proxy settings page: "Use proxy server" checkbox and all proxy fields

@@ -277,33 +277,19 @@ bool LocationBar::event(QEvent *event)
 
 void LocationBar::paintEvent(QPaintEvent *event)
 {
-    QPalette p = palette();
-    QColor defaultBaseColor = QApplication::palette().color(QPalette::Base);
-    QColor backgroundColor = defaultBaseColor;
-    if (m_webView && m_webView->url().scheme() == QLatin1String("https")
-        && p.color(QPalette::Text).value() < 128) {
-        backgroundColor = ArktosStyle::secureFieldColor();
-    }
-
-    // set the progress bar
-    QBrush baseBrush = QBrush(backgroundColor);
-    if (m_webView) {
-        int progress = m_webView->progress();
-        if (progress == 0) {
-            p.setBrush(QPalette::Base, backgroundColor);
-        } else {
-            const QColor loadingColor =
-                ArktosStyle::loadingProgressColor(p);
-
-            QLinearGradient gradient(0, 0, width(), 0);
-            gradient.setColorAt(0, loadingColor);
-            gradient.setColorAt(((double)progress)/100, backgroundColor);
-            p.setBrush(QPalette::Base, gradient);
-            baseBrush = gradient;
-        }
-        setPalette(p);
-    }
-
+    // MAC09: the field always renders on the palette's own Base —
+    // no fills are written into the widget palette from inside
+    // paintEvent.  Two overrides used to live here: the https
+    // "secure" tint (the 2008-Chrome yellow, dropped by Chrome long
+    // ago — the SitePadlockButton carries the connection trust
+    // verdict now) and a loading gradient parked in Base mid-load.
+    // Both flowed through setPalette() during paint, which is exactly
+    // the mechanism that leaves a fill latched on a field hosted in
+    // the native unified NSToolbar on macOS: a transient (or, for
+    // https, scheme-gated) color persisted as the widget's permanent
+    // Base and read back out long after its state ended.  Under Qt6
+    // the gradient was dead anyway — loadProgress only reports 0 and
+    // 100 (NAVB01) — so the bottom strip below is the loading cue.
     LineEdit::paintEvent(event);
 
     // NAVB01: indeterminate loading cue — Qt 6.12 reports progress 0
@@ -312,7 +298,8 @@ void LocationBar::paintEvent(QPaintEvent *event)
     // field's bottom edge (the affordance the dead 0<progress<100
     // gradient used to provide mid-load).
     if (m_webView && m_webView->isLoading()) {
-        const QColor stripColor = ArktosStyle::loadingProgressColor(p);
+        const QColor stripColor =
+            ArktosStyle::loadingProgressColor(palette());
         QPainter stripPainter(this);
         stripPainter.fillRect(QRect(1, height() - 3, width() - 2, 2),
                               stripColor);
@@ -353,7 +340,7 @@ void LocationBar::paintEvent(QPaintEvent *event)
 
     QPainter painter(this);
     painter.setClipRect(textRect);
-    painter.fillRect(textRect, baseBrush);
+    painter.fillRect(textRect, palette().color(QPalette::Base));
     const QColor faded =
         palette().color(QPalette::Disabled, QPalette::Text);
     painter.setPen(faded);

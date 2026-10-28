@@ -127,10 +127,6 @@ QColor noContainerColor();
 // bar) the app Base color's deeper step keeps the cue visible.
 QColor loadingProgressColor(const QPalette &fieldPalette);
 
-// The https field tint — the classic light-yellow secure cue.  The
-// caller applies it only where dark text sits on the field.
-QColor secureFieldColor();
-
 // DEVT11: the BiDi network waterfall colors each bar by resource
 // type — approximately Chrome's swatch set (document blue,
 // stylesheet green, script amber, image purple, xhr/fetch light

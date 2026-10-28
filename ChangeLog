@@ -4934,3 +4934,11 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   matter which object Qt delivers the press to first. Clicks outside
   the bubble still dismiss it, as before. (Most visible on macOS,
   where the bubble is a separate frameless window.)
+- The address/search field no longer shows a washed-out yellow tint on
+  secure (https) pages: the old whole-field "secure site" coloring —
+  a leftover from very early Chrome that read as a stuck highlight —
+  is gone, so the field keeps the normal theme background like modern
+  Chrome. The padlock icon next to the address already reports the
+  connection's trust state. The loading indicator strip along the
+  field's bottom edge is unchanged. (Most visible on macOS, where the
+  tint sat permanently over the whole field.)

@@ -2092,13 +2092,13 @@ void DownloadManager::save() const
 void DownloadManager::load()
 {
     QMetaEnum removePolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("RemovePolicy"));
-    bool havePolicy = false;
 #if defined(ARKTOS_RUSTCORE)
     // MD04: the policy + record reads go through dlwpolicy — the
     // module serves records from the profile's downloads.json and
     // falls back to the legacy download_N_* settings keys while that
     // file is absent, so pre-move history is never stranded.  An FFI
     // failure runs the local consult.
+    bool havePolicy = false;
     {
         const QJsonObject r = dlwPolicyCall(m_profileId, {
             {QLatin1String("op"), QLatin1String("rule_get")},

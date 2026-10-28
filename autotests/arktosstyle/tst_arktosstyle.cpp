@@ -697,10 +697,11 @@ void tst_Arktosstyle::fixedFamilies()
     QCOMPARE(ArktosStyle::warningBannerBorderColor().name(),
              QLatin1String("#e0c45f"));
 
-    // The location bar's cues — the https tint, and the loading
-    // accent: the fixed blue over a light field, the app Base's
-    // deeper step where light text sits on the field.
-    QCOMPARE(ArktosStyle::secureFieldColor(), QColor(248, 248, 210));
+    // The location bar's loading accent: the fixed blue over a
+    // light field, the app Base's deeper step where light text sits
+    // on the field.  (MAC09 dropped the https "secure" field tint —
+    // the padlock owns the trust verdict and a persistent yellow
+    // field read as a render bug.)
     QCOMPARE(ArktosStyle::loadingProgressColor(QApplication::palette()),
              QColor(116, 192, 250));
     QPalette violetField;

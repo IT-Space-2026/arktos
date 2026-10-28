@@ -1321,7 +1321,6 @@ bool betterWithinExt(const DeclarativeNetRequest::ParsedRule &a,
 
 // Full condition check against the request snapshot.
 bool ruleMatchesRequest(const DeclarativeNetRequest::ParsedRule &r,
-                        const DeclarativeNetRequest::EvalInput &in,
                         const QString &urlStr, const QString &chromeType,
                         const QString &methodUpper,
                         const QString &hostLower,
@@ -1493,7 +1492,7 @@ DeclarativeNetRequest::Verdict DeclarativeNetRequest::evaluate(
                 if (!covered)
                     continue;
             }
-            if (!ruleMatchesRequest(sr.rule, in, urlStr, chromeType,
+            if (!ruleMatchesRequest(sr.rule, urlStr, chromeType,
                                     methodUpper, hostLower,
                                     initiatorHost))
                 continue;
@@ -1841,7 +1840,7 @@ QJsonArray DeclarativeNetRequest::testMatchOutcome(
             // request.type is already a Chrome name — compare it
             // directly so webtransport/webbundle conditions resolve
             // against the declared type, not the mapped 'other'.
-            if (ruleMatchesRequest(r, in, urlStr, type,
+            if (ruleMatchesRequest(r, urlStr, type,
                                    method, hostLower, initHost))
                 hits.append(&r);
         }

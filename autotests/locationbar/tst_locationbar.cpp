@@ -168,6 +168,7 @@ private slots:
     void domainEmphasis();
     void punycodeDisplay();
     void domainEmphasisPaint();
+    void fieldFillUntinted();
     void sanitizeUntrustedText_data();
     void sanitizeUntrustedText();
     void pasteStripsJavascript();
@@ -1178,6 +1179,80 @@ void tst_LocationBar::domainEmphasisPaint()
     QVERIFY(domainDiff <= 60);
     QVERIFY(prefixDiff > domainDiff + 20);
     QVERIFY(suffixDiff > domainDiff + 20);
+}
+
+// MAC09: the field paints on the palette's own Base, always.  The
+// https "secure" yellow and the mid-load gradient both used to be
+// written into the widget palette from inside paintEvent — a fill
+// latched into the persistent palette is exactly what showed as a
+// permanent yellow field over the native NSToolbar chrome on macOS.
+// The padlock owns the trust verdict now; paintEvent must leave the
+// palette untouched even with a bound view reporting progress.
+void tst_LocationBar::fieldFillUntinted()
+{
+    QWidget window;
+    QVBoxLayout layout(&window);
+    TestLocationBar *bar = new TestLocationBar(&window);
+    layout.addWidget(bar);
+    QLineEdit *focusSponge = new QLineEdit(&window);
+    layout.addWidget(focusSponge);
+
+    WebView *view = new WebView(BrowserApplication::webEngineProfile(),
+                                &window);
+    bar->setWebView(view);
+
+    window.resize(520, window.sizeHint().height());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    focusSponge->setFocus();
+    qApp->processEvents();
+    QVERIFY(!bar->hasFocus());
+
+    const QPalette paletteBefore = bar->palette();
+
+    // A mid-flight progress value (Qt6 engines report only 0/100,
+    // but a non-WebEngine backend or a port can still emit one) used
+    // to install a gradient Base during the paint below.
+    QVERIFY(QMetaObject::invokeMethod(view, "setProgress",
+                                      Q_ARG(int, 40)));
+    bar->setText(QLatin1String("https://untinted.example/"));
+    bar->setCursorPosition(0);
+    qApp->processEvents();
+
+    const QImage image = bar->grab().toImage();
+    QVERIFY(!image.isNull());
+
+    // The paint left the widget palette alone — no solid tint or
+    // gradient brush latched into Base.
+    QCOMPARE(bar->palette(), paletteBefore);
+
+    // And the painted field really is the palette Base — neither the
+    // old yellow secure cue nor a loading-gradient edge.
+    const QColor base = paletteBefore.color(QPalette::Base);
+    const QColor oldTint(248, 248, 210);
+    const QColor loadingBlue(116, 192, 250);
+    const QRect textRect = bar->textContentsRect();
+    int basePixels = 0;
+    int foreignPixels = 0;
+    for (int x = textRect.x(); x <= textRect.right(); x += 3) {
+        const QColor pixel =
+            image.pixelColor(x, textRect.y() + 2);
+        const int toBase = qAbs(pixel.red() - base.red())
+            + qAbs(pixel.green() - base.green())
+            + qAbs(pixel.blue() - base.blue());
+        const int toTint = qAbs(pixel.red() - oldTint.red())
+            + qAbs(pixel.green() - oldTint.green())
+            + qAbs(pixel.blue() - oldTint.blue());
+        const int toBlue = qAbs(pixel.red() - loadingBlue.red())
+            + qAbs(pixel.green() - loadingBlue.green())
+            + qAbs(pixel.blue() - loadingBlue.blue());
+        if (toBase <= 45)
+            ++basePixels;
+        else if (toTint <= 45 || toBlue <= 45)
+            ++foreignPixels;
+    }
+    QVERIFY(basePixels > 0);
+    QCOMPARE(foreignPixels, 0);
 }
 
 // SEC30: the shared untrusted-input strip — a leading "javascript:"

@@ -571,20 +571,14 @@ QColor ArktosStyle::noContainerColor()
 QColor ArktosStyle::loadingProgressColor(const QPalette &fieldPalette)
 {
     // Light text on the field means a dark or violet scheme — step
-    // the app palette's Base down for the cue instead.  The app
-    // palette, not the widget's own: the progress gradient may
-    // already have overwritten the widget's Base role.
+    // the app palette's Base down for the cue instead so it still
+    // reads against a violet (tor) field.
     if (fieldPalette.color(QPalette::Text).value() >= 128) {
         const QPalette appPalette =
             qApp ? qApp->palette() : QPalette();
         return appPalette.color(QPalette::Base).darker(200);
     }
     return QColor(116, 192, 250);
-}
-
-QColor ArktosStyle::secureFieldColor()
-{
-    return QColor(248, 248, 210);
 }
 
 QColor ArktosStyle::networkTypeSwatch(const QString &type,
