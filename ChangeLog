@@ -4951,3 +4951,10 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   earlier). The "Enable network cache" group and the ad-block rules
   viewer used the same pattern and are fixed the same way. (Most
   visible on macOS, where the painted checkbox was unusable.)
+- The Preferences > Extensions list no longer shows a garbled,
+  overlapping extension name (e.g. "BitwardenPa?awocMdbteager"): the
+  painted copy of the name was still being drawn behind the new
+  checkbox cell, offset a few pixels from the checkbox's own label.
+  The cell's background painter now draws no text or icon at all, so
+  the checkbox is the only thing rendering the name. (Most visible on
+  macOS; MAC04 follow-up.)

@@ -3145,6 +3145,49 @@ void tst_SettingsDialog::extensionPage()
     // never double the indicator.
     QVERIFY(enableBox->parent() == dialog.extensionsTree->viewport());
 
+    // MAC11: the column-0 delegate must paint NOTHING — the box is
+    // the cell's only renderer.  Feature-flag suppression alone is
+    // not enough: QCommonStyle::drawControl(CE_ItemViewItem) draws
+    // the item text whenever option->text is non-empty, so a painted
+    // name copy survived under the widget and produced the
+    // overlapping "BitwardenPa?awocMdbteager" on macOS.  Render the
+    // cell through the delegate with two different names — a
+    // backdrop-only delegate yields identical images; any painted
+    // copy of the text would differ.
+    const int rowIndex = dialog.extensionsTree->indexOfTopLevelItem(row);
+    QVERIFY(rowIndex >= 0);
+    auto renderCell = [&](int column) {
+        QImage image(240, 26, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::white);
+        QPainter painter(&image);
+        QStyleOptionViewItem option;
+        option.rect = image.rect();
+        option.state = QStyle::State_Enabled;
+        option.widget = dialog.extensionsTree;
+        option.direction = dialog.extensionsTree->layoutDirection();
+        option.font = dialog.extensionsTree->font();
+        option.fontMetrics = QFontMetrics(option.font);
+        option.palette = dialog.extensionsTree->palette();
+        dialog.extensionsTree->itemDelegate()->paint(
+            &painter, option,
+            dialog.extensionsTree->model()->index(rowIndex, column));
+        return image;
+    };
+    const QImage nameBefore = renderCell(0);
+    const QString savedName = row->text(0);
+    row->setText(0, QStringLiteral("zz a completely different name zz"));
+    const QImage nameAfter = renderCell(0);
+    row->setText(0, savedName);
+    QCOMPARE(nameAfter, nameBefore);
+    // The painted sibling columns still paint — otherwise the leg
+    // above proves nothing.
+    const QImage versionBefore = renderCell(1);
+    const QString savedVersion = row->text(1);
+    row->setText(1, QStringLiteral("9.9.9"));
+    const QImage versionAfter = renderCell(1);
+    row->setText(1, savedVersion);
+    QVERIFY(versionAfter != versionBefore);
+
     // Wrong-column and id-less item changes are ignored.
     QVERIFY(QMetaObject::invokeMethod(&dialog, "extensionItemChanged",
         Q_ARG(QTreeWidgetItem*, row), Q_ARG(int, 1)));

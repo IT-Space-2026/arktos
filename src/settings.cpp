@@ -189,10 +189,24 @@ public:
                          const QModelIndex &index) const override
     {
         PlainTextItemDelegate::initStyleOption(option, index);
-        if (index.column() == 0)
-            option->features &= ~(QStyleOptionViewItem::HasDisplay
-                                  | QStyleOptionViewItem::HasCheckIndicator
-                                  | QStyleOptionViewItem::HasDecoration);
+        if (index.column() != 0)
+            return;
+        option->features &= ~(QStyleOptionViewItem::HasDisplay
+                              | QStyleOptionViewItem::HasCheckIndicator
+                              | QStyleOptionViewItem::HasDecoration);
+        // MAC11: the feature flags are only half the suppression —
+        // QCommonStyle::drawControl(CE_ItemViewItem) gates the item
+        // text on !option->text.isEmpty(), not HasDisplay, so the
+        // item's own copy still painted under the index widget and
+        // double-drew the name on macOS.  Empty the paintable
+        // content itself (same idiom Qt's sheet style uses to blank
+        // an item's content) so the delegate contributes only the
+        // cell backdrop; the real QCheckBox is the column's single
+        // renderer.  Sizing is unaffected — viewItemSize measures
+        // off the feature flags, which are already stripped.
+        option->text.clear();
+        option->icon = QIcon();
+        option->checkState = Qt::Unchecked;
     }
 };
 

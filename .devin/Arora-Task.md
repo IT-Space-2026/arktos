@@ -390,7 +390,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC08 | macOS fix: Bitwarden welcome screen Skip button unreachable — details below | done | 0 | Blind fix: click-outside dismissal read the QWindow event pass as outside (a QWidgetWindow is no QWidget) and closed the popup on its first click — dead buttons. Now a global-rect hit test, same verdict on both passes + both popup shapes. Also repaired the stale health-probe leg (hosted trees never mint probe pages — leg now uses an ARKTOS_EXTHOST_OFF native fixture). Verified: chromePageChurn PASS incl. inside/outside press + probe legs, actionPopupSelfWires + extensionPopupContext PASS, --quit-after-load exit 0 offscreen; mac runtime verify still owed |
 | MAC09 | macOS fix: URL/search bar renders wrong — yellow tint + still buggy — details below | done | 0 | Blind fix: urlbar yellow was ArktosStyle::secureFieldColor — the 2008-Chrome https "secure" tint applied from LocationBar::paintEvent via setPalette-during-paint (the latch mechanism on the native NSToolbar field; light palettes only, why Linux read fine). Removed the tint + the dead mid-load gradient Base write entirely — paintEvent never mutates the palette now; padlock owns trust, NAVB01 strip owns loading. secureFieldColor() deleted; also fixed 2 pre-existing no-rust warnings blocking check-warnings. Verified: tst_locationbar 59/59 incl. new fieldFillUntinted, tst_downloadmanager 46/46, check-warnings PASS, --quit-after-load exit 0 offscreen; groupBoxTitleWeight+flatGroupSection fail identically on unmodified HEAD (pre-existing); mac runtime verify still owed |
 | MAC10 | macOS fix: Proxy settings page controls unselectable — details below | done | 0 | Checkable-QGroupBox enable affordance is the MAC04 style-painted-indicator class — converted proxy/networkCache groups + adblock rulesGroup to real QCheckBox driving a fields container; tst_settingsdialog 60/60 incl. new leg, tst_adblockmanager 15/15, --quit-after-load exit 0 offscreen; mac verify owed |
-| MAC11 | macOS fix: extension list names render garbled/double-drawn — details below | pending | 0 | REGRESSION from MAC04: name column shows overlapping corrupted text ("BitwardenPa?awocMdbteager") — the column-0 delegate that was supposed to drop painted indicator/text is double-drawing or the index widget overlaps item text. Check delegate paint logic + widget geometry |
+| MAC11 | macOS fix: extension list names render garbled/double-drawn — details below | done | 0 | Blind fix: MAC04 feature-flag strip never suppressed the painted name copy — Qt6 QCommonStyle draws item text on !option->text.isEmpty(), not HasDisplay; delegate now empties text/icon/checkState for column 0 (backdrop only, QCheckBox is sole renderer; sizing unchanged). Verified: new render leg fails on unmodified HEAD + passes fixed, tst_settingsdialog 60/60, --quit-after-load exit 0 offscreen; mac verify owed |
 
 ## Task details
 
@@ -4261,3 +4261,40 @@ the column-0 delegate added to suppress the painted indicator/text is
 double-drawing or the index widget overlays the item's own painted text.
 Fix the delegate/paint interaction so exactly one of {widget, delegate}
 renders per cell; re-verify tst_settingsdialog legs.
+
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Root cause found in Qt 6.12 source, not a geometry guess:
+QCommonStyle::drawControl(CE_ItemViewItem) draws the item text gated
+only on !vopt->text.isEmpty() — the HasDisplay feature flag is
+consulted for layout (viewItemSize) but NEVER for painting.  MAC04's
+delegate stripped HasDisplay/HasCheckIndicator/HasDecoration, which
+did suppress the painted check indicator (that one is feature-gated)
+but left the item's own name text painting underneath the transparent
+QCheckBox index widget on every platform.  On macOS the item copy
+(cell text origin) and the box label (after its indicator) land ~an
+indicator-width apart -> two offset copies of the name -> the
+reported "BitwardenPa?awocMdbteager" overlap.  (On Linux the offset
+was small enough to read as the "clean" render MAC04 measured.)
+QStyleSheetStyle's CE_ItemViewItem routes through the same
+QWindowsStyle/QCommonStyle code and QMacStyle inherits it, so no
+flag-only strip could ever have worked.
+
+Fix (src/settings.cpp, ExtensionEnableBoxDelegate::initStyleOption):
+column 0 now also empties option->text, option->icon and
+option->checkState — the same content-blanking idiom QStyleSheetStyle
+uses internally.  The delegate contributes only the cell backdrop
+(panel + selection/focus chrome); the real QCheckBox is the cell's
+single renderer.  Sizing is unchanged: viewItemSize measures off the
+feature flags that were already stripped, so the column hint is
+identical to MAC04's.
+
+Linux verification: new tst_settingsdialog::extensionPage legs render
+the column-0 cell through the delegate with two different item texts
+— identical images prove a backdrop-only delegate (a column-1 leg
+confirms the harness still sees painted text).  The new leg FAILS on
+unmodified HEAD (the painted copy was real and reproducible on Linux)
+and PASSES with the fix; full suite 60/60; arktos --quit-after-load
+exit 0 offscreen; 0 warnings on the touched unit.  macOS runtime
+verification still owed: the Name column must show a single clean
+label per row.
