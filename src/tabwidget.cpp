@@ -5901,6 +5901,65 @@ bool TabWidget::restoreSessionState(const QJsonObject &state)
     }
     return restoreSessionSnapshot(snap);
 }
+
+QJsonObject TabWidget::presenceWindowJson() const
+{
+    // The same orderedSessionPages() walk collectSessionSnapshot()
+    // does — hidden collapsed-group and filtered-level members are
+    // live tabs too — but only the fields a peer's read-only view
+    // renders.  Off-the-record tabs drop out under the same SEC07
+    // rule the session snapshot applies.
+    QJsonArray tabs;
+    int current = -1;
+    QWidget *currentPage = widget(currentIndex());
+    const QList<QWidget*> ordered = orderedSessionPages();
+    for (QWidget *page : ordered) {
+        if (!page)
+            continue;
+        WebView *tab = webViewForPage(page);
+        EngineTab *foreign = tab ? nullptr
+                                 : qobject_cast<EngineTab*>(page);
+        if (!tab && !foreign)
+            continue;
+        if (tab && tab->enginePage() && tab->enginePage()->isOffTheRecord())
+            continue;
+        QJsonObject rec;
+        QString url;
+        QString title = m_customTitles.value(page);
+        if (foreign) {
+            url = QString::fromUtf8(foreign->url().toEncoded());
+            if (title.isEmpty())
+                title = foreign->title();
+        } else {
+            // A pending-restore tab never loaded — its stashed url
+            // is the live truth, and its title is the rename
+            // override or nothing (the strip shows the url).
+            const auto pending = m_pendingRestores.constFind(tab);
+            if (pending != m_pendingRestores.constEnd()) {
+                url = QString::fromUtf8(pending->url.toEncoded());
+            } else {
+                url = QString::fromUtf8(tab->url().toEncoded());
+                if (title.isEmpty())
+                    title = tab->title();
+            }
+            const QString container = tab->containerId();
+            if (!container.isEmpty())
+                rec.insert(QLatin1String("container"), container);
+        }
+        rec.insert(QLatin1String("url"), url);
+        if (!title.isEmpty() && title != url)
+            rec.insert(QLatin1String("title"), title);
+        if (m_pinnedTabs.contains(page))
+            rec.insert(QLatin1String("pinned"), true);
+        if (page == currentPage)
+            current = tabs.count();
+        tabs.append(rec);
+    }
+    QJsonObject window;
+    window.insert(QLatin1String("current"), current);
+    window.insert(QLatin1String("tabs"), tabs);
+    return window;
+}
 #endif // ARKTOS_RUSTCORE
 
 void TabWidget::createTab(const QByteArray &historyState, TabWidget::OpenUrlIn tab,

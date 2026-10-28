@@ -106,6 +106,7 @@
 #ifdef ARKTOS_RUSTCORE
 #include "rustcore.h"
 #include "rustcorebridge.h"
+#include "synctabpresence.h"
 
 #include <arktos_core.h>
 #include <qjsondocument.h>
@@ -1743,6 +1744,11 @@ BrowserMainWindow *BrowserApplication::newMainWindow(const QString &profileId)
     m_mainWindows.prepend(browser);
     connect(this, &BrowserApplication::privacyChanged,
             browser, &BrowserMainWindow::privacyChanged);
+#ifdef ARKTOS_RUSTCORE
+    // SYNC06: presence publishing watches this window's tab set —
+    // changes debounce into a whole-doc "tabs" op per profile scope.
+    SyncTabPresence::instance()->watchWindow(browser);
+#endif
 #ifndef AUTOTESTS
     // SESS02: if this turns out to be the last browser window, a stray
     // visible top-level (a dialog outliving its parent window) would

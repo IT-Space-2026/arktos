@@ -237,6 +237,7 @@ Topics actually emitted today:
 | `updates` | update-check state | record_check/snooze/set_* |
 | `torctl` | tor control link | reply/event/error queued for drain (a wake-up — no store mutated) |
 | `sync` | sync engine | member add/remove/seen, local op append, import accepting new ops |
+| `synctabs` | tab-presence adapter | a peer's presence doc replaced this device's newest stored view (the doc is in-memory; nothing durable changed — it is a view-update wake-up like `torctl`) |
 
 Session ops deliberately emit nothing — per-run scratch state, not
 shared-observable data (arktos_core.h documents this; MB03 must not
@@ -709,6 +710,33 @@ longer history cannot resurrect rows this device already expired.
 The first flush after hydrate also advertises every local row
 whose visit-id is still unknown — pre-sync history flows to the
 group once.
+
+The open-tabs presence adapter (SYNC06, `synctabs.rs`) adds the
+domain's first new ops since pairing — the "tabs" store's doc is
+EPHEMERAL per-device presence, not a durable CRDT.  `tabs_publish`
+signs the caller's whole tab set as one `presence` body
+(`windows:[{current, tabs:[{url, title?, pinned?, container?}]}]`,
+the Qt side snapshots each window via
+`TabWidget::presenceWindowJson` — off-the-record tabs dropped like
+the session snapshot drops them); an empty windows array is a real
+publish — the "everything closed" wipe.  Apply keeps only the
+newest doc per device — LWW on the op's (lamport, device_id) stamp,
+never a merge — held in MEMORY ONLY: the lane writes to no store,
+so a peer's open tabs are a read-only view and receiving presence
+can never mint a history row.  `tabs_peers` reports the newest doc
+every OTHER device published for the scope (this device's own doc
+is never listed — its live tabs are already on screen).  The
+op-log's durability gives the view a warm restart — last-known
+state is shown, honestly stale-capable (no TTL yet).  The Qt read
+side is the History menu's "Tabs from Other Devices" submenu
+(`SyncTabsMenu`): opening a listed tab is an ordinary local
+navigation — its history entry is local, exactly like typing the
+url.
+
+| Op | Class | Notes |
+|----|-------|-------|
+| `sync.tabs_publish` | C | `{profile?, windows:[…]}` — publish this device's open tabs as one presence doc; `since: 4` |
+| `sync.tabs_peers` | Q | `{profile?}` → `{devices:[{device_id, updated_ms, windows}]}` — newest presence doc per OTHER device |
 
 The transport half (SYNC02) shares the same envelope and the
 `synctransport` notify topic — a pull-drain wake-up shaped like

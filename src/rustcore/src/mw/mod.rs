@@ -62,7 +62,7 @@ use crate::facade::{self, AcCore};
 use crate::{
     blocklist, bookmarks, containers, cookies, extverify, history, icons, notes, notify,
     omnibox, opensearch, profiles, profilevault, session, settings, sitedecisions,
-    sitetrust, store, sync, syncbookmarks, synchistory, syncpair, synctransport, tlsprobe, tranco, updates, util,
+    sitetrust, store, sync, syncbookmarks, synchistory, syncpair, synctabs, synctransport, tlsprobe, tranco, updates, util,
 };
 
 /// The envelope schema version — the frame's `version` byte and the
@@ -2573,10 +2573,11 @@ const VAULT_OPS: &[Op] = &[
 // (SYNC09) hang off it.
 
 fn sync_engine(ctx: &MwCtx) -> Result<sync::SyncEngine, OpErr> {
-    // SYNC04/05: keep the store-adapter apply lanes bound to the
+    // SYNC04/05/06: keep the store-adapter apply lanes bound to the
     // core this call is for — the applier seam is process-global.
     syncbookmarks::install(ctx.core.data_root());
     synchistory::install(ctx.core.data_root());
+    synctabs::install(ctx.core.data_root());
     sync::SyncEngine::open(ctx.core.data_root()).map_err(OpErr::from)
 }
 
@@ -2930,6 +2931,42 @@ fn op_sync_pair_list(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
     Ok(json!({ "sessions": syncpair::list(root) }))
 }
 
+// SYNC06: open-tabs presence — an ephemeral per-device doc on the
+// "tabs" store, NOT a durable CRDT.  tabs_publish signs the caller's
+// whole tab set as one presence doc (the Qt side snapshots its
+// windows; an empty windows array is a real publish — the
+// "everything closed" wipe); tabs_peers reports the newest doc every
+// OTHER device published for the scope.  The apply lane keeps docs
+// in memory and writes no store — a peer's open tabs are a
+// read-only view, never a visit, so receiving presence can never
+// create history on this device.
+//
+//   tabs_publish {profile?, windows:[{current, tabs:[{url, title?,
+//                  pinned?, container?}]}]} — publish this device's
+//                  open tab set (command)
+//   tabs_peers   {profile?} — {devices:[{device_id, updated_ms,
+//                  windows}]} newest-first-proof LWW view (query)
+
+fn op_sync_tabs_publish(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let scope = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    let windows = p
+        .get("windows")
+        .ok_or_else(|| OpErr::BadPayload("missing \"windows\" array".into()))?;
+    let op = synctabs::publish(ctx.core.data_root(), &scope, windows)?;
+    notify::emit("sync");
+    Ok(json!({
+        "ok": true,
+        "op_id": op.op_id,
+        "lamport": op.lamport,
+    }))
+}
+
+fn op_sync_tabs_peers(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let scope = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    let devices = synctabs::peers(ctx.core.data_root(), &scope)?;
+    Ok(json!({ "devices": devices }))
+}
+
 const SYNC_OPS: &[Op] = &[
     Op { id: 0x0001, name: "identity", class: OpClass::Query,
          profile_scoped: false, since: 1, handler: op_sync_identity },
@@ -2983,6 +3020,10 @@ const SYNC_OPS: &[Op] = &[
          profile_scoped: false, since: 3, handler: op_sync_pair_cancel },
     Op { id: 0x001a, name: "pair_list", class: OpClass::Query,
          profile_scoped: false, since: 3, handler: op_sync_pair_list },
+    Op { id: 0x001b, name: "tabs_publish", class: OpClass::Command,
+         profile_scoped: false, since: 4, handler: op_sync_tabs_publish },
+    Op { id: 0x001c, name: "tabs_peers", class: OpClass::Query,
+         profile_scoped: false, since: 4, handler: op_sync_tabs_peers },
 ];
 
 // ---- registry ------------------------------------------------------------------
@@ -5236,6 +5277,149 @@ mod tests {
             b_ops.iter().all(|o| o["device_id"].as_str().unwrap() != b_id),
             "a local delete must never emit an op: {b_ops:?}"
         );
+        let _ = dir_b;
+    }
+
+    /// SYNC06: tab presence over the real envelope — tabs_publish on
+    /// core A signs a whole-doc snapshot; B's import lands it in the
+    /// in-memory view tabs_peers reads; a republish with a tab closed
+    /// replaces the doc outright; and B's history stays EMPTY —
+    /// presence is a view, never a visit.
+    #[test]
+    fn sync_tabs_presence_end_to_end() {
+        let _g = guard();
+        let dir_a = tmpdir("tsyA");
+        let dir_b = tmpdir("tsyB");
+        let core_a = TestCore::new(&dir_a);
+        let core_b = TestCore::new(&dir_b);
+
+        // Pair each device into the other's "default" sync group.
+        let a_pk = call(core_a.0, &query(1, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let b_pk = call(core_b.0, &query(2, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let a_id = call(core_a.0, &query(21, 19, 0x0001, "")).ok()["device_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let r = call(
+            core_a.0,
+            &command(
+                3,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{b_pk}","scope":"default"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_b.0,
+            &command(
+                4,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{a_pk}","scope":"default"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+
+        // A publishes a two-tab window — one signed presence op.
+        let r = call(
+            core_a.0,
+            &command(
+                5,
+                19,
+                0x001b,
+                r#"{"profile":"default","windows":[{"current":0,"tabs":[
+                    {"url":"http://one/","title":"One"},
+                    {"url":"http://two/","pinned":true}]}]}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true, "{:?}", r.err());
+        let r = call(
+            core_a.0,
+            &query(6, 19, 0x0007, r#"{"store":"tabs"}"#),
+        );
+        let ops = r.ok()["ops"].clone();
+        assert_eq!(ops.as_array().unwrap().len(), 1, "{ops}");
+        assert_eq!(ops[0]["scope"], "default");
+        assert_eq!(ops[0]["body"]["t"], "presence");
+
+        // B imports — the view shows A's doc, not B's (empty) one.
+        let r = call(
+            core_b.0,
+            &command(
+                7,
+                19,
+                0x0008,
+                &serde_json::to_string(&json!({"ops": ops})).unwrap(),
+            ),
+        );
+        let p = r.ok();
+        assert_eq!(p["accepted"], 1, "{p}");
+        assert_eq!(p["applied"], 1, "{p}");
+        let r = call(
+            core_b.0,
+            &query(8, 19, 0x001c, r#"{"profile":"default"}"#),
+        );
+        let devices = r.ok()["devices"].as_array().unwrap().clone();
+        assert_eq!(devices.len(), 1, "{devices:?}");
+        assert_eq!(devices[0]["device_id"], a_id);
+        let tabs = devices[0]["windows"][0]["tabs"].as_array().unwrap();
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs[0]["title"], "One");
+        assert_eq!(tabs[1]["pinned"], true);
+
+        // A republishes with the second tab closed — the newer
+        // whole-doc wins outright, so the close propagates.
+        let r = call(
+            core_a.0,
+            &command(
+                9,
+                19,
+                0x001b,
+                r#"{"profile":"default","windows":[{"current":0,"tabs":[
+                    {"url":"http://one/","title":"One"}]}]}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_a.0,
+            &query(10, 19, 0x0007, r#"{"store":"tabs"}"#),
+        );
+        let ops = r.ok()["ops"].clone();
+        assert_eq!(ops.as_array().unwrap().len(), 2);
+        let r = call(
+            core_b.0,
+            &command(
+                11,
+                19,
+                0x0008,
+                &serde_json::to_string(&json!({"ops": ops})).unwrap(),
+            ),
+        );
+        assert_eq!(r.ok()["applied"], 1, "{:?}", r.ok());
+        let r = call(
+            core_b.0,
+            &query(12, 19, 0x001c, r#"{"profile":"default"}"#),
+        );
+        let devices = r.ok()["devices"].as_array().unwrap().clone();
+        let tabs = devices[0]["windows"][0]["tabs"].as_array().unwrap();
+        assert_eq!(tabs.len(), 1, "{devices:?}");
+        assert_eq!(tabs[0]["url"], "http://one/");
+
+        // The apply lane wrote NOTHING — B's profile history is
+        // still empty.  A peer's open tabs are a view, not a visit.
+        let r = call(
+            core_b.0,
+            &query(13, 3, 0x0003, r#"{"profile":"default","spec":{}}"#),
+        );
+        assert_eq!(r.ok().as_array().unwrap().len(), 0,
+            "presence apply must never mint a history row");
         let _ = dir_b;
     }
 }

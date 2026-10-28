@@ -849,9 +849,12 @@ core landed and UX/completion work still landing.
     nothing to any profile store. Site trust verdicts and permission
     decisions stay machine-global by design (they are not persona
     data); cookie rules and container assignments are persona-scoped.
-    There is no sync service — profiles never leave the local data
-    directory. `arktos --profile <id>` launches a standalone instance
-    bound to a registry persona
+    Sync is strictly opt-in: nothing leaves the local data directory
+    until the user explicitly pairs a second device into a profile's
+    sync group (Settings → Sync), and sync traffic then moves only
+    signed ops between paired devices over the embedded Tor
+    transport — there is no server. `arktos --profile <id>` launches
+    a standalone instance bound to a registry persona
   - Profile vaults *(in progress)* — whole-profile sealed archives
     (ARV1): Argon2id KEK wrapping a random 512-bit vault key,
     AES-256-GCM chunks + HMAC-SHA-512 integrity, optional

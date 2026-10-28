@@ -110,6 +110,7 @@
 #include "siteshield.h"
 #include "sourceviewer.h"
 #include "statusbarwidgets.h"
+#include "synctabpresence.h"
 #include "tabbar.h"
 #include "tabwidget.h"
 #include "toolbarsearch.h"
@@ -1546,6 +1547,17 @@ void BrowserMainWindow::setupMenu()
     historyActions.append(m_historyHomeAction);
     historyActions.append(m_tabWidget->recentlyClosedTabsAction());
     historyActions.append(m_historyRestoreLastSessionAction);
+#ifdef ARKTOS_RUSTCORE
+    // SYNC06: read-only "tabs on my other devices" — presence docs
+    // the sync lane publishes per device; opening one is an
+    // ordinary local navigation, never a write back.
+    auto *remoteTabsMenu = new SyncTabsMenu(m_profileId, this);
+    connect(remoteTabsMenu, &SyncTabsMenu::openUrl,
+            m_tabWidget, [this](const QUrl &url) {
+        m_tabWidget->loadUrl(url, TabWidget::NewSelectedTab);
+    });
+    historyActions.append(remoteTabsMenu->menuAction());
+#endif
     m_historyMenu->setInitialActions(historyActions);
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_historyRestoreLastSessionAction->setIcon(ArktosIcon::getChrome(QLatin1String("document-revert")));

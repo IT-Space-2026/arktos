@@ -350,6 +350,13 @@ public:
     // Compiled only under CONFIG+=rustcore.
     QJsonObject sessionStateJson() const;
     bool restoreSessionState(const QJsonObject &state);
+    // SYNC06: the lean presence record for one window — {"current",
+    // "tabs":[{url,title?,pinned?,container?}]} across EVERY level
+    // (orderedSessionPages covers hidden rows), off-the-record tabs
+    // dropped like the session snapshot drops them.  No history
+    // blobs and no scroll: presence is a peer's view of what is
+    // open, not restore data.
+    QJsonObject presenceWindowJson() const;
 #endif
 
     // PREFUI04: lazy session restore (performance/lazyRestoreTabs) —

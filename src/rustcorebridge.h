@@ -141,6 +141,10 @@ enum SyncOp : quint16 {
     SyncPairConfirm = 0x0018,
     SyncPairCancel = 0x0019,
     SyncPairList = 0x001a,
+    // SYNC06: open-tabs presence — publish this device's tab set /
+    // read the newest doc each other device published.
+    SyncTabsPublish = 0x001b,
+    SyncTabsPeers = 0x001c,
 };
 enum OpenSearchOp : quint16 {
     OseList = 0x0001,
