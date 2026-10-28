@@ -347,6 +347,15 @@ private:
     // next start even when async deletes don't flush before exit.
     // Idempotent; called from quitBrowser() and ~BrowserApplication().
     void clearPrivateDataOnExit();
+    // MAC07: the extension-tainted lane both exit sites share — the
+    // macOS trap (SIGSEGV inside ~BrowserApplication+124) fires during
+    // the window/page destructors, not only at ~QApplication's global
+    // teardown, so once an MV3 extension ran this session NO
+    // engine-descendant destructor may run at all.  Flushes the
+    // autosave/session state the skipped ~BrowserMainWindow would have
+    // written, runs the non-engine cleanup and quick_exits before a
+    // single engine object dies.  Never returns.
+    [[noreturn]] void quickExitWithoutEngineTeardown(int exitCode);
 
     QList<QPointer<BrowserMainWindow> > m_mainWindows;
     QByteArray m_lastSession;

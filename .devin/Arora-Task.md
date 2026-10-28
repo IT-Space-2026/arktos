@@ -386,6 +386,11 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC04 | macOS fix: extension settings page shows no enable tick boxes — details below | done | 0 | Blind fix: per-row enable control is now a real QCheckBox index widget (rendered via standalone-control path, not the style-painted item-view indicator that failed on the macOS dmg); item keeps CheckStateRole so toggling still routes itemChanged->setExtensionEnabled, and a column-0 delegate drops the painted indicator/text so nothing double-draws. Verified: tst_settingsdialog 59/59 incl. new box legs, clean pixel render, --quit-after-load exit 0; mac runtime verify still owed |
 | MAC05 | macOS fix: search/url bar renders a stray mini close/clear button — details below | done | 0 | Blind fix: clear (x) affordance is now gated on a live user edit (focus + non-baseline text via SRCH10 pristine bookkeeping), not bare hasFocus() — a programmatic url write always re-baselines and re-hides it even under stuck Qt focus in the native NSToolbar; ToolbarSearch opts into the same gate (was ungated entirely), dialog/find fields keep the always-on-text affordance; qApp focusChanged covers undelivered FocusOut. Verified: tst_locationbar 58/58 + tst_toolbarsearch 13/13 incl. new gate legs, searchlineedit 4/4, tabwidget 46/46, --quit-after-load exit 0; chromeSlots SIGSEGV reproduces on unmodified HEAD (pre-existing). mac runtime verify still owed |
 | MAC06 | macOS fix: bundled Bitwarden never installs — details below | done | 0 | Blind fix: .app now ships the bundle via QMAKE_BUNDLE_DATA -> Contents/Resources/share/arktos/extensions (was never installed on mac — !mac gated the INSTALLS entry), bundledExtensionsPath also probes both bundle roots directly. consumed marker no longer veto-only: consumed-but-absent retries install (presence = registry OR manifest-bearing tree under installPath incl. staged pkg-/ext- names); deliberate uninstall recorded under extensions/bundled-removed/ and stays honored. Verified: tst_extensionmanager bundledInstall PASS incl. new retry+removed-marker legs, --bitwarden-smoke 0 failures, --quit-after-load exit 0 offscreen; chromePageChurn SIGSEGV identical on unmodified HEAD (pre-existing). mac runtime verify still owed |
+| MAC07 | macOS fix: crash on quit — BrowserApplication::~BrowserApplication SIGSEGV — details below | done | 0 | Blind fix: EXTEXIT01 quick_exit sat at the END of ~BrowserApplication, but the macOS trap fires INSIDE the dtor (+124) during qDeleteAll window/page teardown — normal quit path (main.cpp return sessionRc) reaches the dtor. sessionSawEnabledExtension gate hoisted to the top of dtor + shutdownAndQuickExit + quitBrowser exit(0); extension-tainted lane flushes autosave/session state, runs non-engine cleanup only (wipe/lock/tor stop/vault seal), then quick_exit before any engine-descendant destructor. Verified: clean qmake6+make, disasm confirms gate-first layout, --quit-after-load exit 0, --extension-smoke + --bitwarden-smoke exit 0 offscreen, tst_browserapp 11/11; mac runtime verify still owed |
+| MAC08 | macOS fix: Bitwarden welcome screen Skip button unreachable — details below | pending | 0 | Popup renders (MAC02 confirmed) but the onboarding screen's Skip/Continue buttons don't respond — likely frameless popup window not routing mouse events to web content on macOS (firstMouse/firstResponder, or NSPanel can'tBecomeKey). Check popup view event delivery + acceptsFirstMouse |
+| MAC09 | macOS fix: URL/search bar renders wrong — yellow tint + still buggy — details below | pending | 0 | Screenshot: urlbar shows persistent yellow/green tint over the whole field on macOS. Check focus/find-highlight styling — likely the search-highlight background or a stylesheet color meant for transient state left permanently applied; verify against intended Chrome-style chrome |
+| MAC10 | macOS fix: Proxy settings page controls unselectable — details below | pending | 0 | Screenshot: "Use proxy server" checkbox + type/hostname/port fields all greyed/non-interactive on macOS — likely the same QCheckBox/item-render issue class as MAC04 or a disabled-state leak from settings load |
+| MAC11 | macOS fix: extension list names render garbled/double-drawn — details below | pending | 0 | REGRESSION from MAC04: name column shows overlapping corrupted text ("BitwardenPa?awocMdbteager") — the column-0 delegate that was supposed to drop painted indicator/text is double-drawing or the index widget overlaps item text. Check delegate paint logic + widget geometry |
 
 ## Task details
 
@@ -4049,3 +4054,111 @@ offscreen.  chromePageChurn SIGSEGVs identically on unmodified HEAD
 runtime verification still owed: on the next dmg, Bitwarden must
 appear enabled on a fresh profile and appear (toggleable) on an
 existing one.
+
+### MAC07
+Real-Mac crash on quit (report 2026-10-28, macOS 27.0.1, ARM64):
+EXC_BAD_ACCESS SIGSEGV, KERN_INVALID_ADDRESS at 0xe6a3f620c34f756b —
+poisoned/dangling pointer — inside `BrowserApplication::~BrowserApplication`
+(+124) on CrBrowserMain during app teardown. Audit the dtor: member
+destruction order, deletes of objects Qt already owns (parents), singletons
+torn down before the dtor runs, disconnects on dead senders, and anything
+touching QWebEngineProfile/page after WebEngine shutdown. Fix on Linux by
+code audit + sanitizer run if reproducible (ASan build or valgrind quit
+path); mark verified accordingly.
+
+
+Blind fix shipped on Linux (still unverified on real macOS hardware):
+
+Audit conclusion — the report's "~BrowserApplication+124 SIGSEGV" is
+the EXTEXIT01 teardown trap firing EARLIER on macOS than the fix
+anticipated.  The normal browsing path never reaches
+shutdownAndQuickExit: main.cpp's non-standalone lane runs
+`return sessionRc` after exec(), so every real quit (Cmd+Q, native
+terminate, windowDestroyed force-exit) unwinds through
+~BrowserApplication itself.  The old backstop quick_exited only at the
+TAIL of the dtor — it covered ~QApplication's post-dtor engine
+teardown (the verified Linux trap site) but on macOS the
+extension-tainted Chromium teardown state is already poisoned during
+the dtor body's qDeleteAll(m_mainWindows) -> ~BrowserMainWindow ->
+~QWebEngineView/page destruction (member-epilogue and ~QObject child
+teardown of the profiles/pages follow the body — also inside the
+dtor's frame).  Every delete/disconnect/singleton call in the dtor was
+audited: windows are QPointer-guarded, m_torManager is app-parented,
+ProfileVault/RustCoreBridge/ExtensionManager are leaky heap
+singletons, SecureStore::lock is pure FFI — the engine-descendant
+teardown is the only poisonable operation, matching the poisoned
+0xe6a3f62… fault address and the already-documented trap class.
+
+Fix (src/browserapplication.{h,cpp}): the
+ExtensionManager::sessionSawEnabledExtension() gate now runs FIRST in
+both quit lanes (~BrowserApplication and shutdownAndQuickExit) and in
+quitBrowser() before its exit(0).  On the extension-tainted lane the
+shared [[noreturn]] helper quickExitWithoutEngineTeardown() flushes
+the state ~BrowserMainWindow would have written (per-window
+m_autoSaver->saveIfNeccessary() + saveSession(), tor keeps its
+no-save semantics), then runs ONLY the non-engine cleanup
+(clearPrivateDataOnExit, SecureStore::lock, tor stop, vault
+sealUnlockedProfilesAtShutdown) and std::quick_exit()s — no window,
+page, profile, member or ~QApplication teardown can run at all.  The
+untainted lanes are byte-for-byte the old order.  quitBrowser's
+exit(0) gets the same gate because ::exit() unwinds static-storage
+teardown (QtWebEngineCore globals = the same Chromium shutdown).
+
+Flag reliability re-audited: s_extensionEnabledThisSession latches on
+bundled install+enable (MAC06 path), the loadFinished persisted-flag
+re-apply (every restart where the engine reloads Bitwarden disabled
+then re-enables), and explicit toggles — it stays set even after a
+later disable, which is the conservative read given EXTEXIT01's
+"survives disable-before-quit".
+
+Linux verification: qmake6+make clean (0 warnings on the touched
+unit); objdump of the new ~BrowserApplication confirms the gate is
+instruction #7 (+0x19) with the tainted lane branching to
+quickExitWithoutEngineTeardown before `quitting`/qDeleteAll;
+--quit-after-load about:blank exits 0 offscreen (untainted
+shutdownAndQuickExit lane); --extension-smoke exercises the tainted
+~BrowserApplication lane end-to-end (enable sets the flag, `return
+application.exec()` unwinds the dtor, process exits 0);
+--bitwarden-smoke 0 failures; tst_browserapp 11/11 PASS.
+--extension-smoke "extension loads disabled" FAIL leg reproduces
+identically on an unmodified-HEAD rebuild (pre-existing flake, likely
+the bundled Bitwarden install racing the fixture in the same profile).
+macOS runtime verification still owed: a quit with Bitwarden enabled
+must now exit rc=0 instead of SIGSEGV; if a trap still fires, the
+next lead is the ExtensionManager aboutToQuit `delete m_healthPage`
+(which still destructs an engine object, but at a live-engine point
+where the same delete is known-safe on Linux).
+
+### MAC08
+Popup renders on macOS now (MAC02 fix confirmed on real hardware — the
+Bitwarden login + onboarding screen is visible) but its buttons don't
+respond: the onboarding "Skip"/"Continue" can't be clicked. Likely cause:
+the frameless window style used to make it render doesn't route mouse
+events to the web content on macOS — check acceptsFirstMouse / first
+responder on the QCocoa view, whether the popup window canBecomeKey, and
+whether the QWebEngineView inside actually receives QMouseEvents. Compare
+with how DevTools/PiP frameless windows behave. Blind fix + document what
+needs mac re-verify.
+
+### MAC09
+URL/search bar renders wrong on macOS — screenshot shows the whole field
+with a persistent yellow/green tint. Audit the urlbar styling: find/search
+highlight background, focus-ring stylesheet, or a color meant for a
+transient state left permanently applied under the mac style. Cross-check
+against Linux where it renders correctly. Blind fix + document.
+
+### MAC10
+Proxy settings page: "Use proxy server" checkbox and all proxy fields
+(type/host/port/user/pass) appear greyed and non-interactive on macOS —
+cannot enable or select anything. Check whether the enable checkbox is
+rendered but disabled due to a state leak from settings load, or whether
+it's the same item-view/delegate render class as MAC04 (controls that rely
+on style painting invisible under qmacstyle). Blind fix + document.
+
+### MAC11
+Regression from MAC04: the extension list now shows garbled, overlapping,
+corrupted text in the Name column (e.g. "BitwardenPa?awocMdbteager") —
+the column-0 delegate added to suppress the painted indicator/text is
+double-drawing or the index widget overlays the item's own painted text.
+Fix the delegate/paint interaction so exactly one of {widget, delegate}
+renders per cell; re-verify tst_settingsdialog legs.

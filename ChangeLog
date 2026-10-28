@@ -4917,3 +4917,10 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   get stuck under the native unified toolbar). The toolbar search field
   follows the same rule; clear buttons in dialogs and the find bar are
   unchanged.
+- Fixed a crash on quit on macOS when an extension (e.g. the bundled
+  Bitwarden) had been enabled during the session: quitting could die
+  with a SIGSEGV inside the application teardown instead of exiting
+  cleanly. Session state is still flushed to disk on the way out; the
+  window itself is simply released to the OS rather than destructed,
+  which is what the Chromium-side teardown requires on that platform
+  once an MV3 extension ran.

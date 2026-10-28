@@ -459,6 +459,19 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
 
 BrowserApplication::~BrowserApplication()
 {
+    // EXTEXIT01/MAC07: the macOS trap is not only ~QApplication's
+    // post-dtor engine teardown — the real-Mac report (2026-10-28)
+    // shows the SIGSEGV landing INSIDE this destructor (+124): once an
+    // MV3 extension was enabled in the session, the extension-tainted
+    // Chromium teardown state is already poisoned when the
+    // qDeleteAll() below runs ~BrowserMainWindow -> ~QWebEngineView ->
+    // page teardown, before the tail backstop could ever fire.  The
+    // extension lane therefore must not destruct a single
+    // engine-descendant object — flush the state those destructors
+    // would have written, run only the non-engine cleanup and leave
+    // everything else for the kernel to reap.
+    if (ExtensionManager::sessionSawEnabledExtension())
+        quickExitWithoutEngineTeardown(0);
     quitting = true;
     clearPrivateDataOnExit();
     // SEC13: drop the passphrase-derived key and any cached file key.
@@ -472,24 +485,22 @@ BrowserApplication::~BrowserApplication()
     // PVAULT02: last — the auto-lock re-seal must run after every
     // store flushed; a seal earlier would orphan late plaintext.
     ProfileVault::instance()->sealUnlockedProfilesAtShutdown();
-    // EXTEXIT01 backstop: whatever lane ended the run, never unwind
-    // into ~QApplication's post-routine engine teardown once an
-    // extension was enabled — ~ProfileAdapter traps there (SIGSEGV on
-    // macOS, SIGTRAP on Linux).  Untainted lanes unwind normally so
-    // their exit codes reach the caller; lanes that enabled an
-    // extension all exit through quick_exit sites anyway.
-    if (ExtensionManager::sessionSawEnabledExtension())
-        std::quick_exit(0);
 }
 
 void BrowserApplication::shutdownAndQuickExit(int exitCode)
 {
-    // EXTEXIT01: same cleanup the destructor runs — minus the engine
-    // teardown that follows it (~QApplication's profile children and
-    // QtWebEngineCore's global shutdown), which traps when an MV3
-    // extension was enabled in-session.  Windows still get their
-    // destructors here: their AutoSaver/geometry flush is state we
-    // want persisted, and page teardown is not what trips the trap.
+    // EXTEXIT01/MAC07: same lane split as the destructor — with an
+    // extension-tainted session even the window/page destructors are
+    // part of the trap on macOS, so they are skipped here too; the
+    // engine teardown simply must not run on the quit path.
+    if (ExtensionManager::sessionSawEnabledExtension())
+        quickExitWithoutEngineTeardown(exitCode);
+    // Untainted lanes: same cleanup the destructor runs — minus the
+    // engine teardown that follows it (~QApplication's profile
+    // children and QtWebEngineCore's global shutdown), which is the
+    // trap site on Linux.  Windows still get their destructors here:
+    // their AutoSaver/geometry flush is state we want persisted, and
+    // page teardown is not what trips the trap.
     quitting = true;
     clearPrivateDataOnExit();
     SecureStore::lock();
@@ -497,6 +508,38 @@ void BrowserApplication::shutdownAndQuickExit(int exitCode)
     if (m_torManager)
         m_torManager->stop();
     ProfileVault::instance()->sealUnlockedProfilesAtShutdown();
+    std::quick_exit(exitCode);
+}
+
+[[noreturn]] void BrowserApplication::quickExitWithoutEngineTeardown(
+    int exitCode)
+{
+    // The window destructors this lane skips are the usual flush for
+    // the autosave debounce and each window's geometry — write that
+    // state explicitly while every page is still alive.  saveSession()
+    // declines to write once `quitting` is set, so the flush precedes
+    // the flag; tor keeps its pre-existing no-save semantics (nothing
+    // wrote its session at quit before, and its tabs must not persist
+    // anyway).
+    if (!isTorMode()) {
+        clean();
+        for (int i = 0; i < m_mainWindows.count(); ++i) {
+            if (BrowserMainWindow *window = m_mainWindows.at(i))
+                window->m_autoSaver->saveIfNeccessary();
+        }
+        saveSession();
+    }
+    quitting = true;
+    clearPrivateDataOnExit();
+    SecureStore::lock();
+    if (m_torManager)
+        m_torManager->stop();
+    ProfileVault::instance()->sealUnlockedProfilesAtShutdown();
+    // No return path exists from here — unwinding would run member
+    // destructors (m_torDataDir, the guarded window list), ~QObject's
+    // child teardown (profiles, pages, the single-instance server)
+    // and ~QApplication's engine shutdown, all inside the poisoned
+    // extension-tainted state.
     std::quick_exit(exitCode);
 }
 
@@ -672,6 +715,12 @@ void BrowserApplication::quitBrowser()
     // so an explicit Quit would leave the sentinel armed and score as
     // a crash on the next start — record the clean exit first.
     BrowserProfile::markSessionCleanExit(0);
+    // EXTEXIT01/MAC07: ::exit() still runs static-storage teardown —
+    // QtWebEngineCore's globals and Chromium's process state — which
+    // is the same poisoned path on macOS once an MV3 extension ran
+    // this session.  The explicit Quit takes the no-teardown lane too.
+    if (ExtensionManager::sessionSawEnabledExtension())
+        quickExitWithoutEngineTeardown(0);
     exit(0);
 }
 
