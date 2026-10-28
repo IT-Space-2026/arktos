@@ -392,7 +392,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | MAC10 | macOS fix: Proxy settings page controls unselectable — details below | done | 0 | Checkable-QGroupBox enable affordance is the MAC04 style-painted-indicator class — converted proxy/networkCache groups + adblock rulesGroup to real QCheckBox driving a fields container; tst_settingsdialog 60/60 incl. new leg, tst_adblockmanager 15/15, --quit-after-load exit 0 offscreen; mac verify owed |
 | MAC11 | macOS fix: extension list names render garbled/double-drawn — details below | done | 0 | Blind fix: MAC04 feature-flag strip never suppressed the painted name copy — Qt6 QCommonStyle draws item text on !option->text.isEmpty(), not HasDisplay; delegate now empties text/icon/checkState for column 0 (backdrop only, QCheckBox is sole renderer; sizing unchanged). Verified: new render leg fails on unmodified HEAD + passes fixed, tst_settingsdialog 60/60, --quit-after-load exit 0 offscreen; mac verify owed |
 | MAC12 | macOS fix: Bitwarden popup renders but right edge truncated/clipped — details below | done | 0 | needs:task:MAC11 — blind fix: doc-fit read documentElement.scrollWidth, clamped under Bitwarden html/body{overflow:hidden} so bubble never reached content size and the page clipped at the window edge; now max(de/body scroll size, body rect), initial bubble 400x620; actionPopupDocFit FAILs old/PASSes new + real-Bitwarden grab clean; mac verify owed |
-| MAC13 | macOS fix: Profile Manager dialog buttons/text truncated on right edge — details below | pending | 0 | needs:task:MAC11 — "Set Password"/"Remove Picture"/"Open Window" clipped; dialog min-width too small for its button column or missing layout constraint |
+| MAC13 | macOS fix: Profile Manager dialog buttons/text truncated on right edge — details below | done | 0 | Blind fix: action-column buttons floored at widest runtime label via font metrics + em bezel allowance (qmacstyle CT_PushButton hint under-measures the Aqua bezel/focus ring it paints -> centered text clipped at both edges); column equalized to one width; initial size content-derived instead of fixed 640x360. Verified: new tst_profilemanager::buttonColumnFitsLabels FAILs unmodified/PASSes fixed, tst_profilemanager 10/10 + tst_profilemanagers 20/20 offscreen, --quit-after-load exit 0; deleteRefusesWithBoundWindow flakes identically on unmodified HEAD (pre-existing); mac runtime verify still owed |
 | MAC14 | macOS fix: Tor window new-tab (+) button misplaced/wrong — details below | pending | 0 | needs:task:MAC11 — add-tab button in the Tor window tab bar renders in the wrong place/state on macOS |
 | MAC15 | macOS fix: Tor start page background doesn't fill the window — details below | pending | 0 | needs:task:MAC11 — aurora gradient covers only the top band, rest renders white; page bg doesn't stretch to viewport height on macOS |
 | SYNC01 | Serverless sync: engine core — device identity (Ed25519), sync store, per-store op-log tailing, sync-group membership state — details below | done | 0 | rustcore sync engine core: Ed25519 identity (sync/device.key, never synced), members+oplog sync.db, content-addressed signed ops (op_id=sha256 frame), canonical (lamport,device_id,op_id) apply + dedup, deferred drain seam for SYNC04 adapters; mw domain 19 envelope-only (identity/members/append/export/import/stats/drain) + MW-ARCH §8.19. Verified: cargo test 492/492 incl. two-device loopback + tamper/unknown-signer rejects, acprobe --bridge OK, sync.rs 86% lines (>85% gate), make -j2 green, --quit-after-load exit 0 offscreen |
@@ -4483,6 +4483,28 @@ column — "Set Password." shows as "et Password.", "Remove Picture" as
 doesn't account for the button column on the mac style (qmacstyle button
 metrics differ from Linux). Check fixed/minimum sizes and whether the
 dialog was laid out against non-native metrics. Blind fix + document.
+
+
+Outcome (2026-10-28): blind fix landed in profilemanagerdialog.cpp.
+Diagnosis: labels clipped symmetrically inside correctly-placed
+buttons => the button rect met the style's CT_PushButton sizeHint
+but the painted Aqua bezel + focus ring need more width than the
+hint grants — a hint laid out on Linux metrics is a macOS-unsafe
+floor. QPushButton::minimumSizeHint()==sizeHint() (verified on Qt
+6.12.0) and resize() clamps to layout min, so the column can only
+clip when the style under-measures; the global polish floor
+(BrowserTheme::polishDialogButtons, ~8em=80px) is text-agnostic and
+too low. Fix: every column button gets minimumWidth = max(style
+hint, font-metrics width of its widest runtime label — incl.
+"Set/Change Password..." and "Lock"/"Unlock..." swaps) + ~3em bezel
+allowance, equalized across the stack; dialog initial size now
+max(640x360, sizeHint). Regression leg:
+tst_profilemanager::buttonColumnFitsLabels (red on HEAD:
+profileManagerNew minimumWidth 80 < label 71+bezel; green with fix).
+macOS runtime verify still owed (no mac host in this loop).
+Pre-existing flake noted: deleteRefusesWithBoundWindow fails ~half
+of runs on unmodified HEAD — bound-window DeferredDelete race,
+unrelated.
 
 ### MAC14
 Real-Mac screenshot: in the Tor window's tab bar the new-tab (+) button

@@ -4977,3 +4977,13 @@ WebKit user-facing surfaces (WK19): the WPE WebKit backend now
   content at the window edge. The fit now reads the body's true
   scroll size as well, and the bubble starts at a size that already
   covers the usual action-popup layout. (Most visible on macOS.)
+- The Profile Manager dialog's action column no longer clips its
+  button labels ("et Password." for "Set Password...", "emove
+  Pictur" for "Remove Picture"): the column was laid out on each
+  button's style size hint alone, and the macOS style under-measures
+  the Aqua bezel and focus-ring margins it actually paints, so the
+  centered labels lost characters at both edges. Every column button
+  now floors at the widest label it can carry — measured through
+  font metrics plus a bezel allowance, including the Lock/Unlock and
+  Set/Change Password swaps — and the stack is equalized to a single
+  width. (Most visible on macOS.)

@@ -35,10 +35,12 @@
 
 #include <qapplication.h>
 #include <qdir.h>
+#include <qfontmetrics.h>
 #include <qinputdialog.h>
 #include <qjsonarray.h>
 #include <qjsondocument.h>
 #include <qjsonobject.h>
+#include <qlayout.h>
 #include <qlineedit.h>
 #include <qpushbutton.h>
 #include <qsettings.h>
@@ -57,6 +59,7 @@ private slots:
     void avatarPerProfile();
     void identitySync();
     void managerDialogLegs();
+    void buttonColumnFitsLabels();
     void deleteRefusesWithBoundWindow();
 };
 
@@ -360,6 +363,61 @@ void tst_ProfileManager::managerDialogLegs()
         BrowserApplication::instance()->mainWindows().last();
     opened->close();
     QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
+// MAC13: a real-mac screenshot showed the action column clipping its
+// labels at both edges ("et Password." for "Set Password...",
+// "emove Pictur" for "Remove Picture") — the macOS style's
+// CT_PushButton hint under-measures the bezel it paints, so a column
+// laid out on style hints alone clips centered text.  The dialog
+// floors every column button at font-metrics text width + a bezel
+// allowance for the WIDEST label the button can carry — including
+// the runtime Set/Change and Lock/Unlock swaps — and equalizes the
+// column into one uniform stack.
+void tst_ProfileManager::buttonColumnFitsLabels()
+{
+    QTemporaryDir dir;
+    ProfileStore store(dir.filePath(QLatin1String("profiles.json")));
+    ProfileManagerDialog dialog(&store, QLatin1String("default"));
+    dialog.show();
+    QApplication::processEvents();
+
+    const QList<QPushButton *> column = {
+        dialog.newButton, dialog.renameButton, dialog.pictureButton,
+        dialog.removePictureButton, dialog.passwordButton,
+        dialog.vaultButton, dialog.deleteButton,
+        dialog.openWindowButton, dialog.closeButton };
+    for (QPushButton *button : column) {
+        QStringList labels = { button->text() };
+        if (button == dialog.passwordButton)
+            labels << QStringLiteral("Set Password...")
+                   << QStringLiteral("Change Password...");
+        else if (button == dialog.vaultButton)
+            labels << QStringLiteral("Lock")
+                   << QStringLiteral("Unlock...");
+        const QFontMetrics fm = button->fontMetrics();
+        for (QString label : labels) {
+            label.remove(QLatin1Char('&'));
+            const int text = fm.horizontalAdvance(label);
+            // Text + bezel allowance must fit inside the floor, or a
+            // style that under-measures its hint clips the label.
+            QVERIFY2(button->minimumWidth() >= text + 20,
+                     qPrintable(QStringLiteral(
+                         "%1: minimumWidth %2 < label %3 + bezel")
+                            .arg(button->objectName())
+                            .arg(button->minimumWidth())
+                            .arg(text)));
+        }
+        QVERIFY(button->width() >= button->minimumWidth());
+    }
+    // One uniform stack — no button narrower than a sibling.
+    for (QPushButton *button : column)
+        QCOMPARE(button->width(), dialog.newButton->width());
+    // The stack ends inside the dialog's right edge — the column
+    // itself can never be clipped by the window frame.
+    QVERIFY(dialog.openWindowButton->geometry().right()
+            < dialog.width());
+    QVERIFY(dialog.width() >= dialog.layout()->minimumSize().width());
 }
 
 // CONT01: deleting a persona whose window is still bound must refuse

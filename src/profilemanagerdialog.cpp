@@ -31,6 +31,7 @@
 #include <qfile.h>
 #include <qfiledialog.h>
 #include <qfileinfo.h>
+#include <qfontmetrics.h>
 #include <qframe.h>
 #include <qheaderview.h>
 #include <qinputdialog.h>
@@ -225,7 +226,6 @@ ProfileManagerDialog::ProfileManagerDialog(ProfileStore *store,
     // The singleton is a QPointer — closing drops it so a reopen
     // starts from a fresh registry read.
     setAttribute(Qt::WA_DeleteOnClose);
-    resize(640, 360);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     QLabel *intro = new QLabel(
@@ -280,11 +280,44 @@ ProfileManagerDialog::ProfileManagerDialog(ProfileStore *store,
     closeButton->setObjectName(QLatin1String("profileManagerClose"));
     const QSizePolicy fixedWidth(QSizePolicy::Maximum,
                                  QSizePolicy::Fixed);
-    for (QPushButton *button :
-         { newButton, renameButton, pictureButton, removePictureButton,
-           passwordButton, vaultButton, deleteButton, openWindowButton,
-           closeButton })
+    QPushButton *columnButtons[] =
+        { newButton, renameButton, pictureButton, removePictureButton,
+          passwordButton, vaultButton, deleteButton, openWindowButton,
+          closeButton };
+    // MAC13 (blind macOS fix — a real-mac screenshot showed the
+    // column's labels clipped at both edges: "Set Password..." read
+    // "et Password.", "Remove Picture" read "emove Pictur"): never
+    // trust the style's CT_PushButton hint alone — the macOS style
+    // under-measures against the Aqua bezel + focus-ring margins it
+    // actually paints, so a column laid out on hints clips centered
+    // text.  Floor every button at the widest runtime label measured
+    // through font metrics plus an em-based bezel allowance, then
+    // equalize the column so it reads as one control stack.  On
+    // honest styles the floor only adds slack — the native hint
+    // still wins when it is wider.
+    const QStringList passwordTexts =
+        { tr("Set Pass&word..."), tr("Change Pass&word...") };
+    const QStringList vaultTexts = { tr("&Lock"), tr("&Unlock...") };
+    int columnWidth = 0;
+    for (QPushButton *button : columnButtons) {
         button->setSizePolicy(fixedWidth);
+        QStringList texts = { button->text() };
+        if (button == passwordButton)
+            texts = passwordTexts;
+        else if (button == vaultButton)
+            texts = vaultTexts;
+        const QFontMetrics fm = button->fontMetrics();
+        columnWidth = qMax(columnWidth, button->sizeHint().width());
+        for (const QString &label : texts) {
+            QString plain = label;
+            plain.remove(QLatin1Char('&'));
+            columnWidth = qMax(columnWidth,
+                               fm.horizontalAdvance(plain));
+        }
+    }
+    columnWidth += fontMetrics().horizontalAdvance(QLatin1String("MMM"));
+    for (QPushButton *button : columnButtons)
+        button->setMinimumWidth(columnWidth);
     buttons->addWidget(newButton);
     buttons->addWidget(renameButton);
     buttons->addWidget(pictureButton);
@@ -329,6 +362,13 @@ ProfileManagerDialog::ProfileManagerDialog(ProfileStore *store,
             this, [this](const QString &) { reloadProfiles(); });
 
     reloadProfiles();
+
+    // MAC13: the 640x360 default was a Linux-metrics guess; on a
+    // style whose layout minimum runs wider (macOS) it under-sizes
+    // the dialog and squeezes the action column.  Keep it as the
+    // preferred extent but never below the content's own hint.
+    const QSize hint = sizeHint();
+    resize(qMax(640, hint.width()), qMax(360, hint.height()));
 }
 
 void ProfileManagerDialog::showManager(QWidget *parent,
