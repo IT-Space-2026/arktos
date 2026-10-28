@@ -767,6 +767,45 @@ real change emits `settings` + `settings/changed` for the Qt side.
 |----|-------|-------|
 | `sync.settings_excludes` | Q | `{profile?}` → `{defaults:[…], local:[…]}` — the effective LWW-map exclusion prefixes; `since: 5` |
 
+The passwords adapter (SYNC08, `syncpasswords.rs`) is strictly
+opt-in and end-to-end encrypted: saved-login records (the autofill
+store's `has_password` forms in `<root>/profiles/<id>/
+autofill-store.dat` — plain form fills and addresses never leave
+the device) travel as per-entry ciphertext under a vault key
+Argon2id-derived from the user's sync passphrase and salted by
+`SHA-256("arktos-pwvault-salt/v1" || group_secret)` — the SYNC03
+group secret every member already holds, so key material is never
+an op payload and the salt is bound to the paired group.
+`passwords_enable` is the passphrase gate: it requires the
+profile's group secret (no group → `NotEnabled`), probes the
+newest `pwv` verifier op in the log (the first enabler plants it —
+`seal(vault_key, VERIFIER)`, a wrong passphrase fails the GCM tag
+→ `WrongPassphrase`), then drains pending ciphertext and
+advertises the local entries.  Wire ops carry `{t:"pwv"}`,
+`{t:"set","e":eid,"f":[blobs],"r":[blobs]}` and
+`{t:"del","e":eid}` — `eid` = hex-SHA-256 of the record url, every
+other byte sealed (set blobs bind `eid|field|value`, `r` blobs
+tombstone a field).  Semantics: field-level LWW on the op's
+(lamport, device_id) stamp — the op-log's total order makes each
+field's latest stamp its version — with whole-entry `del`
+tombstones; stale fields drop, a later set resurrects.  A locked
+vault defers apply (`Locked` → applied=0 → `drain` retries after
+unlock): a peer that never enables still holds and forwards the
+ciphertext.  Emission diffs `Store::autofill_set` against the
+decrypted synced image; apply merges through
+`autofill_set_applied` without clobbering local fields the group
+never mentioned, and a real change emits `autofill` +
+`autofill/changed`.  Honest edges: two passphrases in one group
+fork the vault (each side holds ops it cannot read), and SYNC09's
+group-secret rotation re-bases the salt — its re-wrap must re-seal
+password fields under the re-derived key.
+
+| Op | Class | Notes |
+|----|-------|-------|
+| `sync.passwords_enable` | C | `{profile?, passphrase}` — opt in + unlock; verifier probe, drain, advertise; `since: 6` |
+| `sync.passwords_lock` | C | `{profile?}` — drop vault key + decrypted image; `since: 6` |
+| `sync.passwords_status` | Q | `{profile?}` → `{unlocked, enabled_ever, ops, pending_apply}`; `since: 6` |
+
 The transport half (SYNC02) shares the same envelope and the
 `synctransport` notify topic — a pull-drain wake-up shaped like
 `torctl`'s: inbound links and frames land in a queue drained by

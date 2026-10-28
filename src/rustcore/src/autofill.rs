@@ -492,11 +492,28 @@ impl Store {
     /// Wholescale replace + persist.  Returns Ok(false) when the set
     /// is unchanged — the caller uses that to skip the change notify.
     pub fn autofill_set(&mut self, records: Vec<FormRecord>) -> RcResult<bool> {
+        self.autofill_commit(records, true)
+    }
+
+    /// The SYNC08 apply lane's spelling: the same replace + persist
+    /// without the emit hook, so a merged sync op can never echo
+    /// back onto the log.
+    pub fn autofill_set_applied(&mut self, records: Vec<FormRecord>) -> RcResult<bool> {
+        self.autofill_commit(records, false)
+    }
+
+    fn autofill_commit(&mut self, records: Vec<FormRecord>, emit: bool) -> RcResult<bool> {
         if self.autofill_data()?.forms.as_slice() == records.as_slice() {
             return Ok(false);
         }
+        let dir = self.dir().ok().map(PathBuf::from);
         self.autofill_data()?.forms = records;
         self.save_autofill()?;
+        if emit {
+            if let (Some(dir), Some(data)) = (dir, self.autofill.as_ref()) {
+                crate::syncpasswords::emit_after(&dir, &data.forms);
+            }
+        }
         Ok(true)
     }
 

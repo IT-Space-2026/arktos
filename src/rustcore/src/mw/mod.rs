@@ -62,7 +62,8 @@ use crate::facade::{self, AcCore};
 use crate::{
     blocklist, bookmarks, containers, cookies, extverify, history, icons, notes, notify,
     omnibox, opensearch, profiles, profilevault, session, settings, sitedecisions,
-    sitetrust, store, sync, syncbookmarks, synchistory, syncpair, syncsettings, synctabs, synctransport, tlsprobe, tranco, updates, util,
+    sitetrust, store, sync, syncbookmarks, synchistory, syncpair, syncpasswords, syncsettings,
+    synctabs, synctransport, tlsprobe, tranco, updates, util,
 };
 
 /// The envelope schema version — the frame's `version` byte and the
@@ -2577,6 +2578,7 @@ fn sync_engine(ctx: &MwCtx) -> Result<sync::SyncEngine, OpErr> {
     // core this call is for — the applier seam is process-global.
     syncbookmarks::install(ctx.core.data_root());
     synchistory::install(ctx.core.data_root());
+    syncpasswords::install(ctx.core.data_root());
     syncsettings::install(ctx.core.data_root());
     synctabs::install(ctx.core.data_root());
     sync::SyncEngine::open(ctx.core.data_root()).map_err(OpErr::from)
@@ -2982,6 +2984,42 @@ fn op_sync_settings_excludes(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
     Ok(syncsettings::excludes(ctx.core.data_root(), &scope)?)
 }
 
+// SYNC08: the passwords adapter — strictly opt-in, end-to-end
+// encrypted.  Saved-login records (the autofill store's
+// has_password forms) travel as per-entry ciphertext under a vault
+// key Argon2id-derived from the user's sync passphrase and salted
+// by the profile's group secret, so every paired member holding
+// the passphrase reads them and nobody else — including a
+// wrong-passphrase peer — sees anything but ciphertext.  Key
+// material is never an op payload; `enable` is the passphrase
+// gate (probes the group's planted verifier), `lock` re-seals the
+// session.  Local writes emit signed ops by themselves through
+// the autofill_set funnel while unlocked.
+//
+//   passwords_enable {profile?, passphrase} — opt in + unlock;
+//                 probes the group verifier, drains pending
+//                 ciphertext, advertises local entries (command)
+//   passwords_lock   {profile?} — drop the vault key + decrypted
+//                 image; emission stops, apply defers (command)
+//   passwords_status {profile?} — {unlocked, enabled_ever, ops,
+//                 pending_apply} (query)
+
+fn op_sync_passwords_enable(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let scope = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    let pass = arg_str(p, "passphrase")?;
+    syncpasswords::enable(ctx.core.data_root(), &scope, pass.as_bytes()).map_err(OpErr::from)
+}
+
+fn op_sync_passwords_lock(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let scope = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    syncpasswords::lock(ctx.core.data_root(), &scope).map_err(OpErr::from)
+}
+
+fn op_sync_passwords_status(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let scope = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    syncpasswords::status(ctx.core.data_root(), &scope).map_err(OpErr::from)
+}
+
 const SYNC_OPS: &[Op] = &[
     Op { id: 0x0001, name: "identity", class: OpClass::Query,
          profile_scoped: false, since: 1, handler: op_sync_identity },
@@ -3041,6 +3079,12 @@ const SYNC_OPS: &[Op] = &[
          profile_scoped: false, since: 4, handler: op_sync_tabs_peers },
     Op { id: 0x001d, name: "settings_excludes", class: OpClass::Query,
          profile_scoped: false, since: 5, handler: op_sync_settings_excludes },
+    Op { id: 0x001e, name: "passwords_enable", class: OpClass::Command,
+         profile_scoped: false, since: 6, handler: op_sync_passwords_enable },
+    Op { id: 0x001f, name: "passwords_lock", class: OpClass::Command,
+         profile_scoped: false, since: 6, handler: op_sync_passwords_lock },
+    Op { id: 0x0020, name: "passwords_status", class: OpClass::Query,
+         profile_scoped: false, since: 6, handler: op_sync_passwords_status },
 ];
 
 // ---- registry ------------------------------------------------------------------
@@ -4837,8 +4881,9 @@ mod tests {
         let r = call(core_a.0, &query(7, 19, 0x0002, ""));
         assert_eq!(r.ok()["members"][0]["last_seen_ms"], 99);
 
-        // A appends a passwords op (the one synced store still
-        // without an adapter); the export carries the signed wire doc.
+        // A appends a passwords op (a synced store whose adapter —
+        // SYNC08 — refuses the malformed body); the export carries
+        // the signed wire doc.
         let r = call(
             core_a.0,
             &command(8, 19, 0x0006, r#"{"store":"passwords","body":{"set":{"k":1}}}"#),
@@ -4877,7 +4922,11 @@ mod tests {
         );
         let p = r.ok();
         assert_eq!(p["accepted"], 1);
-        assert_eq!(p["deferred"], 1, "no adapter registered -> deferred");
+        assert_eq!(
+            p["apply_errors"].as_array().unwrap().len(),
+            1,
+            "adapter registered -> malformed body apply-errors, stays pending"
+        );
 
         // Re-import dedups; drain reports the still-pending op.
         let r = call(
@@ -4890,7 +4939,7 @@ mod tests {
             &command(15, 19, 0x000a, r#"{"store":"passwords"}"#),
         );
         assert_eq!(r.ok()["pending_before"], 1);
-        assert_eq!(r.ok()["deferred"], 1);
+        assert_eq!(r.ok()["apply_errors"].as_array().unwrap().len(), 1);
 
         // stats reflects the merged log on B.
         let r = call(core_b.0, &query(16, 19, 0x0009, ""));
@@ -5166,6 +5215,178 @@ mod tests {
         assert_eq!(p["duplicates"], 2, "{p}");
         assert_eq!(p["applied"], 0, "{p}");
         let _ = dir_b;
+    }
+
+    /// SYNC08: the passwords adapter over the real envelope —
+    /// passwords_enable plants the group verifier, a saved-login
+    /// write emits a ciphertext-only op, a wrong-passphrase peer is
+    /// refused at the gate, and the right passphrase decrypts.
+    #[test]
+    fn sync_passwords_adapter_end_to_end() {
+        let _g = guard();
+        let dir_a = tmpdir("pwsA");
+        let dir_b = tmpdir("pwsB");
+        let core_a = TestCore::new(&dir_a);
+        let core_b = TestCore::new(&dir_b);
+
+        // The group secret the SYNC03 channel carries, installed on
+        // both roots — the vault salt binds derivation to it.
+        let ea = sync::SyncEngine::open(&dir_a).unwrap();
+        let gk = ea.group_secret_get_or_create("default").unwrap();
+        sync::SyncEngine::open(&dir_b)
+            .unwrap()
+            .group_secret_install("default", &gk)
+            .unwrap();
+
+        // Pair each device into the other's "default" sync group.
+        let a_pk = call(core_a.0, &query(1, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let b_pk = call(core_b.0, &query(2, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let r = call(
+            core_a.0,
+            &command(
+                3,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{b_pk}","scope":"default"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_b.0,
+            &command(
+                4,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{a_pk}","scope":"default"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+
+        // Opt-in on A — plants the group verifier (pwv).
+        let r = call(
+            core_a.0,
+            &command(
+                5,
+                19,
+                0x001e,
+                r#"{"profile":"default","passphrase":"vaultpw"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true, "{:?}", r.err());
+        let r = call(
+            core_a.0,
+            &query(6, 19, 0x0020, r#"{"profile":"default"}"#),
+        );
+        assert_eq!(r.ok()["unlocked"], true);
+
+        // A saves a login through the flat autofill lane — the
+        // emit hook diffs it into a ciphertext-only set op.
+        {
+            let mut st = store::lock();
+            st.set_data_dir(&format!("{dir_a}/profiles/default"))
+                .unwrap();
+            st.autofill_set(vec![crate::autofill::FormRecord {
+                url: "https://ex/login".into(),
+                name: "loginform".into(),
+                has_password: true,
+                elements: vec![
+                    ("user".into(), "alice".into()),
+                    ("pass".into(), "s3cret".into()),
+                ],
+            }])
+            .unwrap();
+        }
+        let r = call(
+            core_a.0,
+            &query(7, 19, 0x0007, r#"{"store":"passwords"}"#),
+        );
+        let ops = r.ok()["ops"].clone();
+        assert_eq!(ops.as_array().unwrap().len(), 2, "{ops}");
+        // The wire carries ciphertext only — no plaintext url,
+        // user, secret, or field names.
+        let wire_txt = ops[1]["body"].to_string();
+        for needle in ["s3cret", "alice", "https://ex", "loginform", "user", "pass"] {
+            assert!(!wire_txt.contains(needle), "plaintext leaked: {needle}");
+        }
+
+        // B's status before anything: locked, verifier unseen.
+        let r = call(
+            core_b.0,
+            &query(8, 19, 0x0020, r#"{"profile":"default"}"#),
+        );
+        assert_eq!(r.ok()["unlocked"], false);
+
+        // B imports while locked — the verifier applies, the entry
+        // defers as pending ciphertext.
+        let r = call(
+            core_b.0,
+            &command(
+                9,
+                19,
+                0x0008,
+                &serde_json::to_string(&json!({"ops": ops})).unwrap(),
+            ),
+        );
+        let p = r.ok();
+        assert_eq!(p["accepted"], 2, "{p}");
+        assert_eq!(p["applied"], 1, "{p}");
+        assert_eq!(p["apply_errors"].as_array().unwrap().len(), 1, "{p}");
+
+        // The passphrase gate: wrong is refused, right unlocks and
+        // drains the deferred ciphertext into B's store.
+        let r = call(
+            core_b.0,
+            &command(
+                10,
+                19,
+                0x001e,
+                r#"{"profile":"default","passphrase":"nope"}"#,
+            ),
+        );
+        assert_eq!(r.err().0, "op_failed");
+        let r = call(
+            core_b.0,
+            &command(
+                11,
+                19,
+                0x001e,
+                r#"{"profile":"default","passphrase":"vaultpw"}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true, "{:?}", r.err());
+        assert_eq!(r.ok()["drained"], 1);
+        {
+            let mut st = store::lock();
+            st.set_data_dir(&format!("{dir_b}/profiles/default"))
+                .unwrap();
+            let forms = st.autofill_data().unwrap().forms.clone();
+            assert_eq!(forms.len(), 1, "{forms:?}");
+            assert_eq!(forms[0].url, "https://ex/login");
+            assert!(forms[0]
+                .elements
+                .iter()
+                .any(|(k, v)| k == "pass" && v == "s3cret"));
+        }
+
+        // passwords_lock re-seals the session; status reports the
+        // vault shut but the group verifier still on record.
+        let r = call(
+            core_b.0,
+            &command(12, 19, 0x001f, r#"{"profile":"default"}"#),
+        );
+        assert_eq!(r.ok()["was_unlocked"], true);
+        let r = call(
+            core_b.0,
+            &query(13, 19, 0x0020, r#"{"profile":"default"}"#),
+        );
+        assert_eq!(r.ok()["unlocked"], false);
+        assert_eq!(r.ok()["enabled_ever"], true);
     }
 
     /// SYNC05: the history adapter over the real envelope — a

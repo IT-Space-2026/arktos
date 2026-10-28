@@ -1362,8 +1362,11 @@ mod tests {
     #[test]
     fn tampered_and_unknown_signers_rejected() {
         let _g = guard();
-        // "passwords" — a synced store with no adapter yet, so the
-        // deferred-count legs below can't leak a neighbour's applier.
+        // The applier seam is process-global — SYNC08 registers the
+        // "passwords" adapter in neighbouring tests, so drop any
+        // leaked registration before relying on its absence for the
+        // deferred-count leg below.
+        unregister_applier("passwords");
         let a = SyncEngine::open(&tmpdir("tA")).unwrap();
         a.append("passwords", "", &serde_json::json!({"k": 1})).unwrap();
         let wire: Vec<Value> =

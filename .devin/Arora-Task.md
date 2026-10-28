@@ -404,7 +404,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | SYNC05 | Serverless sync: history adapter — append-only union set, per-device retention — details below | done | 0 | history CRDT adapter: synchistory.rs union-set per deterministic visit-id (url,ts sha256 — pre-sync dup merges), title LWW by (lamport,device), deletes/retention device-local (expire_older_than records meta cutoff, applier re-prunes after merge); history.rs outbox+apply lane; mw sync_engine installs applier; verified: cargo test 527/527 incl. union/dedup/deletes-local/retention/LWW legs + mw e2e; acprobe --bridge OK; rustcov 90.7%; make -j2 green; --quit-after-load exit 0 |
 | SYNC06 | Serverless sync: open-tabs presence — ephemeral per-device doc, read-only "tabs on my other devices" view — details below | done | 0 | open-tabs presence: ephemeral per-device doc on tabs store (whole-doc LWW by lamport,device — closes propagate by absence, empty=wipe); apply lane in-memory only, writes NO store (peer tabs = read-only view, never history); mw tabs_publish/tabs_peers since:4; Qt: TabWidget::presenceWindowJson (OTR dropped), SyncTabPresence debounced publisher (paired scopes only, doc-hash dedup), SyncTabsMenu "Tabs from Other Devices" in History menu; MW-ARCH §8.19 + topics updated. Verified: cargo test 533/533 incl propagation/closes/LWW/no-writes + mw e2e; acprobe --bridge OK; rustcov 90.72%; make -j2 green; --quit-after-load exit 0 offscreen |
 | SYNC07 | Serverless sync: settings/profile adapter — LWW map with device-local exclusions — details below | done | 0 | settings CRDT adapter: per-key LWW map (set/del ops carrying typed-value docs), device-local exclusion prefixes gating emit+apply (defaults: sync/sessions/BrowserMainWindow/proxy/downloadmanager paths+records + profile sync/localExclude which cannot sync itself), emit rides RcSettings::set/remove, apply via non-emitting set_applied/remove_applied, first-touch advertise incl ini-imported keys, global scope never syncs; mw sync.settings_excludes (since:5) + settings/changed topic + MW-ARCH 8.19. Verified: cargo test 542/542 incl LWW/del-vs-set/converge/exclusion/advertise legs + mw e2e; acprobe --bridge OK; rustcov 90.81% (>85%); make -j2 green; --quit-after-load exit 0 offscreen |
-| SYNC08 | Serverless sync: passwords — E2E per-entry encrypted records, vault key, passphrase gate, strictly opt-in — details below | pending | 0 | needs:task:SYNC07 |
+| SYNC08 | Serverless sync: passwords — E2E per-entry encrypted records, vault key, passphrase gate, strictly opt-in — details below | done | 0 | passwords CRDT adapter: opt-in E2E vault — Argon2id vault key from sync passphrase salted by group secret, ciphertext-only ops (pwv/set/del), field-level LWW + entry tombstones, locked=deferred drain-on-unlock, emit rides autofill_set, mw passwords_enable/lock/status (since:6) + autofill/changed topic; sync.rs/mw deferred legs moved to unregister/apply_errors. Verified: cargo test 553/553 incl. encrypted-sync, wrong-passphrase ciphertext-only, concurrent field merge, stale/del no-resurrect, mw e2e; acprobe --bridge OK; rustcov 90.88%; make -j2 green; --quit-after-load exit 0 offscreen |
 | SYNC09 | Serverless sync: revocation + device management — paired-device list UI, fingerprint display, unpair, group-key rotation — details below | pending | 0 | needs:task:SYNC03 |
 | SYNC10 | Serverless sync: LAN fast path — mDNS discovery + direct QUIC when co-located, Tor fallback unchanged — details below | pending | 0 | needs:task:SYNC03 |
 | SYNC11 | Serverless sync: integration verification — two-profile loopback sync over in-process circuits, conflict-merge legs, honest docs — details below | pending | 0 | needs:task:SYNC08,SYNC09,SYNC10 |
@@ -4592,6 +4592,44 @@ derived from user passphrase (or generated + wrapped per device);
 sync moves ciphertext only, keys never a payload. Field-level LWW with
 version vectors. Verify: entry syncs encrypted, decrypts on peer with
 passphrase, wrong-passphrase peer sees only ciphertext.
+
+Landed (2026-10-28), syncpasswords.rs:
+
+- Synced data: autofill-store.dat has_password form records only
+  (plain fills + addresses stay local).  eid = hex-SHA-256(url) —
+  deterministic, so identical pre-sync logins merge instead of
+  doubling.
+- Vault key = Argon2id(passphrase, SHA-256("arktos-pwvault-salt/v1"
+  || group_secret)) — group secret comes from SYNC03 pairing, so
+  keys NEVER ride ops.  passwords_enable requires the group secret
+  (NotEnabled until paired), probes the newest pwv verifier op
+  (first enabler plants seal(key, VERIFIER)) — WrongPassphrase
+  refuses; then drains pending ciphertext + advertises the local
+  set.  Lock drops key + decrypted image (full opt-out state).
+- Wire ops carry only eid + sealed blobs: {"t":"pwv","v"},
+  {"t":"set","e","f":[sealed eid|field|value],"r":[sealed
+  eid|field]}, {"t":"del","e"}.  Fields: "url","name","el.<key>".
+- Field-level LWW on the op's (lamport,device) stamp (under the
+  log's total order, the latest stamp IS the field's version);
+  del tombstones the entry — stale sets drop, later ones resurrect.
+- Locked vault defers apply (Locked -> applied=0 -> drain retries
+  post-unlock): a never-enabled peer still holds+forwards
+  ciphertext.  Apply merges via autofill_set_applied preserving
+  local-only fields (no frontier entry = never synced).
+- Emit hook lives in Store::autofill_set (the shared mutation
+  funnel); lock ordering documented: store > adapter, never held
+  across each other.
+- mw ops since:6: passwords_enable/lock/status; autofill/changed
+  event topic.  sync.rs + mw e2e deferred legs adjusted (last
+  unadapted store is gone).
+- Honest edges recorded: two passphrases in one group fork the
+  vault (each side holds ops it cannot read); SYNC09's group-
+  secret rotation re-bases the salt so its re-wrap must re-seal
+  password fields under the re-derived key; eid is brute-forceable
+  for known sites like SYNC05's visit ids.
+Verify: cargo test 553/553 (10 adapter legs + mw envelope e2e),
+acprobe --bridge OK, rustcov 90.88%, make -j2 green,
+arktos --quit-after-load exit 0 offscreen.
 
 ### SYNC09
 Revocation + device management UI: Settings -> Sync section inside each
