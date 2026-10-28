@@ -20,10 +20,24 @@
 //!     one-shot lazy backfill covers databases written before the
 //!     table existed (and rebuilds after a bulk delete wipes it).
 //!
+//!   meta(key PK, value)
+//!     — per-store bookkeeping; SYNC05 records the widest retention
+//!     cutoff expire_older_than applied so the sync adapter can
+//!     re-prune merged remote rows against this device's own
+//!     boundary (retention stays local by contract).
+//!
 //! The legacy "history" file is a READ-ONLY import source: the Qt
 //! side parses it once (bounded HistoryParser) when the .db does not
 //! exist yet and replays the rows through rc_hist_add.  Old entries
 //! never flow back — new writes land in SQLite only.
+//!
+//! SYNC05 outbox: mutators that grow the union set (add,
+//! update_title) record events here; `with` flushes them to the
+//! synchistory adapter after the call commits.  Deletes
+//! (remove/clear/clear_since/expire) record NOTHING — they are
+//! device-local; a peer's delete never moves another device's copy.
+//! Remote applies route around the recording mutators so a peer's
+//! op can never echo.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -57,25 +71,57 @@ pub struct Entry {
     pub visited_at: i64,
 }
 
+/// A mutation worth a sync op, recorded by the public mutators and
+/// drained by the history adapter (synchistory) after the call
+/// commits.  Deletes and retention record nothing — they are
+/// device-local by contract.
+#[derive(Clone, Debug)]
+pub(crate) enum HistEvent {
+    /// A visit appended — emit-deduped by its visit-id so a raw
+    /// duplicate row costs no extra op.
+    Visited { url: String, title: String, ts: i64 },
+    /// A title change resolved to the element's (url, ts) at
+    /// mutation time — always emits so the merge side can LWW it.
+    Titled { url: String, title: String, ts: i64 },
+}
+
+/// An outbox entry: the event plus the db binding it was recorded
+/// under — the sync adapter maps the path back to the sync scope
+/// (profile) it belongs to and drops events for non-profile files.
+#[derive(Clone, Debug)]
+pub(crate) struct HistOutEv {
+    pub path: Option<PathBuf>,
+    pub ev: HistEvent,
+}
+
 pub struct HistoryStore {
     conn: Option<Connection>,
     path: Option<PathBuf>,
     /// Deduped newest-first listing cache — rebuilt lazily and dropped
     /// on every mutation so the Qt mirror's load is O(rows) once.
     entries: Option<Vec<Entry>>,
+    /// SYNC05 outbox: see the module doc — in-memory, an op that
+    /// never emitted is at worst a missed local edit.
+    pub(crate) outbox: Vec<HistOutEv>,
 }
 
 static HIST: Mutex<HistoryStore> = Mutex::new(HistoryStore {
     conn: None,
     path: None,
     entries: None,
+    outbox: Vec::new(),
 });
 
 /// Runs `f` against the shared history store, surviving a poisoned
-/// mutex.
+/// mutex.  After the call commits, recorded mutation events flush to
+/// the sync adapter — a no-op when nothing changed or the db isn't a
+/// synced profile file, and never echo: remote applies don't record
+/// events.
 pub fn with<R>(f: impl FnOnce(&mut HistoryStore) -> R) -> R {
     let mut guard = HIST.lock().unwrap_or_else(|e| e.into_inner());
-    f(&mut guard)
+    let r = f(&mut guard);
+    crate::synchistory::flush_local(&mut guard);
+    r
 }
 
 impl HistoryStore {
@@ -122,7 +168,10 @@ impl HistoryStore {
              CREATE TABLE IF NOT EXISTS hosts(
                  host TEXT PRIMARY KEY,
                  first_seen INTEGER NOT NULL,
-                 visits INTEGER NOT NULL DEFAULT 1);",
+                 visits INTEGER NOT NULL DEFAULT 1);
+             CREATE TABLE IF NOT EXISTS meta(
+                 key TEXT PRIMARY KEY,
+                 value TEXT NOT NULL);",
         )
         .map_err(|e| Fail {
             status: RcStatus::Io,
@@ -156,46 +205,89 @@ impl HistoryStore {
 
     // ---- visits ------------------------------------------------------
 
-    pub fn add(&mut self, url: &str, title: &str, visited_at: i64) -> RcResult<()> {
-        {
-            let conn = self.conn()?;
+    /// The raw insert shared by add() and the sync apply lane —
+    /// keeps the TRUST01 host rollup in step either way.
+    fn insert_visit(&self, url: &str, title: &str, visited_at: i64) -> RcResult<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO visits(url, title, visited_at) VALUES(?1, ?2, ?3)",
+            params![url, title, visited_at],
+        )
+        .map_err(|e| sql_fail("history insert", e))?;
+        // Keep the TRUST01 host rollup in step — min() because the
+        // legacy-file replay can land visits out of order.
+        let host = omnibox::url_host(url).to_lowercase();
+        if !host.is_empty() {
             conn.execute(
-                "INSERT INTO visits(url, title, visited_at) VALUES(?1, ?2, ?3)",
-                params![url, title, visited_at],
+                "INSERT INTO hosts(host, first_seen, visits)
+                 VALUES(?1, ?2, 1)
+                 ON CONFLICT(host) DO UPDATE SET
+                     first_seen = MIN(first_seen, ?2),
+                     visits = visits + 1",
+                params![host, visited_at],
             )
-            .map_err(|e| sql_fail("history insert", e))?;
-            // Keep the TRUST01 host rollup in step — min() because the
-            // legacy-file replay can land visits out of order.
-            let host = omnibox::url_host(url).to_lowercase();
-            if !host.is_empty() {
-                conn.execute(
-                    "INSERT INTO hosts(host, first_seen, visits)
-                     VALUES(?1, ?2, 1)
-                     ON CONFLICT(host) DO UPDATE SET
-                         first_seen = MIN(first_seen, ?2),
-                         visits = visits + 1",
-                    params![host, visited_at],
-                )
-                .map_err(|e| sql_fail("hosts upsert", e))?;
-            }
+            .map_err(|e| sql_fail("hosts upsert", e))?;
         }
+        Ok(())
+    }
+
+    fn record(&mut self, ev: HistEvent) {
+        self.outbox.push(HistOutEv {
+            path: self.path.clone(),
+            ev,
+        });
+    }
+
+    pub(crate) fn take_outbox(&mut self) -> Vec<HistOutEv> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    pub fn add(&mut self, url: &str, title: &str, visited_at: i64) -> RcResult<()> {
+        self.insert_visit(url, title, visited_at)?;
         self.entries = None;
+        self.record(HistEvent::Visited {
+            url: url.to_string(),
+            title: title.to_string(),
+            ts: visited_at,
+        });
         Ok(())
     }
 
     /// Title-update parity with the old in-memory loop: only the
     /// newest matching row changes.
     pub fn update_title(&mut self, url: &str, title: &str) -> RcResult<()> {
-        let changed = self.conn()?
+        // Resolve the newest matching row first — its (url, ts) names
+        // the sync element the title event lands on.
+        let row: Option<(i64, i64)> = self
+            .conn()?
+            .query_row(
+                "SELECT seq, visited_at FROM visits WHERE url = ?1
+                 ORDER BY seq DESC LIMIT 1",
+                params![url],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                e => Err(sql_fail("history update probe", e)),
+            })?;
+        let Some((seq, ts)) = row else {
+            return Ok(());
+        };
+        let changed = self
+            .conn()?
             .execute(
-                "UPDATE visits SET title = ?2 WHERE seq = (
-                     SELECT seq FROM visits WHERE url = ?1
-                     ORDER BY seq DESC LIMIT 1)",
-                params![url, title],
+                "UPDATE visits SET title = ?2 WHERE seq = ?1",
+                params![seq, title],
             )
             .map_err(|e| sql_fail("history update", e))?;
         if changed > 0 {
             self.entries = None;
+            self.record(HistEvent::Titled {
+                url: url.to_string(),
+                title: title.to_string(),
+                ts,
+            });
         }
         Ok(())
     }
@@ -259,9 +351,21 @@ impl HistoryStore {
     /// (the caller computes the local-time boundary).  Icons stay;
     /// the hosts rollup is wiped and lazily rebuilt.  Returns the
     /// deleted row count.
+    ///
+    /// SYNC05: the widest cutoff ever applied is recorded in meta —
+    /// the sync adapter re-runs it after merging remote ops so a
+    /// peer's longer history cannot resurrect rows this device
+    /// already expired.  Deletes stay local: no op ever leaves.
     pub fn expire_older_than(&mut self, cutoff_ms: i64) -> RcResult<i64> {
         let removed = {
             let conn = self.conn()?;
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES('retention_cutoff', ?1)
+                 ON CONFLICT(key) DO UPDATE SET
+                     value = CAST(MAX(CAST(value AS INTEGER), ?1) AS TEXT)",
+                params![cutoff_ms],
+            )
+            .map_err(|e| sql_fail("retention record", e))?;
             let removed = conn
                 .execute(
                     "DELETE FROM visits WHERE visited_at <= ?1",
@@ -278,6 +382,90 @@ impl HistoryStore {
             self.entries = None;
         }
         Ok(removed as i64)
+    }
+
+    /// This device's recorded retention boundary — the widest cutoff
+    /// expire_older_than ever applied, or None when retention never
+    /// ran here.
+    pub(crate) fn retention_cutoff(&self) -> RcResult<Option<i64>> {
+        if self.conn.is_none() {
+            return Ok(None);
+        }
+        self.conn()?
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM meta
+                 WHERE key = 'retention_cutoff'",
+                [],
+                |r| r.get(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                e => Err(sql_fail("retention cutoff", e)),
+            })
+    }
+
+    // ---- sync apply lane (SYNC05) ------------------------------------
+    //
+    // The merge side of the history adapter: same store mutations
+    // minus the outbox — a remote op must never echo as a local one.
+
+    /// Whether a row for this exact (url, visited_at) pair is already
+    /// in the table — the element probe for rows that predate sync
+    /// (they carry no op yet, so the replayed seen-set cannot know
+    /// them).
+    pub(crate) fn visit_exists(&self, url: &str, visited_at: i64) -> RcResult<bool> {
+        self.conn()?
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM visits
+                               WHERE url = ?1 AND visited_at = ?2)",
+                params![url, visited_at],
+                |r| r.get(0),
+            )
+            .map_err(|e| sql_fail("visit probe", e))
+    }
+
+    /// Insert a merged visit — no outbox event.
+    pub(crate) fn apply_visit(&mut self, url: &str, title: &str, visited_at: i64) -> RcResult<()> {
+        self.insert_visit(url, title, visited_at)?;
+        self.entries = None;
+        Ok(())
+    }
+
+    /// Merge a title onto every row of one element — the LWW half of
+    /// an already-known visit op.  True when the value changed.
+    pub(crate) fn apply_title(&mut self, url: &str, title: &str, visited_at: i64) -> RcResult<bool> {
+        let changed = self
+            .conn()?
+            .execute(
+                "UPDATE visits SET title = ?1
+                 WHERE url = ?2 AND visited_at = ?3 AND title <> ?1",
+                params![title, url, visited_at],
+            )
+            .map_err(|e| sql_fail("apply title", e))?;
+        if changed > 0 {
+            self.entries = None;
+        }
+        Ok(changed > 0)
+    }
+
+    /// Every raw row — the first-touch advertise scan the adapter
+    /// runs once per scope so pre-sync history flows to the group.
+    pub(crate) fn all_visits(&self) -> RcResult<Vec<(String, String, i64)>> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare("SELECT url, title, visited_at FROM visits")
+            .map_err(|e| sql_fail("advertise scan", e))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get(2)?))
+            })
+            .map_err(|e| sql_fail("advertise scan", e))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| sql_fail("advertise scan", e))?);
+        }
+        Ok(out)
     }
 
     // ---- first-seen rollup (TRUST01) --------------------------------
@@ -780,6 +968,7 @@ mod tests {
             conn: None,
             path: None,
             entries: None,
+            outbox: Vec::new(),
         };
         s.open(Some(path)).unwrap();
         s

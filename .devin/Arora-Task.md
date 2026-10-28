@@ -401,7 +401,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | SYNC02 | Serverless sync: Tor transport — embedded Arti, v3 onion service per device, authorized-client gating, outbound circuits — details below | done | 2 | embedded-Arti tor transport + mem loopback behind the SyncTransport seam: v3 onion stable across restarts (keystore hsid), restricted-discovery x25519 gating refuses unpaired peers at the Tor layer, backoffd outbound links, sync.transport_* mw ops (domain 19, since:2). Verified: tools/synctor-e2e.sh ALL LEGS PASS on real Tor (authorized PING->PONG, unauthorized refused pre-app-layer, endpoint stable across restart), cargo test 501/501 incl mw envelope e2e, acprobe --bridge OK, rustcore 91.10% lines (>85% gate), check-supplychain clean (audit.toml mirrors deny.toml ignores; rustdl webpki bumped for new advisories), make -j2 green, --quit-after-load exit 0 offscreen |
 | SYNC03 | Serverless sync: pairing — QR payload, Noise_XX mutual auth, group-secret join, emoji/word fingerprint verify UI — details below | done | 0 | Noise_XX pairing w/ QR+manual code, fingerprint verify, scoped members; cargo test 513/513, make -j2 clean |
 | SYNC04 | Serverless sync: bookmarks adapter — OR-Set CRDT, tombstoned deletes, causal folder ordering — details below | done | 0 | bookmarks CRDT adapter: OR-set guids (XBEL id), observed-stamp tombstones, causal pending, fractional ranks, LWW fields; cargo test 521/521 incl. concurrent add/remove/move convergence + mw e2e; make -j2 green; --quit-after-load exit 0 offscreen |
-| SYNC05 | Serverless sync: history adapter — append-only union set, per-device retention — details below | pending | 0 | needs:task:SYNC04 |
+| SYNC05 | Serverless sync: history adapter — append-only union set, per-device retention — details below | done | 0 | history CRDT adapter: synchistory.rs union-set per deterministic visit-id (url,ts sha256 — pre-sync dup merges), title LWW by (lamport,device), deletes/retention device-local (expire_older_than records meta cutoff, applier re-prunes after merge); history.rs outbox+apply lane; mw sync_engine installs applier; verified: cargo test 527/527 incl. union/dedup/deletes-local/retention/LWW legs + mw e2e; acprobe --bridge OK; rustcov 90.7%; make -j2 green; --quit-after-load exit 0 |
 | SYNC06 | Serverless sync: open-tabs presence — ephemeral per-device doc, read-only "tabs on my other devices" view — details below | pending | 0 | needs:task:SYNC04 |
 | SYNC07 | Serverless sync: settings/profile adapter — LWW map with device-local exclusions — details below | pending | 0 | needs:task:SYNC04 |
 | SYNC08 | Serverless sync: passwords — E2E per-entry encrypted records, vault key, passphrase gate, strictly opt-in — details below | pending | 0 | needs:task:SYNC07 |
@@ -4480,6 +4480,46 @@ tree).  make -j2 green; arktos --quit-after-load exit 0 offscreen.
 History adapter: append-only union set ops, dedup by visit-id, per-device
 retention applied locally after merge. Verify: two profiles exchange
 histories, union correct, deletes/retention stay local.
+
+
+
+Landed (this run):
+- src/rustcore/src/synchistory.rs — the history CRDT adapter:
+  one union-set element per visit keyed by visit-id =
+  hex(sha256("ARHV1" | url | le ts)) — device-independent, so
+  identical pre-sync visits name the same element and dedup to
+  one row.  `visit` is the only op type — append-only union; a
+  known element merges title LWW by (lamport, device) stamp, an
+  empty remote title never erasing.  Dedup is two-layered: the
+  replayed op-log stamp frontier + a row probe on (url, ts) for
+  elements the local table holds pre-sync.  Deletes and
+  retention NEVER emit — remove/clear/clear_since/expire are
+  device-local by contract (honest edge documented: a never-
+  before-seen remote op for a locally-deleted element re-adds
+  it — union semantics; retention re-prunes anyway).  Per-device
+  retention after merge: the applier re-runs the store's
+  recorded cutoff on every merged op.  First-touch advertise
+  flows pre-sync rows to the group once.  No adapter db — the
+  op-log replay rebuilds the seen-stamp map.
+- src/rustcore/src/history.rs — HistEvent outbox (Visited /
+  Titled resolved to the element's (url,ts) at mutation time),
+  `with` flushes to the adapter, meta table +
+  retention_cutoff (widest expire_older_than boundary,
+  persisted per db), apply-lane helpers (visit_exists,
+  apply_visit, apply_title, all_visits) that mutate without
+  recording so a peer's op can never echo.
+- src/rustcore/src/mw/mod.rs — sync_engine() installs the
+  history applier beside bookmarks'; new
+  sync_history_adapter_end_to_end envelope leg.
+- sync.rs test: deferred_ops_drain unregisters "history" first —
+  the process-global applier seam was leaking my adapter into
+  its deferred-expectation leg.
+- MW-ARCH §8.19: history adapter semantics paragraph.
+Verify: cargo test 527/527 — round-trip + emit-dedup, pre-sync
+union without doubling, deletes/clear stay local, retention
+re-applies after merge, title LWW, mw envelope e2e; acprobe
+--bridge OK; rustcore coverage 90.67% (>85% gate); make -j2
+green; arktos --quit-after-load exit 0 offscreen.
 
 ### SYNC06
 Open-tabs presence: ephemeral per-device document (not durable CRDT) —

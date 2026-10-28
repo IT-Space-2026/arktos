@@ -1404,6 +1404,10 @@ mod tests {
     #[test]
     fn deferred_ops_drain_when_applier_registers() {
         let _g = guard();
+        // The applier seam is process-global — the SYNC05 adapter may
+        // have registered "history" in a neighbouring test, so drop
+        // any leaked registration before relying on its absence.
+        unregister_applier("history");
         let a = SyncEngine::open(&tmpdir("dA")).unwrap();
         a.append("history", "", &serde_json::json!({"visit": "u"})).unwrap();
         let wire: Vec<Value> =

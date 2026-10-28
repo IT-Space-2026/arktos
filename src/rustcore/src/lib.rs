@@ -231,6 +231,7 @@ mod sitetrust;
 mod store;
 mod sync;
 mod syncbookmarks;
+mod synchistory;
 pub mod syncpair;
 pub mod synctransport;
 mod tlsprobe;

@@ -62,7 +62,7 @@ use crate::facade::{self, AcCore};
 use crate::{
     blocklist, bookmarks, containers, cookies, extverify, history, icons, notes, notify,
     omnibox, opensearch, profiles, profilevault, session, settings, sitedecisions,
-    sitetrust, store, sync, syncbookmarks, syncpair, synctransport, tlsprobe, tranco, updates, util,
+    sitetrust, store, sync, syncbookmarks, synchistory, syncpair, synctransport, tlsprobe, tranco, updates, util,
 };
 
 /// The envelope schema version — the frame's `version` byte and the
@@ -2573,9 +2573,10 @@ const VAULT_OPS: &[Op] = &[
 // (SYNC09) hang off it.
 
 fn sync_engine(ctx: &MwCtx) -> Result<sync::SyncEngine, OpErr> {
-    // SYNC04: keep the bookmarks apply lane bound to the core this
-    // call is for — the applier seam is process-global.
+    // SYNC04/05: keep the store-adapter apply lanes bound to the
+    // core this call is for — the applier seam is process-global.
     syncbookmarks::install(ctx.core.data_root());
+    synchistory::install(ctx.core.data_root());
     sync::SyncEngine::open(ctx.core.data_root()).map_err(OpErr::from)
 }
 
@@ -5105,6 +5106,136 @@ mod tests {
         let p = r.ok();
         assert_eq!(p["duplicates"], 2, "{p}");
         assert_eq!(p["applied"], 0, "{p}");
+        let _ = dir_b;
+    }
+
+    /// SYNC05: the history adapter over the real envelope — a
+    /// history.add on core A lands a signed visit op in A's log;
+    /// importing on B applies it into B's own profile history.db,
+    /// and B's local deletes never travel back.
+    #[test]
+    fn sync_history_adapter_end_to_end() {
+        let _g = guard();
+        let dir_a = tmpdir("hsyA");
+        let dir_b = tmpdir("hsyB");
+        let core_a = TestCore::new(&dir_a);
+        let core_b = TestCore::new(&dir_b);
+
+        // Pair each device into the other's "default" sync group.
+        let a_pk = call(core_a.0, &query(1, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let b_id = call(core_b.0, &query(2, 19, 0x0001, "")).ok()["device_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let b_pk = call(core_b.0, &query(22, 19, 0x0001, "")).ok()["pubkey_b64"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let r = call(
+            core_a.0,
+            &command(
+                3,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{b_pk}","scope":"default"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_b.0,
+            &command(
+                4,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{a_pk}","scope":"default"}}"#),
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+
+        // A records a visit through the history domain — the store
+        // event flushes into a signed op.
+        let r = call(
+            core_a.0,
+            &command(
+                5,
+                3,
+                0x0002,
+                r#"{"profile":"default","url":"http://a.example/","title":"A","ts_ms":4242}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+
+        // A's op-log now tails the store: one visit op, scope
+        // "default".
+        let r = call(
+            core_a.0,
+            &query(6, 19, 0x0007, r#"{"store":"history"}"#),
+        );
+        let ops = r.ok()["ops"].clone();
+        assert_eq!(ops.as_array().unwrap().len(), 1, "{ops}");
+        assert_eq!(ops[0]["scope"], "default");
+        assert_eq!(ops[0]["body"]["t"], "visit");
+
+        // B imports — the adapter binds B's profile db and lands
+        // the row.
+        let r = call(
+            core_b.0,
+            &command(
+                7,
+                19,
+                0x0008,
+                &serde_json::to_string(&json!({"ops": ops})).unwrap(),
+            ),
+        );
+        let p = r.ok();
+        assert_eq!(p["accepted"], 1, "{p}");
+        assert_eq!(p["applied"], 1, "{p}");
+
+        // B's listing now shows the visit.
+        let r = call(
+            core_b.0,
+            &query(8, 3, 0x0003, r#"{"profile":"default","spec":{}}"#),
+        );
+        let rows = r.ok().as_array().unwrap().clone();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["url"], "http://a.example/");
+        assert_eq!(rows[0]["ts"], 4242);
+
+        // Re-import dedups; B's local remove emits no op back.
+        let r = call(
+            core_b.0,
+            &command(
+                9,
+                19,
+                0x0008,
+                &serde_json::to_string(&json!({"ops": ops})).unwrap(),
+            ),
+        );
+        assert_eq!(r.ok()["duplicates"], 1);
+        let r = call(
+            core_b.0,
+            &command(
+                10,
+                3,
+                0x0007,
+                r#"{"profile":"default","url":"http://a.example/","title":"A","ts_ms":4242}"#,
+            ),
+        );
+        assert_eq!(r.ok()["ok"], true);
+        let r = call(
+            core_b.0,
+            &query(11, 19, 0x0007, r#"{"store":"history"}"#),
+        );
+        // The log carries A's imported remote op, but B must have
+        // authored nothing — deletes never emit.
+        let b_ops = r.ok()["ops"].as_array().unwrap();
+        assert!(
+            b_ops.iter().all(|o| o["device_id"].as_str().unwrap() != b_id),
+            "a local delete must never emit an op: {b_ops:?}"
+        );
         let _ = dir_b;
     }
 }

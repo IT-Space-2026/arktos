@@ -689,6 +689,27 @@ resolution.  The op-log itself is the adapter's durable state —
 tombstones, stamps and parked ops rebuild by replaying on first
 use.
 
+The history adapter (SYNC05, `synchistory.rs`) rides the same
+domain — no new ops.  `add`/`update_title` on the canonical store
+record outbox events that `history::with` flushes into signed ops
+scoped to the bound profile (`<root>/profiles/<id>/history.db` ⇒
+scope `<id>`).  Semantics: one union-set element per visit keyed by
+a visit-id deterministic over (url, visited_at) — identical
+pre-sync visits on two devices name the same element and dedup to
+one row.  `visit` is the only op type — append-only union; a known
+element merges its title LWW by (lamport, device), an empty remote
+title never erasing.  Dedup is two-layered: the replayed op-log
+stamp frontier plus a row probe on (url, ts) for elements the
+local table holds pre-sync.  Deletes and retention NEVER emit —
+remove/clear/clear_since/expire are device-local by contract.
+Per-device retention applies locally after merge:
+expire_older_than records the widest cutoff in the store's meta
+table and the applier re-runs it on every merged op, so a peer's
+longer history cannot resurrect rows this device already expired.
+The first flush after hydrate also advertises every local row
+whose visit-id is still unknown — pre-sync history flows to the
+group once.
+
 The transport half (SYNC02) shares the same envelope and the
 `synctransport` notify topic — a pull-drain wake-up shaped like
 `torctl`'s: inbound links and frames land in a queue drained by
