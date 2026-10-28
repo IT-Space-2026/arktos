@@ -1,0 +1,587 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index 3e7b547f5..19f8908d7 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -573,6 +573,8 @@ source_set("libcef_static") {
+     "libcef/browser/chrome/chrome_startup_browser_creator.cc",
+     "libcef/browser/chrome/chrome_startup_browser_creator.h",
+     "libcef/browser/chrome/chrome_web_contents_view_delegate_cef.h",
++    "libcef/browser/chrome/extensions/alloy_window_controller.cc",
++    "libcef/browser/chrome/extensions/alloy_window_controller.h",
+     "libcef/browser/chrome/extensions/chrome_extension_util.cc",
+     "libcef/browser/chrome/extensions/chrome_extension_util.h",
+     "libcef/browser/chrome/extensions/chrome_mime_handler_view_guest_delegate_cef.cc",
+diff --git a/libcef/browser/alloy/alloy_browser_host_impl.cc b/libcef/browser/alloy/alloy_browser_host_impl.cc
+index 248604ecd..9f035e828 100644
+--- a/libcef/browser/alloy/alloy_browser_host_impl.cc
++++ b/libcef/browser/alloy/alloy_browser_host_impl.cc
+@@ -20,6 +20,7 @@
+ #include "cef/libcef/browser/browser_info.h"
+ #include "cef/libcef/browser/browser_info_manager.h"
+ #include "cef/libcef/browser/browser_platform_delegate.h"
++#include "cef/libcef/browser/chrome/extensions/alloy_window_controller.h"
+ #include "cef/libcef/browser/context.h"
+ #include "cef/libcef/browser/hang_monitor.h"
+ #include "cef/libcef/browser/media_access_query.h"
+@@ -221,6 +222,10 @@ CefRefPtr<AlloyBrowserHostImpl> AlloyBrowserHostImpl::CreateInternal(
+   // CefBrowserViewDelegate::OnBrowserCreated().
+   browser->platform_delegate_->NotifyBrowserCreated();
+ 
++  // Expose the browser to the extensions tab/window model.
++  browser->ext_window_controller_ =
++      std::make_unique<cef::AlloyExtensionWindowController>(browser.get());
++
+   return browser;
+ }
+ 
+@@ -513,6 +518,13 @@ void AlloyBrowserHostImpl::DestroyBrowser() {
+     menu_manager_->Destroy();
+   }
+ 
++  // Detach from the extensions tab/window model while the WebContents is
++  // still alive (fires tabs.onRemoved and unregisters the window).
++  if (ext_window_controller_) {
++    ext_window_controller_->OnDestroyed();
++    ext_window_controller_.reset();
++  }
++
+   // Disassociate the platform delegate from this browser. This will trigger
+   // WebContents destruction in most cases.
+   platform_delegate_->BrowserDestroyed(this);
+@@ -586,6 +598,10 @@ void AlloyBrowserHostImpl::OnSetFocus(cef_focus_source_t source) {
+   if (platform_delegate_) {
+     platform_delegate_->SetFocus(true);
+   }
++
++  if (ext_window_controller_) {
++    ext_window_controller_->OnFocused();
++  }
+ }
+ 
+ void AlloyBrowserHostImpl::EnterFullscreenModeForTab(
+diff --git a/libcef/browser/alloy/alloy_browser_host_impl.h b/libcef/browser/alloy/alloy_browser_host_impl.h
+index 9eeb0055c..9e3122813 100644
+--- a/libcef/browser/alloy/alloy_browser_host_impl.h
++++ b/libcef/browser/alloy/alloy_browser_host_impl.h
+@@ -29,6 +29,10 @@ class CefAudioCapturer;
+ class CefBrowserInfo;
+ class SiteInstance;
+ 
++namespace cef {
++class AlloyExtensionWindowController;
++}  // namespace cef
++
+ // CefBrowser implementation for Alloy style. Method calls are delegated to the
+ // CefPlatformDelegate or the WebContents as appropriate. All methods are
+ // thread-safe unless otherwise indicated.
+@@ -78,6 +82,12 @@ class AlloyBrowserHostImpl : public CefBrowserHostBase,
+   static CefRefPtr<AlloyBrowserHostImpl> GetBrowserForGlobalId(
+       const content::GlobalRenderFrameHostId& global_id);
+ 
++  // Returns the extensions WindowController for this browser, or nullptr if
++  // it has not been created yet.
++  cef::AlloyExtensionWindowController* extension_window_controller() const {
++    return ext_window_controller_.get();
++  }
++
+   // CefBrowserHost methods.
+   void CloseBrowser(bool force_close) override;
+   bool TryCloseBrowser() override;
+@@ -311,6 +321,12 @@ class AlloyBrowserHostImpl : public CefBrowserHostBase,
+   const bool is_windowless_;
+   CefWindowHandle host_window_handle_ = kNullWindowHandle;
+ 
++  // Extensions WindowController for this browser. Exposes the browser to the
++  // extensions tab/window model (tabs.query, windows.*, tab events). Declared
++  // before other members so that it is destroyed last.
++  std::unique_ptr<cef::AlloyExtensionWindowController>
++      ext_window_controller_;
++
+   // Represents the current browser destruction state. Only accessed on the UI
+   // thread.
+   DestructionState destruction_state_ = DESTRUCTION_STATE_NONE;
+diff --git a/libcef/browser/chrome/extensions/alloy_window_controller.cc b/libcef/browser/chrome/extensions/alloy_window_controller.cc
+new file mode 100644
+index 000000000..25b7a2734
+--- /dev/null
++++ b/libcef/browser/chrome/extensions/alloy_window_controller.cc
+@@ -0,0 +1,331 @@
++// Copyright 2026 The Chromium Embedded Framework Authors. All rights
++// reserved. Use of this source code is governed by a BSD-style license that
++// can be found in the LICENSE file.
++
++#include "cef/libcef/browser/chrome/extensions/alloy_window_controller.h"
++
++#include "base/notimplemented.h"
++#include "base/no_destructor.h"
++#include "cef/libcef/browser/alloy/alloy_browser_host_impl.h"
++#include "cef/libcef/browser/browser_host_base.h"
++#include "cef/libcef/browser/browser_info.h"
++#include "cef/libcef/browser/browser_platform_delegate.h"
++#include "chrome/browser/extensions/api/tabs/tabs_event_router.h"
++#include "chrome/browser/extensions/api/tabs/tabs_windows_api.h"
++#include "chrome/browser/extensions/extension_tab_util.h"
++#include "chrome/browser/extensions/window_controller_list.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/common/extensions/api/tabs.h"
++#include "components/sessions/content/session_tab_helper.h"
++#include "content/public/browser/web_contents.h"
++#include "extensions/common/constants.h"
++#include "extensions/common/extension.h"
++#include "ui/gfx/geometry/rect.h"
++
++namespace cef {
++
++namespace {
++
++constexpr char kAlwaysOnTopKey[] = "alwaysOnTop";
++constexpr char kFocusedKey[] = "focused";
++constexpr char kHeightKey[] = "height";
++constexpr char kIncognitoKey[] = "incognito";
++constexpr char kLeftKey[] = "left";
++constexpr char kShowStateKey[] = "state";
++constexpr char kTopKey[] = "top";
++constexpr char kWidthKey[] = "width";
++constexpr char kWindowTypeKey[] = "type";
++constexpr char kShowStateValueNormal[] = "normal";
++
++// Tracks the most recently focused Alloy window controller. Cleared by the
++// controller on destruction.
++AlloyExtensionWindowController*& LastFocused() {
++  static AlloyExtensionWindowController* last_focused = nullptr;
++  return last_focused;
++}
++
++extensions::TabsEventRouter* TabsEventRouterFor(Profile* profile) {
++  if (auto* api = extensions::TabsWindowsAPI::Get(profile)) {
++    return api->tabs_event_router();
++  }
++  return nullptr;
++}
++
++}  // namespace
++
++// AlloyBaseWindow:
++
++AlloyBaseWindow::AlloyBaseWindow(AlloyBrowserHostImpl* browser)
++    : browser_(browser) {}
++
++bool AlloyBaseWindow::IsActive() const {
++  return focused_;
++}
++
++bool AlloyBaseWindow::IsMaximized() const {
++  return false;
++}
++
++bool AlloyBaseWindow::IsMinimized() const {
++  return false;
++}
++
++bool AlloyBaseWindow::IsFullscreen() const {
++  return false;
++}
++
++gfx::NativeWindow AlloyBaseWindow::GetNativeWindow() const {
++  // Alloy windows are not aura::Window backed.
++  return nullptr;
++}
++
++gfx::Rect AlloyBaseWindow::GetRestoredBounds() const {
++  return GetBounds();
++}
++
++ui::mojom::WindowShowState AlloyBaseWindow::GetRestoredState() const {
++  return ui::mojom::WindowShowState::kNormal;
++}
++
++gfx::Rect AlloyBaseWindow::GetBounds() const {
++  if (auto* web_contents = browser_->GetWebContents()) {
++    return web_contents->GetContainerBounds();
++  }
++  return gfx::Rect();
++}
++
++void AlloyBaseWindow::Show() {
++  if (auto* delegate = browser_->platform_delegate()) {
++    delegate->WasHidden(false);
++  }
++}
++
++void AlloyBaseWindow::Hide() {
++  if (auto* delegate = browser_->platform_delegate()) {
++    delegate->WasHidden(true);
++  }
++}
++
++bool AlloyBaseWindow::IsVisible() const {
++  if (auto* delegate = browser_->platform_delegate()) {
++    return !delegate->IsHidden();
++  }
++  return true;
++}
++
++void AlloyBaseWindow::ShowInactive() {
++  Show();
++}
++
++void AlloyBaseWindow::Close() {
++  browser_->CloseBrowser(/*force_close=*/true);
++}
++
++void AlloyBaseWindow::Activate() {
++  browser_->SetFocus(true);
++}
++
++void AlloyBaseWindow::Deactivate() {
++  browser_->SetFocus(false);
++}
++
++void AlloyBaseWindow::Maximize() {
++  NOTIMPLEMENTED();
++}
++
++void AlloyBaseWindow::Minimize() {
++  NOTIMPLEMENTED();
++}
++
++void AlloyBaseWindow::Restore() {
++  NOTIMPLEMENTED();
++}
++
++void AlloyBaseWindow::SetBounds(const gfx::Rect& bounds) {
++  NOTIMPLEMENTED();
++}
++
++void AlloyBaseWindow::FlashFrame(bool flash) {
++  NOTIMPLEMENTED();
++}
++
++ui::ZOrderLevel AlloyBaseWindow::GetZOrderLevel() const {
++  return ui::ZOrderLevel::kNormal;
++}
++
++void AlloyBaseWindow::SetZOrderLevel(ui::ZOrderLevel order) {
++  NOTIMPLEMENTED();
++}
++
++// AlloyExtensionWindowController:
++
++AlloyExtensionWindowController::AlloyExtensionWindowController(
++    AlloyBrowserHostImpl* browser)
++    : WindowController(new AlloyBaseWindow(browser),
++                       Profile::FromBrowserContext(
++                           browser->GetBrowserContext())),
++      browser_(browser),
++      session_id_(SessionID::NewUnique()),
++      is_popup_(browser->browser_info()->is_popup()),
++      base_window_(static_cast<AlloyBaseWindow*>(window())) {
++  if (auto* web_contents = browser_->GetWebContents()) {
++    // Give the tab a window id so that |tab.windowId| matches this
++    // controller's |GetWindowId()|. Chrome-style browsers get this from the
++    // Browser object; Alloy browsers would otherwise report -1.
++    if (auto* session_tab_helper =
++            sessions::SessionTabHelper::FromWebContents(web_contents)) {
++      session_tab_helper->SetWindowID(session_id_);
++    }
++  }
++
++  extensions::WindowControllerList::GetInstance()->AddExtensionWindow(this);
++
++  if (auto* web_contents = browser_->GetWebContents()) {
++    if (auto* router = TabsEventRouterFor(profile())) {
++      router->TrackAlloyTab(*web_contents);
++    }
++  }
++}
++
++AlloyExtensionWindowController::~AlloyExtensionWindowController() {
++  if (LastFocused() == this) {
++    LastFocused() = nullptr;
++  }
++  if (auto* web_contents = browser_->GetWebContents()) {
++    if (auto* router = TabsEventRouterFor(profile())) {
++      router->UntrackAlloyTab(*web_contents);
++    }
++  }
++  extensions::WindowControllerList::GetInstance()->RemoveExtensionWindow(this);
++}
++
++void AlloyExtensionWindowController::OnFocused() {
++  base_window_->SetFocused(true);
++  LastFocused() = this;
++  NotifyWindowFocusChanged(/*has_focus=*/true);
++}
++
++void AlloyExtensionWindowController::OnDestroyed() {
++  destroyed_ = true;
++}
++
++int AlloyExtensionWindowController::GetWindowId() const {
++  return static_cast<int>(session_id_.id());
++}
++
++std::string AlloyExtensionWindowController::GetWindowTypeText() const {
++  return extensions::api::tabs::ToString(
++      is_popup_ ? extensions::api::tabs::WindowType::kPopup
++                : extensions::api::tabs::WindowType::kNormal);
++}
++
++void AlloyExtensionWindowController::SetFullscreenMode(
++    bool is_fullscreen,
++    const GURL& extension_url) const {
++  NOTIMPLEMENTED();
++}
++
++content::WebContents* AlloyExtensionWindowController::GetActiveTab() const {
++  return browser_->GetWebContents();
++}
++
++int AlloyExtensionWindowController::GetTabCount() const {
++  return browser_->GetWebContents() ? 1 : 0;
++}
++
++content::WebContents* AlloyExtensionWindowController::GetWebContentsAt(
++    int i) const {
++  return i == 0 ? browser_->GetWebContents() : nullptr;
++}
++
++bool AlloyExtensionWindowController::IsVisibleToTabsAPIForExtension(
++    const extensions::Extension* extension,
++    bool include_dev_tools_windows) const {
++  // Platform apps can only see their own windows.
++  if (extension && extension->is_platform_app()) {
++    return false;
++  }
++  return !destroyed_;
++}
++
++base::DictValue
++AlloyExtensionWindowController::CreateWindowValueForExtension(
++    const extensions::Extension* extension,
++    PopulateTabBehavior populate_tab_behavior,
++    extensions::mojom::ContextType context) const {
++  base::DictValue dict;
++
++  dict.Set(extensions::extension_misc::kId, session_id_.id());
++  dict.Set(kWindowTypeKey, GetWindowTypeText());
++  dict.Set(kFocusedKey, window()->IsActive());
++  dict.Set(kIncognitoKey, profile()->IsOffTheRecord());
++  dict.Set(kAlwaysOnTopKey,
++           window()->GetZOrderLevel() == ui::ZOrderLevel::kFloatingWindow);
++  dict.Set(kShowStateKey, kShowStateValueNormal);
++
++  const gfx::Rect bounds = window()->GetBounds();
++  dict.Set(kLeftKey, bounds.x());
++  dict.Set(kTopKey, bounds.y());
++  dict.Set(kWidthKey, bounds.width());
++  dict.Set(kHeightKey, bounds.height());
++
++  if (populate_tab_behavior == kPopulateTabs) {
++    dict.Set(extensions::ExtensionTabUtil::kTabsKey,
++             CreateTabList(extension, context));
++  }
++
++  return dict;
++}
++
++base::ListValue AlloyExtensionWindowController::CreateTabList(
++    const extensions::Extension* extension,
++    extensions::mojom::ContextType context) const {
++  base::ListValue tab_list;
++  if (auto* web_contents = browser_->GetWebContents()) {
++    tab_list.Append(
++        extensions::ExtensionTabUtil::CreateTabObject(
++            web_contents,
++            extensions::ExtensionTabUtil::GetScrubTabBehavior(
++                extension, context, web_contents),
++            extension)
++            .ToValue());
++  }
++  return tab_list;
++}
++
++bool AlloyExtensionWindowController::OpenOptionsPage(
++    const extensions::Extension* extension,
++    const GURL& url,
++    bool open_in_tab) {
++  NOTIMPLEMENTED();
++  return false;
++}
++
++bool IsAlloyWindowController(extensions::WindowController* controller) {
++  return dynamic_cast<AlloyExtensionWindowController*>(controller) != nullptr;
++}
++
++extensions::WindowController* GetAlloyWindowControllerFor(
++    content::WebContents* contents) {
++  auto base_browser = CefBrowserHostBase::GetBrowserForContents(contents);
++  if (!base_browser || !base_browser->IsAlloyStyle()) {
++    return nullptr;
++  }
++  return AlloyBrowserHostImpl::FromBaseChecked(base_browser)
++      ->extension_window_controller();
++}
++
++extensions::WindowController* LastFocusedAlloyWindowController(
++    content::BrowserContext* context) {
++  auto* controller = LastFocused();
++  if (!controller) {
++    return nullptr;
++  }
++  Profile* profile = Profile::FromBrowserContext(context);
++  if (profile && !profile->IsSameOrParent(controller->profile())) {
++    return nullptr;
++  }
++  return controller;
++}
++
++}  // namespace cef
+diff --git a/libcef/browser/chrome/extensions/alloy_window_controller.h b/libcef/browser/chrome/extensions/alloy_window_controller.h
+new file mode 100644
+index 000000000..9c38148e2
+--- /dev/null
++++ b/libcef/browser/chrome/extensions/alloy_window_controller.h
+@@ -0,0 +1,142 @@
++// Copyright 2026 The Chromium Embedded Framework Authors. All rights
++// reserved. Use of this source code is governed by a BSD-style license that
++// can be found in the LICENSE file.
++
++#ifndef CEF_LIBCEF_BROWSER_CHROME_EXTENSIONS_ALLOY_WINDOW_CONTROLLER_H_
++#define CEF_LIBCEF_BROWSER_CHROME_EXTENSIONS_ALLOY_WINDOW_CONTROLLER_H_
++#pragma once
++
++#include <memory>
++
++#include "base/memory/raw_ptr.h"
++#include "chrome/browser/extensions/window_controller.h"
++#include "components/sessions/core/session_id.h"
++#include "ui/base/base_window.h"
++
++class AlloyBrowserHostImpl;
++
++namespace content {
++class WebContents;
++}
++
++class Profile;
++
++namespace cef {
++
++// A ui::BaseWindow facade for an Alloy style browser. There is no platform
++// window in the OSR case, so most operations are no-ops and state queries
++// report the WebContents container state.
++class AlloyBaseWindow : public ui::BaseWindow {
++ public:
++  explicit AlloyBaseWindow(AlloyBrowserHostImpl* browser);
++
++  AlloyBaseWindow(const AlloyBaseWindow&) = delete;
++  AlloyBaseWindow& operator=(const AlloyBaseWindow&) = delete;
++
++  ~AlloyBaseWindow() override = default;
++
++  void SetFocused(bool focused) { focused_ = focused; }
++
++  // ui::BaseWindow:
++  bool IsActive() const override;
++  bool IsMaximized() const override;
++  bool IsMinimized() const override;
++  bool IsFullscreen() const override;
++  gfx::NativeWindow GetNativeWindow() const override;
++  gfx::Rect GetRestoredBounds() const override;
++  ui::mojom::WindowShowState GetRestoredState() const override;
++  gfx::Rect GetBounds() const override;
++  void Show() override;
++  void Hide() override;
++  bool IsVisible() const override;
++  void ShowInactive() override;
++  void Close() override;
++  void Activate() override;
++  void Deactivate() override;
++  void Maximize() override;
++  void Minimize() override;
++  void Restore() override;
++  void SetBounds(const gfx::Rect& bounds) override;
++  void FlashFrame(bool flash) override;
++  ui::ZOrderLevel GetZOrderLevel() const override;
++  void SetZOrderLevel(ui::ZOrderLevel order) override;
++
++ private:
++  const raw_ptr<AlloyBrowserHostImpl> browser_;
++  bool focused_ = false;
++};
++
++// Extensions WindowController for an Alloy style CefBrowserHost. Alloy
++// browsers are not BrowserWindowInterface objects, so they are invisible to
++// the extensions tab/window model. This controller is a lightweight bridge
++// that registers each Alloy browser in WindowControllerList as a single-tab
++// window, which is sufficient for the windows.* enumeration surface and for
++// the tabs.* paths that accept a WindowController.
++//
++// Owned by the associated AlloyBrowserHostImpl. Unregisters itself from
++// WindowControllerList on destruction.
++class AlloyExtensionWindowController : public extensions::WindowController {
++ public:
++  explicit AlloyExtensionWindowController(AlloyBrowserHostImpl* browser);
++
++  AlloyExtensionWindowController(const AlloyExtensionWindowController&) =
++      delete;
++  AlloyExtensionWindowController& operator=(
++      const AlloyExtensionWindowController&) = delete;
++
++  ~AlloyExtensionWindowController() override;
++
++  // Called by the owning browser when it gains focus or is destroyed.
++  void OnFocused();
++  void OnDestroyed();
++
++  // extensions::WindowController implementation.
++  int GetWindowId() const override;
++  std::string GetWindowTypeText() const override;
++  void SetFullscreenMode(bool is_fullscreen,
++                         const GURL& extension_url) const override;
++  content::WebContents* GetActiveTab() const override;
++  int GetTabCount() const override;
++  content::WebContents* GetWebContentsAt(int i) const override;
++  bool IsVisibleToTabsAPIForExtension(
++      const extensions::Extension* extension,
++      bool include_dev_tools_windows) const override;
++  base::DictValue CreateWindowValueForExtension(
++      const extensions::Extension* extension,
++      PopulateTabBehavior populate_tab_behavior,
++      extensions::mojom::ContextType context) const override;
++  base::ListValue CreateTabList(
++      const extensions::Extension* extension,
++      extensions::mojom::ContextType context) const override;
++  bool OpenOptionsPage(const extensions::Extension* extension,
++                       const GURL& url,
++                       bool open_in_tab) override;
++
++ private:
++  // Not owned. Outlives this object.
++  const raw_ptr<AlloyBrowserHostImpl> browser_;
++  const SessionID session_id_;
++  const bool is_popup_;
++
++  // Owned. Lifetime is bound to this object.
++  const std::unique_ptr<AlloyBaseWindow> base_window_;
++
++  bool destroyed_ = false;
++};
++
++// Returns true if |controller| is an AlloyExtensionWindowController.
++bool IsAlloyWindowController(extensions::WindowController* controller);
++
++// Returns the AlloyExtensionWindowController for the Alloy style browser
++// hosting |contents|, or nullptr.
++extensions::WindowController* GetAlloyWindowControllerFor(
++    content::WebContents* contents);
++
++// Returns the most recently focused AlloyExtensionWindowController for
++// |profile| (or its OTR profile), or nullptr.
++extensions::WindowController* LastFocusedAlloyWindowController(
++    content::BrowserContext* context);
++
++}  // namespace cef
++
++#endif  // CEF_LIBCEF_BROWSER_CHROME_EXTENSIONS_ALLOY_WINDOW_CONTROLLER_H_

@@ -85,7 +85,10 @@ Per `cef_window_info.h` and CEF issue #3685:
 
 Consequence for Arktos: an extension-capable CEF backend must embed a
 **windowed chrome-style** browser (X11 `winId` reparent — verified
-below), while the Wayland-safe OSR path is necessarily extension-less.
+below), while the Wayland-safe OSR path loses every Chrome-UI
+surface (popup toolbar, sidePanel, chrome://extensions) — per the
+maintainer in CEF#3859, RequestContext-level extension
+functionality should still run there; unverified by this spike.
 Both shapes are real; capability reporting must stay honest about that
 split — this is exactly CEF08's scope.
 
@@ -161,7 +164,10 @@ hours) and belongs — if ever — to CEF14's packaging row. MP3 decodes
 ## What's left open for CEF02+ (if un-parked)
 
 - Chrome-style windowed embedding is the only extension-capable shape;
-  OSR is extension-less by construction (CEF08 must design honestly).
+  OSR carries no Chrome-UI extension surface by design (CEF08 must
+  report it honestly); whether RequestContext-level functionality
+  (SW/storage/cs/webRequest) actually runs under Alloy style needs
+  a probe — the maintainer says it should (CEF#3859).
 - `--use-native` / native parenting details under real X11/Qt-chrome —
   the probe proves reparent, not full integration (focus, IME, resize,
   HiDPI: CEF03).
