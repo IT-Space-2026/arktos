@@ -116,13 +116,18 @@ void SyncTabPresence::publishNow()
     }
 
     // The doc is per profile scope: each window contributes one
-    // "windows" entry to ITS persona's group.
+    // "windows" entry to ITS persona's group.  presenceWindowJson
+    // is rustcore-only — a no-rust build publishes nothing.
     QMap<QString, QJsonArray> byScope;
     const QList<BrowserMainWindow*> windows = app->mainWindows();
     for (BrowserMainWindow *window : windows) {
         if (!window || !window->tabWidget())
             continue;
+#ifdef ARKTOS_RUSTCORE
         const QJsonObject w = window->tabWidget()->presenceWindowJson();
+#else
+        const QJsonObject w;
+#endif
         if (w.value(QStringLiteral("tabs")).toArray().isEmpty())
             continue;
         byScope[window->profileId()].append(w);

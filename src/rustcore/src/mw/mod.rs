@@ -62,8 +62,8 @@ use crate::facade::{self, AcCore};
 use crate::{
     blocklist, bookmarks, containers, cookies, extverify, history, icons, notes, notify,
     omnibox, opensearch, profiles, profilevault, session, settings, sitedecisions,
-    sitetrust, store, sync, syncbookmarks, synchistory, syncpair, syncpasswords, syncsettings,
-    synctabs, synctransport, tlsprobe, tranco, updates, util,
+    sitetrust, store, sync, syncbookmarks, synchistory, syncmeta, syncpair, syncpasswords,
+    syncsettings, synctabs, synctransport, tlsprobe, tranco, updates, util,
 };
 
 /// The envelope schema version — the frame's `version` byte and the
@@ -2574,10 +2574,12 @@ const VAULT_OPS: &[Op] = &[
 // (SYNC09) hang off it.
 
 fn sync_engine(ctx: &MwCtx) -> Result<sync::SyncEngine, OpErr> {
-    // SYNC04/05/06/07: keep the store-adapter apply lanes bound to the
-    // core this call is for — the applier seam is process-global.
+    // SYNC04/05/06/07/09: keep the store-adapter apply lanes bound
+    // to the core this call is for — the applier seam is
+    // process-global.
     syncbookmarks::install(ctx.core.data_root());
     synchistory::install(ctx.core.data_root());
+    syncmeta::install(ctx.core.data_root());
     syncpasswords::install(ctx.core.data_root());
     syncsettings::install(ctx.core.data_root());
     synctabs::install(ctx.core.data_root());
@@ -3020,6 +3022,37 @@ fn op_sync_passwords_status(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
     syncpasswords::status(ctx.core.data_root(), &scope).map_err(OpErr::from)
 }
 
+// SYNC09: device management — the per-profile view of the paired
+// set + the unpair command.  devices_list is the read model the
+// Settings > Sync page renders (fingerprint + last-seen per
+// device, this profile's members only); device_revoke is the
+// orchestrated unpair: rotate the profile's group secret, ship it
+// to the surviving members inside a signed "rekey" op on the
+// syncmeta store, drop the member binding and the onion
+// client-auth grant, and re-wrap the password vault under the new
+// key when it is unlocked.  Every member that imports the rekey
+// applies the same revocation, so the cut propagates group-wide.
+//
+//   devices_list   {profile?} — {device_id, fingerprint,
+//                  devices:[{device_id, fingerprint, last_seen_ms,
+//                  added_ms, onion_addr, device_global}]} (query)
+//   device_revoke  {profile?, device_id} — rotate + revoke +
+//                  report (command)
+
+fn op_sync_devices_list(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let scope = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    let _ = sync_engine(ctx)?; // binds the apply lanes for this core
+    syncmeta::devices(ctx.core.data_root(), &scope).map_err(OpErr::from)
+}
+
+fn op_sync_device_revoke(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let scope = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    let id = arg_str(p, "device_id")?;
+    let _ = sync_engine(ctx)?;
+    let rep = syncmeta::revoke(ctx.core.data_root(), &scope, id)?;
+    Ok(rep)
+}
+
 const SYNC_OPS: &[Op] = &[
     Op { id: 0x0001, name: "identity", class: OpClass::Query,
          profile_scoped: false, since: 1, handler: op_sync_identity },
@@ -3085,6 +3118,10 @@ const SYNC_OPS: &[Op] = &[
          profile_scoped: false, since: 6, handler: op_sync_passwords_lock },
     Op { id: 0x0020, name: "passwords_status", class: OpClass::Query,
          profile_scoped: false, since: 6, handler: op_sync_passwords_status },
+    Op { id: 0x0021, name: "devices_list", class: OpClass::Query,
+         profile_scoped: false, since: 7, handler: op_sync_devices_list },
+    Op { id: 0x0022, name: "device_revoke", class: OpClass::Command,
+         profile_scoped: false, since: 7, handler: op_sync_device_revoke },
 ];
 
 // ---- registry ------------------------------------------------------------------
@@ -4959,6 +4996,113 @@ mod tests {
             &command(18, 19, 0x0004, &format!(r#"{{"device_id":"{}"}}"#, a_id)),
         );
         assert_eq!(r.ok()["removed"], false);
+    }
+
+    /// SYNC09: device management over the envelope — per-profile
+    /// device lists stay disjoint, and device_revoke un-members,
+    /// drops the grant, and rotates the profile's group secret.
+    #[test]
+    fn sync_device_management_end_to_end() {
+        let _g = guard();
+        let core_a = TestCore::new(&tmpdir("dva"));
+        let core_b = TestCore::new(&tmpdir("dvb"));
+        let core_c = TestCore::new(&tmpdir("dvc"));
+
+        let pk_of = |core: *mut AcCore| {
+            call(core, &query(1, 19, 0x0001, "")).ok()["pubkey_b64"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let id_of = |core: *mut AcCore| {
+            call(core, &query(1, 19, 0x0001, "")).ok()["device_id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let b_pk = pk_of(core_b.0);
+        let b_id = id_of(core_b.0);
+        let c_pk = pk_of(core_c.0);
+        let c_id = id_of(core_c.0);
+
+        // Pair B into "work", C into "home" — the lists are disjoint.
+        let r = call(
+            core_a.0,
+            &command(
+                2,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{}","scope":"work"}}"#, b_pk),
+            ),
+        );
+        assert_eq!(r.ok()["device_id"], b_id);
+        let r = call(
+            core_a.0,
+            &command(
+                3,
+                19,
+                0x0003,
+                &format!(r#"{{"pubkey_b64":"{}","scope":"home"}}"#, c_pk),
+            ),
+        );
+        assert_eq!(r.ok()["device_id"], c_id);
+
+        let r = call(
+            core_a.0,
+            &query(4, 19, 0x0021, r#"{"profile":"work"}"#),
+        );
+        let devs = r.ok()["devices"].as_array().unwrap();
+        assert_eq!(devs.len(), 1);
+        assert_eq!(devs[0]["device_id"], b_id);
+        assert_eq!(
+            devs[0]["fingerprint"]["words"].as_array().unwrap().len(),
+            6
+        );
+        let r = call(
+            core_a.0,
+            &query(5, 19, 0x0021, r#"{"profile":"home"}"#),
+        );
+        let devs = r.ok()["devices"].as_array().unwrap();
+        assert_eq!(devs.len(), 1);
+        assert_eq!(devs[0]["device_id"], c_id);
+
+        // Revoking B empties the work list, leaves home untouched,
+        // and reports the rotation it performed.
+        let r = call(
+            core_a.0,
+            &command(
+                6,
+                19,
+                0x0022,
+                &format!(r#"{{"profile":"work","device_id":"{}"}}"#, b_id),
+            ),
+        );
+        let rep = r.ok();
+        assert_eq!(rep["ok"], true);
+        assert_eq!(rep["member_removed"], true);
+        assert_eq!(rep["gen"], 1);
+        let r = call(
+            core_a.0,
+            &query(7, 19, 0x0021, r#"{"profile":"work"}"#),
+        );
+        assert_eq!(r.ok()["devices"].as_array().unwrap().len(), 0);
+        let r = call(
+            core_a.0,
+            &query(8, 19, 0x0021, r#"{"profile":"home"}"#),
+        );
+        assert_eq!(r.ok()["devices"].as_array().unwrap().len(), 1);
+
+        // A second revoke of the same device is an honest NotFound.
+        let r = call(
+            core_a.0,
+            &command(
+                9,
+                19,
+                0x0022,
+                &format!(r#"{{"profile":"work","device_id":"{}"}}"#, b_id),
+            ),
+        );
+        assert_eq!(r.err().0, "op_failed");
     }
 
     /// SYNC02: two cores exchanging over the mem backend through the

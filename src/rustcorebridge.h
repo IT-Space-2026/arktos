@@ -145,6 +145,12 @@ enum SyncOp : quint16 {
     // read the newest doc each other device published.
     SyncTabsPublish = 0x001b,
     SyncTabsPeers = 0x001c,
+    // SYNC09: device management — this profile's paired devices
+    // (id, fingerprint, last-seen) and the unpair/revoke command
+    // (drops the member, its onion grant, and rotates the
+    // profile's group secret).
+    SyncDevicesList = 0x0021,
+    SyncDeviceRevoke = 0x0022,
 };
 enum OpenSearchOp : quint16 {
     OseList = 0x0001,

@@ -77,6 +77,7 @@
 #if defined(ARKTOS_RUSTCORE)
 #include "sitedecisionstore.h"
 #include <rustcore.h>
+#include "rustcorebridge.h"
 #endif
 #include "scopeshortcuts.h"
 #include "sidebarpanel.h"
@@ -156,6 +157,7 @@ private slots:
     void appearanceFieldBounds();
     void capsAnnotations();
     void enableCheckboxesDriveFields();
+    void syncPageDevices();
 };
 
 // Every re-arming modal driver below stamps itself with this counter
@@ -1146,7 +1148,7 @@ void tst_SettingsDialog::sidebarNavigation()
     {
         SettingsDialog dialog;
         QCOMPARE(dialog.pagesList->count(), dialog.tabWidget->count());
-        QCOMPARE(dialog.pagesList->count(), 12);
+        QCOMPARE(dialog.pagesList->count(), 13);
         for (int row = 0; row < dialog.pagesList->count(); ++row) {
             dialog.pagesList->setCurrentRow(row);
             QCOMPARE(dialog.tabWidget->currentIndex(), row);
@@ -1168,6 +1170,9 @@ void tst_SettingsDialog::sidebarNavigation()
                  QStringLiteral("Downloads"));
         QCOMPARE(dialog.pagesList->item(11)->text(),
                  QStringLiteral("Performance"));
+        // SYNC03/SYNC09: the code-built Sync page sits last.
+        QCOMPARE(dialog.pagesList->item(12)->text(),
+                 QStringLiteral("Sync"));
     }
 
     // The persisted currentTab round-trips through the sidebar.
@@ -2004,7 +2009,7 @@ void tst_SettingsDialog::scrollablePages()
 
     // One resizable, frameless scroll area per page — stack indices
     // unchanged (the sidebar stays unwrapped and fixed-height).
-    QCOMPARE(dialog.tabWidget->count(), 12);
+    QCOMPARE(dialog.tabWidget->count(), 13);
     for (int i = 0; i < dialog.tabWidget->count(); ++i) {
         QScrollArea *area = qobject_cast<QScrollArea *>(
             dialog.tabWidget->widget(i));
@@ -4953,6 +4958,58 @@ void tst_SettingsDialog::enableCheckboxesDriveFields()
     QVERIFY(adblock.rulesView->isEnabledTo(&adblock));
     QVERIFY(adblock.search->isEnabledTo(&adblock));
     adblock.close();
+}
+
+// SYNC09: the Sync page's paired-device list — the engine's
+// devices_list query drives it, an empty group shows the
+// empty-state row, and the unpair button stays disarmed without a
+// selection.
+void tst_SettingsDialog::syncPageDevices()
+{
+    SettingsDialog dialog;
+    QWidget *page = dialog.tabWidget->widget(12);
+    QVERIFY(page);
+    QTreeWidget *tree = nullptr;
+    QPushButton *unpair = nullptr;
+    for (QWidget *w : page->findChildren<QWidget *>()) {
+        if (auto *t = qobject_cast<QTreeWidget *>(w))
+            tree = t;
+        if (auto *b = qobject_cast<QPushButton *>(w)) {
+            if (b->text().contains(QStringLiteral("Unpair")))
+                unpair = b;
+        }
+    }
+    QVERIFY(tree);
+    QVERIFY(unpair);
+    QCOMPARE(tree->columnCount(), 3);
+    QVERIFY(!unpair->isEnabled());
+    // When the bridge is up the empty group shows the
+    // empty-state row (not selectable); when it is not serving the
+    // page reports sync unavailable and the tree stays empty.
+#if defined(ARKTOS_RUSTCORE)
+    if (RustCoreBridge::serving()) {
+        QCOMPARE(tree->topLevelItemCount(), 1);
+        QVERIFY(!(tree->topLevelItem(0)->flags() & Qt::ItemIsSelectable));
+        QVERIFY(tree->topLevelItem(0)->text(0).contains(
+            QStringLiteral("No paired devices")));
+    } else
+#endif
+    {
+        QCOMPARE(tree->topLevelItemCount(), 0);
+    }
+
+#if defined(ARKTOS_RUSTCORE)
+    // The engine side of the page answers the same shape the mw
+    // e2e leg pins — this device's own id plus the devices array.
+    if (RustCoreBridge *bridge = RustCoreBridge::serving()) {
+        QJsonObject err;
+        const QJsonValue dl = bridge->mwQuery(
+            AcMw::Sync, AcMw::SyncDevicesList, QJsonObject(), &err);
+        QVERIFY(dl.toObject().contains(QStringLiteral("device_id")));
+        QVERIFY(dl.toObject().contains(QStringLiteral("devices")));
+    }
+#endif
+    dialog.close();
 }
 
 QTEST_MAIN(tst_SettingsDialog)

@@ -52,9 +52,11 @@ pub const DB_FILE: &str = "sync.db";
 const SCHEMA: &str = "2";
 
 /// The stores the op-log tails — SYNC04–SYNC08 land the per-store
-/// CRDT adapters that produce and consume their bodies.
-pub const SYNCED_STORES: [&str; 5] =
-    ["bookmarks", "history", "tabs", "settings", "passwords"];
+/// CRDT adapters that produce and consume their bodies; SYNC09's
+/// "syncmeta" carries the group-management ops (key rotation +
+/// revocation notices) — engine state, never user data.
+pub const SYNCED_STORES: [&str; 6] =
+    ["bookmarks", "history", "tabs", "settings", "passwords", "syncmeta"];
 
 const OP_FRAME_MAGIC: &[u8; 6] = b"AROPS1";
 const WIRE_VERSION: i64 = 1;
@@ -71,12 +73,22 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn hex(data: &[u8]) -> String {
+pub(crate) fn hex(data: &[u8]) -> String {
     let mut s = String::with_capacity(data.len() * 2);
     for b in data {
         s.push_str(&format!("{b:02x}"));
     }
     s
+}
+
+pub(crate) fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
 }
 
 /// Canonical JSON: objects serialize with sorted keys, no
@@ -155,6 +167,48 @@ pub struct Member {
     pub last_seen_ms: i64,
     pub added_ms: i64,
     pub scopes: Vec<String>,
+}
+
+/// The canonical stamp of one rekey op — the total-order key
+/// SYNC09's concurrent rotations resolve by: generation first,
+/// then the op's ordinary (lamport, device_id, op_id) order.
+/// Every device applies the same order, so concurrent same-gen
+/// rotations converge on the canonically-later op's secret.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RotationMark {
+    pub gen: u64,
+    pub lamport: u64,
+    pub device_id: String,
+    pub op_id: String,
+}
+
+impl RotationMark {
+    pub fn of(gen: u64, op: &WireOp) -> RotationMark {
+        RotationMark {
+            gen,
+            lamport: op.lamport,
+            device_id: op.device_id.clone(),
+            op_id: op.op_id.clone(),
+        }
+    }
+
+    fn serialize(&self) -> String {
+        format!("{}:{}:{}:{}", self.gen, self.lamport, self.device_id, self.op_id)
+    }
+
+    fn parse(raw: &str) -> Option<RotationMark> {
+        let mut parts = raw.rsplitn(3, ':');
+        let op_id = parts.next()?.to_string();
+        let device_id = parts.next()?.to_string();
+        let head = parts.next()?;
+        let mut h = head.splitn(2, ':');
+        Some(RotationMark {
+            gen: h.next()?.parse().ok()?,
+            lamport: h.next()?.parse().ok()?,
+            device_id,
+            op_id,
+        })
+    }
 }
 
 /// One op on the wire — the shape export() emits and import()
@@ -938,6 +992,164 @@ impl SyncEngine {
         Ok(())
     }
 
+    /// The previous generation's group secret — kept exactly ONE
+    /// rotation deep (SYNC09).  A member that was locked while the
+    /// group rotated still needs it to probe the last pre-rotation
+    /// password-vault verifier; anything older is legitimately
+    /// unreachable — the revoked device it was rotated away from
+    /// holds it anyway.
+    #[allow(dead_code)]
+    pub fn group_secret_prev(&self, scope: &str) -> RcResult<Option<[u8; 32]>> {
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        group_secret_read_key(&st.conn, &group_secret_prev_key(scope))
+    }
+
+    /// The rotation generation — 0 until the first rotate.
+    #[allow(dead_code)]
+    pub fn group_secret_gen(&self, scope: &str) -> RcResult<u64> {
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(meta_get(&st.conn, &group_secret_gen_key(scope))?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0))
+    }
+
+    /// The canonical stamp of the newest rekey accepted for `scope`
+    /// — the total-order marker concurrent rotations resolve by.
+    pub fn group_secret_rotation(&self, scope: &str) -> RcResult<Option<RotationMark>> {
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(raw) = meta_get(&st.conn, &group_secret_rot_key(scope))? else {
+            return Ok(None);
+        };
+        Ok(RotationMark::parse(&raw))
+    }
+
+    /// Record a rekey's canonical stamp — after the local op
+    /// appended (revoke path) or after a remote one applied.
+    pub fn group_secret_rotation_mark(
+        &self,
+        scope: &str,
+        mark: &RotationMark,
+    ) -> RcResult<()> {
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        st.conn
+            .execute(
+                "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![group_secret_rot_key(scope), mark.serialize()],
+            )
+            .map_err(|e| sql_fail("rotation mark write", e))?;
+        Ok(())
+    }
+
+    /// Rotate `scope`'s group secret to a fresh key — SYNC09's
+    /// deliberate act after unpairing a member.  The displaced key
+    /// slides into the one-deep previous slot, the generation
+    /// counter advances, and the caller MUST immediately emit the
+    /// rekey op (wrapped for the remaining members) and re-wrap
+    /// whatever the old key sealed (syncpasswords::rewrap) — this
+    /// call only re-keys the store.
+    pub fn group_secret_rotate(&self, scope: &str) -> RcResult<([u8; 32], u64)> {
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let key = crate::noisexx::rand_bytes::<32>()?;
+        let gen = meta_get(&st.conn, &group_secret_gen_key(scope))?
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0)
+            + 1;
+        if let Some(old) = group_secret_read(&st.conn, scope)? {
+            st.conn
+                .execute(
+                    "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![group_secret_prev_key(scope), hex(&old)],
+                )
+                .map_err(|e| sql_fail("group secret prev write", e))?;
+        }
+        st.conn
+            .execute(
+                "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![group_secret_key(scope), hex(&key)],
+            )
+            .map_err(|e| sql_fail("group secret write", e))?;
+        st.conn
+            .execute(
+                "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![group_secret_gen_key(scope), gen.to_string()],
+            )
+            .map_err(|e| sql_fail("group secret gen write", e))?;
+        Ok((key, gen))
+    }
+
+    /// Install a rotated secret a verified rekey op delivered —
+    /// the receiving-side spelling of rotate().  Unlike
+    /// group_secret_install this DELIBERATELY replaces the current
+    /// key: the applier already resolved the rotation against the
+    /// stored marker before calling.  The displaced key slides to
+    /// the previous slot and the generation counter lifts past the
+    /// op's gen so a later local rotation stays in front.
+    pub fn group_secret_install_rotated(
+        &self,
+        scope: &str,
+        key: &[u8; 32],
+        gen: u64,
+    ) -> RcResult<()> {
+        let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(old) = group_secret_read(&st.conn, scope)? {
+            if &old == key {
+                return Ok(());
+            }
+            st.conn
+                .execute(
+                    "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![group_secret_prev_key(scope), hex(&old)],
+                )
+                .map_err(|e| sql_fail("group secret prev write", e))?;
+        }
+        st.conn
+            .execute(
+                "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![group_secret_key(scope), hex(key)],
+            )
+            .map_err(|e| sql_fail("group secret write", e))?;
+        let cur = meta_get(&st.conn, &group_secret_gen_key(scope))?
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        if gen > cur {
+            st.conn
+                .execute(
+                    "INSERT INTO meta(key, value) VALUES(?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![group_secret_gen_key(scope), gen.to_string()],
+                )
+                .map_err(|e| sql_fail("group secret gen write", e))?;
+        }
+        Ok(())
+    }
+
+    /// The members bound to `scope`'s sync group: scope-listed
+    /// members plus device-global members (an empty scope list
+    /// signs every scope, so it belongs to every group).  SYNC09's
+    /// per-profile device list and the rekey wrap set both read
+    /// this.
+    pub fn members_for_scope(&self, scope: &str) -> RcResult<Vec<Member>> {
+        Ok(self
+            .members_list()?
+            .into_iter()
+            .filter(|m| m.scopes.is_empty() || m.scopes.iter().any(|s| s == scope))
+            .collect())
+    }
+
+    /// One member row by device id — None when never paired.
+    pub fn member(&self, device_id: &str) -> RcResult<Option<Member>> {
+        Ok(self
+            .members_list()?
+            .into_iter()
+            .find(|m| m.device_id == device_id))
+    }
+
     pub fn stats(&self) -> RcResult<Value> {
         let st = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let members: i64 = st
@@ -1085,23 +1297,39 @@ fn member_scope_allows(conn: &Connection, device_id: &str, scope: &str) -> RcRes
     Ok(scopes.iter().any(|s| s == scope))
 }
 
-/// The meta-table key a scope's group secret lives under.
+/// The meta-table keys a scope's group secret + rotation
+/// bookkeeping live under.
 fn group_secret_key(scope: &str) -> String {
     format!("gkey:{scope}")
 }
+fn group_secret_prev_key(scope: &str) -> String {
+    format!("gkey_prev:{scope}")
+}
+fn group_secret_gen_key(scope: &str) -> String {
+    format!("gkey_gen:{scope}")
+}
+fn group_secret_rot_key(scope: &str) -> String {
+    format!("gkey_rot:{scope}")
+}
 
 fn group_secret_read(conn: &Connection, scope: &str) -> RcResult<Option<[u8; 32]>> {
-    let Some(raw) = meta_get(conn, &group_secret_key(scope))? else {
+    group_secret_read_key(conn, &group_secret_key(scope))
+}
+
+fn group_secret_read_key(conn: &Connection, meta_key: &str) -> RcResult<Option<[u8; 32]>> {
+    let Some(raw) = meta_get(conn, meta_key)? else {
         return Ok(None);
     };
-    let bytes: Vec<u8> = (0..raw.len())
-        .step_by(2)
-        .filter_map(|i| u8::from_str_radix(raw.get(i..i + 2)?, 16).ok())
-        .collect();
+    let Some(bytes) = hex_decode(&raw) else {
+        return fail(
+            RcStatus::Corrupt,
+            "stored sync group secret is malformed",
+        );
+    };
     if bytes.len() != 32 {
         return fail(
             RcStatus::Corrupt,
-            format!("stored sync group secret for scope \"{scope}\" is malformed"),
+            "stored sync group secret is malformed",
         );
     }
     let mut key = [0u8; 32];
@@ -1128,6 +1356,60 @@ fn member_pubkey(conn: &Connection, device_id: &str) -> RcResult<Option<[u8; 32]
         rusqlite::Error::QueryReturnedNoRows => Ok(None),
         e => Err(sql_fail("member lookup", e)),
     })
+}
+
+/// The 32-byte Ed25519 seed inside our device identity's PKCS#8 —
+/// SYNC09's rekey unwrap derives the matching x25519 static from
+/// it (the standard ed→curve25519 map: the Montgomery scalar is
+/// SHA-512(seed)[:32], the peer's Montgomery point is the u-image
+/// of its Ed25519 public key).  The file is only ever written by
+/// load_or_create_identity, so a missing/unparseable seed is the
+/// same loud Corrupt a bad keypair is.
+pub fn device_seed(sync_dir: &std::path::Path) -> RcResult<[u8; 32]> {
+    let raw = std::fs::read(sync_dir.join(DEVICE_KEY_FILE))?;
+    // Validate the way the loader does before trusting the parse.
+    Ed25519KeyPair::from_pkcs8(&raw).map_err(|_| Fail {
+        status: RcStatus::Corrupt,
+        msg: "sync/device.key is not a valid Ed25519 keypair".into(),
+    })?;
+    pkcs8_ed25519_seed(&raw)
+}
+
+/// Walk just enough DER to lift the seed out of a PKCS#8 v1
+/// Ed25519 private key: SEQUENCE { int, alg-seq,
+/// OCTET STRING { OCTET STRING { 32-byte seed } } }.  Anything
+/// else is Corrupt — the only writer is ring's generate_pkcs8.
+fn pkcs8_ed25519_seed(der: &[u8]) -> RcResult<[u8; 32]> {
+    fn tlv<'a>(b: &'a [u8], tag: u8) -> Option<(&'a [u8], &'a [u8])> {
+        if b.len() < 2 || b[0] != tag {
+            return None;
+        }
+        let (len, hdr) = match b[1] {
+            n if n < 0x80 => (n as usize, 2),
+            0x81 if b.len() >= 3 => (b[2] as usize, 3),
+            0x82 if b.len() >= 4 => (((b[2] as usize) << 8) | b[3] as usize, 4),
+            _ => return None,
+        };
+        Some((b.get(hdr..hdr + len)?, b.get(hdr + len..)?))
+    }
+    let corrupt = || Fail {
+        status: RcStatus::Corrupt,
+        msg: "sync/device.key PKCS#8 has no Ed25519 seed".into(),
+    };
+    let (outer, _) = tlv(der, 0x30).ok_or_else(corrupt)?;
+    // Skip version INTEGER + algorithm SEQUENCE, land on the
+    // privateKey OCTET STRING, whose content is itself an
+    // OCTET STRING holding the 32-byte seed.
+    let (_, rest) = tlv(outer, 0x02).ok_or_else(corrupt)?;
+    let (_, rest) = tlv(rest, 0x30).ok_or_else(corrupt)?;
+    let (priv_octets, _) = tlv(rest, 0x04).ok_or_else(corrupt)?;
+    let (seed, _) = tlv(priv_octets, 0x04).ok_or_else(corrupt)?;
+    if seed.len() != 32 {
+        return Err(corrupt());
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(seed);
+    Ok(out)
 }
 
 #[cfg(test)]

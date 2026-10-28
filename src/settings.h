@@ -293,12 +293,19 @@ private:
     // waiting on — the mask empties when every singleton reported.
     int m_siteTrustUpdatesPending = 0;
     bool m_siteTrustUpdateFailed = false;
-    // SYNC03: the Sync page's live labels (class members — the page
+    // SYNC03: the Sync page's live widgets (class members — the page
     // itself is built in code, not the .ui).
     QLabel *m_syncStatusLabel = nullptr;
-    QLabel *m_syncMembersLabel = nullptr;
+    // SYNC09: this profile's paired devices (id, fingerprint,
+    // last-seen) + the unpair flow.
+    QTreeWidget *m_syncDevicesTree = nullptr;
+    QPushButton *m_syncUnpairButton = nullptr;
     // SYNC03: fills the Sync page from the sync engine + transport.
     void refreshSyncStatus();
+    // SYNC09: drop the selected device from this profile's sync
+    // group — the engine rotates the group secret and revokes the
+    // device's client-auth grant.
+    void unpairSyncDevice();
 };
 
 #endif // SETTINGS_H

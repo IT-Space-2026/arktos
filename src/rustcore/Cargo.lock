@@ -153,6 +153,7 @@ dependencies = [
  "aes-gcm",
  "argon2",
  "arti-client",
+ "curve25519-dalek",
  "dom_query",
  "dom_smoothie",
  "futures",

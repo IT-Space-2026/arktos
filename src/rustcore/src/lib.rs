@@ -232,6 +232,7 @@ mod store;
 mod sync;
 mod syncbookmarks;
 mod synchistory;
+mod syncmeta;
 mod syncpasswords;
 mod syncsettings;
 mod synctabs;

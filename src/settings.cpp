@@ -242,13 +242,31 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         m_syncStatusLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
         auto *pairButton = new QPushButton(tr("Pair a New Device…"), syncPage);
         auto *joinButton = new QPushButton(tr("Join a Sync Group…"), syncPage);
-        m_syncMembersLabel = new QLabel(syncPage);
-        m_syncMembersLabel->setWordWrap(true);
-        m_syncMembersLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        // SYNC09: the paired-device list is per-profile — only
+        // members bound to THIS profile's sync group appear here.
+        m_syncDevicesTree = new QTreeWidget(syncPage);
+        m_syncDevicesTree->setColumnCount(3);
+        m_syncDevicesTree->setHeaderLabels(
+            {tr("Device"), tr("Fingerprint"), tr("Last seen")});
+        m_syncDevicesTree->setRootIsDecorated(false);
+        m_syncDevicesTree->setUniformRowHeights(true);
+        m_syncDevicesTree->setAllColumnsShowFocus(true);
+        m_syncDevicesTree->setSelectionMode(QAbstractItemView::SingleSelection);
+        m_syncDevicesTree->setMaximumHeight(160);
+        m_syncUnpairButton = new QPushButton(tr("Unpair Selected Device…"), syncPage);
+        m_syncUnpairButton->setEnabled(false);
         sgLay->addWidget(m_syncStatusLabel);
         sgLay->addWidget(pairButton);
         sgLay->addWidget(joinButton);
-        sgLay->addWidget(m_syncMembersLabel);
+        sgLay->addWidget(m_syncDevicesTree);
+        sgLay->addWidget(m_syncUnpairButton);
+        connect(m_syncDevicesTree, &QTreeWidget::itemSelectionChanged,
+                this, [this]() {
+            m_syncUnpairButton->setEnabled(
+                m_syncDevicesTree->currentItem() != nullptr);
+        });
+        connect(m_syncUnpairButton, &QPushButton::clicked,
+                this, &SettingsDialog::unpairSyncDevice);
         syncLay->addWidget(syncGroup);
         syncLay->addStretch();
         connect(pairButton, &QPushButton::clicked, this, [this]() {
@@ -257,6 +275,15 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         connect(joinButton, &QPushButton::clicked, this, [this]() {
             SyncPairDialog::join(ProfileStore::activeProfileId(), this);
         });
+        // The pair dialog is modeless — a finished ceremony lands
+        // as a "sync" change topic, which re-reads the device list.
+        if (RustCoreBridge *bridge = RustCoreBridge::instance()) {
+            connect(bridge, &RustCoreBridge::storeChanged,
+                    this, [this](const QString &topic) {
+                if (topic == QLatin1String("sync"))
+                    refreshSyncStatus();
+            });
+        }
         pagesList->addItem(tr("Sync"));
         tabWidget->addWidget(syncPage);
     }
@@ -4212,7 +4239,8 @@ void SettingsDialog::refreshSyncStatus()
     if (!bridge || !bridge->serving()) {
         m_syncStatusLabel->setText(
             tr("Sync is unavailable — the Rust core is not loaded."));
-        m_syncMembersLabel->clear();
+        if (m_syncDevicesTree)
+            m_syncDevicesTree->clear();
         return;
     }
     const QString scope = ProfileStore::activeProfileId();
@@ -4233,28 +4261,97 @@ void SettingsDialog::refreshSyncStatus()
     } else {
         lines << tr("Transport: not running (starts when pairing).");
     }
-    const QJsonValue members = bridge->mwQuery(
-        AcMw::Sync, AcMw::SyncMembersList, QJsonObject(), &err);
-    QStringList memberLines;
-    for (const QJsonValue &m
-         : members.toObject().value(QStringLiteral("members")).toArray()) {
-        const QJsonObject mo = m.toObject();
-        QStringList scopes;
-        for (const QJsonValue &s
-             : mo.value(QStringLiteral("scopes")).toArray())
-            scopes << s.toString();
-        const bool mine = scopes.contains(scope);
-        memberLines << tr("%1 — %2")
-            .arg(mo.value(QStringLiteral("device_id")).toString().left(16)
-                 + QLatin1String("…"))
-            .arg(scopes.isEmpty() ? tr("all profiles")
-                 : (mine ? tr("this profile")
-                    : scopes.join(QLatin1String(", "))));
-    }
     m_syncStatusLabel->setText(lines.join(QLatin1Char('\n')));
-    m_syncMembersLabel->setText(
-        memberLines.isEmpty()
-            ? tr("No paired devices yet — pair to start syncing.")
-            : tr("Paired devices:\n%1")
-                  .arg(memberLines.join(QLatin1Char('\n'))));
+
+    // SYNC09: the device list is strictly this profile's set — the
+    // engine filters members by scope, so no other profile's
+    // devices are ever named here.
+    if (m_syncDevicesTree) {
+        m_syncDevicesTree->clear();
+        m_syncUnpairButton->setEnabled(false);
+        const QJsonValue dl = bridge->mwQuery(
+            AcMw::Sync, AcMw::SyncDevicesList,
+            QJsonObject{{QStringLiteral("profile"), scope}}, &err);
+        for (const QJsonValue &m
+             : dl.toObject().value(QStringLiteral("devices")).toArray()) {
+            const QJsonObject mo = m.toObject();
+            const QString id =
+                mo.value(QStringLiteral("device_id")).toString();
+            const QJsonObject fp =
+                mo.value(QStringLiteral("fingerprint")).toObject();
+            QStringList fpParts;
+            for (const QJsonValue &w
+                 : fp.value(QStringLiteral("words")).toArray())
+                fpParts << w.toString();
+            for (const QJsonValue &e
+                 : fp.value(QStringLiteral("emoji")).toArray())
+                fpParts << e.toString();
+            const qint64 seen =
+                mo.value(QStringLiteral("last_seen_ms")).toInteger();
+            auto *item = new QTreeWidgetItem(m_syncDevicesTree);
+            item->setText(0, id.left(16) + QLatin1String("…")
+                + (mo.value(QStringLiteral("device_global")).toBool()
+                       ? tr(" (all profiles)") : QString()));
+            item->setText(1, fpParts.join(QLatin1Char(' ')));
+            item->setText(2, seen > 0
+                ? QDateTime::fromMSecsSinceEpoch(seen)
+                      .toString(Qt::ISODate)
+                : tr("never"));
+            item->setData(0, Qt::UserRole, id);
+            item->setToolTip(0, id);
+            const QString onion =
+                mo.value(QStringLiteral("onion_addr")).toString();
+            if (!onion.isEmpty())
+                item->setToolTip(1, onion);
+        }
+        m_syncDevicesTree->resizeColumnToContents(0);
+        if (m_syncDevicesTree->topLevelItemCount() == 0) {
+            auto *item = new QTreeWidgetItem(m_syncDevicesTree);
+            item->setText(0, tr("No paired devices yet — pair to start syncing."));
+            item->setFlags(Qt::NoItemFlags);
+        }
+    }
+}
+
+// SYNC09: unpair the selected device from this profile's sync
+// group.  The engine's device_revoke does the whole cut — member
+// binding, onion client-auth grant, group-secret rotation, vault
+// re-wrap — and the rekey op it emits makes the revocation stick
+// on every member that imports it.
+void SettingsDialog::unpairSyncDevice()
+{
+    if (!m_syncDevicesTree)
+        return;
+    QTreeWidgetItem *item = m_syncDevicesTree->currentItem();
+    if (!item)
+        return;
+    const QString id = item->data(0, Qt::UserRole).toString();
+    if (id.isEmpty())
+        return;
+    RustCoreBridge *bridge = RustCoreBridge::instance();
+    if (!bridge || !bridge->serving())
+        return;
+    const auto answer = QMessageBox::warning(
+        this, tr("Unpair Device"),
+        tr("Unpair this device from the \"%1\" profile's sync group?\n\n"
+           "The device loses access immediately and the group's key "
+           "rotates, so it cannot see anything synced from now on. "
+           "It can rejoin only through a new pairing invite.")
+            .arg(ProfileStore::activeProfileId()),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes)
+        return;
+    QJsonObject err;
+    const QJsonValue rep = bridge->mwCommand(
+        AcMw::Sync, AcMw::SyncDeviceRevoke,
+        QJsonObject{{QStringLiteral("profile"), ProfileStore::activeProfileId()},
+                    {QStringLiteral("device_id"), id}},
+        &err);
+    if (!rep.toObject().value(QStringLiteral("ok")).toBool()) {
+        QMessageBox::warning(
+            this, tr("Unpair Device"),
+            tr("The device could not be unpaired: %1")
+                .arg(err.value(QStringLiteral("message")).toString()));
+    }
+    refreshSyncStatus();
 }

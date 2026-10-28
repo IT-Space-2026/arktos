@@ -130,3 +130,8 @@ safelog = { version = "=0.10.0", optional = true }
 # sandbox.  Exact-pinned like the rest of the reviewed tree.
 hayro = { version = "=0.8.0", features = ["embed-fonts"] }
 tor-llcrypto = "=0.47.0"
+# Sync key rotation (SYNC09): the rekey wrap converts a member's
+# Ed25519 device pubkey to its Montgomery image — already pinned in
+# the committed lock via the Arti tree, so the dep adds no new
+# transitive surface.  Exact-pinned like the rest of the crypto deps.
+curve25519-dalek = "=4.1.3"

@@ -20,8 +20,11 @@
 //!     bound to the group: members derive the same key from the same
 //!     passphrase, outsiders cannot precompute.  SYNC09 note:
 //!     rotating the group secret re-bases the salt, so the re-wrap
-//!     it performs must also re-seal password fields under the
-//!     re-derived key or the old ciphertext goes unreadable.
+//!     it performs re-seals password fields under the re-derived
+//!     key — only the fields the device itself last wrote
+//!     (SYNC09): republishing a peer's field at a fresh stamp
+//!     would manufacture LWW recency, and the one-deep previous
+//!     key keeps pre-rotation ciphertext readable anyway.
 //!   * Wire ops carry ciphertext only — keys are never a payload:
 //!       {"t":"pwv","v":<b64>}             — group verifier marker
 //!       {"t":"set","e":<eid>,"f":[<b64>…],"r":[<b64>…]}
@@ -180,6 +183,15 @@ struct PwSync {
     /// The derived vault key while unlocked — strictly opt-in:
     /// None means emit nothing, apply nothing.
     key: Option<Key>,
+    /// The PREVIOUS generation's key — one rotation deep
+    /// (SYNC09): pre-rotation ciphertext stays readable across a
+    /// rekey, while every new seal rides `key`.
+    prev_key: Option<Key>,
+    /// The passphrase sealed under `key` — re-wrap's way to
+    /// re-derive on rotation without holding plaintext secrets.
+    /// A leaked vault key already exposes the whole image, so the
+    /// sealed passphrase adds no new surface.
+    sealed_pass: Option<Vec<u8>>,
     hydrated: bool,
     /// (eid, field) -> newest op stamp — the LWW frontier.
     frontier: BTreeMap<(String, String), Stamp>,
@@ -229,13 +241,28 @@ impl PwSync {
         Ok(crate::mw::b64_encode(&store::seal_with_key(key, &pt)?))
     }
 
+    /// Open a sealed blob under the current key, then the
+    /// previous-generation key — a pre-rotation ciphertext is
+    /// still legit group material for exactly one generation.
+    fn open_blob(&self, b: &Value) -> Option<Vec<u8>> {
+        let blob = crate::mw::b64_decode(b.as_str()?)?;
+        if let Some(pt) = self
+            .key
+            .as_ref()
+            .and_then(|k| store::open_with_key(k, &blob).ok())
+        {
+            return Some(pt);
+        }
+        self.prev_key
+            .as_ref()
+            .and_then(|k| store::open_with_key(k, &blob).ok())
+    }
+
     /// Open an "sf" blob → (field, value), or None when the blob
     /// does not decrypt for this vault or binds a different eid.
     /// The "url" field must hash back to the eid it claims.
     fn open_field(&self, eid: &str, b: &Value) -> Option<(String, String)> {
-        let key = self.key.as_ref()?;
-        let blob = crate::mw::b64_decode(b.as_str()?)?;
-        let pt = store::open_with_key(key, &blob).ok()?;
+        let pt = self.open_blob(b)?;
         let rest = pt.strip_prefix(b"sf\0")?;
         let (eid2, rest) = split0(rest)?;
         if eid2 != eid.as_bytes() {
@@ -256,9 +283,7 @@ impl PwSync {
     /// Open an "rf" blob → the removed field name, same binding
     /// checks minus the value.
     fn open_rm(&self, eid: &str, b: &Value) -> Option<String> {
-        let key = self.key.as_ref()?;
-        let blob = crate::mw::b64_decode(b.as_str()?)?;
-        let pt = store::open_with_key(key, &blob).ok()?;
+        let pt = self.open_blob(b)?;
         let rest = pt.strip_prefix(b"rf\0")?;
         let (eid2, fname) = split0(rest)?;
         if eid2 != eid.as_bytes() {
@@ -689,16 +714,26 @@ pub(crate) fn enable(root: &str, scope: &str, passphrase: &[u8]) -> RcResult<Val
         );
     };
     let key = vault_key(passphrase, &gkey)?;
+    // SYNC09: the previous generation's key — a member that was
+    // locked through a rotation still probes the last pre-rotation
+    // verifier with it (the passphrase outlives the group secret),
+    // then reads the pre-rotation ciphertext off the same key.
+    let prev = engine.group_secret_prev(scope)?;
+    let prev_key = match &prev {
+        Some(pk) => Some(vault_key(passphrase, pk)?),
+        None => None,
+    };
     let pwv = newest_pwv(&engine, scope)?;
     if let Some(blob) = &pwv {
-        match store::open_with_key(&key, blob) {
-            Ok(pt) if pt == VERIFIER => {}
-            _ => {
-                return fail(
-                    RcStatus::WrongPassphrase,
-                    "passphrase does not match the sync vault",
-                )
-            }
+        let probe = |k: &Key| match store::open_with_key(k, blob) {
+            Ok(pt) => pt == VERIFIER,
+            Err(_) => false,
+        };
+        if !probe(&key) && !prev_key.as_ref().map(probe).unwrap_or(false) {
+            return fail(
+                RcStatus::WrongPassphrase,
+                "passphrase does not match the sync vault",
+            );
         }
     }
     {
@@ -708,7 +743,9 @@ pub(crate) fn enable(root: &str, scope: &str, passphrase: &[u8]) -> RcResult<Val
             .or_default();
         // A re-enable re-keys cleanly: fresh state, fresh hydrate.
         let mut fresh = PwSync::default();
+        fresh.sealed_pass = Some(store::seal_with_key(&key, passphrase)?);
         fresh.key = Some(key);
+        fresh.prev_key = prev_key;
         *ps = fresh;
         ps.hydrate(&engine, scope)?;
         if pwv.is_none() {
@@ -752,6 +789,99 @@ pub(crate) fn lock(root: &str, scope: &str) -> RcResult<Value> {
     let mut reg = REG.lock().unwrap_or_else(|e| e.into_inner());
     let was = reg.remove(&(root.to_string(), scope.to_string()));
     Ok(json!({ "ok": true, "was_unlocked": was.map(|p| p.key.is_some()).unwrap_or(false) }))
+}
+
+/// SYNC09: re-key the vault after a group-secret rotation — the
+/// "vault re-wrap" revocation performs for the remaining devices.
+/// Locked vaults skip quietly: the next enable re-derives off the
+/// passphrase (and still probes a pre-rotation verifier through
+/// the one-deep prev key).  An unlocked vault recovers its
+/// passphrase from the key-sealed copy, derives the new key, then
+/// plants a fresh verifier and re-seals the whole merged image
+/// under it — so the post-rotation log stands alone on the new
+/// key and the revoked device's old ciphertext is the last thing
+/// it can ever read.
+pub(crate) fn rewrap(root: &str, scope: &str) -> RcResult<Value> {
+    let engine = SyncEngine::open(root)?;
+    let Some(gkey) = engine.group_secret(scope)? else {
+        return fail(RcStatus::NotEnabled, "no sync group for this profile");
+    };
+    let mut reg = REG.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(ps) = reg.get_mut(&(root.to_string(), scope.to_string())) else {
+        return Ok(json!({ "ok": true, "rewrapped": false, "reason": "locked" }));
+    };
+    let Some(old_key) = ps.key.clone() else {
+        return Ok(json!({ "ok": true, "rewrapped": false, "reason": "locked" }));
+    };
+    let pass = ps
+        .sealed_pass
+        .as_ref()
+        .and_then(|sp| store::open_with_key(&old_key, sp).ok())
+        .ok_or_else(|| Fail {
+            status: RcStatus::Locked,
+            msg: "vault has no sealed passphrase to re-wrap with".into(),
+        })?;
+    let new_key = vault_key(&pass, &gkey)?;
+    ps.sealed_pass = Some(store::seal_with_key(&new_key, &pass)?);
+    ps.prev_key = Some(old_key);
+    ps.key = Some(new_key);
+    if !ps.hydrated {
+        ps.hydrate(&engine, scope)?;
+    }
+    // Fresh verifier under the new key — members that were offline
+    // through the rotation probe this one on their next enable.
+    let blob = store::seal_with_key(ps.key.as_ref().unwrap(), VERIFIER)?;
+    engine.append(
+        STORE,
+        scope,
+        &json!({"t":"pwv","v":crate::mw::b64_encode(&blob)}),
+    )?;
+    // Re-seal the fields THIS device last wrote: one set op per
+    // entry carrying its own-stamped fields under the new key.
+    // Only own fields — re-emitting a peer's field at our fresh
+    // stamp would manufacture recency and bury a genuinely newer
+    // write of theirs under LWW (each device republishes its own
+    // authorship, so the image is covered by the survivors).  A
+    // field whose author was just revoked simply ages out under
+    // the one-generation prev-key horizon.
+    let own = engine.device_id();
+    let eids: Vec<String> = ps.shadow.keys().cloned().collect();
+    let mut resealed = 0usize;
+    for eid in eids {
+        let Some(fields) = ps.shadow.get(&eid).cloned() else {
+            continue;
+        };
+        let mut f_blobs = Vec::new();
+        for (fname, val) in &fields {
+            let ours = ps
+                .frontier
+                .get(&(eid.clone(), fname.clone()))
+                .map(|s| s.1 == own)
+                .unwrap_or(false);
+            if ours {
+                f_blobs.push((fname.clone(), json!(ps.seal_field(&eid, fname, val)?)));
+            }
+        }
+        if f_blobs.is_empty() {
+            continue;
+        }
+        let op = engine.append(
+            STORE,
+            scope,
+            &json!({
+                "t":"set","e":eid,
+                "f":f_blobs.iter().map(|(_, b)| b.clone()).collect::<Vec<_>>(),
+                "r":[]
+            }),
+        )?;
+        let s = stamp_of(&op);
+        for (fname, _) in &f_blobs {
+            let val = fields.get(fname).cloned();
+            ps.stage(&eid, fname, val.as_deref(), &s);
+        }
+        resealed += 1;
+    }
+    Ok(json!({ "ok": true, "rewrapped": true, "entries": resealed }))
 }
 
 /// The status read model: is the vault open, does the group carry

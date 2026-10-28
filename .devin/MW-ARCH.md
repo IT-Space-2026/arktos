@@ -863,6 +863,48 @@ a timer.
 | `sync.pair_cancel` | C | `{pair_id}` — best-effort abort |
 | `sync.pair_list` | Q | `{sessions}` — live pairing sessions |
 
+Device management (SYNC09, `syncmeta.rs`) adds the sixth synced
+store, `"syncmeta"` — group-management ops, never user data — and
+the revocation flow.  `device_revoke` un-pairs a device from one
+profile's group: it rotates the scope's group secret
+(`group_secret_rotate` bumps a per-scope generation and keeps the
+displaced key one deep in `gkey_prev:`), ships the new secret to
+the surviving members inside a signed `{"t":"rekey","v":1,"gen",
+"revoked":[…],"wraps":[…]}` op, drops the member's scope binding
+(the whole member row goes when that was its last scope — a
+bare-scoped member would silently become device-global), revokes
+its `member-<id16>` onion client-auth grant, drops its tab
+presence, and re-wraps the password vault when unlocked.  The
+wrap is an ephemeral x25519 DH against the recipient's Ed25519
+device pubkey converted to Montgomery form — recipients derive
+their own x25519 static from the device.key seed
+(SHA-512(seed)[:32]), so no extra key material or transport state
+is needed and the same path works on tor and mem.  Applying a
+rekey installs the secret only when its canonical stamp
+(gen, lamport, device_id, op_id) passes the stored rotation
+marker — concurrent rotations converge on the canonically-later
+one — while `revoked` lists always land: every member drops the
+device's binding and grant, so the cut propagates group-wide, and
+a device finding ITSELF revoked tears the pair down
+symmetrically.  Revoked devices are then refused at the Tor layer
+(deauthorized), and any op they still sign is rejected as
+unknown-signer.  The vault re-wrap re-seals only fields the
+device itself last wrote — republishing a peer's field at a fresh
+stamp would manufacture LWW recency.  Members that were locked
+through a rotation keep reading: the passphrase probe falls back
+to the one-deep previous-generation key.  Honest edges: a
+re-pairing into the same profile after revocation still hits
+`group_secret_install`'s loud conflict (the stale stored secret
+is deliberate proof of old membership — clearing sync state is
+the opt-out), and wraps the revoker did not include (asymmetric
+pairing) leave that member diverged, exactly like a device that
+was never in the group.
+
+| Op | Class | Notes |
+|----|-------|-------|
+| `sync.devices_list` | Q | `{profile?}` → `{device_id, fingerprint, devices:[{device_id, fingerprint{words,emoji}, last_seen_ms, added_ms, onion_addr, device_global}]}` — this profile's paired devices only; `since: 7` |
+| `sync.device_revoke` | C | `{profile?, device_id}` → `{ok, gen, member_removed, grant_revoked, wrapped_for, vault}` — rotate + revoke + report; `since: 7` |
+
 ## 9. Cutover decision table (landed — MB06/MB07)
 
 Rule restated: an `ac_*` caller moves to `ac_mw_dispatch` only where

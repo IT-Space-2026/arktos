@@ -255,6 +255,19 @@ pub(crate) fn peers(root: &str, scope: &str) -> RcResult<Vec<Value>> {
         .collect())
 }
 
+/// SYNC09: drop one device's doc from the scope's in-memory view —
+/// revocation's presence half.  The durable log keeps the doc (a
+/// restart replays it as last-known state), but the live view
+/// stops advertising a device the group no longer trusts.
+pub(crate) fn drop_device(root: &str, scope: &str, device_id: &str) {
+    let mut reg = REG.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(sp) = reg.get_mut(&(root.to_string(), scope.to_string())) {
+        if sp.docs.remove(device_id).is_some() {
+            notify::emit("synctabs");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
