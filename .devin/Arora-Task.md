@@ -422,6 +422,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | CA12 | Code fixes: platform remediations from CA05+CA06 — Windows+macOS issues — details below | done | 0 | All 15 Windows + 12 macOS findings remediated (CODE-AUDIT PLATFORM REMEDIATION section): QSettings IniFormat global, nativeMsg registry+macOS dirs, systemic indexcheckbox.h for every CheckStateRole view, vault rename retry, reserved-stem/NTFS screening C+++Rust, win32 console+manifest+NSIS regApps/firewall/VCREDIST, plist URLTypes+versions+UTI, entitlements, menubar/nav-drag/19px gates, ⌘Y+⌃⌘F, DPR pixmaps; W12/W15 deferred (need Windows host). Verified: make 0 warnings, --quit-after-load rc=0, cargo profiles+dlwpolicy 19/19 |
 | CA13 | Code audit close-out — re-run detectors, full suite green, CODE-AUDIT.md finalized with fixed/deferred dispositions — details below | done | 0 | Detector re-run: dead syms 13->10 (all verified-live), clone groups 127->65, clippy dead_code 0; all deferred B leftovers applied (shim FFI/boilerplate vocab, cookieRecordJson->cookierecord.h, session/tab/sanitize/opensearch/bidi/statusbar/extensionmanager helpers, main.cpp smokeFinish/smokeRespond/smokeServer/smokePollUntil); CODE-AUDIT.md finalized w/ fixed+deferred+wontfix dispositions; make 0 warnings, quit-after-load rc=0, suite reds = documented pre-existing stale legs |
 | THEME01 | Desktop preferences: mobile-style colored-circle category icons — pastel circle + monochrome glyph per settings section — details below | done | 0 | getCircledChrome pastel-circle engine in the icon path; settings nav table maps each category to a mobile icon_circle_* color; Sync icon fixed (network-server resolved nowhere -> document-revert). Verified: 0-warning build, --quit-after-load rc=0, tst_arktosicon 15/15, new circledSidebarIcons PASS on light+forced-dark palettes + PNG dumps; sidebarPanelsListGeometry failure is pre-existing on clean master |
+| CI01 | Fix v1.2 pipeline: 4 platform build failures — macOS IOKit link, flatpak arti-client vendor, rpm tarball name, MSVC probeTicks — details below | done | 0 | 4 legs fixed: IOKit framework link for rustcore consumers (app+tst_acprobe), cargo-sources.json regenerated (371->666 crates incl arti-client tree), pkg-rpm VER derived from spec Version (arktos-1.2.tar.gz produced), windef.h far-macro collision renamed farFrame+#undef guard (CA12 regression). Verified: qmake6+make 0 warnings, --quit-after-load rc=0 offscreen |
 
 ## Task details
 
@@ -5565,3 +5566,68 @@ palettes; check dark-palette contrast and adjust circle alpha or use
 the dark variants if the mobile repo has any. DPR-aware pixmap
 generation (Retina — the M11 class). Verify: screenshot/dump of the
 settings sidebar under both palettes + existing settings tests green.
+
+### CI01
+v1.2 tag a1cf34a3 failed on 4 of 6 package legs (deb24/26 green).
+Fix all four, then the tag rebuilds green:
+
+1. macOS — tst_acprobe link: `Undefined symbols for architecture
+   arm64: _IOServiceAddMatchingNotification/_IOServiceGetMatchingServices/
+   _kIOMasterPortDefault` from libarktos_rustcore.a (sysinfo crate,
+   objc2_io_kit). Add `-framework IOKit` to the mac link for the
+   affected targets (tst_acprobe at minimum; check the app too).
+2. flatpak — `error: no matching package named 'arti-client' found`
+   under --offline cargo: the vendored cargo manifest is stale vs
+   SYNC02's new arti-client dep. Regenerate/update the flatpak cargo
+   vendor manifest (follow how the manifest was produced before).
+3. rpm — `%prep` fails: `arktos-1.2.tar.gz: No such file or
+   directory` — the SOURCES tarball name doesn't match the spec's
+   versioned Source0 after the 1.2 bump. Check where the tarball
+   name is produced (workflow step or spec Source0) and align.
+4. windows — `main.cpp(15808): error C2065: 'probeTicks':
+   undeclared identifier` + C1003 cascade — a probe variable used in
+   code MSVC compiles but declared under a guard MSVC doesn't take
+   (likely the CA04-era startupprobe instrumentation). Declare/gate
+   it consistently.
+
+Each fix must keep the Linux build + suite green; record per-leg
+evidence in the notes. Re-tagging happens after this lands.
+
+Resolution (this run):
+
+1. macOS — sysinfo (an arti-client transitive dep in
+   libarktos_rustcore.a) calls IOKit via objc2_io_kit. Added
+   `-framework IOKit` to the macx LIBS line in src/rustcore/rustcore.pri
+   (the app) and autotests/acprobe/acprobe.pro (tst_acprobe) — the only
+   two targets that link that archive; rustdl's archive has no sysinfo.
+2. flatpak — regenerated flatpak/cargo-sources.json via
+   flatpak/gen-cargo-sources.py from the three committed Cargo.locks:
+   371 -> 666 vendored crates (+302, -7), now covering
+   arti-client-0.47.0's full transitive set. Verified every lock entry
+   is a registry dep (no git/path sources the generator would skip).
+3. rpm — pkg-rpm.sh defaulted ARKTOS_VERSION to 1.0, so `srctar` wrote
+   dist/arktos-1.0.tar.gz while Source0 wanted arktos-1.2.tar.gz.
+   VER now defaults to the spec's `Version:` field (ARKTOS_VERSION
+   remains an explicit override). Verified: `./.devin/pkg-rpm.sh
+   srctar` produces dist/arktos-1.2.tar.gz with an arktos-1.2/ top
+   dir, matching Source0 + %setup.
+4. windows — real root cause was NOT a gating mismatch: CA12 added
+   `#include <qt_windows.h>` to main.cpp's TU (Q_OS_WIN), and windef.h
+   predefines `far`/`near` as empty macros. The extension-host smoke
+   declares `const QJsonObject far` at line ~15709 — MSVC expands it
+   to `const QJsonObject = ...` (syntax error), the error-recovery
+   desync drops the enclosing scope, and every later local reports
+   C2065 — `probeTicks` at 15808 was the first visible casualty before
+   C1003 capped the flood. Timeline confirms: windows leg green on
+   eea4860f (CA10, no windows.h include), first red on 2f57f6aa
+   (CA12, include added). Renamed the variable to farFrame and added
+   `#undef far`/`near`/`small` after the include as a guard. Other
+   windows.h TUs (browserapplication, profilemenuactions,
+   singleapplication) audited — no far/near/small/interface
+   identifier collisions.
+
+Verified: clean qmake6+make, 0 warnings; ./arktos --quit-after-load
+rc=0 offscreen (about:blank loadFinished). Note: job logs require
+repo-admin so the windows diagnosis is inferred from the CA12 diff +
+macro semantics, not the raw cl output — the `far` collision is a
+guaranteed MSVC compile error in that TU regardless.

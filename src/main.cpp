@@ -242,6 +242,11 @@
 
 #if defined(Q_OS_WIN)
 #include <qt_windows.h>
+// windef.h predefines far/near (and small via rpcndr.h) as empty
+// macros — they silently eat same-named identifiers in this TU.
+#undef far
+#undef near
+#undef small
 #endif
 
 #if defined(ARKTOS_ADBLOCK_RUST)
@@ -15706,9 +15711,9 @@ int main(int argc, char **argv)
                     check(sub.value(QLatin1String("le")).isNull(),
                           "frameId sendMessage response path "
                           "returns without lastError");
-                    const QJsonObject far =
+                    const QJsonObject farFrame =
                         o.value(QLatin1String("far")).toObject();
-                    check(!far.value(QLatin1String("le"))
+                    check(!farFrame.value(QLatin1String("le"))
                               .toString().isEmpty(),
                           "out-of-tree frameId answers a typed "
                           "error");

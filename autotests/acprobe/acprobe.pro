@@ -45,7 +45,9 @@ rustcore:!no-rust {
     LIBS += $$RUSTCORE_LIB
     unix: LIBS += -ldl -lpthread -lm
     win32: LIBS += -ladvapi32 -lbcrypt -lntdll -luserenv -lws2_32
-    macx: LIBS += -framework Security -framework CoreFoundation
+    # IOKit: same sysinfo/objc2_io_kit surface as rustcore.pri —
+    # tst_acprobe links the archive directly.
+    macx: LIBS += -framework Security -framework CoreFoundation -framework IOKit
 } else {
     SOURCES += acprobe_norust.c
 }

@@ -24,6 +24,15 @@ Theme (THEME01):
 - Preferences sidebar categories render as pastel-circle icons
   (Arktos-Mobile style): 16-color palette, existing glyphs centered,
   light and dark palette safe, Retina-aware pixmaps.
+Packaging fixes (CI01):
+- macOS: link IOKit for rustcore consumers (sysinfo dep) — app +
+  tst_acprobe.
+- Flatpak: vendored crate manifest regenerated for the new
+  arti-client dependency tree (offline build was unresolvable).
+- RPM: source tarball version derives from the spec's Version field
+  — %prep no longer looks for a stale tarball name.
+- Windows: fix MSVC build — a `far` variable collided with windef.h's
+  macro after qt_windows.h was added; renamed and guarded.
 
 1.1 — Extension runtime + serverless sync + macOS polish
 Extension runtime (BW01-BW13, hosted chrome.* over QtWebEngine):

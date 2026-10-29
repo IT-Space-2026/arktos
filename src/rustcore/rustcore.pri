@@ -66,5 +66,7 @@ rustcore:!no-rust {
     LIBS += $$RUSTCORE_LIB
     unix: LIBS += -ldl -lpthread -lm
     win32: LIBS += -ladvapi32 -lbcrypt -lntdll -luserenv -lws2_32
-    macx: LIBS += -framework Security -framework CoreFoundation
+    # IOKit: sysinfo (arti-client's metrics dep) pulls objc2_io_kit —
+    # _IOService*/_kIOMasterPortDefault are unresolved without it.
+    macx: LIBS += -framework Security -framework CoreFoundation -framework IOKit
 }

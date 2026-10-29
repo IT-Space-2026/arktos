@@ -33,7 +33,8 @@
 # the local verification is the spec+stage legs; the binary rpm build
 # is verified via the container path.
 #
-# Env: QTDIR, ARKTOS_PKG_JOBS (default 2), ARKTOS_VERSION (default 1.0),
+# Env: QTDIR, ARKTOS_PKG_JOBS (default 2), ARKTOS_VERSION (default: the
+#      spec's Version field),
 #      ARKTOS_QMAKE_CONFIG, ARKTOS_PKG_KEEP=1.
 
 set -euo pipefail
@@ -41,9 +42,13 @@ set -euo pipefail
 SRCROOT="$(cd "$(dirname "$0")/.." && pwd)"
 QTDIR="${QTDIR:-$HOME/Qt/6.12.0/gcc_64}"
 JOBS="${ARKTOS_PKG_JOBS:-2}"
-VER="${ARKTOS_VERSION:-1.0}"
 PKG=arktos
 SPEC="$SRCROOT/rpm/arktos.spec"
+# The source tarball name MUST equal Source0 (%{name}-%{version}.tar.gz),
+# so the default comes from the spec itself — a stale fallback here is
+# what produced `arktos-1.2.tar.gz: No such file or directory` in %prep
+# on the v1.2 tag. ARKTOS_VERSION stays an explicit override.
+VER="${ARKTOS_VERSION:-$(awk '/^Version:[[:space:]]/{print $2; exit}' "$SPEC")}"
 BUILDROOT="$SRCROOT/rpm/buildroot"
 DIST="$SRCROOT/dist"
 LIBDIR=usr/lib/arktos   # bundle payload home inside the package
