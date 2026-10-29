@@ -479,7 +479,8 @@ jobs:
           # ULFO = lzfse (macOS 10.11+): ~10-15% smaller than UDZO zlib
           # on binary payloads.  The floor is QtWebEngineCore (~300MB
           # of Chromium) — compression can't shrink the engine itself.
-          hdiutil create -volname "Arktos" -srcfolder dmg-root -ov -format ULFO Arktos.dmg
+          VERSION=${GITHUB_REF_NAME#v}
+          hdiutil create -volname "Arktos" -srcfolder dmg-root -ov -format ULFO "Arktos-${VERSION}.dmg"
 
       - uses: actions/upload-artifact@v7
         with:

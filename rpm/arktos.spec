@@ -45,7 +45,7 @@
 %global debug_package %{nil}
 
 Name:           arktos
-Version:        1.0
+Version:        1.1
 # openSUSE convention: Release 0, the build service increments it.
 Release:        0
 Summary:        Experimental Qt 6 / QtWebEngine web browser
@@ -212,6 +212,10 @@ rm -rf "%{buildroot}"
 %license /usr/share/doc/arktos/LICENSE.GPL3
 
 %changelog
+* Wed Oct 28 2026 Arktos Developers <devin@cognition.ai>
+- Arktos 1.1: hosted MV3 extension runtime (Bitwarden verified),
+  serverless profile sync (Tor onion + LAN, CRDT stores), macOS UI
+  and crash fixes.
 * Sat Oct 17 2026 Arktos Developers <devin@cognition.ai>
 - Rebrand to Arktos 1.0 (arktos-browser.com): binary, install paths,
   desktop file, icons and user data roots renamed; existing Arora

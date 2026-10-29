@@ -1,3 +1,33 @@
+1.1 — Extension runtime + serverless sync + macOS polish
+Extension runtime (BW01-BW13, hosted chrome.* over QtWebEngine):
+- Full MV3 hosting: service worker, action popup, content scripts.
+- storage.local/session/managed with persistence, quota, onChanged.
+- Port messaging (connect/postMessage/disconnect), frame-routed
+  tabs.sendMessage, offscreen documents, clipboard.
+- nativeMessaging: real Chrome-layout host manifests, spawned hosts,
+  uint32-LE JSON framing, typed error strings.
+- Real permissions surface; Bitwarden 2026.9.3 verified end-to-end -
+  install, unlock, autofill. Honest gaps documented
+  (webRequestAuthProvider, FIDO2, webRequest-blocking family).
+Serverless sync (SYNC01-SYNC11, no central server):
+- Per-profile device identity (Ed25519) + sync store + op-log tailing.
+- Embedded Arti v3 onion service transport with authorized-client
+  gating; LAN fast path (mDNS + QUIC) behind the same transport seam.
+- Pairing over Noise_XX with fingerprint verification.
+- CRDT replication: bookmarks (OR-Set), history (union), open-tabs
+  presence, settings (LWW + device-local exclusions), passwords
+  (opt-in, ciphertext-only ops).
+- Device management: paired-device list, unpair, group-key rotation.
+macOS (MAC02-MAC17):
+- Quit crash fixed; extension popup renders, sizes to content and
+  stays anchor-locked; settings/proxy checkboxes; urlbar completer
+  follows the bar; profile manager button column; Tor window tab
+  button and start-page background; bundled extensions ship inside
+  the .app and lost installs retry.
+CEF spike concluded (CS01-CS10): full MV3 capability verified on all
+CEF runtime shapes for one ~850-line graft; verdict recorded in
+.devin/CEF-PATCHED-VERDICT.md - stay on the hosted runtime.
+
 1.0 — Arktos: first release
 - Rebranded the project from Arora to Arktos (BRAND01): product name,
   website (https://arktos-browser.com) and repository
