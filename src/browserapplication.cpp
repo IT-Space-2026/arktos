@@ -1065,6 +1065,39 @@ static bool vaultUnlockForRestore(const QString &persona,
     return false;
 }
 
+// The per-slot window resolution both restore readers share —
+// manifest walk and legacy QSettings blob alike: resolve the slot's
+// persona (empty reads "default", never the ambient persona), reuse
+// the pristine launch window when it already runs that persona, else
+// mint a persona window after the VSEC01 unlock prompt and retire
+// the placeholder.  Returns nullptr when the slot must be skipped.
+static BrowserMainWindow *windowForSessionSlot(
+    BrowserApplication *app, const QString &rawPersona, bool firstSlot,
+    QSet<QString> *declinedUnlock)
+{
+    const QString persona = normalizedWindowProfileId(
+        rawPersona.isEmpty() ? QStringLiteral("default")
+                             : rawPersona);
+    BrowserMainWindow *preExisting =
+        (firstSlot && !app->mainWindows().isEmpty())
+        ? app->mainWindow() : nullptr;
+    if (preExisting && preExisting->profileId() == persona)
+        return preExisting;
+    // VSEC01: a sealed persona unlocks on request (one prompt each)
+    // or the window is skipped.
+    if (!vaultUnlockForRestore(persona, declinedUnlock, preExisting))
+        return nullptr;
+    BrowserMainWindow *newWindow = app->newMainWindow(persona);
+    if (!newWindow)
+        return nullptr;
+    // The launch placeholder stays a pristine blank — close it so a
+    // non-default session doesn't leave a stray default window
+    // behind.
+    if (preExisting && isPristineSessionWindow(preExisting))
+        preExisting->close();
+    return newWindow;
+}
+
 #ifdef ARKTOS_RUSTCORE
 // RC13: the session store is per-persona — profiles/<id>/session.dat
 // holds only that persona's windows, so an engine swap, a deleted
@@ -1538,31 +1571,10 @@ bool BrowserApplication::restoreLastSession()
                 // honest reading).
                 const QString rawPersona =
                     win.value(QLatin1String("profile")).toString();
-                const QString persona = normalizedWindowProfileId(
-                    rawPersona.isEmpty() ? QStringLiteral("default")
-                                         : rawPersona);
-                BrowserMainWindow *preExisting =
-                    (i == 0 && m_mainWindows.count() >= 1)
-                    ? mainWindow() : nullptr;
-                BrowserMainWindow *newWindow = nullptr;
-                if (preExisting && preExisting->profileId() == persona) {
-                    newWindow = preExisting;
-                } else {
-                    // VSEC01: a sealed persona unlocks on request
-                    // (one prompt each) or the window is skipped.
-                    if (!vaultUnlockForRestore(
-                            persona, &declinedUnlock, preExisting))
-                        continue;
-                    newWindow = newMainWindow(persona);
-                    if (!newWindow)
-                        continue;
-                    // The launch placeholder stays a pristine blank —
-                    // close it so a non-default session doesn't leave a
-                    // stray default window behind.
-                    if (preExisting
-                            && isPristineSessionWindow(preExisting))
-                        preExisting->close();
-                }
+                BrowserMainWindow *newWindow = windowForSessionSlot(
+                    this, rawPersona, i == 0, &declinedUnlock);
+                if (!newWindow)
+                    continue;
                 // The shell blob carries no tabs (saveState(false));
                 // the structured record set restores them.
                 newWindow->restoreState(QByteArray::fromBase64(
@@ -1626,27 +1638,10 @@ bool BrowserApplication::restoreLastSession()
         // A v2 blob (or a truncated v3 tail) leaves the id empty —
         // restore on "default", never the ambient persona.
         const QString rawPersona = windowProfiles.at(i);
-        const QString persona = normalizedWindowProfileId(
-            rawPersona.isEmpty() ? QStringLiteral("default")
-                                 : rawPersona);
-        BrowserMainWindow *preExisting =
-            (i == 0 && m_mainWindows.count() >= 1)
-            ? mainWindow() : nullptr;
-        BrowserMainWindow *newWindow = nullptr;
-        if (preExisting && preExisting->profileId() == persona) {
-            newWindow = preExisting;
-        } else {
-            // VSEC01: sealed personas get one unlock prompt each; a
-            // decline or a refused window skips that manifest slot.
-            if (!vaultUnlockForRestore(
-                    persona, &declinedUnlock, preExisting))
-                continue;
-            newWindow = newMainWindow(persona);
-            if (!newWindow)
-                continue;
-            if (preExisting && isPristineSessionWindow(preExisting))
-                preExisting->close();
-        }
+        BrowserMainWindow *newWindow = windowForSessionSlot(
+            this, rawPersona, i == 0, &declinedUnlock);
+        if (!newWindow)
+            continue;
         newWindow->restoreState(windows.at(i));
     }
     return true;

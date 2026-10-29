@@ -420,7 +420,8 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | CA10 | Code fixes: memory-leak remediations from CA03 — details below | done | 0 | CA03 leak fixes applied: L1 cached m_offTheRecord (settings-smoke rc 139->0), L2 dying-window gate on identity key, L3 ctx member dies before child bars, + mainWindows() downcast via ~BMW removeMainWindow; ASan/UBSan legs all rc=0, 0 runtime errors, 0 our-code LSan blocks pre-teardown |
 | CA11 | Code fixes: performance remediations from CA04 — top findings only, measured — details below | done | 1 | CA04 top fixes applied+measured: P1 adblock rebuild coalescing+metadata split (leg rebuilds 11/13/12->3/5/3, ~750ms/download-pair -> 1 pass), P2 DNR token+domain index (9.78ms->2.2-2.6us/eval ~4000x via new --dnr-bench), P3 whitelist in snapshot (2 FFI->0/req), P4 policy memoized per generation (1->0 envelopes/signal), P5 ctor marks, P6 shared /proc sweep, P7 url-membership hash, P9 conditional settings write; P8 deferred; check-warnings PASS, quit-after-load rc=0, touched tests all pass |
 | CA12 | Code fixes: platform remediations from CA05+CA06 — Windows+macOS issues — details below | done | 0 | All 15 Windows + 12 macOS findings remediated (CODE-AUDIT PLATFORM REMEDIATION section): QSettings IniFormat global, nativeMsg registry+macOS dirs, systemic indexcheckbox.h for every CheckStateRole view, vault rename retry, reserved-stem/NTFS screening C+++Rust, win32 console+manifest+NSIS regApps/firewall/VCREDIST, plist URLTypes+versions+UTI, entitlements, menubar/nav-drag/19px gates, ⌘Y+⌃⌘F, DPR pixmaps; W12/W15 deferred (need Windows host). Verified: make 0 warnings, --quit-after-load rc=0, cargo profiles+dlwpolicy 19/19 |
-| CA13 | Code audit close-out — re-run detectors, full suite green, CODE-AUDIT.md finalized with fixed/deferred dispositions — details below | pending | 0 | needs:task:CA09,CA10,CA11,CA12 |
+| CA13 | Code audit close-out — re-run detectors, full suite green, CODE-AUDIT.md finalized with fixed/deferred dispositions — details below | done | 0 | Detector re-run: dead syms 13->10 (all verified-live), clone groups 127->65, clippy dead_code 0; all deferred B leftovers applied (shim FFI/boilerplate vocab, cookieRecordJson->cookierecord.h, session/tab/sanitize/opensearch/bidi/statusbar/extensionmanager helpers, main.cpp smokeFinish/smokeRespond/smokeServer/smokePollUntil); CODE-AUDIT.md finalized w/ fixed+deferred+wontfix dispositions; make 0 warnings, quit-after-load rc=0, suite reds = documented pre-existing stale legs |
+| THEME01 | Desktop preferences: mobile-style colored-circle category icons — pastel circle + monochrome glyph per settings section — details below | pending | 0 | needs:task:CA13 — port the Arktos-Mobile settings icon theme (36dp pastel circle + inset glyph) to the desktop SettingsDialog category sidebar |
 
 ## Task details
 
@@ -5501,3 +5502,66 @@ Verified: clean qmake6+make 0 warnings, ./arktos --quit-after-load exit 0 offscr
 Close-out: re-run the CA01 detectors (dead/dup counts should drop),
 full suite + make green, finalize CODE-AUDIT.md — every finding gets
 a fixed/deferred/wontfix disposition with a reason.
+
+
+Applied the CA08-deferred B leftovers + re-ran the CA01 detectors:
+
+- Re-run: dead-symbol scan 13->10 candidates (all D9 verified-live),
+  clone groups 127->65, clippy dead_code 0, 2 NEW dead includes from
+  the CA08/CA12 refactors removed (autosaver/tabwidget browserpaths.h).
+- New shared homes/helpers: network/cookiejar/cookierecord.h
+  (cookieRecordJson — merged cookiejar.cpp rustCookieJson +
+  shim copy), extensionmanager emitUnsupported/emitNotLoaded (8 sites),
+  historycompleter lightFontForColumn, readersanitizer keptHtmlTags
+  (unreachable br/img exclusion entries dropped), bidipanel
+  sendDomPropsFallback, statusbarwidgets engineChildProcs,
+  opensearchmanager oseEngineRecord+restoreEnginePrefs,
+  opensearchwriter writeUrlElement, browserapplication
+  windowForSessionSlot, tabwidget sessionPages +
+  orderedWebViews-on-orderedSessionPages, extensionshimbackend:
+  cookiesHandle/historyHandle/ffiTake (5 FFI prologue/parse sites),
+  urlSchemeToken, windowIdQueryMatch, tabIdsArg, windowTargetFor,
+  cookieTarget, findExtensionRecord, addUniqueHostPerm/
+  appendManifestHostPerms, groupTarget lambda, bmMutableNode (3 sites);
+  main.cpp smokeFinish/smokeRespond/smokeServer/smokePollUntil.
+- Kept variants documented in CODE-AUDIT.md CA13 CLOSE-OUT: ~25
+  main.cpp leg-variant groups, C-class config lanes/interface
+  conformance, managementWarnings QStringList collector,
+  profileregistry<->browserpaths 10-line pair (deferred — needs a
+  deliberate shared home).
+- Verified: qmake6+make 0 warnings (rust lane), ./arktos
+  --quit-after-load exit 0 offscreen, full suite run — reds are the
+  documented pre-existing stale legs (tst_Arktosstyle x2 same as CA07;
+  tst_ExtensionManager extensionShimBackend/runtimeLifecycle legs
+  verified stale at HEAD — invokePermissions/runtime code untouched).
+
+### THEME01
+Port the Arktos-Mobile settings icon theme to the desktop preferences
+sidebar (SettingsDialog category list — currently monochrome icons
+seen in user screenshots: General, Search, Appearance, Tab Settings,
+Proxy, Privacy, AutoFill, Containers, Downloads, Performance,
+Advanced, Extensions, + the new Sync section).
+
+Mobile spec (from Arktos-Mobile res/drawable/ic_settings_*_layers.xml
++ colors.xml): each category icon = a 36dp pastel CIRCLE with the
+existing monochrome vector glyph centered inside (6dp inset = glyph
+occupies inner 24dp). Circle palette:
+  #D7E5F8 blue   #F8D7DF pink   #F8E0D7 peach  #D7F8E7 mint
+  #F8F3D7 yellow #F7E9D5 lt-org #ffc8b9 salmon #DAD7F8 lavender
+  #EDD7F8 purple #ffddb0 amber  #ffe2b6 lt-amb #b2ebf2 teal
+  #D7F8F8 cyan   #E8E8E8 grey   #f2bcf8 lilac  #e1f5fe ice
+
+Suggested desktop mapping (reuse the icon the category already has,
+just wrap in the circle): General=blue, Search=cyan, Appearance=peach,
+Tab Settings=lt-amber, Proxy=teal, Privacy=mint, AutoFill=pink,
+Containers=purple, Downloads=amber, Performance=lilac, Advanced=yellow,
+Extensions=lavender, Sync=ice.
+
+Implement as a composite in the existing icon path (ChromeIconEngine
+or a small circle+glyph pixmap builder used by the settings model) —
+NOT a second icon set, the same glyph drawn over a filled circle.
+Keep it theme-aware: pastel circles work on both light and dark Qt
+palettes; check dark-palette contrast and adjust circle alpha or use
+the dark variants if the mobile repo has any. DPR-aware pixmap
+generation (Retina — the M11 class). Verify: screenshot/dump of the
+settings sidebar under both palettes + existing settings tests green.

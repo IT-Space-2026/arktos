@@ -674,6 +674,74 @@ static quint16 startTelemetryCapture()
     return port;
 }
 
+// ---- shared --*-smoke fixture vocabulary (CA13) -------------------
+//
+// The smoke legs used to carry per-leg copies of these shapes — the
+// first-write-wins PASS/FAIL reporter, the canned HTTP reply, the
+// loopback QTcpServer prologue, and the 50 ms pollUntil skeleton.
+// They are test-only plumbing; keep them in one place.
+
+// The leg's single-shot reporter: first call wins, prints
+// "<leg>: PASS|FAIL <why>" and exits with the matching status.
+static std::function<void(bool, const QString &)>
+smokeFinish(BrowserApplication &application, const char *leg,
+            const std::shared_ptr<bool> &done)
+{
+    return [&application, done, leg](bool pass, const QString &why) {
+        if (*done)
+            return;
+        *done = true;
+        qInfo().noquote() << leg << (pass ? "PASS" : "FAIL") << why;
+        application.exit(pass ? 0 : 1);
+    };
+}
+
+// The canned one-shot HTTP reply every static fixture writes.
+static void smokeRespond(QTcpSocket *client, const QByteArray &mime,
+                         const QByteArray &body)
+{
+    client->write("HTTP/1.1 200 OK\r\nContent-Type: " + mime
+                  + "\r\nContent-Length: "
+                  + QByteArray::number(body.size())
+                  + "\r\nConnection: close\r\n\r\n" + body);
+    client->disconnectFromHost();
+}
+
+// The fixture-server prologue: a QTcpServer parented to the app,
+// bound to an ephemeral loopback port — nullptr after reporting
+// through `finish` on listen failure.
+static QTcpServer *smokeServer(
+    BrowserApplication &application,
+    const std::function<void(bool, const QString &)> &finish)
+{
+    QTcpServer *server = new QTcpServer(&application);
+    if (!server->listen(QHostAddress::LocalHost)) {
+        finish(false, QStringLiteral("listen: %1")
+                          .arg(server->errorString()));
+        return nullptr;
+    }
+    return server;
+}
+
+// The pollUntil skeleton — check the condition every 50 ms; the
+// first of (condition true, maxTicks elapsed) decides the verdict.
+static void smokePollUntil(const std::function<bool()> &condition,
+                           const std::function<void(bool)> &finished,
+                           int maxTicks)
+{
+    auto ticks = std::make_shared<int>(0);
+    QTimer *poll = new QTimer(qApp);
+    QObject::connect(poll, &QTimer::timeout, qApp,
+        [condition, finished, ticks, poll, maxTicks]() {
+        if (condition() || ++*ticks > maxTicks) {
+            poll->stop();
+            poll->deleteLater();
+            finished(condition());
+        }
+    });
+    poll->start(50);
+}
+
 // SAFE01: --httpsonly-smoke's answering proxy.  Chromium points at it
 // via --proxy-server, so http:// requests to the fake .test hosts
 // arrive here in absolute-uri form and CONNECT tunnels arrive for the
@@ -2811,46 +2879,28 @@ static int bidiNetworkSmoke(BrowserApplication &application,
     return 0;
 #else
     auto done = std::make_shared<bool>(false);
-    const auto finish = [&application, done](bool pass,
-                                             const QString &why) {
-        if (*done)
-            return;
-        *done = true;
-        qInfo().noquote() << "bidi-network-smoke:"
-                          << (pass ? "PASS" : "FAIL") << why;
-        application.exit(pass ? 0 : 1);
-    };
+    const auto finish = smokeFinish(application,
+                                    "bidi-network-smoke:", done);
 
     // The fixture page plus typed subresources — Document/Stylesheet/
     // Script/Image/XHR hit different waterfall swatches, and /slow.png
     // stretches the window so the zoomed axis gets exercised too.
-    QTcpServer *server = new QTcpServer(&application);
-    if (!server->listen(QHostAddress::LocalHost)) {
-        finish(false, QStringLiteral("listen: %1")
-                          .arg(server->errorString()));
+    QTcpServer *server = smokeServer(application, finish);
+    if (!server)
         return application.exec();
-    }
     const quint16 port = server->serverPort();
     const QByteArray indexBody = QByteArray(
         "<html><head><link rel=\"stylesheet\" href=\"/style.css\">"
         "<script src=\"/app.js\"></script></head><body>"
         "<img src=\"/img.png\"><img src=\"/slow.png\">"
         "<script>fetch('/api.json')</script></body></html>");
-    const auto respond = [](QTcpSocket *client, const QByteArray &mime,
-                            const QByteArray &body) {
-        client->write("HTTP/1.1 200 OK\r\nContent-Type: " + mime
-                      + "\r\nContent-Length: "
-                      + QByteArray::number(body.size())
-                      + "\r\nConnection: close\r\n\r\n" + body);
-        client->disconnectFromHost();
-    };
     QObject::connect(server, &QTcpServer::newConnection, &application,
-                     [server, indexBody, respond]() {
+                     [server, indexBody]() {
         QTcpSocket *client = server->nextPendingConnection();
         auto header = std::make_shared<QByteArray>();
         auto served = std::make_shared<bool>(false);
         QObject::connect(client, &QTcpSocket::readyRead, client,
-                         [client, header, served, indexBody, respond]() {
+                         [client, header, served, indexBody]() {
             if (*served)
                 return;
             header->append(client->readAll());
@@ -2862,28 +2912,28 @@ static int bidiNetworkSmoke(BrowserApplication &application,
                                         .first().simplified();
             const QByteArray path = line.split(' ').value(1, "/");
             if (path == "/")
-                respond(client, "text/html", indexBody);
+                smokeRespond(client, "text/html", indexBody);
             else if (path == "/style.css")
-                respond(client, "text/css",
+                smokeRespond(client, "text/css",
                         "body{background:#fff;margin:0}");
             else if (path == "/app.js")
-                respond(client, "application/javascript",
+                smokeRespond(client, "application/javascript",
                         "window.__ns=1;");
             else if (path == "/img.png")
-                respond(client, "image/png",
+                smokeRespond(client, "image/png",
                         QByteArray("\x89PNG\r\n\x1a\n", 8)
                         + QByteArray(64, 'p'));
             else if (path == "/api.json")
-                respond(client, "application/json", "{\"ok\":true}");
+                smokeRespond(client, "application/json", "{\"ok\":true}");
             else if (path == "/slow.png") {
                 // A ~900ms straggler so the waterfall window spans
                 // long enough for tick steps and the dense zoom.
-                QTimer::singleShot(900, client, [client, respond]() {
-                    respond(client, "image/png",
+                QTimer::singleShot(900, client, [client]() {
+                    smokeRespond(client, "image/png",
                             QByteArray(64, 's'));
                 });
             } else {
-                respond(client, "text/plain", "nf");
+                smokeRespond(client, "text/plain", "nf");
             }
         });
         QObject::connect(client, &QTcpSocket::disconnected, client,
@@ -3020,22 +3070,12 @@ static int bidiSourcesSmoke(BrowserApplication &application,
     return 0;
 #else
     auto done = std::make_shared<bool>(false);
-    const auto finish = [&application, done](bool pass,
-                                             const QString &why) {
-        if (*done)
-            return;
-        *done = true;
-        qInfo().noquote() << "bidi-sources-smoke:"
-                          << (pass ? "PASS" : "FAIL") << why;
-        application.exit(pass ? 0 : 1);
-    };
+    const auto finish = smokeFinish(application,
+                                    "bidi-sources-smoke:", done);
 
-    QTcpServer *server = new QTcpServer(&application);
-    if (!server->listen(QHostAddress::LocalHost)) {
-        finish(false, QStringLiteral("listen: %1")
-                          .arg(server->errorString()));
+    QTcpServer *server = smokeServer(application, finish);
+    if (!server)
         return application.exec();
-    }
     const quint16 port = server->serverPort();
     // The breakpoint leg relies on line 3 being the counter bump
     // inside tick() — keep it there.
@@ -3051,22 +3091,13 @@ static int bidiSourcesSmoke(BrowserApplication &application,
         "<link rel=\"stylesheet\" href=\"/style.css\">"
         "<script src=\"/app.js\"></script></head>"
         "<body><p>src</p></body></html>");
-    const auto respond = [](QTcpSocket *client, const QByteArray &mime,
-                            const QByteArray &body) {
-        client->write("HTTP/1.1 200 OK\r\nContent-Type: " + mime
-                      + "\r\nContent-Length: "
-                      + QByteArray::number(body.size())
-                      + "\r\nConnection: close\r\n\r\n" + body);
-        client->disconnectFromHost();
-    };
     QObject::connect(server, &QTcpServer::newConnection, &application,
-                     [server, indexBody, jsBody, respond]() {
+                     [server, indexBody, jsBody]() {
         QTcpSocket *client = server->nextPendingConnection();
         auto header = std::make_shared<QByteArray>();
         auto served = std::make_shared<bool>(false);
         QObject::connect(client, &QTcpSocket::readyRead, client,
-                         [client, header, served, indexBody, jsBody,
-                          respond]() {
+                         [client, header, served, indexBody, jsBody]() {
             if (*served)
                 return;
             header->append(client->readAll());
@@ -3078,13 +3109,13 @@ static int bidiSourcesSmoke(BrowserApplication &application,
                                         .first().simplified();
             const QByteArray path = line.split(' ').value(1, "/");
             if (path == "/")
-                respond(client, "text/html", indexBody);
+                smokeRespond(client, "text/html", indexBody);
             else if (path == "/app.js")
-                respond(client, "application/javascript", jsBody);
+                smokeRespond(client, "application/javascript", jsBody);
             else if (path == "/style.css")
-                respond(client, "text/css", "body{margin:0}");
+                smokeRespond(client, "text/css", "body{margin:0}");
             else
-                respond(client, "text/plain", "nf");
+                smokeRespond(client, "text/plain", "nf");
         });
         QObject::connect(client, &QTcpSocket::disconnected, client,
                          &QTcpSocket::deleteLater);
@@ -3277,22 +3308,12 @@ static int bidiPerfMemSmoke(BrowserApplication &application,
     return 0;
 #else
     auto done = std::make_shared<bool>(false);
-    const auto finish = [&application, done](bool pass,
-                                             const QString &why) {
-        if (*done)
-            return;
-        *done = true;
-        qInfo().noquote() << "bidi-perfmem-smoke:"
-                          << (pass ? "PASS" : "FAIL") << why;
-        application.exit(pass ? 0 : 1);
-    };
+    const auto finish = smokeFinish(application,
+                                    "bidi-perfmem-smoke:", done);
 
-    QTcpServer *server = new QTcpServer(&application);
-    if (!server->listen(QHostAddress::LocalHost)) {
-        finish(false, QStringLiteral("listen: %1")
-                          .arg(server->errorString()));
+    QTcpServer *server = smokeServer(application, finish);
+    if (!server)
         return application.exec();
-    }
     const quint16 port = server->serverPort();
     // Named functions doing measurable CPU work plus steady
     // allocation — the profiler needs self time and the heap
@@ -11168,19 +11189,9 @@ int main(int argc, char **argv)
             application.exit(1);
         };
         // Poll a condition until it holds (or ~10s elapse -> done(false)).
-        auto pollUntil = [](std::function<bool()> condition,
-                            std::function<void(bool)> finished) {
-            auto ticks = std::make_shared<int>(0);
-            QTimer *poll = new QTimer(qApp);
-            QObject::connect(poll, &QTimer::timeout, qApp,
-                [condition, finished, ticks, poll]() {
-                if (condition() || ++*ticks > 200) {
-                    poll->stop();
-                    poll->deleteLater();
-                    finished(condition());
-                }
-            });
-            poll->start(50);
+        const auto pollUntil = [](std::function<bool()> condition,
+                                  std::function<void(bool)> finished) {
+            smokePollUntil(condition, finished, 200);
         };
         auto evalJs = [&](const QString &script,
                           std::function<void(const QVariant &)> cb) {
@@ -11599,19 +11610,9 @@ int main(int argc, char **argv)
             qInfo() << "reader-live: FAIL at" << stage;
             application.exit(1);
         };
-        auto pollUntil = [](std::function<bool()> condition,
-                            std::function<void(bool)> finished) {
-            auto ticks = std::make_shared<int>(0);
-            QTimer *poll = new QTimer(qApp);
-            QObject::connect(poll, &QTimer::timeout, qApp,
-                [condition, finished, ticks, poll]() {
-                if (condition() || ++*ticks > 400) {
-                    poll->stop();
-                    poll->deleteLater();
-                    finished(condition());
-                }
-            });
-            poll->start(50);
+        const auto pollUntil = [](std::function<bool()> condition,
+                                  std::function<void(bool)> finished) {
+            smokePollUntil(condition, finished, 400);
         };
         auto overlay = [&]() -> QWidget * {
             return view->findChild<QWidget *>(
@@ -11893,19 +11894,9 @@ int main(int argc, char **argv)
             // delegate wedges Chromium's static teardown.
             std::quick_exit(1);
         };
-        auto pollUntil = [](std::function<bool()> condition,
-                            std::function<void(bool)> finished) {
-            auto ticks = std::make_shared<int>(0);
-            QTimer *poll = new QTimer(qApp);
-            QObject::connect(poll, &QTimer::timeout, qApp,
-                [condition, finished, ticks, poll]() {
-                if (condition() || ++*ticks > 240) {
-                    poll->stop();
-                    poll->deleteLater();
-                    finished(condition());
-                }
-            });
-            poll->start(50);
+        const auto pollUntil = [](std::function<bool()> condition,
+                                  std::function<void(bool)> finished) {
+            smokePollUntil(condition, finished, 240);
         };
         auto evalJs = [&](const QString &script,
                           std::function<void(const QVariant &)> cb) {

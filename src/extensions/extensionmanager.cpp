@@ -718,6 +718,16 @@ QList<ExtensionManager::ExtensionInfo> ExtensionManager::extensions() const
     return list;
 }
 
+void ExtensionManager::emitUnsupported()
+{
+    emit errorOccurred(tr("Extension support is not available in this build of Qt WebEngine."));
+}
+
+void ExtensionManager::emitNotLoaded(const QString &id)
+{
+    emit errorOccurred(tr("Extension %1 is no longer loaded.").arg(id));
+}
+
 QString ExtensionManager::installPath() const
 {
 #if QT_CONFIG(webengine_extensions)
@@ -756,7 +766,7 @@ void ExtensionManager::loadExtension(const QString &path)
         return;
     }
 #endif
-    emit errorOccurred(tr("Extension support is not available in this build of Qt WebEngine."));
+    emitUnsupported();
 }
 
 void ExtensionManager::installExtension(const QString &path)
@@ -778,7 +788,7 @@ void ExtensionManager::installExtension(const QString &path)
         return;
     }
 #endif
-    emit errorOccurred(tr("Extension support is not available in this build of Qt WebEngine."));
+    emitUnsupported();
 }
 
 void ExtensionManager::removeExtension(const QString &id)
@@ -798,11 +808,11 @@ void ExtensionManager::removeExtension(const QString &id)
                 extensions->unloadExtension(info);
             return;
         }
-        emit errorOccurred(tr("Extension %1 is no longer loaded.").arg(id));
+        emitNotLoaded(id);
         return;
     }
 #endif
-    emit errorOccurred(tr("Extension support is not available in this build of Qt WebEngine."));
+    emitUnsupported();
 }
 
 void ExtensionManager::reloadExtension(const QString &id)
@@ -833,11 +843,11 @@ void ExtensionManager::reloadExtension(const QString &id)
             extensions->unloadExtension(info);
             return;
         }
-        emit errorOccurred(tr("Extension %1 is no longer loaded.").arg(id));
+        emitNotLoaded(id);
         return;
     }
 #endif
-    emit errorOccurred(tr("Extension support is not available in this build of Qt WebEngine."));
+    emitUnsupported();
 }
 
 bool ExtensionManager::setUninstallUrl(const QString &id,
@@ -946,11 +956,11 @@ void ExtensionManager::setExtensionEnabled(const QString &id, bool enabled)
             poll->start();
             return;
         }
-        emit errorOccurred(tr("Extension %1 is no longer loaded.").arg(id));
+        emitNotLoaded(id);
         return;
     }
 #endif
-    emit errorOccurred(tr("Extension support is not available in this build of Qt WebEngine."));
+    emitUnsupported();
 }
 
 QString ExtensionManager::bundledExtensionsPath()

@@ -413,16 +413,16 @@ namespace {
 // dies.  GUI thread only.
 QList<qint64> s_enginePids;
 QElapsedTimer s_lastRescan;
-}
 
-void NetIndicator::rescanEnginePids()
-{
-    s_enginePids.clear();
-    s_lastRescan.start();
 #if defined(Q_OS_LINUX)
+// One /proc sweep yielding every direct QtWebEngineProcess child of
+// this process as (pid, cmdline) — rescanEnginePids() picks the
+// network service out of the set, engineIoTotals() reads each
+// child's io counters.
+QList<QPair<qint64, QByteArray>> engineChildProcs()
+{
+    QList<QPair<qint64, QByteArray>> out;
     const qint64 appPid = QCoreApplication::applicationPid();
-    QList<qint64> enginePids;
-    qint64 networkPid = -1;
     const QStringList procs = QDir(QLatin1String("/proc")).entryList(
         QDir::Dirs | QDir::NoDotAndDotDot);
     for (const QString &entry : procs) {
@@ -452,12 +452,27 @@ void NetIndicator::rescanEnginePids()
         const QByteArray cmdline = cmdlineFile.readAll();
         if (!cmdline.contains("QtWebEngineProcess"))
             continue;
-        enginePids.append(pid);
+        out.append({pid, cmdline});
+    }
+    return out;
+}
+#endif
+}
+
+void NetIndicator::rescanEnginePids()
+{
+    s_enginePids.clear();
+    s_lastRescan.start();
+#if defined(Q_OS_LINUX)
+    QList<qint64> enginePids;
+    qint64 networkPid = -1;
+    for (const auto &child : engineChildProcs()) {
+        enginePids.append(child.first);
         // The network service runs as
         // --type=utility --utility-sub-type=network.mojom.NetworkService
-        if (cmdline.contains("--type=utility")
-            && cmdline.contains("network.mojom.NetworkService"))
-            networkPid = pid;
+        if (child.second.contains("--type=utility")
+            && child.second.contains("network.mojom.NetworkService"))
+            networkPid = child.first;
     }
     // The network service alone carries page traffic — prefer it.
     // The fallback sums every engine child, which over-counts with
@@ -474,34 +489,10 @@ bool NetIndicator::engineIoTotals(qint64 *readBytes, qint64 *writeBytes)
 #if defined(Q_OS_LINUX)
     // Standalone scan for tests — the widget itself caches the pid
     // list via rescanEnginePids().
-    qint64 appPid = QCoreApplication::applicationPid();
     bool found = false;
-    const QStringList procs = QDir(QLatin1String("/proc")).entryList(
-        QDir::Dirs | QDir::NoDotAndDotDot);
-    for (const QString &entry : procs) {
-        bool isPid = false;
-        entry.toLongLong(&isPid);
-        if (!isPid)
-            continue;
-        QFile statFile(QLatin1String("/proc/") + entry
-                       + QLatin1String("/stat"));
-        if (!statFile.open(QIODevice::ReadOnly))
-            continue;
-        const QByteArray stat = statFile.readAll();
-        const int paren = stat.lastIndexOf(')');
-        if (paren == -1)
-            continue;
-        const QList<QByteArray> fields =
-            stat.mid(paren + 1).simplified().split(' ');
-        if (fields.count() < 2 || fields.at(1).toLongLong() != appPid)
-            continue;
-        QFile cmdlineFile(QLatin1String("/proc/") + entry
-                          + QLatin1String("/cmdline"));
-        if (!cmdlineFile.open(QIODevice::ReadOnly))
-            continue;
-        if (!cmdlineFile.readAll().contains("QtWebEngineProcess"))
-            continue;
-        QFile ioFile(QLatin1String("/proc/") + entry
+    for (const auto &child : engineChildProcs()) {
+        QFile ioFile(QLatin1String("/proc/")
+                     + QString::number(child.first)
                      + QLatin1String("/io"));
         if (!ioFile.open(QIODevice::ReadOnly))
             continue;

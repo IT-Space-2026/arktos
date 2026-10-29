@@ -70,7 +70,6 @@
 #include <qdebug.h>
 
 #if defined(ARKTOS_RUSTCORE)
-#include "browserpaths.h"
 #include "rustcorebridge.h"
 
 #include <rustcore.h>

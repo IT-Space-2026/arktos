@@ -296,7 +296,11 @@ bool isVoidKeep(const QString &name)
 // data: long after the attribute pass ran, and a reader article has
 // no business animating anything.  They fall to transparent like
 // every other unlisted element.
-bool isKeptElement(const QString &name)
+// The kept HTML flow/phrasing tags — isForeignElement() excludes
+// exactly this set (kept minus HTML leaves the SVG/MathML
+// vocabulary), so the table lives once here rather than as a second
+// driftable copy.
+static const QSet<QString> &keptHtmlTags()
 {
     static const QSet<QString> tags = {
         // flow / phrasing
@@ -338,54 +342,65 @@ bool isKeptElement(const QString &name)
         QStringLiteral("tt"), QStringLiteral("u"),
         QStringLiteral("ul"), QStringLiteral("var"),
         QStringLiteral("video"),
-        // svg
-        QStringLiteral("svg"), QStringLiteral("circle"),
-        QStringLiteral("clippath"), QStringLiteral("defs"),
-        QStringLiteral("desc"), QStringLiteral("ellipse"),
-        QStringLiteral("feblend"), QStringLiteral("fecolormatrix"),
-        QStringLiteral("fecomponenttransfer"),
-        QStringLiteral("fecomposite"), QStringLiteral("feconvolvematrix"),
-        QStringLiteral("fediffuselighting"),
-        QStringLiteral("fedisplacementmap"),
-        QStringLiteral("fedistantlight"), QStringLiteral("fedropshadow"),
-        QStringLiteral("feflood"), QStringLiteral("fefunca"),
-        QStringLiteral("fefuncb"), QStringLiteral("fefuncg"),
-        QStringLiteral("fefuncr"), QStringLiteral("fegaussianblur"),
-        QStringLiteral("feimage"), QStringLiteral("femerge"),
-        QStringLiteral("femergenode"), QStringLiteral("femorphology"),
-        QStringLiteral("feoffset"), QStringLiteral("fepointlight"),
-        QStringLiteral("fespecularlighting"),
-        QStringLiteral("fespotlight"), QStringLiteral("fetile"),
-        QStringLiteral("feturbulence"), QStringLiteral("filter"),
-        QStringLiteral("g"), QStringLiteral("line"),
-        QStringLiteral("lineargradient"), QStringLiteral("marker"),
-        QStringLiteral("mask"),
-        QStringLiteral("path"), QStringLiteral("pattern"),
-        QStringLiteral("polygon"), QStringLiteral("polyline"),
-        QStringLiteral("radialgradient"), QStringLiteral("rect"),
-        QStringLiteral("stop"),
-        QStringLiteral("switch"), QStringLiteral("symbol"),
-        QStringLiteral("text"), QStringLiteral("textpath"),
-        QStringLiteral("tspan"), QStringLiteral("use"),
-        QStringLiteral("view"),
-        // mathml
-        QStringLiteral("math"), QStringLiteral("mi"),
-        QStringLiteral("mo"), QStringLiteral("mn"),
-        QStringLiteral("ms"), QStringLiteral("mtext"),
-        QStringLiteral("mrow"), QStringLiteral("mfrac"),
-        QStringLiteral("msqrt"), QStringLiteral("mroot"),
-        QStringLiteral("msub"), QStringLiteral("msup"),
-        QStringLiteral("msubsup"), QStringLiteral("munder"),
-        QStringLiteral("mover"), QStringLiteral("munderover"),
-        QStringLiteral("mtable"), QStringLiteral("mtr"),
-        QStringLiteral("mtd"), QStringLiteral("mlabeledtr"),
-        QStringLiteral("mspace"), QStringLiteral("mpadded"),
-        QStringLiteral("mphantom"), QStringLiteral("menclose"),
-        QStringLiteral("merror"), QStringLiteral("mmultiscripts"),
-        QStringLiteral("mprescripts"), QStringLiteral("mstyle"),
-        QStringLiteral("semantics"), QStringLiteral("annotation"),
-        QStringLiteral("maligngroup"), QStringLiteral("malignmark"),
     };
+    return tags;
+}
+
+bool isKeptElement(const QString &name)
+{
+    static const QSet<QString> tags = [] {
+        QSet<QString> set = keptHtmlTags();
+        set += {
+            // svg
+            QStringLiteral("svg"), QStringLiteral("circle"),
+            QStringLiteral("clippath"), QStringLiteral("defs"),
+            QStringLiteral("desc"), QStringLiteral("ellipse"),
+            QStringLiteral("feblend"), QStringLiteral("fecolormatrix"),
+            QStringLiteral("fecomponenttransfer"),
+            QStringLiteral("fecomposite"), QStringLiteral("feconvolvematrix"),
+            QStringLiteral("fediffuselighting"),
+            QStringLiteral("fedisplacementmap"),
+            QStringLiteral("fedistantlight"), QStringLiteral("fedropshadow"),
+            QStringLiteral("feflood"), QStringLiteral("fefunca"),
+            QStringLiteral("fefuncb"), QStringLiteral("fefuncg"),
+            QStringLiteral("fefuncr"), QStringLiteral("fegaussianblur"),
+            QStringLiteral("feimage"), QStringLiteral("femerge"),
+            QStringLiteral("femergenode"), QStringLiteral("femorphology"),
+            QStringLiteral("feoffset"), QStringLiteral("fepointlight"),
+            QStringLiteral("fespecularlighting"),
+            QStringLiteral("fespotlight"), QStringLiteral("fetile"),
+            QStringLiteral("feturbulence"), QStringLiteral("filter"),
+            QStringLiteral("g"), QStringLiteral("line"),
+            QStringLiteral("lineargradient"), QStringLiteral("marker"),
+            QStringLiteral("mask"),
+            QStringLiteral("path"), QStringLiteral("pattern"),
+            QStringLiteral("polygon"), QStringLiteral("polyline"),
+            QStringLiteral("radialgradient"), QStringLiteral("rect"),
+            QStringLiteral("stop"),
+            QStringLiteral("switch"), QStringLiteral("symbol"),
+            QStringLiteral("text"), QStringLiteral("textpath"),
+            QStringLiteral("tspan"), QStringLiteral("use"),
+            QStringLiteral("view"),
+            // mathml
+            QStringLiteral("math"), QStringLiteral("mi"),
+            QStringLiteral("mo"), QStringLiteral("mn"),
+            QStringLiteral("ms"), QStringLiteral("mtext"),
+            QStringLiteral("mrow"), QStringLiteral("mfrac"),
+            QStringLiteral("msqrt"), QStringLiteral("mroot"),
+            QStringLiteral("msub"), QStringLiteral("msup"),
+            QStringLiteral("msubsup"), QStringLiteral("munder"),
+            QStringLiteral("mover"), QStringLiteral("munderover"),
+            QStringLiteral("mtable"), QStringLiteral("mtr"),
+            QStringLiteral("mtd"), QStringLiteral("mlabeledtr"),
+            QStringLiteral("mspace"), QStringLiteral("mpadded"),
+            QStringLiteral("mphantom"), QStringLiteral("menclose"),
+            QStringLiteral("merror"), QStringLiteral("mmultiscripts"),
+            QStringLiteral("mprescripts"), QStringLiteral("mstyle"),
+            QStringLiteral("semantics"), QStringLiteral("annotation"),
+            QStringLiteral("maligngroup"), QStringLiteral("malignmark"),
+        };
+        return set;
+    }();
     return tags.contains(name);
 }
 
@@ -402,51 +417,10 @@ bool isMediaElement(const QString &name)
 // honored, unlike HTML where it is ignored.
 bool isForeignElement(const QString &name)
 {
-    static const QSet<QString> html = {
-        QStringLiteral("a"), QStringLiteral("abbr"),
-        QStringLiteral("address"), QStringLiteral("article"),
-        QStringLiteral("aside"), QStringLiteral("audio"),
-        QStringLiteral("b"), QStringLiteral("bdi"),
-        QStringLiteral("bdo"), QStringLiteral("blockquote"),
-        QStringLiteral("caption"), QStringLiteral("center"),
-        QStringLiteral("cite"), QStringLiteral("code"),
-        QStringLiteral("colgroup"), QStringLiteral("data"),
-        QStringLiteral("dd"), QStringLiteral("del"),
-        QStringLiteral("details"), QStringLiteral("dfn"),
-        QStringLiteral("div"), QStringLiteral("dl"),
-        QStringLiteral("dt"), QStringLiteral("em"),
-        QStringLiteral("figcaption"), QStringLiteral("figure"),
-        QStringLiteral("font"), QStringLiteral("footer"),
-        QStringLiteral("h1"), QStringLiteral("h2"),
-        QStringLiteral("h3"), QStringLiteral("h4"),
-        QStringLiteral("h5"), QStringLiteral("h6"),
-        QStringLiteral("header"), QStringLiteral("hgroup"),
-        QStringLiteral("i"), QStringLiteral("ins"),
-        QStringLiteral("kbd"), QStringLiteral("li"),
-        QStringLiteral("main"), QStringLiteral("map"),
-        QStringLiteral("mark"), QStringLiteral("nav"),
-        QStringLiteral("ol"), QStringLiteral("p"),
-        QStringLiteral("picture"), QStringLiteral("pre"),
-        QStringLiteral("q"), QStringLiteral("rp"),
-        QStringLiteral("rt"), QStringLiteral("ruby"),
-        QStringLiteral("s"), QStringLiteral("samp"),
-        QStringLiteral("section"), QStringLiteral("small"),
-        QStringLiteral("span"), QStringLiteral("strike"),
-        QStringLiteral("strong"), QStringLiteral("sub"),
-        QStringLiteral("summary"), QStringLiteral("sup"),
-        QStringLiteral("table"), QStringLiteral("tbody"),
-        QStringLiteral("td"), QStringLiteral("tfoot"),
-        QStringLiteral("th"), QStringLiteral("thead"),
-        QStringLiteral("time"), QStringLiteral("tr"),
-        QStringLiteral("tt"), QStringLiteral("u"),
-        QStringLiteral("ul"), QStringLiteral("var"),
-        QStringLiteral("video"), QStringLiteral("br"),
-        QStringLiteral("hr"), QStringLiteral("img"),
-        QStringLiteral("wbr"), QStringLiteral("col"),
-        QStringLiteral("source"), QStringLiteral("track"),
-        QStringLiteral("area"),
-    };
-    return isKeptElement(name) && !html.contains(name);
+    // "Foreign" = kept but not HTML — the kept SVG/MathML tags.
+    // Elements like br/img that the old exclusion table also listed
+    // can never reach this arm: isKeptElement() already refused them.
+    return isKeptElement(name) && !keptHtmlTags().contains(name);
 }
 
 // ---- attribute policy -----------------------------------------------------

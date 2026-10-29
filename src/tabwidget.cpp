@@ -102,7 +102,6 @@
 #include "webviewsearch.h"
 
 #ifdef ARKTOS_RUSTCORE
-#include "browserpaths.h"
 #include "rustcorebridge.h"
 
 #include <arktos_core.h>
@@ -2242,59 +2241,25 @@ void TabWidget::normalizeTabGroupMove(int movedIndex)
 // restoreState() re-creates.
 QList<WebView*> TabWidget::orderedWebViews() const
 {
+    // The session-page walk already splices collapsed-group members
+    // and container-filtered tabs into canonical order — this list is
+    // the same walk minus the foreign EngineTab pages.
     QList<WebView*> ordered;
-    for (int i = 0; i < count(); ++i) {
-        WebView *view = const_cast<TabWidget*>(this)->webView(i);
-        if (!view)
-            continue;
-        ordered.append(view);
-        const QString gid = m_tabGroups.value(view);
-        if (gid.isEmpty())
-            continue;
-        const TabGroup group = m_tabGroupInfo.value(gid);
-        if (!group.collapsed)
-            continue;
-        const QList<int> members = tabGroupMembers(gid);
-        if (members.isEmpty() || members.first() != i)
-            continue;
-        for (const HiddenGroupTab &hidden : group.hidden) {
-            if (WebViewWithSearch *withSearch =
-                    qobject_cast<WebViewWithSearch*>(hidden.tab))
-                ordered.append(withSearch->m_webView);
-        }
-    }
-    // CONT06: tabs filtered off the strip by a non-active level append
-    // after the visible row, grouped by their header in strip order —
-    // every tab serializes.  A container-hidden collapsed-group chip
-    // still carries its hidden members with it, or they would drop
-    // out of the session entirely.
-    for (const QString &containerId : containerHeaders()) {
-        for (const HiddenGroupTab &hidden : m_containerHidden.value(containerId)) {
-            WebViewWithSearch *withSearch =
-                qobject_cast<WebViewWithSearch*>(hidden.tab);
-            if (!withSearch)
-                continue;
-            ordered.append(withSearch->m_webView);
-            const QString gid = m_tabGroups.value(withSearch->m_webView);
-            const TabGroup group = m_tabGroupInfo.value(gid);
-            if (gid.isEmpty() || !group.collapsed)
-                continue;
-            for (const HiddenGroupTab &member : group.hidden) {
-                if (WebViewWithSearch *memberSearch =
-                        qobject_cast<WebViewWithSearch*>(member.tab))
-                    ordered.append(memberSearch->m_webView);
-            }
-        }
+    const QList<QWidget*> pages = orderedSessionPages();
+    for (QWidget *page : pages) {
+        if (WebView *view = webViewForPage(page))
+            ordered.append(view);
     }
     return ordered;
 }
 
 QList<QWidget*> TabWidget::orderedSessionPages() const
 {
-    // Same walk as orderedWebViews() but yielding the strip's page
-    // widgets: a web tab contributes its WebViewWithSearch, a foreign
-    // EngineTab contributes itself, other widget tabs keep their
-    // existing exclusion (they never serialized).
+    // The canonical session-order walk — orderedWebViews() is this
+    // pass mapped down to its hosted WebViews.  A web tab contributes
+    // its WebViewWithSearch, a foreign EngineTab contributes itself,
+    // other widget tabs keep their existing exclusion (they never
+    // serialized).
     QList<QWidget*> ordered;
     for (int i = 0; i < count(); ++i) {
         QWidget *page = const_cast<TabWidget*>(this)->widget(i);
@@ -2337,6 +2302,23 @@ QList<QWidget*> TabWidget::orderedSessionPages() const
         }
     }
     return ordered;
+}
+
+QList<TabWidget::SessionPage> TabWidget::sessionPages() const
+{
+    QList<SessionPage> pages;
+    const QList<QWidget*> ordered = orderedSessionPages();
+    for (QWidget *page : ordered) {
+        if (!page)
+            continue;
+        WebView *tab = webViewForPage(page);
+        EngineTab *foreign = tab ? nullptr
+                                 : qobject_cast<EngineTab*>(page);
+        if (!tab && !foreign)
+            continue;
+        pages.append({page, tab, foreign});
+    }
+    return pages;
 }
 
 // Defined further down — closeHiddenTab() records the closed page's
@@ -5246,15 +5228,11 @@ TabWidget::TabSessionSnapshot TabWidget::collectSessionSnapshot() const
     // rows, so no tab drops out of the serialized session — foreign
     // EngineTabs included (SESS01).
     QWidget *currentPage = widget(currentIndex());
-    const QList<QWidget*> ordered = orderedSessionPages();
-    for (QWidget *page : ordered) {
-        if (!page)
-            continue;
-        WebView *tab = webViewForPage(page);
-        EngineTab *foreign = tab ? nullptr
-                                 : qobject_cast<EngineTab*>(page);
-        if (!tab && !foreign)
-            continue;
+    const QList<SessionPage> ordered = sessionPages();
+    for (const SessionPage &sp : ordered) {
+        QWidget *page = sp.page;
+        WebView *tab = sp.tab;
+        EngineTab *foreign = sp.foreign;
         if (tab && tab->enginePage() && tab->enginePage()->isOffTheRecord()) {
             ++snap.droppedPrivate;
             continue;
@@ -5863,15 +5841,11 @@ QJsonObject TabWidget::presenceWindowJson() const
     QJsonArray tabs;
     int current = -1;
     QWidget *currentPage = widget(currentIndex());
-    const QList<QWidget*> ordered = orderedSessionPages();
-    for (QWidget *page : ordered) {
-        if (!page)
-            continue;
-        WebView *tab = webViewForPage(page);
-        EngineTab *foreign = tab ? nullptr
-                                 : qobject_cast<EngineTab*>(page);
-        if (!tab && !foreign)
-            continue;
+    const QList<SessionPage> ordered = sessionPages();
+    for (const SessionPage &sp : ordered) {
+        QWidget *page = sp.page;
+        WebView *tab = sp.tab;
+        EngineTab *foreign = sp.foreign;
         if (tab && tab->enginePage() && tab->enginePage()->isOffTheRecord())
             continue;
         QJsonObject rec;

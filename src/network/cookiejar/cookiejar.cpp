@@ -64,6 +64,7 @@
 ****************************************************************************/
 
 #include "cookiejar.h"
+#include "cookierecord.h"
 #include "hostmatch.h"
 #include "profilesettings.h"
 
@@ -215,44 +216,6 @@ bool CookieJar::isPrivate() const
 }
 
 #if defined(ARKTOS_RUSTCORE)
-namespace {
-
-// MD23: QNetworkCookie -> the RC15 record JSON for this jar's
-// container partition.  The jar keeps the Set-Cookie Domain
-// verbatim: a leading dot marks a domain cookie, its absence a
-// host-exact one — the same split the RC15 hostOnly flag records
-// (cookies.rs documents the measured Qt behavior).
-QJsonObject rustCookieJson(const QNetworkCookie &cookie,
-                         const QString &container)
-{
-    QString domain = cookie.domain();
-    const bool hostOnly = !domain.startsWith(QLatin1Char('.'));
-    if (!hostOnly)
-        domain = domain.mid(1);
-    QJsonObject o;
-    o.insert(QLatin1String("container"), container);
-    o.insert(QLatin1String("name"),
-             QString::fromUtf8(cookie.name()));
-    o.insert(QLatin1String("value"),
-             QString::fromUtf8(cookie.value()));
-    o.insert(QLatin1String("domain"), domain);
-    o.insert(QLatin1String("path"), cookie.path().isEmpty()
-             ? QStringLiteral("/") : cookie.path());
-    if (cookie.isSessionCookie())
-        o.insert(QLatin1String("expires"), QJsonValue());
-    else
-        o.insert(QLatin1String("expires"),
-                 double(cookie.expirationDate().toMSecsSinceEpoch()));
-    o.insert(QLatin1String("secure"), cookie.isSecure());
-    o.insert(QLatin1String("httpOnly"), cookie.isHttpOnly());
-    o.insert(QLatin1String("sameSite"), int(cookie.sameSitePolicy()));
-    o.insert(QLatin1String("hostOnly"), hostOnly);
-    o.insert(QLatin1String("created"),
-             double(QDateTime::currentMSecsSinceEpoch()));
-    return o;
-}
-
-} // namespace
 
 AcCookies *CookieJar::rustCookies() const
 {
@@ -305,7 +268,7 @@ void CookieJar::rustCookieSet(const QNetworkCookie &cookie) const
             ContainerManager::instanceIfCreated(m_profileId))
         container = manager->containerIdForProfile(m_profile);
     const QByteArray json = QJsonDocument(
-        rustCookieJson(cookie, container)).toJson(QJsonDocument::Compact);
+        cookieRecordJson(cookie, container)).toJson(QJsonDocument::Compact);
     if (AcCookies *h = rustCookies()) {
         ac_cookies_set(h,
                        reinterpret_cast<const uint8_t *>(json.constData()),

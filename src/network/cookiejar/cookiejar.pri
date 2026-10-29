@@ -6,7 +6,8 @@ HEADERS += \
   $$PWD/cookieexceptionsdialog.h \
   $$PWD/cookieexceptionsmodel.h \
   $$PWD/cookiejar.h \
-  $$PWD/cookiemodel.h
+  $$PWD/cookiemodel.h \
+  $$PWD/cookierecord.h
 
 SOURCES += \
   $$PWD/cookiedialog.cpp \

@@ -1668,3 +1668,60 @@ runtime verification stays owed to WIN01/MAC01.
   the DPR too.
 - M12 FIXED: Show All History binds ⌘Y on macOS; fullscreen carries
   ⌃⌘F alongside F11.
+
+---
+
+## CA13 CLOSE-OUT — detector re-run + final dispositions
+
+CA01's scanners re-run on the post-CA12 tree:
+
+| Detector | CA01 | CA13 | Verdict |
+|----------|------|------|---------|
+| Dead-symbol scan (member/signal/field) | 13 candidates | 10 | D1's three members gone; remainder is the D9 verified-live set (Q_INVOKABLE/override/webchannel-invoked) |
+| Whole-class / free-function / #ifdef / unref-file scans | 0 actionable | 0 actionable | unchanged — same documented live categories |
+| Dead includes | 5 fixed + 5 live | 2 new dead (autosaver.cpp/tabwidget.cpp `browserpaths.h` — CA08/CA12 refactor leftovers, removed) | fixed; 16 other candidates are scanner artifacts (inline/multi-line decls the ident regex misses — chromecommon/sitebinding_p/modeldnd_p/twoleveldomains_p/downloadworker all live) |
+| Clone groups (8-line normalized windows) | **127** | **65** | all confirmed families consolidated; remainder documented below |
+| `clang -Wunused-lambda-capture` | 47 | ~3 GCC-required keepers (blobSize×2, serveDelayMs — documented D6) | applied class stays clean |
+| cargo clippy dead_code (rustcore/rustdl/adblock-rust) | 1 (SRCS_TRANCO) | **0** | clean |
+
+### Dead-code dispositions (D1–D9)
+
+- **D1** (3 dead members) — FIXED in CA07.
+- **D2** (2 "dead" consts) — WONTFIX-as-audit-FP: live under the `no-rust` lane; annotated in CA07.
+- **D3** (`#if 0` cookie-path arm) — FIXED in CA07 (deleted; Firefox-parity rationale already in prose).
+- **D4** (~50 `#ifdef ARKTOS_*` unreachable tails) — WONTFIX by design: they are the `no-rust` build lanes; live in that flavor, unreachable only under the shipped config. Deleting them deletes the fallback build.
+- **D5** (dead includes) — FIXED (CA07×4 + CA13×2); webpage.h in webviewsearch.cpp is a verified false positive (complete type needed).
+- **D6** (47 lambda captures) — FIXED 44; 3 remain deliberately — GCC odr-uses what clang calls unneeded (documented).
+- **D7** (SRCS_TRANCO + FFI parity consts) — FIXED (const deleted); FFI `AC_*` consts WONTFIX — ABI parity with facade.rs, documented.
+- **D8** (stores/classes/signals/files) — nothing found, stays nothing found.
+- **D9** — verified-live list re-confirmed on re-scan.
+
+### Duplicate dispositions (A/B/C)
+
+- **A1–A20** — all 20 cross-file families FIXED in CA08 (shared homes: hostmatch/menufit/chromecommon/sitebinding_p/workerio/remotelistfetch/modeldnd_p/policyrequestmarshal/twoleveldomains_p + member helpers).
+- **A-carry: cookie record JSON** — FIXED in CA13: cookiejar.cpp `rustCookieJson` ≡ extensionshimbackend `cookieRecordJson` merged into the new shared header `network/cookiejar/cookierecord.h`.
+- **B within-file** — FIXED in CA08+CA13: applyRefererVerdict, dialogParentWindow, readerBarStyleSheet, detachedPrivateView, GlyphCanvas, showRestoredCard, drawShiftedBandTab, finishTabInsert/detachHiddenTab, fanOutEvent + 13 ok/err pairs, emitPortDisconnects, hostShimSource, listenOnLoopback (CA08); then CA13: `emitUnsupported`/`emitNotLoaded` (extensionmanager ×8 sites), `lightFontForColumn`, `keptHtmlTags` (readersanitizer — the foreign-exclusion extras br/img/etc. were unreachable entries and dropped), `sendDomPropsFallback`, `engineChildProcs`, `oseEngineRecord` + `restoreEnginePrefs`, `writeUrlElement`, `windowForSessionSlot`, `sessionPages` + `orderedWebViews`-via-`orderedSessionPages` (tabwidget), and the extensionshimbackend vocabulary (`cookiesHandle`, `historyHandle`, `ffiTake`, `urlSchemeToken`, `windowIdQueryMatch`, `tabIdsArg`, `windowTargetFor`, `cookieTarget`, `findExtensionRecord`, `appendManifestHostPerms`/`addUniqueHostPerm`, `groupTarget` lambda, `bmMutableNode`).
+- **B smoke-harness class (main.cpp)** — PARTIAL: CA13 extracted `smokeFinish` (3 verbatim legs), `smokeRespond` (2 defs + all call sites), `smokeServer` (3 legs), `smokePollUntil` (3 legs, bounds 200/240/400). The remaining ~25 main.cpp clone groups are leg-specific *variants* — the serve/poll/report skeleton recurs but always with different fixtures, captures, and verdict logic; further consolidation means parameterizing real behavior, not dedup. Documented WONTFIX-beyond-vocabulary.
+- **C excluded families** — WONTFIX as designed: webenginebackend/servobackend header conformance (same interface, not copy-paste), securestore + torcontrol `#if/#else` config lanes (only one arm compiles per build), adblocknetwork match*Unlocked differential pair (autotests assert identical decisions), domainblocklist/trancolist preambles (shared include vocabulary), cookiemodel/cookieexceptionsmodel FontRole arm (single-expression arm), managementWarnings' QStringList apiPerms/hostPerms collector (different container type than appendManifestHostPerms), servobackend.cpp 1079-1129 leg pair, webpage.cpp cert-interstitial arms, sitepanel.cpp small pair — all verified live variants or interface-required.
+- **Re-run residue** — of the 65 remaining groups: ~30 are the documented smoke-variant class, ~15 the C exclusions, ~10 shim handler shapes whose shared prefix is now 1-3 lines post-extraction (below the useful threshold), rest are new small cross-file pairs (profileregistry↔browserpaths avatar-name sanitize 9-10 lines — deferred, needs a deliberate home under rustcorebridge like A1 got).
+
+### Security dispositions (CA02, S1–S8)
+
+All 8 FIXED in CA09 (subframe confinement, pdf-worker pin+cap, session cert whitelist, DNR redirect re-gate + file/ftp refusal, nativeMessaging anchoring/stdio/abs-path + inbox bound, header-value validation, randomBytes tail, drainStdout bound). Carried-forward D1 resolved — `foreignCertOverrideHosts` removed; a future foreign proceed path must reintroduce the writer (WK19 comment).
+
+### Leak dispositions (CA03, L1–L3)
+
+All 3 FIXED in CA10 (+1 same-class `mainWindows()` downcast found on re-verification). ASan/LSan re-run clean — see CA03's leg table; the settings-smoke atexit report's 4 teardown-orphan blocks are the methodology-excluded statics class.
+
+### Performance dispositions (CA04, P1–P9)
+
+- **P1–P7, P9** — FIXED in CA11, measured: rebuild coalescing (~750 ms/pair → 1 pass), DNR index (~9.8 ms → ~2.4 µs/eval), whitelist-in-snapshot (2 FFI → 0), policy memoization (1 → 0 envelopes/signal), ctor instrumentation marks, shared /proc sweep, url-membership hash, conditional settings write.
+- **P8** (sync oplog batching) — DEFERRED: bounded-scope cut; rust-side batching needs its own design pass.
+
+### Platform dispositions (CA05/CA06, W*/M*)
+
+All 15 Windows + 12 macOS findings FIXED in CA12 (see PLATFORM REMEDIATION above) except **W12** (POSIX-only smoke harness) and **W15** (arti windows cargo check) — DEFERRED, both need a Windows host.
+
+### Bottom line
+
+Dead code: fully remediated — every confirmed finding is fixed, a documented config-lane keeper, or an annotated false positive. Duplication: 127 → 65 clone groups, every *confirmed* family consolidated; the residue is the documented variant/exclusion set plus one deferred 10-line pair. Security/leaks/perf/platform: every finding dispositioned fixed or deferred-with-reason.

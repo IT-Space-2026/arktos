@@ -31,6 +31,7 @@
 #include "clearprivatedata.h"
 #include "containermanager.h"
 #include "cookiejar.h"
+#include "cookierecord.h"
 #include "declarativenetrequest.h"
 #include "downloadmanager.h"
 #include "engineinterface.h"
@@ -52,6 +53,7 @@
 #include "webview.h"
 
 #include <cmath>
+#include <functional>
 
 #include <qapplication.h>
 #include <qbuffer.h>
@@ -211,6 +213,50 @@ LocatedTab locateTab(int tabId)
         }
     }
     return LocatedTab();
+}
+
+// The windowId query-filter leg every *QueryInfo shares: absent key
+// passes, -2 (WINDOW_ID_CURRENT) resolves to the live window.
+bool windowIdQueryMatch(const QJsonObject &q, int wid, int currentWid)
+{
+    if (!q.contains(QStringLiteral("windowId")))
+        return true;
+    int wanted = int(q.value(QStringLiteral("windowId")).toDouble(-2));
+    if (wanted == -2)
+        wanted = currentWid;
+    return wanted == wid;
+}
+
+// Chrome's scalar-or-array "ids" argument, flattened — false when
+// the value is neither (a call error, never "the current tab").
+bool tabIdsArg(const QJsonObject &args, QList<int> *ids)
+{
+    const QJsonValue idv = args.value(QStringLiteral("ids"));
+    if (!idv.isDouble() && !idv.isArray())
+        return false;
+    if (idv.isArray()) {
+        const QJsonArray arr = idv.toArray();
+        for (const QJsonValue &v : arr)
+            ids->append(int(v.toDouble(-1)));
+    } else {
+        ids->append(int(idv.toDouble(-1)));
+    }
+    return true;
+}
+
+// The windowId-arg → window resolution the tab/group ops share: -2
+// resolves to the live window, anything else must name a browsing
+// window.  Returns nullptr when no window matches.
+BrowserMainWindow *windowTargetFor(
+    int wanted, const QList<BrowserMainWindow *> &windows)
+{
+    if (wanted == -2)
+        return currentWindow();
+    for (BrowserMainWindow *w : windows) {
+        if (w && idFor(w) == wanted)
+            return w;
+    }
+    return nullptr;
 }
 
 // chrome.tabs reports groupId as an int; the strip keys group
@@ -406,6 +452,23 @@ BookmarkNode *bmResolve(BookmarksManager *manager, const QString &id)
 // separator node).  The store carries no timestamps, so
 // dateAdded/dateGroupModified are honestly omitted rather than
 // fabricated.
+// Resolve a mutable bookmark: the not-found / fixed-root failures
+// every mutating op shares — *reply carries the error to return.
+BookmarkNode *bmMutableNode(BookmarksManager *manager,
+                            const QString &id, QJsonObject *reply)
+{
+    BookmarkNode *node = bmResolve(manager, id);
+    if (!node) {
+        *reply = errReply(QStringLiteral("not-found"));
+        return nullptr;
+    }
+    if (bmIsSpecial(manager, node)) {
+        *reply = errReply(QStringLiteral("cannot-modify"));
+        return nullptr;
+    }
+    return node;
+}
+
 QJsonObject bmNodeJson(BookmarksManager *manager, BookmarkNode *node,
                      bool deep)
 {
@@ -454,23 +517,35 @@ void bmCollect(BookmarkNode *node, QList<BookmarkNode *> *out)
 // tree: http/https/ftp/mailto and schemeless urls pass, everything
 // else (javascript:, data:, file:, arktos-*) refuses — an extension
 // is code, not a human's deliberate edit.
-bool bmUrlAllowed(const QString &url)
+// The absolute-scheme probe both url gates run: control characters
+// are stripped first so "\njavascript:" cannot smuggle a scheme past
+// the check, then the token before the first ':' must parse as a real
+// scheme (alpha first, then alnum/+/-/. ) — anything else is relative
+// and harmless.  Returns the lowercased scheme, empty when relative.
+QString urlSchemeToken(const QString &url)
 {
     QString probe = url;
     probe.remove(
         QRegularExpression(QStringLiteral("[\\x00-\\x20\\x7f]+")));
     const int colon = probe.indexOf(QLatin1Char(':'));
     if (colon < 0)
-        return true;    // schemeless — the store calls it harmless
+        return QString();   // schemeless
     const QString scheme = probe.left(colon).toLower();
     if (scheme.isEmpty() || !scheme.at(0).isLetter())
-        return true;
+        return QString();
     for (const QChar c : scheme) {
         if (!c.isLetterOrNumber() && c != QLatin1Char('+')
                 && c != QLatin1Char('-') && c != QLatin1Char('.'))
-            return true;    // not a scheme token — treated relative
+            return QString();    // not a scheme token — treated relative
     }
-    return scheme == QLatin1String("http")
+    return scheme;
+}
+
+bool bmUrlAllowed(const QString &url)
+{
+    const QString scheme = urlSchemeToken(url);
+    return scheme.isEmpty()
+        || scheme == QLatin1String("http")
         || scheme == QLatin1String("https")
         || scheme == QLatin1String("ftp")
         || scheme == QLatin1String("mailto");
@@ -608,23 +683,11 @@ quint64 histHash(const QByteArray &key)
 // Chrome records it too) passes.
 bool histUrlAllowed(const QString &url)
 {
-    QString probe = url;
-    probe.remove(
-        QRegularExpression(QStringLiteral("[\\x00-\\x20\\x7f]+")));
-    const int colon = probe.indexOf(QLatin1Char(':'));
-    if (colon < 0)
-        return true;    // schemeless — treated relative/harmless
-    const QString scheme = probe.left(colon).toLower();
-    if (scheme.isEmpty() || !scheme.at(0).isLetter())
-        return true;
-    for (const QChar c : scheme) {
-        if (!c.isLetterOrNumber() && c != QLatin1Char('+')
-                && c != QLatin1Char('-') && c != QLatin1Char('.'))
-            return true;    // not a scheme token — treated relative
-    }
-    return scheme != QLatin1String("javascript")
-        && scheme != QLatin1String("data")
-        && scheme != QLatin1String("vbscript");
+    const QString scheme = urlSchemeToken(url);
+    return scheme.isEmpty()
+        || (scheme != QLatin1String("javascript")
+            && scheme != QLatin1String("data")
+            && scheme != QLatin1String("vbscript"));
 }
 
 // The Chrome HistoryItem object for one url's visit rows.
@@ -779,38 +842,6 @@ void tapHistEvents(HistoryManager *manager)
 // pipeline.
 // -------------------------------------------------------------------
 
-// QNetworkCookie -> the RC15 record shape (container "": the
-// extension store is always the default partition — the ambient
-// profile's jar).
-QJsonObject cookieRecordJson(const QNetworkCookie &cookie)
-{
-    QString domain = cookie.domain();
-    const bool hostOnly = !domain.startsWith(QLatin1Char('.'));
-    if (!hostOnly)
-        domain = domain.mid(1);
-    QJsonObject o;
-    o.insert(QLatin1String("container"), QString());
-    o.insert(QLatin1String("name"),
-             QString::fromUtf8(cookie.name()));
-    o.insert(QLatin1String("value"),
-             QString::fromUtf8(cookie.value()));
-    o.insert(QLatin1String("domain"), domain);
-    o.insert(QLatin1String("path"), cookie.path().isEmpty()
-             ? QStringLiteral("/") : cookie.path());
-    if (cookie.isSessionCookie())
-        o.insert(QLatin1String("expires"), QJsonValue());
-    else
-        o.insert(QLatin1String("expires"),
-                 double(cookie.expirationDate().toMSecsSinceEpoch()));
-    o.insert(QLatin1String("secure"), cookie.isSecure());
-    o.insert(QLatin1String("httpOnly"), cookie.isHttpOnly());
-    o.insert(QLatin1String("sameSite"), int(cookie.sameSitePolicy()));
-    o.insert(QLatin1String("hostOnly"), hostOnly);
-    o.insert(QLatin1String("created"),
-             double(QDateTime::currentMSecsSinceEpoch()));
-    return o;
-}
-
 // The Chrome Cookie object for a record: domain re-derives the
 // leading dot from hostOnly, expires-ms becomes seconds
 // expirationDate (omitted on session cookies), sameSite answers in
@@ -887,6 +918,47 @@ void legacyCookiesLane(const QString &profileId)
     rustCoreEnsureDataDirFor(profileId);
     rc_cookies_open(nullptr);
 }
+
+// The facade-or-legacy handle prologue every cookie FFI op repeats:
+// the bridge's per-persona AcCookies when it serves, else the legacy
+// store anchored for this call (the rc_* spelling then runs over the
+// same anchor).
+AcCookies *cookiesHandle(CookieJar *jar)
+{
+    const QString profileId = jar->profileId();
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        if (AcCookies *h = bridge->cookies(profileId))
+            return h;
+    legacyCookiesLane(profileId);
+    return nullptr;
+}
+
+// Same prologue for AcHistory — the legacy lane anchors the
+// persona's history.db by path.
+AcHistory *historyHandle(const QString &profileId)
+{
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        if (AcHistory *h = bridge->history(profileId))
+            return h;
+    const QByteArray dbPath = BrowserPaths::profileDataFilePath(
+        profileId, QLatin1String("history.db")).toUtf8();
+    rc_hist_open(dbPath.constData());
+    return nullptr;
+}
+
+// Take a heap string result off an FFI call — the facade spelling
+// frees through ac_string_free, the legacy through rc_string_free.
+QByteArray ffiTake(char *raw, bool facade)
+{
+    if (!raw)
+        return QByteArray();
+    const QByteArray out(raw);
+    if (facade)
+        ac_string_free(raw);
+    else
+        rc_string_free(raw);
+    return out;
+}
 #endif
 
 // Every default-partition record the mirror holds — facade handle
@@ -896,22 +968,13 @@ void legacyCookiesLane(const QString &profileId)
 QJsonArray cookieMirrorRows(CookieJar *jar)
 {
 #ifdef ARKTOS_RUSTCORE
-    AcCookies *h = nullptr;
-    const QString profileId = jar->profileId();
-    if (RustCoreBridge *bridge = RustCoreBridge::serving())
-        h = bridge->cookies(profileId);
-    if (!h)
-        legacyCookiesLane(profileId);
+    AcCookies *h = cookiesHandle(jar);
     char *raw = h
         ? ac_cookies_list(h, "")
         : rc_cookies_list("");
     ac_cookies_close(h);
-    if (raw) {
-        const QByteArray out(raw);
-        if (h)
-            ac_string_free(raw);
-        else
-            rc_string_free(raw);
+    const QByteArray out = ffiTake(raw, h != nullptr);
+    if (!out.isEmpty()) {
         const QJsonArray rows = QJsonDocument::fromJson(out).array();
         if (!rows.isEmpty() || out.trimmed() == "[]")
             return rows;
@@ -932,12 +995,7 @@ QJsonArray cookieMirrorRows(CookieJar *jar)
 QJsonArray cookieRowsForUrl(CookieJar *jar, const QUrl &url)
 {
 #ifdef ARKTOS_RUSTCORE
-    AcCookies *h = nullptr;
-    const QString profileId = jar->profileId();
-    if (RustCoreBridge *bridge = RustCoreBridge::serving())
-        h = bridge->cookies(profileId);
-    if (!h)
-        legacyCookiesLane(profileId);
+    AcCookies *h = cookiesHandle(jar);
     const QByteArray request = QJsonDocument(QJsonObject{
         {QStringLiteral("url"), url.toString()},
         {QStringLiteral("container"), QString()},
@@ -951,20 +1009,49 @@ QJsonArray cookieRowsForUrl(CookieJar *jar, const QUrl &url)
               reinterpret_cast<const uint8_t *>(request.constData()),
               size_t(request.size()));
     ac_cookies_close(h);
-    if (raw) {
-        const QByteArray out(raw);
-        if (h)
-            ac_string_free(raw);
-        else
-            rc_string_free(raw);
+    const QByteArray out = ffiTake(raw, h != nullptr);
+    if (!out.isEmpty())
         return QJsonDocument::fromJson(out).array();
-    }
 #endif
     QJsonArray rows;
     const QList<QNetworkCookie> cookies = jar->cookiesForUrl(url);
     for (const QNetworkCookie &c : cookies)
         rows.append(cookieRecordJson(c));
     return rows;
+}
+
+// The cookies.get/remove {url,name} target: arg validation then the
+// store/host gates.  Returns true with the outputs filled to proceed;
+// false carries the reply the handler must return.
+bool cookieTarget(const QJsonObject &args,
+                  const std::function<bool(const QJsonObject &)> &knownStore,
+                  const std::function<bool(const QString &)> &urlCovered,
+                  QString *url, QString *name, QUrl *qurl,
+                  QJsonObject *reply)
+{
+    const QJsonValue urlArg = args.value(QLatin1String("url"));
+    const QJsonValue nameArg = args.value(QLatin1String("name"));
+    if (!urlArg.isString() || !nameArg.isString()
+            || nameArg.toString().isEmpty()) {
+        *reply = errReply(QStringLiteral("invalid-argument"));
+        return false;
+    }
+    *url = urlArg.toString();
+    *name = nameArg.toString();
+    *qurl = QUrl(*url);
+    if (!qurl->isValid() || qurl->host().isEmpty()) {
+        *reply = errReply(QStringLiteral("invalid-argument"));
+        return false;
+    }
+    if (!knownStore(args)) {
+        *reply = okReply();
+        return false;
+    }
+    if (!urlCovered(*url)) {
+        *reply = errReply(QStringLiteral("no-host-access"));
+        return false;
+    }
+    return true;
 }
 
 // Engine-store signal -> chrome.cookies.onChanged broadcast.  Qt's
@@ -2056,14 +2143,8 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
             // WINDOW_ID_CURRENT (-2) resolves to the live window;
             // WINDOW_ID_NONE (-1) matches only window-less tabs —
             // the engine has none, so it filters everything.
-            if (q.contains(QStringLiteral("windowId"))) {
-                int wanted = int(q.value(QStringLiteral("windowId"))
-                                     .toDouble(-2));
-                if (wanted == -2)
-                    wanted = currentWid;
-                if (wanted != wid)
-                    continue;
-            }
+            if (!windowIdQueryMatch(q, wid, currentWid))
+                continue;
             if (q.value(QStringLiteral("currentWindow")).toBool()
                     && wid != currentWid)
                 continue;
@@ -2316,17 +2397,9 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
         // first so a bogus id refuses the batch before any tab dies.
         // A missing/null argument is a call error, never "the
         // current tab" (unlike the optional-id ops below).
-        const QJsonValue idv = args.value(QStringLiteral("ids"));
-        if (!idv.isDouble() && !idv.isArray())
-            return errReply(QStringLiteral("invalid-argument"));
         QList<int> ids;
-        if (idv.isArray()) {
-            const QJsonArray arr = idv.toArray();
-            for (const QJsonValue &v : arr)
-                ids.append(int(v.toDouble(-1)));
-        } else {
-            ids.append(int(idv.toDouble(-1)));
-        }
+        if (!tabIdsArg(args, &ids))
+            return errReply(QStringLiteral("invalid-argument"));
         QList<LocatedTab> targets;
         for (const int id : ids) {
             const LocatedTab t = id > 0 ? locateTab(id) : LocatedTab();
@@ -2401,19 +2474,9 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
         // multi-selects the rest.  The strip has no multi-select, so
         // the first listed tab activates and the reply reports the
         // one highlight that actually landed.
-        int wanted = int(
+        const int wanted = int(
             args.value(QStringLiteral("windowId")).toDouble(-2));
-        BrowserMainWindow *target = nullptr;
-        if (wanted == -2) {
-            target = currentWindow();
-        } else {
-            for (BrowserMainWindow *w : windows) {
-                if (w && idFor(w) == wanted) {
-                    target = w;
-                    break;
-                }
-            }
-        }
+        BrowserMainWindow *target = windowTargetFor(wanted, windows);
         if (!target || !target->tabWidget())
             return errReply(QStringLiteral("no-window"));
         TabWidget *tw = target->tabWidget();
@@ -2447,17 +2510,9 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
         return okReply(win);
     }
     if (method == QLatin1String("move")) {
-        const QJsonValue idv = args.value(QStringLiteral("ids"));
-        if (!idv.isDouble() && !idv.isArray())
-            return errReply(QStringLiteral("invalid-argument"));
         QList<int> ids;
-        if (idv.isArray()) {
-            const QJsonArray arr = idv.toArray();
-            for (const QJsonValue &v : arr)
-                ids.append(int(v.toDouble(-1)));
-        } else {
-            ids.append(int(idv.toDouble(-1)));
-        }
+        if (!tabIdsArg(args, &ids))
+            return errReply(QStringLiteral("invalid-argument"));
         if (ids.isEmpty())
             return errReply(QStringLiteral("invalid-argument"));
         const int to =
@@ -2785,19 +2840,9 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
         return okReply();
     }
     if (method == QLatin1String("captureVisibleTab")) {
-        int wanted = int(
+        const int wanted = int(
             args.value(QStringLiteral("windowId")).toDouble(-2));
-        BrowserMainWindow *target = nullptr;
-        if (wanted == -2) {
-            target = currentWindow();
-        } else {
-            for (BrowserMainWindow *w : windows) {
-                if (w && idFor(w) == wanted) {
-                    target = w;
-                    break;
-                }
-            }
-        }
+        BrowserMainWindow *target = windowTargetFor(wanted, windows);
         if (!target || !target->tabWidget())
             return errReply(QStringLiteral("no-window"));
         TabWidget *tw = target->tabWidget();
@@ -3930,6 +3975,32 @@ QJsonObject ExtensionShimBackend::invokeIdle(
 // unsupported.
 // -------------------------------------------------------------------
 
+// Dedupe-on-append for a permission pattern list.
+static void addUniqueHostPerm(QJsonArray *out, const QString &pattern)
+{
+    for (const QJsonValue &v : *out) {
+        if (v.toString() == pattern)
+            return;
+    }
+    out->append(pattern);
+}
+
+// Chrome's management surface reports host permissions as the union
+// of host_permissions and declared content-script matches, deduped.
+static void appendManifestHostPerms(const QJsonObject &manifest,
+                                    QJsonArray *out)
+{
+    for (const QJsonValue &v : manifest.value(
+             QStringLiteral("host_permissions")).toArray())
+        addUniqueHostPerm(out, v.toString());
+    for (const QJsonValue &v : manifest.value(
+             QStringLiteral("content_scripts")).toArray()) {
+        for (const QJsonValue &m : v.toObject().value(
+                 QStringLiteral("matches")).toArray())
+            addUniqueHostPerm(out, m.toString());
+    }
+}
+
 // manifest.json for an extension other than the caller's own — the
 // read ops shape every enumerated record, and each needs its own
 // bundle's manifest (the same 1MB guard manifestJson() applies).
@@ -3951,6 +4022,30 @@ static bool managementRecordGone(
         const ExtensionManager::ExtensionInfo &info)
 {
     return !info.loaded && !info.installed;
+}
+
+// The management get-by-id scan with the tombstone rule: a live
+// record fills *out; a managementRecordGone hit stops the walk as
+// "removed" — *sawRecord marks either outcome so the self-fallback
+// only stands in for a never-tracked backend.
+static bool findExtensionRecord(const QString &wanted,
+                                ExtensionManager::ExtensionInfo *out,
+                                bool *sawRecord)
+{
+    ExtensionManager *manager = ExtensionManager::instance();
+    if (!manager)
+        return false;
+    for (const ExtensionManager::ExtensionInfo &info
+         : manager->extensions()) {
+        if (info.id != wanted)
+            continue;
+        *sawRecord = true;
+        if (managementRecordGone(info))
+            return false;   // tombstone — it was removed
+        *out = info;
+        return true;
+    }
+    return false;
 }
 
 // MD17: ids the manager has reported unloaded/uninstalled this
@@ -4116,27 +4211,12 @@ QJsonObject ExtensionShimBackend::managementInfoJson(
     // matches ∪ MV2-style match patterns inside permissions —
     // Chrome's management surface reports the union.
     QJsonArray hostPermissions;
-    const auto addHost = [&hostPermissions](const QString &pattern) {
-        for (const QJsonValue &v : hostPermissions) {
-            if (v.toString() == pattern)
-                return;
-        }
-        hostPermissions.append(pattern);
-    };
-    for (const QJsonValue &v : manifest.value(
-             QStringLiteral("host_permissions")).toArray())
-        addHost(v.toString());
-    for (const QJsonValue &v : manifest.value(
-             QStringLiteral("content_scripts")).toArray()) {
-        for (const QJsonValue &m : v.toObject().value(
-                 QStringLiteral("matches")).toArray())
-            addHost(m.toString());
-    }
+    appendManifestHostPerms(manifest, &hostPermissions);
     for (const QJsonValue &v : permissions) {
         const QString p = v.toString();
         if (p.contains(QLatin1String("://"))
                 || p == QLatin1String("<all_urls>"))
-            addHost(p);
+            addUniqueHostPerm(&hostPermissions, p);
     }
     info.insert(QStringLiteral("hostPermissions"), hostPermissions);
     return info;
@@ -4246,19 +4326,11 @@ QJsonObject ExtensionShimBackend::invokeManagement(
         if (wanted.isEmpty())
             return errReply(QStringLiteral("invalid-argument"));
         bool sawRecord = false;
-        if (ExtensionManager *manager = ExtensionManager::instance()) {
-            for (const ExtensionManager::ExtensionInfo &info
-                 : manager->extensions()) {
-                if (info.id != wanted)
-                    continue;
-                sawRecord = true;
-                if (managementRecordGone(info))
-                    break;   // tombstone — it was removed
-                return okReply(managementInfoJson(
-                    info.id, info.name, info.path,
-                    manifestForExtensionPath(info.path), &info));
-            }
-        }
+        ExtensionManager::ExtensionInfo info;
+        if (findExtensionRecord(wanted, &info, &sawRecord))
+            return okReply(managementInfoJson(
+                info.id, info.name, info.path,
+                manifestForExtensionPath(info.path), &info));
         // The self-fallback covers a hosted backend the manager
         // never tracked — a tombstone record or a removed marker
         // means it was uninstalled, which is Chrome's not-found,
@@ -4276,21 +4348,11 @@ QJsonObject ExtensionShimBackend::invokeManagement(
         if (wanted.isEmpty())
             return errReply(QStringLiteral("invalid-argument"));
         QString path;
-        bool found = false;
+        ExtensionManager::ExtensionInfo info;
         bool sawRecord = false;
-        if (ExtensionManager *manager = ExtensionManager::instance()) {
-            for (const ExtensionManager::ExtensionInfo &info
-                 : manager->extensions()) {
-                if (info.id != wanted)
-                    continue;
-                sawRecord = true;
-                if (managementRecordGone(info))
-                    break;   // tombstone — it was removed
-                path = info.path;
-                found = true;
-                break;
-            }
-        }
+        bool found = findExtensionRecord(wanted, &info, &sawRecord);
+        if (found)
+            path = info.path;
         // Same rule get() applies: the self-fallback only stands in
         // for a never-tracked backend, not a removed one.
         if (!sawRecord && wanted == m_extensionId
@@ -4670,13 +4732,10 @@ QJsonObject ExtensionShimBackend::invokeBookmarks(
         const QString id = args.value(QLatin1String("id")).toString();
         if (id.isEmpty())
             return errReply(QStringLiteral("invalid-argument"));
-        BookmarkNode *node = bmResolve(manager, id);
+        QJsonObject reply;
+        BookmarkNode *node = bmMutableNode(manager, id, &reply);
         if (!node)
-            return errReply(QStringLiteral("not-found"));
-        // Chrome's root folders are fixed — root, bar and menu all
-        // refuse a move.
-        if (bmIsSpecial(manager, node))
-            return errReply(QStringLiteral("cannot-modify"));
+            return reply;
         BookmarkNode *oldParent = node->parent();
         const int oldIndex = oldParent->children().indexOf(node);
         const QJsonObject dest =
@@ -4741,11 +4800,10 @@ QJsonObject ExtensionShimBackend::invokeBookmarks(
         const QString id = args.value(QLatin1String("id")).toString();
         if (id.isEmpty())
             return errReply(QStringLiteral("invalid-argument"));
-        BookmarkNode *node = bmResolve(manager, id);
+        QJsonObject reply;
+        BookmarkNode *node = bmMutableNode(manager, id, &reply);
         if (!node)
-            return errReply(QStringLiteral("not-found"));
-        if (bmIsSpecial(manager, node))
-            return errReply(QStringLiteral("cannot-modify"));
+            return reply;
         const QJsonObject changes =
             args.value(QLatin1String("changes")).toObject();
         const bool hasTitle = changes.contains(QLatin1String("title"));
@@ -4788,11 +4846,10 @@ QJsonObject ExtensionShimBackend::invokeBookmarks(
         const QString id = args.value(QLatin1String("id")).toString();
         if (id.isEmpty())
             return errReply(QStringLiteral("invalid-argument"));
-        BookmarkNode *node = bmResolve(manager, id);
+        QJsonObject reply;
+        BookmarkNode *node = bmMutableNode(manager, id, &reply);
         if (!node)
-            return errReply(QStringLiteral("not-found"));
-        if (bmIsSpecial(manager, node))
-            return errReply(QStringLiteral("cannot-modify"));
+            return reply;
         // Chrome's remove() deletes a bookmark or an EMPTY folder —
         // subtrees go through removeTree.
         if (node->type() != BookmarkNode::Bookmark
@@ -4818,11 +4875,10 @@ QJsonObject ExtensionShimBackend::invokeBookmarks(
         const QString id = args.value(QLatin1String("id")).toString();
         if (id.isEmpty())
             return errReply(QStringLiteral("invalid-argument"));
-        BookmarkNode *node = bmResolve(manager, id);
+        QJsonObject reply;
+        BookmarkNode *node = bmMutableNode(manager, id, &reply);
         if (!node)
-            return errReply(QStringLiteral("not-found"));
-        if (bmIsSpecial(manager, node))
-            return errReply(QStringLiteral("cannot-modify"));
+            return reply;
         BookmarkNode *parent = node->parent();
         const QJsonObject removeInfo{
             {QStringLiteral("parentId"), bmId(manager, parent)},
@@ -5085,26 +5141,14 @@ QJsonArray topSiteRows()
     // query — same posture the completer's RustHistorySuggestModel
     // takes; the legacy spelling anchors the path by hand when the
     // bridge cannot serve.
-    AcHistory *h = nullptr;
-    const QString profileId = BrowserPaths::activeProfileId();
-    if (RustCoreBridge *bridge = RustCoreBridge::serving())
-        h = bridge->history(profileId);
-    if (!h) {
-        const QByteArray dbPath = BrowserPaths::profileDataFilePath(
-            profileId, QLatin1String("history.db")).toUtf8();
-        rc_hist_open(dbPath.constData());
-    }
+    AcHistory *h = historyHandle(BrowserPaths::activeProfileId());
     // Chrome's tile list stays small — 20 bounds the marshal.
     char *raw = h
         ? ac_hist_top_hosts(h, 20)
         : rc_history_top_hosts(20);
     ac_hist_close(h);
-    if (raw) {
-        const QByteArray out(raw);
-        if (h)
-            ac_string_free(raw);
-        else
-            rc_string_free(raw);
+    const QByteArray out = ffiTake(raw, h != nullptr);
+    if (!out.isEmpty()) {
         const QJsonArray rows = QJsonDocument::fromJson(out).array();
         if (!rows.isEmpty() || out.trimmed() == "[]")
             return rows;
@@ -7210,20 +7254,12 @@ QJsonObject ExtensionShimBackend::invokeCookies(
     }
 
     if (method == QLatin1String("get")) {
-        const QJsonValue urlArg = args.value(QLatin1String("url"));
-        const QJsonValue nameArg = args.value(QLatin1String("name"));
-        if (!urlArg.isString() || !nameArg.isString()
-                || nameArg.toString().isEmpty())
-            return errReply(QStringLiteral("invalid-argument"));
-        const QString url = urlArg.toString();
-        const QString name = nameArg.toString();
-        const QUrl qurl(url);
-        if (!qurl.isValid() || qurl.host().isEmpty())
-            return errReply(QStringLiteral("invalid-argument"));
-        if (!knownStore(args))
-            return okReply();
-        if (!urlCovered(url))
-            return errReply(QStringLiteral("no-host-access"));
+        QString url, name;
+        QUrl qurl;
+        QJsonObject reply;
+        if (!cookieTarget(args, knownStore, urlCovered,
+                          &url, &name, &qurl, &reply))
+            return reply;
         // for_url answers RFC6265 send order — the first name match
         // is the cookie Chrome's get() returns.
         const QJsonArray rows = cookieRowsForUrl(jar, qurl);
@@ -7392,12 +7428,7 @@ QJsonObject ExtensionShimBackend::invokeCookies(
         store->setCookie(cookie, qurl);
 #ifdef ARKTOS_RUSTCORE
         {
-            AcCookies *h = nullptr;
-            const QString profileId = jar->profileId();
-            if (RustCoreBridge *bridge = RustCoreBridge::serving())
-                h = bridge->cookies(profileId);
-            if (!h)
-                legacyCookiesLane(profileId);
+            AcCookies *h = cookiesHandle(jar);
             const QByteArray json = QJsonDocument(
                 cookieRecordJson(cookie)).toJson(QJsonDocument::Compact);
             const AcStatus st = h
@@ -7417,20 +7448,12 @@ QJsonObject ExtensionShimBackend::invokeCookies(
     }
 
     if (method == QLatin1String("remove")) {
-        const QJsonValue urlArg = args.value(QLatin1String("url"));
-        const QJsonValue nameArg = args.value(QLatin1String("name"));
-        if (!urlArg.isString() || !nameArg.isString()
-                || nameArg.toString().isEmpty())
-            return errReply(QStringLiteral("invalid-argument"));
-        const QString url = urlArg.toString();
-        const QString name = nameArg.toString();
-        const QUrl qurl(url);
-        if (!qurl.isValid() || qurl.host().isEmpty())
-            return errReply(QStringLiteral("invalid-argument"));
-        if (!knownStore(args))
-            return okReply();
-        if (!urlCovered(url))
-            return errReply(QStringLiteral("no-host-access"));
+        QString url, name;
+        QUrl qurl;
+        QJsonObject reply;
+        if (!cookieTarget(args, knownStore, urlCovered,
+                          &url, &name, &qurl, &reply))
+            return reply;
         // Chrome removes the cookie get() would return — the first
         // name match in send order.
         const QJsonArray rows = cookieRowsForUrl(jar, qurl);
@@ -7475,12 +7498,7 @@ QJsonObject ExtensionShimBackend::invokeCookies(
             store->deleteCookie(doomed);
 #ifdef ARKTOS_RUSTCORE
             {
-                AcCookies *h = nullptr;
-                const QString profileId = jar->profileId();
-                if (RustCoreBridge *bridge = RustCoreBridge::serving())
-                    h = bridge->cookies(profileId);
-                if (!h)
-                    legacyCookiesLane(profileId);
+                AcCookies *h = cookiesHandle(jar);
                 const QByteArray d = domain.toUtf8();
                 const QByteArray n =
                     rec.value(QLatin1String("name")).toString().toUtf8();
@@ -8334,6 +8352,24 @@ QJsonObject ExtensionShimBackend::invokeTabGroups(
         return true;
     };
 
+    // The {groupId, props} target resolution update/move share —
+    // fills the outputs or the reply to return.
+    const auto groupTarget = [&args, &groupIdArg](
+        BrowserMainWindow **window, QString *gid, TabWidget **tw,
+        QJsonObject *reply) {
+        int chromeId = -1;
+        if (!groupIdArg(&chromeId)) {
+            *reply = errReply(QStringLiteral("invalid-argument"));
+            return false;
+        }
+        if (!resolveTabGroup(chromeId, window, gid)) {
+            *reply = errReply(QStringLiteral("not-found"));
+            return false;
+        }
+        *tw = (*window)->tabWidget();
+        return true;
+    };
+
     if (method == QLatin1String("get")) {
         int chromeId = -1;
         if (!groupIdArg(&chromeId))
@@ -8362,14 +8398,8 @@ QJsonObject ExtensionShimBackend::invokeTabGroups(
             if (!window)
                 continue;
             const int wid = idFor(window);
-            if (q.contains(QStringLiteral("windowId"))) {
-                int wanted = int(q.value(QStringLiteral("windowId"))
-                                     .toDouble(-2));
-                if (wanted == -2)       // WINDOW_ID_CURRENT
-                    wanted = currentWid;
-                if (wanted != wid)
-                    continue;
-            }
+            if (!windowIdQueryMatch(q, wid, currentWid))
+                continue;
             TabWidget *tw = window->tabWidget();
             if (!tw)
                 continue;
@@ -8420,16 +8450,14 @@ QJsonObject ExtensionShimBackend::invokeTabGroups(
     }
 
     if (method == QLatin1String("update")) {
-        int chromeId = -1;
-        if (!groupIdArg(&chromeId))
-            return errReply(QStringLiteral("invalid-argument"));
         BrowserMainWindow *window = nullptr;
         QString gid;
-        if (!resolveTabGroup(chromeId, &window, &gid))
-            return errReply(QStringLiteral("not-found"));
+        TabWidget *tw = nullptr;
+        QJsonObject reply;
+        if (!groupTarget(&window, &gid, &tw, &reply))
+            return reply;
         const QJsonObject props =
             args.value(QStringLiteral("props")).toObject();
-        TabWidget *tw = window->tabWidget();
         // An unknown color name is Chrome's argument error — check
         // before ANY mutation so a bad call stays atomic.
         QColor color;
@@ -8454,16 +8482,14 @@ QJsonObject ExtensionShimBackend::invokeTabGroups(
     }
 
     if (method == QLatin1String("move")) {
-        int chromeId = -1;
-        if (!groupIdArg(&chromeId))
-            return errReply(QStringLiteral("invalid-argument"));
         BrowserMainWindow *window = nullptr;
         QString gid;
-        if (!resolveTabGroup(chromeId, &window, &gid))
-            return errReply(QStringLiteral("not-found"));
+        TabWidget *tw = nullptr;
+        QJsonObject reply;
+        if (!groupTarget(&window, &gid, &tw, &reply))
+            return reply;
         const QJsonObject props =
             args.value(QStringLiteral("props")).toObject();
-        TabWidget *tw = window->tabWidget();
         const int wid = idFor(window);
         if (props.contains(QStringLiteral("windowId"))) {
             int wanted = int(

@@ -540,6 +540,11 @@ private:
     static QString enabledSettingsKey(const QString &storageName,
                                       const QString &id);
     static QString uninstallUrlSettingsKey(const QString &id);
+    // The two error tails every public action shares — the emit after
+    // a QT_CONFIG(webengine_extensions) arm fell through (unsupported
+    // build) and the findById miss.
+    void emitUnsupported();
+    void emitNotLoaded(const QString &id);
     // MD18: opens a setUninstallURL page recorded for a removal
     // removeExtension() dispatched — the pending marker is what
     // keeps a reload-unload from opening the uninstall page.

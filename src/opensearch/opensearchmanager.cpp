@@ -138,6 +138,22 @@ QStringList oseStringListJson(const QJsonArray &array)
     return out;
 }
 
+// The canonical engine record by name — the mw envelope when the
+// bridge serves, the flat rc_ose_get over the same persona anchor
+// otherwise.
+QJsonObject oseEngineRecord(RustCoreBridge *bridge, const QString &name)
+{
+    return bridge
+        ? bridge
+              ->mwQuery(AcMw::OpenSearch, AcMw::OseGet, oseNamed(name))
+              .toObject()
+              .value(QLatin1String("engine"))
+              .toObject()
+        : QJsonDocument::fromJson(
+              oseTake(rc_ose_get(name.toUtf8().constData())))
+              .object();
+}
+
 } // namespace
 #endif // ARKTOS_RUSTCORE
 
@@ -947,6 +963,30 @@ void OpenSearchManager::importLegacyRegistry(ProfileSettings &settings)
 }
 #endif // ARKTOS_RUSTCORE
 
+void OpenSearchManager::restoreEnginePrefs(ProfileSettings &settings)
+{
+    // SRCH04: engine assignments + suggestion-context toggles.
+    m_privateEngine = settings.value(QLatin1String("privateEngine")).toString();
+    m_imageEngine = settings.value(QLatin1String("imageEngine")).toString();
+    m_keepFieldEngine = settings.value(QLatin1String("keepFieldEngine"), true).toBool();
+    m_fieldEngine = m_keepFieldEngine
+        ? settings.value(QLatin1String("fieldEngine")).toString()
+        : QString();
+    m_suggestInAddressField = settings.value(
+        QLatin1String("suggestInAddressField"), true).toBool();
+    m_suggestInSearchField = settings.value(
+        QLatin1String("suggestInSearchField"), true).toBool();
+    m_suggestOnlyWithKeyword = settings.value(
+        QLatin1String("suggestOnlyWithKeyword"), false).toBool();
+
+    settings.endGroup();
+
+    if (!m_engines.contains(m_current) && m_engines.count() > 0)
+        m_current = m_engines.keys().at(0);
+
+    emit currentEngineChanged();
+}
+
 void OpenSearchManager::load()
 {
     StartupProfile::Scope profileScope("opensearch engines parse");
@@ -998,16 +1038,7 @@ void OpenSearchManager::load()
                   .toArray())
         : oseStringList(rc_ose_list());
     for (const QString &name : names) {
-        const QJsonObject record = bridge
-            ? bridge
-                  ->mwQuery(AcMw::OpenSearch, AcMw::OseGet,
-                            oseNamed(name))
-                  .toObject()
-                  .value(QLatin1String("engine"))
-                  .toObject()
-            : QJsonDocument::fromJson(
-                  oseTake(rc_ose_get(name.toUtf8().constData())))
-                  .object();
+        const QJsonObject record = oseEngineRecord(bridge, name);
         OpenSearchEngine *engine = new OpenSearchEngine();
         openSearchEngineApplyJson(engine, record);
         if (engine->isValid())
@@ -1022,26 +1053,7 @@ void OpenSearchManager::load()
     m_suggestionsEnabled =
         settings.value(QLatin1String("suggestions")).toStringList();
 
-    // SRCH04: engine assignments + suggestion-context toggles.
-    m_privateEngine = settings.value(QLatin1String("privateEngine")).toString();
-    m_imageEngine = settings.value(QLatin1String("imageEngine")).toString();
-    m_keepFieldEngine = settings.value(QLatin1String("keepFieldEngine"), true).toBool();
-    m_fieldEngine = m_keepFieldEngine
-        ? settings.value(QLatin1String("fieldEngine")).toString()
-        : QString();
-    m_suggestInAddressField = settings.value(
-        QLatin1String("suggestInAddressField"), true).toBool();
-    m_suggestInSearchField = settings.value(
-        QLatin1String("suggestInSearchField"), true).toBool();
-    m_suggestOnlyWithKeyword = settings.value(
-        QLatin1String("suggestOnlyWithKeyword"), false).toBool();
-
-    settings.endGroup();
-
-    if (!m_engines.contains(m_current) && m_engines.count() > 0)
-        m_current = m_engines.keys().at(0);
-
-    emit currentEngineChanged();
+    restoreEnginePrefs(settings);
 #else
     m_loading = true;
     loadDirectory(enginesDirectory());
@@ -1107,26 +1119,7 @@ void OpenSearchManager::load()
             m_engineOrder.append(it.key());
     }
 
-    // SRCH04: engine assignments + suggestion-context toggles.
-    m_privateEngine = settings.value(QLatin1String("privateEngine")).toString();
-    m_imageEngine = settings.value(QLatin1String("imageEngine")).toString();
-    m_keepFieldEngine = settings.value(QLatin1String("keepFieldEngine"), true).toBool();
-    m_fieldEngine = m_keepFieldEngine
-        ? settings.value(QLatin1String("fieldEngine")).toString()
-        : QString();
-    m_suggestInAddressField = settings.value(
-        QLatin1String("suggestInAddressField"), true).toBool();
-    m_suggestInSearchField = settings.value(
-        QLatin1String("suggestInSearchField"), true).toBool();
-    m_suggestOnlyWithKeyword = settings.value(
-        QLatin1String("suggestOnlyWithKeyword"), false).toBool();
-
-    settings.endGroup();
-
-    if (!m_engines.contains(m_current) && m_engines.count() > 0)
-        m_current = m_engines.keys().at(0);
-
-    emit currentEngineChanged();
+    restoreEnginePrefs(settings);
 #endif // ARKTOS_RUSTCORE
 }
 
@@ -1227,16 +1220,7 @@ void OpenSearchManager::restoreDefaults()
                   .toArray())
         : oseStringList(rc_ose_bundled_names());
     for (const QString &name : bundled) {
-        const QJsonObject record = bridge
-            ? bridge
-                  ->mwQuery(AcMw::OpenSearch, AcMw::OseGet,
-                            oseNamed(name))
-                  .toObject()
-                  .value(QLatin1String("engine"))
-                  .toObject()
-            : QJsonDocument::fromJson(
-                  oseTake(rc_ose_get(name.toUtf8().constData())))
-                  .object();
+        const QJsonObject record = oseEngineRecord(bridge, name);
         OpenSearchEngine *engine = m_engines.value(name);
         if (!engine) {
             engine = new OpenSearchEngine();

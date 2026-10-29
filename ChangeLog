@@ -28,6 +28,27 @@ CEF spike concluded (CS01-CS10): full MV3 capability verified on all
 CEF runtime shapes for one ~850-line graft; verdict recorded in
 .devin/CEF-PATCHED-VERDICT.md - stay on the hosted runtime.
 
+Code-audit remediation sweep (CA01-CA13):
+- Security: extension pages confined to their own origin, PDF worker
+  path pinned, TLS exceptions are session-scoped (no more CA-store
+  writes), declarativeNetRequest redirect validation, nativeMessaging
+  manifest hardening.
+- Reliability: quit-path and tab-teardown crashes on partly-dead
+  objects fixed; session restore and cookie handling made safer.
+- Performance: adblock rule rebuilds coalesced onto one pass per
+  event loop; declarativeNetRequest matching now indexed (~4000x on
+  uBlock-scale rulesets); fewer per-request and per-signal round
+  trips through the Rust core.
+- Platform: Windows reserved-name/path handling, registry
+  nativeMessaging discovery, firewall/installer metadata, console for
+  smoke runs, long-path manifest; macOS bundle resources, Info.plist
+  URL schemes, entitlements, check indicators, shortcuts, DPR-aware
+  badges.
+- Maintainability: dead code removed across src/ and the Rust core;
+  duplicated helpers consolidated into shared homes (host matching,
+  chrome.* bridge replies, cookie records, FFI lanes, session
+  restore, smoke-test plumbing).
+
 Code health (CA01): tree-wide dead-code + copy-paste duplication audit
 of src/ and the Rust cores; findings (no behavior changes yet) live in
 .devin/CODE-AUDIT.md and are remediated by the CA07-CA13 follow-ups.

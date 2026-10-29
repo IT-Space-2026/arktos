@@ -758,6 +758,16 @@ private:
     // WebViewWithSearch AND EngineTab pages so foreign-engine tabs
     // serialize instead of dropping out of the session.
     QList<QWidget*> orderedSessionPages() const;
+    // The session-page walk with each page pre-classified: exactly
+    // one of tab (hosted WebView) / foreign (EngineTab) is non-null.
+    // collectSessionSnapshot() and presenceWindowJson() share the
+    // prologue.
+    struct SessionPage {
+        QWidget *page;
+        WebView *tab;
+        EngineTab *foreign;
+    };
+    QList<SessionPage> sessionPages() const;
     // A lazily restored tab that detached into a filtered container
     // level has no strip slot to dress — patch its hidden-store
     // record (text/tooltip/url/bar) so raising the level still reads

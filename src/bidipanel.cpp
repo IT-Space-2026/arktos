@@ -3249,6 +3249,22 @@ quint64 BidiPanel::sendEval(const QString &context,
     return id;
 }
 
+quint64 BidiPanel::sendDomPropsFallback(const QString &ctx, int serial)
+{
+    if (m_propsPath.isEmpty())
+        return 0;
+    const quint64 id = sendEval(
+        ctx,
+        QString::fromLatin1(kDomProps)
+            + QStringLiteral("(")
+            + QString::fromLatin1(kDomResolve)
+            + QStringLiteral("(\"%1\"))").arg(m_propsPath),
+        TagDomProps);
+    if (id)
+        m_evalSerials.insert(id, serial);
+    return id;
+}
+
 void BidiPanel::refreshContexts()
 {
     const quint64 id = m_client->sendCommand(
@@ -4958,18 +4974,7 @@ void BidiPanel::onCdpResponse(quint64 id, const QJsonObject &root)
         if (err) {
             // Node resolution failed — the DOM-eval fallback still
             // gives a real readout.
-            if (!m_propsPath.isEmpty()) {
-                const quint64 id = sendEval(
-                    ctx,
-                    QString::fromLatin1(kDomProps)
-                        + QStringLiteral("(")
-                        + QString::fromLatin1(kDomResolve)
-                        + QStringLiteral("(\"%1\"))")
-                              .arg(m_propsPath),
-                    TagDomProps);
-                if (id)
-                    m_evalSerials.insert(id, req.n);
-            }
+            sendDomPropsFallback(ctx, req.n);
             return;
         }
         const QJsonObject remote =
@@ -4997,18 +5002,7 @@ void BidiPanel::onCdpResponse(quint64 id, const QJsonObject &root)
         if (err || !nodeId) {
             // Node resolution failed — the DOM-eval fallback still
             // gives a real readout.
-            if (!m_propsPath.isEmpty()) {
-                const quint64 id = sendEval(
-                    ctx,
-                    QString::fromLatin1(kDomProps)
-                        + QStringLiteral("(")
-                        + QString::fromLatin1(kDomResolve)
-                        + QStringLiteral("(\"%1\"))")
-                              .arg(m_propsPath),
-                    TagDomProps);
-                if (id)
-                    m_evalSerials.insert(id, req.n);
-            }
+            sendDomPropsFallback(ctx, req.n);
             return;
         }
         // DEVT19: one nodeId feeds all three sections — attributes

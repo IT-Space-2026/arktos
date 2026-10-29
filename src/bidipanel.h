@@ -222,6 +222,10 @@ private:
     void ensureDomHelper(const QString &context);
     quint64 sendEval(const QString &context, const QString &expression,
                      quint64 tag);
+    // The DOM-props eval the node-resolution failure arms share —
+    // CDP lookup dying still leaves the styles pane an honest
+    // readout.  No-op when m_propsPath is empty; returns the eval id.
+    quint64 sendDomPropsFallback(const QString &context, int serial);
     // DEVT17: a failed/vanished DOM fetch swaps its "loading…"
     // placeholder for an honest verdict row instead of hanging the
     // branch forever; the row keeps the placeholder's null path so a

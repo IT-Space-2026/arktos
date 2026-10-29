@@ -178,6 +178,10 @@ private:
     // store — runs once on first load, then retires the old paths.
     void importLegacyRegistry(ProfileSettings &settings);
 #endif
+    // The shared tail of load() — both build lanes restore the same
+    // SRCH04 preference set, end the group, pick a sane current
+    // engine and announce the result.
+    void restoreEnginePrefs(ProfileSettings &settings);
 
 protected slots:
     void engineFromUrlAvailable();

@@ -600,6 +600,17 @@ int OmniboxCompletionModel::columnCount(const QModelIndex &parent) const
     return parent.isValid() ? 0 : m_history->columnCount();
 }
 
+// Column 1's de-emphasized text — the scoped-tab and suggestion arms
+// both render it in a light weight.
+static QVariant lightFontForColumn(int column)
+{
+    if (column != 1)
+        return QVariant();
+    QFont font;
+    font.setWeight(QFont::Light);
+    return font;
+}
+
 QVariant OmniboxCompletionModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.parent().isValid())
@@ -626,12 +637,7 @@ QVariant OmniboxCompletionModel::data(const QModelIndex &index, int role) const
         case Qt::DecorationRole:
             return index.column() == 0 ? QVariant(row.icon) : QVariant();
         case Qt::FontRole:
-            if (index.column() == 1) {
-                QFont font;
-                font.setWeight(QFont::Light);
-                return font;
-            }
-            return QVariant();
+            return lightFontForColumn(index.column());
         default:
             return QVariant();
         }
@@ -659,12 +665,7 @@ QVariant OmniboxCompletionModel::data(const QModelIndex &index, int role) const
         case Qt::ToolTipRole:
             return suggestion;
         case Qt::FontRole:
-            if (index.column() == 1) {
-                QFont font;
-                font.setWeight(QFont::Light);
-                return font;
-            }
-            return QVariant();
+            return lightFontForColumn(index.column());
         default:
             return QVariant();
         }
