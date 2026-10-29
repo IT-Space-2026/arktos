@@ -5102,3 +5102,8 @@ Code audit (CA01-CA02, no code changes):
   protocol, app-side TLS error handling, DNR redirect validation
   and nativeMessaging manifest resolution; remediations are queued
   under CA09.
+- Memory/leak audit pass appended to .devin/CODE-AUDIT.md: zero
+  leaked heap blocks in Arora code on the instrumented smoke legs,
+  plus 3 sanitizer-proven lifetime findings (1 high — a quit-path
+  crash in CookieJar teardown; 2 lower-severity dead-object member
+  calls); remediations are queued under CA10.

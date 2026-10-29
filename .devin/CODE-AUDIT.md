@@ -478,3 +478,197 @@ comment. DoS-shaped, same-UID host process only.
   covered — re-verified the bounds are live, securestore.cpp:506-512).
 - **Proxy config**: settings-only, tor mode ignores clearnet proxy
   (networkaccessmanager.cpp:140-165); proxy password sealed (SEC03).
+
+## MEMORY / LEAKS (CA03)
+
+Generated 2026-10-29. Method: static ownership review over src/
+(~198 TUs) with a purpose-built scanner — every `new` of a
+QObject-derived class without an inline parent was resolved to its
+owning call (parent arg, addWidget/insertTab/setDefaultWidget,
+WA_DeleteOnClose, owner-map with delete, or documented
+process-lifetime registry) — plus targeted passes for contextless
+`connect()`, QNetworkReply lifetimes, raw `new`/`delete` of
+non-QObject project types, `QThread` worker teardown,
+scheme-handler/request-interceptor ownership, container-profile
+teardown, and the Rust FFI boundary (handle open/close pairing,
+`char *` returns vs `rc_string_free`/`ac_string_free`/`rc_buffer_free`
+and the `*Take` wrappers). Dynamic leg: a throwaway
+`linux-clang CONFIG+=sanitize` (ASan+UBSan+LSan) build ran 13 smoke
+flags; because EXTEXIT01 makes every exit lane `std::quick_exit`
+(which skips the atexit LSan pass), the throwaway tree registered
+`__lsan_do_recoverable_leak_check` via `std::at_quick_exit` — the
+check then reports genuinely unreachable blocks while live objects
+still count as reachable. Leak blocks were classified by ALLOCATION
+SITE exactly as check-leaks.sh does — "ours" only when an early
+frame resolves under src/ or autotests/. Cross-checked against the
+QUAL02 + MEM01/02/07/09/10/11 and PRIV09 baselines so only *open*
+findings are listed. Severity: **high / med / low**. Findings only —
+no code changes.
+
+### Result: 0 leaked heap blocks in our code; 3 lifetime (dying-object) findings
+
+The leak half of the sweep is clean — matching MEM01's gate verdict
+(0 our-code blocks of 21618) and the MRG07/08 sweeps. But the same
+instrumented leg produced three *lifetime* findings: sanitizer-proven
+member calls on partially-destructed objects — the "dead objects
+kept alive" class the task covers. All three are UBSan/ASan
+observations on shipped code paths, not speculation.
+
+### L1 — `CookieJar::save()` dereferences a mid-destruction profile — quit-path SIGSEGV — **HIGH**
+
+`CookieJar::instance(profile)` parents each jar to `qApp` and
+registers `profile, &QObject::destroyed → delete cookieJars().take(profile)`
+(cookiejar.cpp:153-162). When a profile dies, the jar is deleted
+*inside the profile's own `destroyed` emission* — `~CookieJar` calls
+`m_saveTimer->saveIfNeccessary()`, which lands in `CookieJar::save()`,
+whose first statement is `m_profile->isOffTheRecord()`
+(cookiejar.cpp:479). At that instant `m_profile` is the object being
+destroyed: its dynamic type has already reverted past
+QWebEngineProfile, so the member call is undefined behavior — and in
+practice the profile's private pointer is already torn down, so the
+call crashes.
+
+Evidence — `--settings-smoke` on the instrumented build exits 139:
+
+    network/cookiejar/cookiejar.cpp:479:20: runtime error: member call on
+    address 0x5030004f8910 which does not point to an object of type
+    'QWebEngineProfile'  (object has invalid vptr)
+    ARKTOS CRASH pid=… signal=11 (SIGSEGV) addr=0x28
+    stack: QObjectPrivate::deleteChildren → ~QObject →
+           QMetaMethodInvoker::invokeImpl (destroyed emission) →
+           … → QWebEngineProfile::isOffTheRecord
+
+Any profile death with a live jar hits this — container teardown,
+profile release, app quit with a secondary profile. The fix belongs
+to CA10: guard `m_profile`/`save()` with a `QPointer`, or check
+"profile is dying" before the save flush.
+
+### L2 — `ExtensionEventHub` removed-tab sweep dereferences a dying window — **MED**
+
+`onWindowDestroyed()` calls `syncNow()` while the window is
+mid-destruction (extensioneventhub.cpp:860-865). The live-scan loop
+skips `m_dyingWindows` windows (:888-890), so the dying window's tabs
+fail the `seen` filter and reach the removed-tab sweep, which runs:
+
+    WebView *live = tab.view.data();
+    BrowserMainWindow *home = tab.window.data();   // :1017 — UB downcast
+    TabWidget *homeTabs = home ? home->tabWidget() : nullptr;  // :1018
+
+`QPointer<BrowserMainWindow>::data()` static-downcasts to
+BrowserMainWindow — but during ~BrowserMainWindow the object's
+dynamic type has already reverted to QWidget, so `data()`, the
+`->tabWidget()` member call (extensioneventhub.cpp:1018), and the
+`m_tabWidget` member access (browsermainwindow.cpp:3907) are all UB.
+The code HAS the safe identity key — two lines later the `closing`
+calc compares `tab.windowObject` against `m_dyingWindows`
+(extensioneventhub.cpp:1026), and `windowObject` exists for exactly
+this ("usable in dead-object compares where QPointer::data()'s
+checked cast would be UB", extensioneventhub.h:246-249) — but the
+collapsed-group probe dereferences `tab.window` first anyway.
+UBSan fired on this path in the browser-smoke, container-smoke and
+tabstrip-smoke legs (same three SUMMARY lines each run). In practice
+`home->tabWidget()` reads the `m_tabWidget` member of a
+partially-destructed window — garbage `TabWidget*` whose
+`tabGroupOf` is then called; today it happens not to crash, but it
+is a real torn-read. Fix (CA10): test the dying-window membership on
+`windowObject` before touching `tab.window` (a dying window's
+collapsed-group question is moot anyway).
+
+### L3 — `LocationBar`-destroyed lambda touches a partially-destructed `TabWidget` — **LOW**
+
+`TabWidget::wireLocationBar` connects `bar, &QObject::destroyed` to a
+lambda that reads `m_lineEditCompleter` (tabwidget.cpp:1049-1050).
+Qt emits child `destroyed` signals while the parent is already
+inside `~QObject` (children die before connections are severed), so
+when a location bar dies during `TabWidget` teardown the lambda runs
+on a `this` whose dynamic type is already QWidget — member access is
+UB, and `m_lineEditCompleter` may already be torn down. UBSan fired
+in the container-smoke leg (member access on address "of type
+QWidget" at tabwidget.cpp:1049:13/36 and :1050:13). Benign in
+practice — the guard checks `widget() == bar` on possibly-dead but
+mapped memory — but the same class as L1/L2; fix by early-returning
+when `this` is being destroyed (e.g. a `m_destroying` flag, or
+disconnecting in ~TabWidget before members die).
+
+### Dynamic leg detail (LSan)
+
+13 smoke legs on the ASan+UBSan+LSan build, leak check inside the
+quick-exit handler: **28 leak blocks total, 0 allocated in our code**
+(all fontconfig/expat upstream leaves). Per-leg:
+
+    leg                                   rc    blocks  ours
+    --quit-after-load                      0      2      0
+    --app-smoke                            0      2      0
+    --browser-smoke                        0      3      0
+    --otr-teardown-smoke                   0      3      0
+    --container-smoke                      0      3      0
+    --tabstrip-smoke                       0      3      0
+    --extension-smoke                      0      2      0
+    --extension-otr-smoke                  0      2      0
+    --cookie-smoke                         0      2      0
+    --history-smoke                        0      2      0
+    --settings-smoke                     139      —      —  (L1 crash)
+    --search-smoke                         0      2      0
+    --download-smoke                       0      2      0
+
+Note on scope: `at_quick_exit` fires before the app's own
+quick_exit body, so process-lifetime singletons and live app objects
+correctly report reachable — the check measures *unreachable at
+exit*, i.e. true leaks. Blocks leaked by skipped destructors cannot
+exist by construction (quick_exit skips them on purpose — the
+EXTEXIT01 trade-off). Logs: /tmp/ca03-leaklogs (not committed).
+
+### Checked, no findings (honest negatives)
+
+- **Unparented `new QObject`** — 141 scanner-flagged sites all
+  resolve: detached `WebView`/`BrowserMainWindow`/`SourceViewer`/
+  `SettingsDialog` windows carry `WA_DeleteOnClose`
+  (webpage.cpp:1404,1508; webview.cpp:772,813,840;
+  browserapplication.cpp; browsermainwindow.cpp:350,3816);
+  `WebViewWithSearch` reparents its `WebView`
+  (webviewsearch.cpp:122); tab teardown `deleteLater`s both the
+  location bar and the page widget (tabwidget.cpp:3567,3584;
+  hidden-group members 2674/2679); `main.cpp` smoke objects are
+  parented to `&application`.
+- **Per-profile registries** — `DownloadManager::instanceFor`
+  (static QPointer map + `releaseFor` delete, downloadmanager.cpp:1475),
+  `NotesModel::instance` (parented to the profile, QPointer row +
+  destroyed-connect cleanup, notesmodel.cpp:95-105),
+  `ContainerManager::m_profiles` (qApp-parented AND explicitly
+  deleted in teardown + take paths, containermanager.cpp:121,219,445),
+  `OpenSearchManager::m_engines` (`qDeleteAll` in dtor,
+  opensearchmanager.cpp:157) — all bounded, all owned.
+- **QNetworkReply** — every `NAM::get()` site parents the reply and
+  `deleteLater`s it in the finished handler
+  (extensionmanager.cpp:3059-3065,3111; opensearchengine.cpp:570-585;
+  opensearchmanager.cpp:370+1339; adblocksubscription.cpp:289-311).
+- **Contextless `connect()`** — zero `connect(sender, sig, functor)`
+  without a context object in src/; every lambda connection names a
+  receiver context.
+- **Non-QObject raw `new`** — 22 sites all resolve: `QUndoStack`
+  owns pushed bookmark commands (bookmarksmanager.h:146);
+  `QIcon(QIconEngine*)`/`QApplication::setStyle` take ownership;
+  `BookmarkNode` is a self-owning tree (dtor unlinks + deletes
+  children, bookmarknode.cpp:121); delegates/layouts parent to the
+  view.
+- **QThread workers** — `SyncPairDialog` parents `m_thread`, quits
+  it on `destroyed`, deletes the worker on `finished`
+  (syncpairdialog.cpp:130-136).
+- **QWebEngine seam** — every `QWebEngineUrlRequestInterceptor`,
+  `QWebEngineUrlSchemeHandler`, `WebEnginePageAdapter` and
+  download-request wrapper is parented to profile/page/request
+  (webenginebackend.cpp:391,820,983; schemeaccesshandler.cpp:131-140
+  including the `installed`-set destroyed cleanup).
+- **Extension page bridges** — `attachExtensionPage` parents the
+  `QWebChannel` and `ChromeBridge` to the page and detaches on
+  `destroyed` (extensionbackgroundhost.cpp:2008-2038).
+- **Rust FFI** — every `rc_*_open`/`ac_*_open` handle has a paired
+  close (notesmodel.cpp:82-85, pdfview.cpp:88, pdfworker.cpp:226,
+  historymanager.cpp, torcontrol.cpp:85-99, rustcorebridge.cpp:443-733,
+  extensionshimbackend.cpp guards); 99 `rc_string_free` + 12
+  `ac_string_free` + 25 `rc_buffer_free` sites cover the `char *`
+  API surface; `char *` results flow through `*Take` wrappers.
+- **Deliberate still-reachable caches** (documented, not bugs):
+  `SyncTabPresence` static instance, `recently-closed` value
+  snapshots (no live widget refs — tabwidget.cpp:4323+), the
+  QWidgetAction default-widget hand-off in profilemenuactions.cpp:220.
