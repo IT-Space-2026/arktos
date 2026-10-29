@@ -417,7 +417,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | CA07 | Code fixes: dead code removal — apply confirmed CA01 dead-code findings — details below | done | 1 | CA01 dead-code applied: 3 dead members + #if 0 arm + 4 dead includes + 43 lambda captures + SRCS_TRANCO deleted; 3 audit false-positives kept+annotated. Also fixed pre-existing no-rust link break (unguarded RustCoreBridge in sync UI). Verified: check-warnings PASS, make 0 warnings, suite reds all pre-existing in untouched code |
 | CA08 | Code fixes: dedup refactor — consolidate confirmed CA01 duplicates — details below | done | 0 | CA01 dups applied: 20/20 cross-file families consolidated into shared helpers (hostmatch/menufit/chromecommon/workerio/remotelistfetch/policyrequestmarshal/sitebinding/streamingutils + rustcorebridge/browserpaths/engineinterface/streaming + hub trackableTabs + ArktosStyle badge + icon-engine base); ~12 within-file extractions incl. 13 shim ok/err lambda pairs, fanOut, EBH helpers; torcontrol/securestore confirmed config-lane, adblock pair intentional; leftover smoke-leg boilerplate deferred to CA13. make 0 warnings, --quit-after-load exit 0 |
 | CA09 | Code fixes: security remediations from CA02 — details below | done | 0 | All 8 findings fixed high->low: ext subframe confinement (WebPage+self-wire gate), pdf-worker path pin+buffer cap, NAM session cert whitelist (no more CA-store planting+persisted set purged), DNR redirect re-gate+file/ftp coverage dropped, nativeMessaging anchored/stdio/abs-path+inbox bound, header-value validation, randomBytes tail; dead foreignCertOverrideHosts removed (WPE call deleted with backend, not lost). Verified: clean build 0 warnings, quit-after-load exit 0, webpage/downloadmanager/nam/securestore/certerror/webpermissions/schemehandlers all PASS; ext self-wire legs updated to ExtensionChromePage fixtures and PASS; remaining reds are documented pre-existing flakes/stale legs |
-| CA10 | Code fixes: memory-leak remediations from CA03 — details below | pending | 0 | needs:task:CA03,CA08 — fix ownership/parenting; ASan legs clean |
+| CA10 | Code fixes: memory-leak remediations from CA03 — details below | done | 0 | CA03 leak fixes applied: L1 cached m_offTheRecord (settings-smoke rc 139->0), L2 dying-window gate on identity key, L3 ctx member dies before child bars, + mainWindows() downcast via ~BMW removeMainWindow; ASan/UBSan legs all rc=0, 0 runtime errors, 0 our-code LSan blocks pre-teardown |
 | CA11 | Code fixes: performance remediations from CA04 — top findings only, measured — details below | pending | 0 | needs:task:CA04,CA08 — bounded scope, before/after numbers |
 | CA12 | Code fixes: platform remediations from CA05+CA06 — Windows+macOS issues — details below | pending | 0 | needs:task:CA05,CA06,CA08 |
 | CA13 | Code audit close-out — re-run detectors, full suite green, CODE-AUDIT.md finalized with fixed/deferred dispositions — details below | pending | 0 | needs:task:CA09,CA10,CA11,CA12 |
@@ -5368,6 +5368,49 @@ Applied all 8 findings + the carried-forward D1 question:
 Fix CA03's leak findings: correct ownership/parenting, break cycles,
 match new/delete. Re-run any ASan/LSan legs used in the audit; they
 must come back clean.
+
+
+Applied all 3 findings + one new same-class site found during
+re-verification:
+
+- L1 HIGH (CookieJar::save dying-profile deref): cached
+  `m_offTheRecord` at construction (isOffTheRecord is immutable on a
+  profile); all 7 `m_profile->isOffTheRecord()` reads now use it, so
+  ~CookieJar inside the profile's own destroyed() emission never
+  touches the half-destructed object (cookiejar.{h,cpp}).
+- L2 MED (event-hub removed-tab sweep): `tab.window.data()` is now
+  gated on `!m_dyingWindows.contains(windowObject) &&
+  m_windowIds.contains(windowObject)` — the QObject-identity key —
+  before any QPointer downcast (extensioneventhub.cpp:1034-1046).
+- L3 MED (location-bar destroyed lambda): new `QObject
+  m_locationBarDeathCtx` data member is the slot's receiver context —
+  it dies during member teardown, before ~QObject deletes the child
+  bars, so a bar dying inside ~TabWidget can no longer invoke a slot
+  that reads the half-destructed `this` (tabwidget.{h,cpp}).
+- NEW same-class site (found by the re-run, would have kept the leg
+  red): `BrowserApplication::mainWindows()` converted each
+  m_mainWindows QPointer — UB during a window's destroyed() emission.
+  Fixed with `removeMainWindow()` called at the top of
+  ~BrowserMainWindow (the only point the entry can leave the list
+  while `this` is still fully typed — QPointer compare itself
+  downcasts); `quitting` guard keeps the removal from mutating the
+  list under the shutdown qDeleteAll loops (browserapplication.
+  {h,cpp}, browsermainwindow.cpp:804-811).
+
+Re-ran the CA03 legs on a fresh `linux-clang CONFIG+=sanitize`
+throwaway build (at_quick_exit LSan hook, same as the audit):
+all 13 smoke legs rc=0 (was 139 on settings-smoke), ZERO UBSan
+runtime-error lines (was: settings-crash + hub downcast x3 legs +
+tabwidget member-access). LSan: 0 our-code blocks pre-teardown on
+every leg. settings-smoke's post-teardown atexit report shows 4
+our-code blocks (2 RustCoreSettings + 2 FFI handles) — teardown
+orphans: the leg exits via normal return, so the rustStores()/
+retired statics free their buffers before the atexit pass; the
+pre-return probe confirms them live-rooted — the class the audit
+methodology explicitly excluded. Two transient rc=139 flakes were
+upstream fontconfig FcInit/expat getenv crashes under the ASan
+interceptor (no our-code frames; retry passes). Verified: clean
+qmake6+make 0 warnings, ./arktos --quit-after-load exit 0 offscreen.
 
 ### CA11
 Fix CA04's top performance findings only (bounded — this is not a

@@ -962,6 +962,15 @@ QList<BrowserMainWindow*> BrowserApplication::mainWindows()
     return list;
 }
 
+void BrowserApplication::removeMainWindow(BrowserMainWindow *window)
+{
+    // The quitting guard keeps this from mutating the list under the
+    // shutdown paths' own qDeleteAll iteration — entries die with the
+    // list there anyway.
+    if (!quitting)
+        m_mainWindows.removeAll(window);
+}
+
 bool BrowserApplication::allowToCloseWindow(BrowserMainWindow *window)
 {
     Q_UNUSED(window)

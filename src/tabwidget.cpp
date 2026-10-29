@@ -1045,7 +1045,7 @@ void TabWidget::wireLocationBar(QLineEdit *bar)
     // currentLocationBar() would dereference freed layout items.
     // widget()==nullptr is a safe resting state — every complete()
     // gate checks it first, and the next FocusIn/edit rebinds.
-    connect(bar, &QObject::destroyed, this, [this, bar]() {
+    connect(bar, &QObject::destroyed, &m_locationBarDeathCtx, [this, bar]() {
         if (m_lineEditCompleter && m_lineEditCompleter->widget() == bar)
             m_lineEditCompleter->setWidget(nullptr);
     });

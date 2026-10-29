@@ -1031,7 +1031,18 @@ void ExtensionEventHub::syncNow()
             // collapsed members in its tab list, so detachment alone
             // is not a removal.
             WebView *live = tab.view.data();
-            BrowserMainWindow *home = tab.window.data();
+            // tab.window's QPointer::data() static-downcast is UB on
+            // a window inside ~BrowserMainWindow (dynamic type already
+            // reverted).  This rescan runs mid-destruction for the
+            // m_dyingWindows member; after onWindowDestroyed returns
+            // the window is out of m_windowIds but still destructing
+            // while its children die.  Test both on the
+            // QObject-identity key instead — a dying window's
+            // collapsed-group question is moot anyway (CA10 L2).
+            BrowserMainWindow *home = nullptr;
+            if (!m_dyingWindows.contains(tab.windowObject)
+                    && m_windowIds.contains(tab.windowObject))
+                home = tab.window.data();
             TabWidget *homeTabs = home ? home->tabWidget() : nullptr;
             if (live && homeTabs
                     && !homeTabs->tabGroupOf(live).isEmpty()) {

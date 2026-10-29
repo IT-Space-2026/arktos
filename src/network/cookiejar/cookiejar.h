@@ -229,6 +229,11 @@ private:
 
     QWebEngineProfile *m_profile;   // not owned
     QString m_profileId;
+    // Cached at construction: isOffTheRecord is fixed for a profile's
+    // lifetime, and ~CookieJar runs save() from inside the profile's
+    // own destroyed() emission — dereferencing m_profile there is UB
+    // (CA10 L1), so no method may re-ask the profile.
+    bool m_offTheRecord;
     // QPointer: the store can die during WebEngine teardown before this
     // jar is destroyed.
     QPointer<QWebEngineCookieStore> m_store;

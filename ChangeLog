@@ -5156,3 +5156,11 @@ Code audit (CA01-CA04, no code changes):
   native-messaging host names and manifests are validated more
   strictly (anchored name match, absolute host path, stdio required,
   inbound buffer bound).
+- 2026-10-29 CA10: fixed three sanitizer-proven dying-object bugs: the
+  cookie jar no longer dereferences a mid-destruction profile when it
+  flushes on quit (cached off-the-record flag), the extension event
+  hub's removed-tab sweep no longer downcasts a dying window's
+  QPointer, a location-bar destroy hook can no longer touch a
+  half-destructed tab strip, and windows now leave the app's window
+  list at destructor entry so mainWindows() never sees a
+  half-destructed window either.

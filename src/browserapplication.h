@@ -110,6 +110,10 @@ public:
 
     BrowserMainWindow *mainWindow();
     QList<BrowserMainWindow*> mainWindows();
+    // Called from ~BrowserMainWindow while the object is still fully
+    // typed — the only point the entry can leave m_mainWindows without
+    // a QPointer downcast on a half-destructed object (CA10).
+    void removeMainWindow(BrowserMainWindow *window);
     bool allowToCloseWindow(BrowserMainWindow *window);
 
     static QIcon icon(const QUrl &url);

@@ -821,6 +821,12 @@ private:
     QList<WebActionMapper*> m_actions;
 
     QCompleter *m_lineEditCompleter;
+    // Receiver context for each location bar's destroyed() hook: as a
+    // data member it is destroyed before ~QObject deletes the child
+    // bars, so a bar that dies inside our own teardown can no longer
+    // invoke a slot that would touch the half-destructed TabWidget
+    // (CA10 L3).
+    QObject m_locationBarDeathCtx;
     OmniboxSuggestions *m_omniboxSuggestions;
     QStackedWidget *m_locationBars;
     TabBar *m_tabBar;

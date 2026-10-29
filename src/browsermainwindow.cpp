@@ -802,6 +802,13 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
 
 BrowserMainWindow::~BrowserMainWindow()
 {
+    // CA10: leave BrowserApplication::m_mainWindows while 'this' is
+    // still fully typed — after ~QObject emits destroyed() our
+    // QPointer there still tests non-null, so a mainWindows() call
+    // (the extension hub rescan reaches it from that emission) would
+    // downcast the half-destructed object.
+    if (BrowserApplication *app = BrowserApplication::instance())
+        app->removeMainWindow(this);
     // NAVB03: an active edit mode leaves a qApp event filter and
     // possibly an override cursor armed — detach both before the
     // window object dies or the filter would fire on a dead this.

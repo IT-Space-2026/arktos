@@ -98,6 +98,7 @@ CookieJar::CookieJar(QWebEngineProfile *profile, QObject *parent)
     : QObject(parent)
     , m_profile(profile ? profile : QWebEngineProfile::defaultProfile())
     , m_profileId(BrowserProfile::profileIdFor(m_profile))
+    , m_offTheRecord(m_profile->isOffTheRecord())
     , m_store(m_profile->cookieStore())
     , m_saveTimer(new AutoSaver(this))
     , m_filterTrackingCookies(false)
@@ -155,8 +156,9 @@ CookieJar *CookieJar::instance(QWebEngineProfile *profile)
         // A destroyed profile must not leave a jar keyed on its dead
         // address — a recycled profile object would inherit the stale
         // jar (MEM10, same contract as the OTR notes map).  ~CookieJar
-        // only touches the QPointer-guarded store, so running it from
-        // the destroyed signal is safe.
+        // only touches the QPointer-guarded store and the cached
+        // m_offTheRecord flag — never the dying profile — so running
+        // it from the destroyed signal is safe (CA10 L1).
         QObject::connect(profile, &QObject::destroyed, qApp, [profile]() {
             delete cookieJars().take(profile);
         });
@@ -209,7 +211,7 @@ bool CookieJar::isPrivate() const
     // Qt WebEngine has no runtime private-browsing toggle: privacy is a
     // property of the profile.  A private CookieJar is one bound to an
     // off-the-record profile (see BrowserApplication::webEngineProfile).
-    return m_profile->isOffTheRecord();
+    return m_offTheRecord;
 }
 
 #if defined(ARKTOS_RUSTCORE)
@@ -256,7 +258,7 @@ AcCookies *CookieJar::rustCookies() const
 {
     // A private jar never mirrors — the persistent db must not see
     // off-the-record cookies (the same disk silence save() keeps).
-    if (m_profile->isOffTheRecord())
+    if (m_offTheRecord)
         return nullptr;
     // Same drift rule HistoryManager::rustStore() documents: a
     // minted handle pins the root it was bound against, so a
@@ -294,7 +296,7 @@ void CookieJar::ensureRustCookies() const
 
 void CookieJar::rustCookieSet(const QNetworkCookie &cookie) const
 {
-    if (m_profile->isOffTheRecord())
+    if (m_offTheRecord)
         return;
     QString container;
     // ContainerManager::containerIdForProfile resolves the normal
@@ -317,7 +319,7 @@ void CookieJar::rustCookieSet(const QNetworkCookie &cookie) const
 
 void CookieJar::rustCookieRemove(const QNetworkCookie &cookie) const
 {
-    if (m_profile->isOffTheRecord())
+    if (m_offTheRecord)
         return;
     QString container;
     if (ContainerManager *manager =
@@ -343,7 +345,7 @@ void CookieJar::rustCookieRemove(const QNetworkCookie &cookie) const
 
 void CookieJar::rustCookiesClear() const
 {
-    if (m_profile->isOffTheRecord())
+    if (m_offTheRecord)
         return;
     QString container;
     if (ContainerManager *manager =
@@ -477,7 +479,7 @@ void CookieJar::save()
     // (setPersistentCookiesPolicy); only the policy and the exception
     // lists are ours to store.  An off-the-record jar never writes
     // either (MPROF02).
-    if (m_profile->isOffTheRecord())
+    if (m_offTheRecord)
         return;
     ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("cookies"));
@@ -525,7 +527,7 @@ void CookieJar::updatePolicySnapshot()
 
 void CookieJar::applyKeepPolicy()
 {
-    if (m_profile->isOffTheRecord())
+    if (m_offTheRecord)
         return;
     m_profile->setPersistentCookiesPolicy(m_keepCookies == KeepUntilExit
             ? QWebEngineProfile::NoPersistentCookies
