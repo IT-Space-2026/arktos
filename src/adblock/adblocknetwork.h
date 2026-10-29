@@ -37,6 +37,7 @@
 #include <qhash.h>
 #include <qobject.h>
 #include <qreadwritelock.h>
+#include <qset.h>
 #include <qurl.h>
 
 class AdBlockRustEngine;
@@ -120,9 +121,22 @@ public:
 public slots:
     // Snapshots the current subscriptions' network rules.  GUI thread only.
     void rebuildRules();
+    // CA11: the signal-facing entry — coalesces a burst of
+    // rulesChanged emissions into one snapshot per event-loop pass
+    // (a finished list download alone emits two).  rebuildRules()
+    // stays the synchronous force: it satisfies a pending schedule,
+    // and callers that must observe the new rules immediately
+    // (smoke legs, installOnProfile) keep calling it directly.
+    void scheduleRebuild();
 
 private:
     // Requires m_lock held (read) and m_enabled already checked.
+#if defined(ARKTOS_RUSTCORE)
+    // CA11: the SITED01 site whitelist folded into the snapshot —
+    // longest-suffix host walk over m_whitelistedHosts, mirroring the
+    // store's lookup() semantics with no per-request FFI.
+    bool whitelistedDocumentUnlocked(const QString &documentHost) const;
+#endif
 #if defined(ARKTOS_ADBLOCK_RUST)
     // Document-level unbreak scan shared by the composite match():
     // 1 = $document page exception (allow everything), 2 =
@@ -175,7 +189,16 @@ private:
 
     QList<SubscriptionRules> m_subscriptions;
     bool m_enabled;
+    // GUI-thread only — guards the coalesced rebuild queue, so it
+    // deliberately lives outside m_lock.
+    bool m_rebuildPending = false;
     mutable QReadWriteLock m_lock;
+
+#if defined(ARKTOS_RUSTCORE)
+    // CA11: whitelisted site hosts snapshotted at rebuild —
+    // swapped under m_lock with the rule lists.
+    QSet<QString> m_whitelistedHosts;
+#endif
 
 #if defined(ARKTOS_ADBLOCK_RUST)
     std::unique_ptr<AdBlockRustEngine> m_rustEngine; // swapped under m_lock

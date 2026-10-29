@@ -187,8 +187,6 @@ private:
     QTimer *m_timer;
     QTimer *m_idleTimer;
     QElapsedTimer m_interval;
-    QList<qint64> m_enginePids;
-    int m_samplesSinceRescan;
     qint64 m_lastReadBytes;
     qint64 m_lastWriteBytes;
     qint64 m_lastDownloadBytes;

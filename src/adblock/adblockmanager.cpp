@@ -79,6 +79,10 @@ AdBlockManager::AdBlockManager(QObject *parent,
 {
     connect(this, &AdBlockManager::rulesChanged,
             m_saveTimer, &AutoSaver::changeOccurred);
+    // Metadata-only edits persist the same way — they just skip the
+    // matcher rebuild rulesChanged schedules (CA11).
+    connect(this, &AdBlockManager::subscriptionInfoChanged,
+            m_saveTimer, &AutoSaver::changeOccurred);
 }
 
 AdBlockManager::~AdBlockManager()
@@ -181,8 +185,13 @@ void AdBlockManager::setEngine(Engine engine)
                          ? QLatin1String("rust") : QLatin1String("cpp"));
     // rulesChanged rebuilds the matcher snapshot; the Rust engine is
     // constructed (or dropped) inside rebuildRules, so the switch
-    // reaches live requests without a restart.
+    // reaches live requests without a restart.  CA11: signal-driven
+    // rebuilds are coalesced now, but an engine switch is a
+    // deliberate user action — apply it synchronously (the pending
+    // scheduled rebuild then no-ops).
     emit rulesChanged();
+    if (m_adBlockNetwork)
+        m_adBlockNetwork->rebuildRules();
 }
 
 bool AdBlockManager::rustEngineInUse() const
@@ -288,7 +297,7 @@ AdBlockNetwork *AdBlockManager::network()
     if (!m_adBlockNetwork) {
         m_adBlockNetwork = new AdBlockNetwork(this);
         connect(this, &AdBlockManager::rulesChanged,
-                m_adBlockNetwork, &AdBlockNetwork::rebuildRules);
+                m_adBlockNetwork, &AdBlockNetwork::scheduleRebuild);
         m_adBlockNetwork->rebuildRules();
     }
     return m_adBlockNetwork;
@@ -305,7 +314,7 @@ void AdBlockManager::installOnProfile(QWebEngineProfile *profile,
         // then the interceptor sees an empty ruleset (allow-all).
         m_adBlockNetwork = new AdBlockNetwork(this);
         connect(this, &AdBlockManager::rulesChanged,
-                m_adBlockNetwork, &AdBlockNetwork::rebuildRules);
+                m_adBlockNetwork, &AdBlockNetwork::scheduleRebuild);
     } else {
         // Force rules to load and the matcher snapshot to be built on
         // the GUI thread before the interceptor starts seeing
@@ -519,7 +528,7 @@ void AdBlockManager::addSubscription(AdBlockSubscription *subscription)
 #endif
     m_subscriptions.append(subscription);
     connect(subscription, &AdBlockSubscription::rulesChanged, this, &AdBlockManager::rulesChanged);
-    connect(subscription, &AdBlockSubscription::changed, this, &AdBlockManager::rulesChanged);
+    connect(subscription, &AdBlockSubscription::changed, this, &AdBlockManager::subscriptionInfoChanged);
     emit rulesChanged();
 }
 
@@ -716,7 +725,7 @@ void AdBlockManager::load()
         if (!adBlockSubscription)
             continue;
         connect(adBlockSubscription, &AdBlockSubscription::rulesChanged, this, &AdBlockManager::rulesChanged);
-        connect(adBlockSubscription, &AdBlockSubscription::changed, this, &AdBlockManager::rulesChanged);
+        connect(adBlockSubscription, &AdBlockSubscription::changed, this, &AdBlockManager::subscriptionInfoChanged);
         m_subscriptions.append(adBlockSubscription);
     }
 

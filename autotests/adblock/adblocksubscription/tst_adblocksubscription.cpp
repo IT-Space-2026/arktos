@@ -241,7 +241,9 @@ void tst_AdBlockSubscription::isEnabled()
     subscription.setEnabled(isEnabled);
     QCOMPARE(subscription.isEnabled(), isEnabled);
 
-    QCOMPARE(spy0.count(), 0);
+    // CA11: enabled state feeds the matcher snapshot, so a real
+    // toggle emits rulesChanged alongside the metadata 'changed'.
+    QCOMPARE(spy0.count(), changed ? 1 : 0);
     QCOMPARE(spy1.count(), changed ? 1 : 0);
 }
 

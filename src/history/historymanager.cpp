@@ -494,6 +494,9 @@ void HistoryManager::addHistoryEntry(const QString &url)
 void HistoryManager::setHistory(const QList<HistoryEntry> &history, bool loadedAndSorted)
 {
     m_history = history;
+    m_urlNormCounts.clear();
+    for (const HistoryEntry &item : m_history)
+        noteHistoryUrlAdded(item.url);
 
     // verify that it is sorted by date
     if (!loadedAndSorted)
@@ -565,6 +568,7 @@ void HistoryManager::checkForExpired()
         if (nextTimeout > 0)
             break;
         HistoryEntry item = m_history.takeLast();
+        noteHistoryUrlRemoved(item.url);
         // remove from saved file also
         m_lastSavedUrl.clear();
 #ifdef ARKTOS_RUSTCORE
@@ -593,6 +597,7 @@ void HistoryManager::prependHistoryEntry(const HistoryEntry &item)
     // off-the-record (the old QWebSettings::PrivateBrowsingEnabled
     // global flag is gone).
     m_history.prepend(item);
+    noteHistoryUrlAdded(item.url);
 #ifdef ARKTOS_RUSTCORE
     histAdd(m_profileId, item.url, item.title,
             item.dateTime.toMSecsSinceEpoch());
@@ -602,8 +607,26 @@ void HistoryManager::prependHistoryEntry(const HistoryEntry &item)
         checkForExpired();
 }
 
+void HistoryManager::noteHistoryUrlAdded(const QString &url)
+{
+    ++m_urlNormCounts[QUrl(url).toString()];
+}
+
+void HistoryManager::noteHistoryUrlRemoved(const QString &url)
+{
+    auto it = m_urlNormCounts.find(QUrl(url).toString());
+    if (it != m_urlNormCounts.end() && --it.value() <= 0)
+        m_urlNormCounts.erase(it);
+}
+
 void HistoryManager::updateHistoryEntry(const QUrl &url, const QString &title)
 {
+    // CA11/P7: a url with no recorded entry cannot match — skip the
+    // O(history) scan (the common case for OTR pages and
+    // title-before-add races).  Equal QUrls stringify identically,
+    // so the normalized-key miss is exact under the scan's ==.
+    if (!m_urlNormCounts.contains(url.toString()))
+        return;
     for (int i = 0; i < m_history.count(); ++i) {
         if (url == m_history.at(i).url) {
             m_history[i].title = atomicString(title);
@@ -623,7 +646,8 @@ void HistoryManager::updateHistoryEntry(const QUrl &url, const QString &title)
 void HistoryManager::removeHistoryEntry(const HistoryEntry &item)
 {
     m_lastSavedUrl.clear();
-    m_history.removeOne(item);
+    if (m_history.removeOne(item))
+        noteHistoryUrlRemoved(item.url);
 #ifdef ARKTOS_RUSTCORE
     histRemove(m_profileId, item.url, item.title,
                item.dateTime.toMSecsSinceEpoch());
@@ -671,6 +695,7 @@ void HistoryManager::clear()
 {
     m_history.clear();
     m_atomicStringHash.clear();
+    m_urlNormCounts.clear();
     m_lastSavedUrl.clear();
 #ifdef ARKTOS_RUSTCORE
     histClear(m_profileId);
@@ -690,6 +715,7 @@ void HistoryManager::clearSince(qint64 sinceMs)
     for (int i = m_history.count() - 1; i >= 0; --i) {
         if (m_history.at(i).dateTime.toMSecsSinceEpoch() >= sinceMs) {
             const HistoryEntry item = m_history.takeAt(i);
+            noteHistoryUrlRemoved(item.url);
             emit entryRemoved(item);
         }
     }
@@ -707,6 +733,7 @@ void HistoryManager::loadSettings()
     ProfileSettings settings(m_profileId);
     settings.beginGroup(QLatin1String("history"));
     m_daysToExpire = settings.value(QLatin1String("historyLimit"), 30).toInt();
+    m_savedDaysToExpire = m_daysToExpire;
 }
 
 void HistoryManager::load()
@@ -856,9 +883,14 @@ QString HistoryManager::atomicString(const QString &string) {
 
 void HistoryManager::save()
 {
-    ProfileSettings settings(m_profileId);
-    settings.beginGroup(QLatin1String("history"));
-    settings.setValue(QLatin1String("historyLimit"), m_daysToExpire);
+    // CA11/P9: the limit is quasi-static — only open+write settings
+    // when it actually moved, not on every debounced flush.
+    if (m_savedDaysToExpire != m_daysToExpire) {
+        ProfileSettings settings(m_profileId);
+        settings.beginGroup(QLatin1String("history"));
+        settings.setValue(QLatin1String("historyLimit"), m_daysToExpire);
+        m_savedDaysToExpire = m_daysToExpire;
+    }
 
 #ifdef ARKTOS_RUSTCORE
     // history.db writes through on every mutation — nothing pending

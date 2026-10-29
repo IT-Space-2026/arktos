@@ -44,19 +44,33 @@
 
 // SITED01: the site whitelist lives in the Rust store — a stored host
 // acts as the page-level $document exception the custom-rules filter
-// used to provide.  The suffix walk matches the ||host^ anchor's
-// "host or any subdomain" semantics.
-static bool siteWhitelistedDocument(const QString &documentHost)
+// used to provide.  CA11: rebuildRules() folds the rows into the
+// snapshot (one entries() envelope per rebuild) and this walk mirrors
+// the store's longest-suffix lookup — "www.example.com" tries
+// "www.example.com", "example.com", "com" — with no per-request FFI.
+// Requires m_lock held (read).
+bool AdBlockNetwork::whitelistedDocumentUnlocked(
+        const QString &documentHost) const
 {
     if (documentHost.isEmpty())
         return false;
-    return SiteDecisionStore::lookup(SiteDecisionStore::KindAdBlock,
-                                     documentHost, nullptr);
+    QString suffix = documentHost.toLower();
+    while (true) {
+        if (m_whitelistedHosts.contains(suffix))
+            return true;
+        const int dot = suffix.indexOf(QLatin1Char('.'));
+        if (dot < 0)
+            return false;
+        suffix = suffix.mid(dot + 1);
+        if (suffix.isEmpty())
+            return false;
+    }
 }
 #endif
 
 #include <qdebug.h>
 #include <qset.h>
+#include <qtimer.h>
 #include <qurl.h>
 
 #include <algorithm>
@@ -152,7 +166,7 @@ int AdBlockNetwork::documentUnbreakUnlocked(
         const QString &documentString, const QString &documentHost) const
 {
 #if defined(ARKTOS_RUSTCORE)
-    if (siteWhitelistedDocument(documentHost))
+    if (whitelistedDocumentUnlocked(documentHost))
         return 1;
 #endif
     int result = 0;
@@ -301,7 +315,7 @@ AdBlockDecision AdBlockNetwork::matchNativeUnlocked(
     // exception turns blocking off for the whole page, $genericblock
     // suppresses rules that are not domain-restricted.
 #if defined(ARKTOS_RUSTCORE)
-    if (siteWhitelistedDocument(documentHost))
+    if (whitelistedDocumentUnlocked(documentHost))
         return decision;
 #endif
     bool genericBlock = false;
@@ -426,7 +440,7 @@ AdBlockDecision AdBlockNetwork::matchLinearUnlocked(
     // exception turns blocking off for the whole page, $genericblock
     // suppresses rules that are not domain-restricted.
 #if defined(ARKTOS_RUSTCORE)
-    if (siteWhitelistedDocument(documentHost))
+    if (whitelistedDocumentUnlocked(documentHost))
         return decision;
 #endif
     bool genericBlock = false;
@@ -543,9 +557,23 @@ bool AdBlockNetwork::shouldBlock(const QUrl &url) const
     return match(url).action != AdBlockDecision::Allow;
 }
 
+void AdBlockNetwork::scheduleRebuild()
+{
+    if (m_rebuildPending)
+        return;
+    m_rebuildPending = true;
+    QTimer::singleShot(0, this, [this]() {
+        if (!m_rebuildPending)
+            return;   // a synchronous rebuildRules() already covered it
+        m_rebuildPending = false;
+        rebuildRules();
+    });
+}
+
 void AdBlockNetwork::rebuildRules()
 {
     StartupProfile::Scope profileScope("adblock rules snapshot");
+    m_rebuildPending = false;
     // MPROF02: this network belongs to one persona's manager — resolve
     // the parent, never the active profile's singleton.
     AdBlockManager *manager = qobject_cast<AdBlockManager *>(parent());
@@ -610,9 +638,29 @@ void AdBlockNetwork::rebuildRules()
             wantRust ? AdBlockRustEngine::create(rustText) : nullptr;
 #endif
 
+#if defined(ARKTOS_RUSTCORE)
+    // CA11/P3: snapshot the site whitelist alongside the rules — one
+    // entries() envelope per rebuild replaces a per-request lookup
+    // FFI.  Rows carrying an empty decision value are no-rows to the
+    // store's lookup(), so they stay out of the set.
+    QSet<QString> whitelistedHosts;
+    {
+        const QHash<QString, QString> stored =
+            SiteDecisionStore::entries(SiteDecisionStore::KindAdBlock);
+        for (auto it = stored.constBegin(); it != stored.constEnd();
+             ++it) {
+            if (!it.value().isEmpty())
+                whitelistedHosts.insert(it.key());
+        }
+    }
+#endif
+
     QWriteLocker locker(&m_lock);
     m_subscriptions = snapshot;
     m_enabled = enabled;
+#if defined(ARKTOS_RUSTCORE)
+    m_whitelistedHosts = whitelistedHosts;
+#endif
 #if defined(ARKTOS_ADBLOCK_RUST)
     m_rustEngine.reset(rustEngine);
 #endif

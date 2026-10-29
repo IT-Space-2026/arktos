@@ -362,7 +362,6 @@ NetIndicator::NetIndicator(QWidget *parent)
     , m_label(new QLabel(this))
     , m_timer(new QTimer(this))
     , m_idleTimer(new QTimer(this))
-    , m_samplesSinceRescan(0)
     , m_lastReadBytes(0)
     , m_lastWriteBytes(0)
     , m_lastDownloadBytes(0)
@@ -404,10 +403,22 @@ QString NetIndicator::formatRate(qint64 bytesPerSecond)
         + QLatin1String("/s");
 }
 
+namespace {
+// CA11/P6: the engine pid set is process-global — every window's
+// indicator used to re-sweep all of /proc every ~5s.  Shared state
+// collapses N windows into one scan per rescan interval (a shared
+// elapsed timer — per-window sample counters would fire K times
+// faster with K windows); it is still refreshed periodically (a
+// respawned network service) and forced whenever every cached pid
+// dies.  GUI thread only.
+QList<qint64> s_enginePids;
+QElapsedTimer s_lastRescan;
+}
+
 void NetIndicator::rescanEnginePids()
 {
-    m_enginePids.clear();
-    m_samplesSinceRescan = 0;
+    s_enginePids.clear();
+    s_lastRescan.start();
 #if defined(Q_OS_LINUX)
     const qint64 appPid = QCoreApplication::applicationPid();
     QList<qint64> enginePids;
@@ -451,7 +462,7 @@ void NetIndicator::rescanEnginePids()
     // The network service alone carries page traffic — prefer it.
     // The fallback sums every engine child, which over-counts with
     // renderer/GPU disk and IPC traffic; the tooltip owns the caveat.
-    m_enginePids = (networkPid != -1)
+    s_enginePids = (networkPid != -1)
         ? (QList<qint64>() << networkPid) : enginePids;
 #endif
 }
@@ -520,12 +531,13 @@ void NetIndicator::sample()
     // Refresh the pid set periodically so newly spawned renderers and
     // a replaced network service are picked up, and whenever every
     // cached pid has died.
-    if (m_enginePids.isEmpty() || ++m_samplesSinceRescan >= 5)
+    if (s_enginePids.isEmpty() || !s_lastRescan.isValid()
+            || s_lastRescan.elapsed() >= 5000)
         rescanEnginePids();
 
     qint64 readBytes = 0, writeBytes = 0;
     int readable = 0;
-    for (const qint64 pid : m_enginePids) {
+    for (const qint64 pid : s_enginePids) {
         QFile ioFile(QStringLiteral("/proc/%1/io").arg(pid));
         if (!ioFile.open(QIODevice::ReadOnly))
             continue;
@@ -541,9 +553,9 @@ void NetIndicator::sample()
                 writeBytes += kv.at(1).toLongLong();
         }
     }
-    if (readable == 0 && !m_enginePids.isEmpty()) {
+    if (readable == 0 && !s_enginePids.isEmpty()) {
         // Every cached pid is gone — force a rescan next sample.
-        m_enginePids.clear();
+        s_enginePids.clear();
     }
 
     // Scale the deltas by the real elapsed interval — timer slack

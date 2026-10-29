@@ -321,6 +321,14 @@ private:
     struct SnapRule {
         QString extId;
         ParsedRule rule;
+        // CA11/P2: the longest literal run (>=kDnrTokenMin chars) the rule's
+        // urlFilter compiles into — "" for regex-only and
+        // condition-only rules, which sit in the generic bucket.
+        // Every literal char is escaped verbatim into the pattern,
+        // so a matching URL must contain it (case-folded: the probe
+        // runs on the lowered url, a superset for case-sensitive
+        // filters too).
+        QString indexToken;
     };
     static QReadWriteLock s_lock;
     static QVector<SnapRule> s_rules;

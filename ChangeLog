@@ -5164,3 +5164,16 @@ Code audit (CA01-CA04, no code changes):
   half-destructed tab strip, and windows now leave the app's window
   list at destructor entry so mainWindows() never sees a
   half-destructed window either.
+- 2026-10-29 CA11: performance fixes from the code audit's measured
+  findings — the ad-block engine no longer rebuilds its whole matcher
+  snapshot once per list event (a downloaded list used to trigger the
+  ~75-185 ms rebuild twice; bursts now coalesce into one snapshot per
+  event-loop pass, so cold-start and mid-browse list refreshes stop
+  freezing the UI), extension-declared web rules now evaluate through
+  a prefilter index instead of a per-request scan of every rule
+  (~9.8 ms -> ~2.5 us per request on a 25,500-rule set), whitelisting
+  a site no longer costs a per-request store round-trip, session
+  writes skip their repeated policy round-trips, the network
+  indicator sweeps /proc once per interval for all windows, history
+  title updates on unknown URLs skip their full-history scan, and the
+  startup profiler now decomposes window construction.

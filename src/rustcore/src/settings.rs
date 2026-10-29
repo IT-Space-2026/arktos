@@ -272,6 +272,11 @@ impl RcSettings {
         }
         state.values.insert(key.to_string(), value.clone());
         persist(&state)?;
+        // CA11: "session/*" rows feed the sesspolicy verdicts the
+        // AutoSaver memoizes against eval_generation — settings
+        // writes are verdict-state mutations, so the generation must
+        // move (after the commit, like every other bump site).
+        crate::policy::bump_eval_generation();
         Ok(true)
     }
 
@@ -298,6 +303,7 @@ impl RcSettings {
             return Ok(false);
         }
         persist(&state)?;
+        crate::policy::bump_eval_generation();
         Ok(true)
     }
 

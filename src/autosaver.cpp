@@ -104,7 +104,12 @@ AutoSaver::~AutoSaver()
 
 void AutoSaver::setSessionProfile(const QString &profileId)
 {
+    if (m_sessionProfile == profileId)
+        return;
     m_sessionProfile = profileId;
+    // The cached policy is per-profile — rebinding invalidates it.
+    m_policy = QJsonObject();
+    m_policyGen = 0;
 }
 
 void AutoSaver::changeOccurred()
@@ -123,12 +128,20 @@ void AutoSaver::changeOccurredFor(DirtyKind kind)
         // debounce is timed — one resolved set per change.  An empty
         // verdict keeps the compiled-in constants (every class dirty,
         // 3s/15s timing) so a failure can never silently skip a save.
+        // CA11: the answer is memoized against the verdict-state
+        // generation (read BEFORE the call — a mid-query mutation
+        // stillborns the cache line, same as the nav verdict memo).
         static const char *const kinds[] = {
             "tabs", "chrome", "sidebar", "lifecycle" };
-        const QJsonObject policy = rustCoreSessionPolicyCall(
-            m_sessionProfile,
-            QJsonObject{
-                {QLatin1String("op"), QLatin1String("policy")}});
+        const quint64 generation = ac_policy_eval_generation();
+        if (generation != m_policyGen) {
+            m_policy = rustCoreSessionPolicyCall(
+                m_sessionProfile,
+                QJsonObject{
+                    {QLatin1String("op"), QLatin1String("policy")}});
+            m_policyGen = generation;
+        }
+        const QJsonObject policy = m_policy;
         if (!policy.isEmpty()) {
             const int k = (int(kind) >= 0 && int(kind) < 4) ? int(kind) : 0;
             const QJsonObject dirtyOn =

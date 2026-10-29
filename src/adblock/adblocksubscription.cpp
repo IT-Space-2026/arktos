@@ -129,6 +129,10 @@ void AdBlockSubscription::setEnabled(bool enabled)
     m_enabled = enabled;
     populateCache();
     emit changed();
+    // CA11: the enabled flag decides whether the subscription's rules
+    // reach the matcher snapshot at all — emit the rules signal too
+    // now that metadata-only 'changed' no longer drives rebuilds.
+    emit rulesChanged();
 }
 
 QString AdBlockSubscription::title() const

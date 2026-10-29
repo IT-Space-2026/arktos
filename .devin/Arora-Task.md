@@ -418,7 +418,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | CA08 | Code fixes: dedup refactor — consolidate confirmed CA01 duplicates — details below | done | 0 | CA01 dups applied: 20/20 cross-file families consolidated into shared helpers (hostmatch/menufit/chromecommon/workerio/remotelistfetch/policyrequestmarshal/sitebinding/streamingutils + rustcorebridge/browserpaths/engineinterface/streaming + hub trackableTabs + ArktosStyle badge + icon-engine base); ~12 within-file extractions incl. 13 shim ok/err lambda pairs, fanOut, EBH helpers; torcontrol/securestore confirmed config-lane, adblock pair intentional; leftover smoke-leg boilerplate deferred to CA13. make 0 warnings, --quit-after-load exit 0 |
 | CA09 | Code fixes: security remediations from CA02 — details below | done | 0 | All 8 findings fixed high->low: ext subframe confinement (WebPage+self-wire gate), pdf-worker path pin+buffer cap, NAM session cert whitelist (no more CA-store planting+persisted set purged), DNR redirect re-gate+file/ftp coverage dropped, nativeMessaging anchored/stdio/abs-path+inbox bound, header-value validation, randomBytes tail; dead foreignCertOverrideHosts removed (WPE call deleted with backend, not lost). Verified: clean build 0 warnings, quit-after-load exit 0, webpage/downloadmanager/nam/securestore/certerror/webpermissions/schemehandlers all PASS; ext self-wire legs updated to ExtensionChromePage fixtures and PASS; remaining reds are documented pre-existing flakes/stale legs |
 | CA10 | Code fixes: memory-leak remediations from CA03 — details below | done | 0 | CA03 leak fixes applied: L1 cached m_offTheRecord (settings-smoke rc 139->0), L2 dying-window gate on identity key, L3 ctx member dies before child bars, + mainWindows() downcast via ~BMW removeMainWindow; ASan/UBSan legs all rc=0, 0 runtime errors, 0 our-code LSan blocks pre-teardown |
-| CA11 | Code fixes: performance remediations from CA04 — top findings only, measured — details below | pending | 0 | needs:task:CA04,CA08 — bounded scope, before/after numbers |
+| CA11 | Code fixes: performance remediations from CA04 — top findings only, measured — details below | done | 1 | CA04 top fixes applied+measured: P1 adblock rebuild coalescing+metadata split (leg rebuilds 11/13/12->3/5/3, ~750ms/download-pair -> 1 pass), P2 DNR token+domain index (9.78ms->2.2-2.6us/eval ~4000x via new --dnr-bench), P3 whitelist in snapshot (2 FFI->0/req), P4 policy memoized per generation (1->0 envelopes/signal), P5 ctor marks, P6 shared /proc sweep, P7 url-membership hash, P9 conditional settings write; P8 deferred; check-warnings PASS, quit-after-load rc=0, touched tests all pass |
 | CA12 | Code fixes: platform remediations from CA05+CA06 — Windows+macOS issues — details below | pending | 0 | needs:task:CA05,CA06,CA08 |
 | CA13 | Code audit close-out — re-run detectors, full suite green, CODE-AUDIT.md finalized with fixed/deferred dispositions — details below | pending | 0 | needs:task:CA09,CA10,CA11,CA12 |
 
@@ -5416,6 +5416,73 @@ qmake6+make 0 warnings, ./arktos --quit-after-load exit 0 offscreen.
 Fix CA04's top performance findings only (bounded — this is not a
 rewrite). Record before/after numbers in the task notes for each
 fix.
+
+
+Resumed run (attempt 1 was interrupted with the fixes applied but
+unverified): inspected the diff, fixed one regression it introduced
+(adblock-list-smoke consulted match() inside rulesChanged — now forces
+rebuildRules() like the other legs; tst_adblocksubscription::isEnabled
+updated for setEnabled's new rulesChanged emission), measured
+before/after by rebuilding HEAD copies of the touched files.
+
+Applied, with before -> after numbers:
+
+- P1 (HIGH): rulesChanged now drives AdBlockNetwork::scheduleRebuild —
+  a GUI-thread dirty flag drained by QTimer::singleShot(0), so a burst
+  of emissions collapses into one snapshot per event-loop pass.
+  Metadata-only AdBlockSubscription::changed was split onto the new
+  AdBlockManager::subscriptionInfoChanged (save timer + dialog
+  repopulation, no rebuild); setEnabled emits rulesChanged too because
+  enabled state feeds the snapshot; setEngine keeps a synchronous
+  rebuildRules() as the deliberate-switch path.  Measured "adblock
+  rules snapshot" Scope counts per smoke leg, HEAD -> CA11:
+  adblock-smoke 11 -> 3, adblock-rust-smoke 13 -> 5,
+  adblock-list-smoke 12 -> 3 — and list-smoke's rebuilds cost ~72-84 ms
+  each once EasyList (75,940 rules) is in the corpus, i.e. ~750 ms of
+  GUI-thread work per download-finish pair collapsed to one pass.
+  Cold start on a cached-list profile now shows exactly one snapshot
+  (the deferred warmup, +0-1 ms); the audit's 9-extra-rebuild scenario
+  (5 stale remote lists finishing in pairs) is bounded to <=1 rebuild
+  per event-loop pass.
+- P2 (HIGH): rebuildSnapshot now buckets the flat rule list — an
+  8-char-gram prefilter over each urlFilter's longest literal run
+  (verbatim-escaped in the compiled pattern, so an absent token cannot
+  match), a requestDomains suffix index for tokenless domain rules,
+  and a generic bucket for the rest; evaluate() also memoizes
+  host_access coverage per (extension, request).  New --dnr-bench leg
+  (25,500-rule ruleset, 20,000 evals): 9,781,760 ns/eval flat-scan
+  (HEAD objects) -> 2,209-2,612 ns/eval indexed (~3,700-4,400x),
+  identical verdicts (6,667 blocked both runs).
+- P3 (MED): the SITED01 site whitelist is folded into the matcher
+  snapshot — one SiteDecisionStore::entries envelope per rebuild
+  replaces up to two per-request lookup envelopes (documentUnbreak +
+  native/linear match); the snapshot walk mirrors the store's
+  longest-suffix semantics (empty-value rows excluded, matching
+  lookup()'s "no row" verdict).  FFI envelopes per matched request:
+  2 -> 0; per-rebuild cost unchanged (+0-1 ms marks).
+- P4 (MED): AutoSaver memoizes the resolved session policy against
+  ac_policy_eval_generation (a plain atomic-read FFI), queried lazily
+  per dirty signal; settings.rs now bumps the generation on the
+  session/* write and remove paths so mutations invalidate the cache.
+  Policy marshal+query envelopes per dirty signal: 1 -> 0 (one u64
+  FFI read instead; re-query only on verdict-state mutation or
+  setSessionProfile rebind).
+- P5 (MED): the window-ctor bucket is decomposed — StartupProfile
+  marks around setupMenu/setupToolBar/toolbars+docks/first newTab.
+  On an isolated profile: setupMenu +1 ms, setupToolBar +11 ms,
+  toolbars+docks +23 ms, first newTab +4 ms.  (Instrumentation, not a
+  speedup — the audit's un-attributed 430-510 ms now reports.)
+- P6 (LOW-MED): NetIndicator's engine-pid set is process-global with
+  one shared 5 s rescan timer — /proc sweeps per interval: N windows
+  -> 1; still rescans on all-cached-pids-dead.
+- P7 (LOW-MED): HistoryManager keeps a normalized-url ->
+  live-entry-count hash; updateHistoryEntry on a url with no recorded
+  entry skips the O(history) scan (the OTR/title-race common case) —
+  exact under QUrl::operator== (verified equal QUrls stringify
+  identically).  Members still take the unchanged scan.
+- P9 (LOW): save() writes historyLimit to QSettings only when it
+  moved — per-flush settings open+write: 1 -> 0 while unchanged.
+- P8 deferred (bounded scope): rust sync oplog batching is untouched.
 
 ### CA12
 Fix CA05+CA06 platform findings: Windows and macOS issues both. The

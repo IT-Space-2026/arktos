@@ -310,6 +310,21 @@ QAtomicInt DeclarativeNetRequest::s_ruleCount;
 QMutex DeclarativeNetRequest::s_exemptLock;
 QHash<QString, QHash<QString, int>> DeclarativeNetRequest::s_frameExempt;
 
+namespace {
+// CA11/P2: the candidate index rebuildSnapshot fills alongside
+// s_rules, under the same write lock.  evaluate() consults only
+// these buckets instead of the flat vector.
+QVector<int> s_dnrGeneric;                  // untokenizable rules
+QStringList s_dnrTokens;                    // unique lowered tokens
+QVector<QVector<int>> s_dnrTokenRules;      // token id -> s_rules idx
+// token's first-kDnrTokenMin chars -> token ids.
+QHash<QString, QList<int>> s_dnrGrams;
+// requestDomain -> s_rules indices, for rules that carry no usable
+// urlFilter token but do constrain requestDomains — probed by a
+// suffix walk of the request host.
+QHash<QString, QList<int>> s_dnrDomainRules;
+} // namespace
+
 DeclarativeNetRequest *DeclarativeNetRequest::instance()
 {
     if (!s_instance)
@@ -805,6 +820,49 @@ bool parseRule(const QJsonObject &in, const QString &rulesetId,
 QString frameKeyFor(const QUrl &url)
 {
     return url.adjusted(QUrl::RemoveFragment).toString();
+}
+
+// ---- CA11/P2 candidate index -------------------------------------
+// The pre-index evaluate() walked every registered rule per request —
+// one urlFilter regex + domain/method checks each, under the shared
+// read lock, once any extension had a single rule.  Chrome's static
+// quota allows tens of thousands of rules per extension, so the
+// snapshot now carries the same kind of literal-token prefilter the
+// adblock matcher built: a rule whose urlFilter's longest literal
+// run (>= kDnrTokenMin chars) is absent from the URL cannot match.
+// Candidates are a superset — ruleMatchesRequest still decides.
+
+// Index tokens are keyed by their first kDnrGramLen chars — the
+// probe slides a same-width window over the URL, so a token that
+// cannot share a gram with the URL is never looked at.  8 chars
+// keeps large rule corpora's token prefixes (which share leading
+// characters far more often than 4) from collapsing into one bucket;
+// shorter tokens sit in the generic bucket.
+constexpr int kDnrTokenMin = 8;
+
+// Longest non-special run in a urlFilter, lowercased.  '*', '|', '^'
+// are the grammar's only specials; everything else escapes verbatim
+// into the compiled pattern.
+QString dnrIndexToken(const DeclarativeNetRequest::ParsedRule &r)
+{
+    const QString filter = r.json
+        .value(QStringLiteral("condition")).toObject()
+        .value(QStringLiteral("urlFilter")).toString();
+    QString best, cur;
+    const auto flush = [&]() {
+        if (cur.size() > best.size())
+            best = cur;
+        cur.clear();
+    };
+    for (const QChar c : filter) {
+        if (c == QLatin1Char('*') || c == QLatin1Char('|')
+                || c == QLatin1Char('^'))
+            flush();
+        else
+            cur += c.toLower();
+    }
+    flush();
+    return best.size() >= kDnrTokenMin ? best : QString();
 }
 
 } // namespace
@@ -1435,19 +1493,68 @@ DeclarativeNetRequest::Verdict DeclarativeNetRequest::evaluate(
         QReadLocker rl(&s_lock);
         QHash<QString, ExtEval> perExt;
         const QString frameKey = frameKeyFor(in.firstPartyUrl);
-        for (const SnapRule &sr : s_rules) {
+
+        // CA11/P2: candidates via the snapshot's prefilter — the
+        // generic bucket, every rule whose urlFilter token occurs in
+        // the URL, and domain-constrained rules whose requestDomains
+        // cover the host.  A superset of what the flat scan checked;
+        // winner selection is order-independent (priority/order/
+        // regSeq keys), so bucket order needs no re-sort.
+        QList<int> candidates = s_dnrGeneric;
+        const QString urlLower = urlStr.toLower();
+        if (urlLower.size() >= kDnrTokenMin) {
+            QSet<int> checkedTokens;
+            for (int i = 0; i + kDnrTokenMin <= urlLower.size(); ++i) {
+                const auto it = s_dnrGrams.constFind(
+                    urlLower.mid(i, kDnrTokenMin));
+                if (it == s_dnrGrams.constEnd())
+                    continue;
+                for (const int id : it.value()) {
+                    if (checkedTokens.contains(id))
+                        continue;
+                    checkedTokens.insert(id);
+                    if (urlLower.contains(s_dnrTokens.at(id)))
+                        candidates += s_dnrTokenRules.at(id).toList();
+                }
+            }
+        }
+        if (!hostLower.isEmpty() && !s_dnrDomainRules.isEmpty()) {
+            QString suffix = hostLower;
+            while (true) {
+                const auto it = s_dnrDomainRules.constFind(suffix);
+                if (it != s_dnrDomainRules.constEnd())
+                    candidates += it.value();
+                const int dot = suffix.indexOf(QLatin1Char('.'));
+                if (dot < 0)
+                    break;
+                suffix = suffix.mid(dot + 1);
+                if (suffix.isEmpty())
+                    break;
+            }
+        }
+
+        // host_access coverage is per (extension, request) — memoize
+        // it so a withHostAccess ext pays its pattern list once per
+        // evaluate instead of once per rule.
+        QHash<QString, int> coverMemo;   // extId -> 1 covered / -1 not
+        for (const int idx : candidates) {
+            const SnapRule &sr = s_rules.at(idx);
             const ExtMeta meta = s_meta.value(sr.extId);
             if (meta.withHostAccess) {
-                bool covered = false;
-                for (const QString &p : meta.hostPatterns) {
-                    if (matchPatternCovers(p, in.url)
-                            || (!in.firstPartyUrl.isEmpty()
-                                && matchPatternCovers(p, in.firstPartyUrl))) {
-                        covered = true;
-                        break;
+                int &covered = coverMemo[sr.extId];
+                if (covered == 0) {
+                    covered = -1;
+                    for (const QString &p : meta.hostPatterns) {
+                        if (matchPatternCovers(p, in.url)
+                                || (!in.firstPartyUrl.isEmpty()
+                                    && matchPatternCovers(
+                                        p, in.firstPartyUrl))) {
+                            covered = 1;
+                            break;
+                        }
                     }
                 }
-                if (!covered)
+                if (covered < 0)
                     continue;
             }
             if (!ruleMatchesRequest(sr.rule, urlStr, chromeType,
@@ -1866,6 +1973,7 @@ void DeclarativeNetRequest::rebuildSnapshot()
                 sr.extId = it.key();
                 sr.rule = r;
                 sr.rule.extId = it.key();
+                sr.indexToken = dnrIndexToken(r);
                 flat.append(sr);
                 ++total;
             }
@@ -1875,10 +1983,50 @@ void DeclarativeNetRequest::rebuildSnapshot()
         for (const QString &id : enabledRulesetIds(st))
             push(st.staticRules.value(id));
     }
+
+    // CA11/P2: bucket the flat list for the per-request prefilter.
+    // A rule lands exactly once — token index when it has a usable
+    // urlFilter literal, the per-domain lists when only
+    // requestDomains constrain it, generic otherwise.
+    QVector<int> generic;
+    QStringList tokens;
+    QVector<QVector<int>> tokenRules;
+    QHash<QString, QList<int>> grams;
+    QHash<QString, QList<int>> domainRules;
+    {
+        QHash<QString, int> tokenIds;
+        for (int i = 0; i < flat.size(); ++i) {
+            const SnapRule &sr = flat.at(i);
+            if (!sr.indexToken.isEmpty()) {
+                int id = tokenIds.value(sr.indexToken, -1);
+                if (id == -1) {
+                    id = tokens.count();
+                    tokenIds.insert(sr.indexToken, id);
+                    tokens.append(sr.indexToken);
+                    tokenRules.append(QVector<int>());
+                    grams[sr.indexToken.left(kDnrTokenMin)].append(id);
+                }
+                tokenRules[id].append(i);
+                continue;
+            }
+            if (!sr.rule.cond.requestDomains.isEmpty()) {
+                for (const QString &d : sr.rule.cond.requestDomains)
+                    domainRules[d].append(i);
+                continue;
+            }
+            generic.append(i);
+        }
+    }
+
     {
         QWriteLocker wl(&s_lock);
         s_rules = flat;
         s_meta = meta;
+        s_dnrGeneric = generic;
+        s_dnrTokens = tokens;
+        s_dnrTokenRules = tokenRules;
+        s_dnrGrams = grams;
+        s_dnrDomainRules = domainRules;
         s_ruleCount.storeRelease(total);
     }
 }

@@ -201,6 +201,13 @@ protected:
 private:
     void load();
     QString atomicString(const QString &string);
+    // CA11/P7: normalized-url membership for updateHistoryEntry —
+    // a title update whose url has no recorded entry skips the
+    // O(history) scan.  Keys are QUrl(stored).toString() so the
+    // check is exact under QUrl::operator== (equal QUrls stringify
+    // identically).
+    void noteHistoryUrlAdded(const QString &url);
+    void noteHistoryUrlRemoved(const QString &url);
     void startFrecencyTimer();
 #ifdef ARKTOS_RUSTCORE
     // MB07: the icon cache needs no handle either now — like the
@@ -215,9 +222,14 @@ private:
     QString m_profileId;
     AutoSaver *m_saveTimer;
     int m_daysToExpire;
+    // CA11/P9: the last historyLimit value actually written — save()
+    // skips the settings write while it is unchanged.
+    int m_savedDaysToExpire = -1;
     QTimer m_expiredTimer;
     QHash<QString, int> m_atomicStringHash;
     QList<HistoryEntry> m_history;
+    // CA11/P7: normalized url -> live entry count (duplicates count).
+    QHash<QString, int> m_urlNormCounts;
     QString m_lastSavedUrl;
     mutable QHash<QString, QIcon> m_icons;
     mutable QSet<QString> m_iconMisses;

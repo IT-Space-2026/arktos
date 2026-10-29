@@ -85,6 +85,9 @@ AdBlockDialog::AdBlockDialog(QWidget *parent)
         0, QHeaderView::Stretch);
     connect(manager, &AdBlockManager::rulesChanged,
             this, &AdBlockDialog::repopulateSubscriptions);
+    // Metadata-only edits (title, lastUpdate) repaint the same rows.
+    connect(manager, &AdBlockManager::subscriptionInfoChanged,
+            this, &AdBlockDialog::repopulateSubscriptions);
     connect(subscriptionsTree, &QTreeWidget::itemChanged,
             this, &AdBlockDialog::subscriptionItemChanged);
     connect(subscriptionsTree, &QTreeWidget::itemSelectionChanged,

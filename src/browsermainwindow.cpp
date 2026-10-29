@@ -108,6 +108,7 @@
 #include "sitepadlock.h"
 #include "siteshield.h"
 #include "sourceviewer.h"
+#include "startupprofile.h"
 #include "statusbarwidgets.h"
 #include "synctabpresence.h"
 #include "tabbar.h"
@@ -351,8 +352,17 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
     // fixes https://bugzilla.mozilla.org/show_bug.cgi?id=219070
     // yes, that's a Firefox bug!
     statusBar()->setLayoutDirection(Qt::LeftToRight);
-    setupMenu();
-    setupToolBar();
+    // CA11/P5: the window-ctor region was the largest un-decomposed
+    // startup bucket — Scope marks split it into named segments on
+    // the --profile-startup timeline.
+    {
+        StartupProfile::Scope menuScope("window ctor: setupMenu");
+        setupMenu();
+    }
+    {
+        StartupProfile::Scope barScope("window ctor: setupToolBar");
+        setupToolBar();
+    }
 
     // The menu row doubles as the top header strip on a normal
     // window — give it the faint aurora wave from the start page.
@@ -530,6 +540,7 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
         updateTorCircuitLabel();
     }
 
+    StartupProfile::Scope dockScope("window ctor: toolbars + docks");
     QWidget *centralWidget = new QWidget(this);
     BookmarksModel *boomarksModel = BookmarksManager::instanceFor(m_profileId)->bookmarksModel();
     m_bookmarksToolbar = new BookmarksToolBar(boomarksModel, this);
@@ -765,7 +776,11 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
         if (isActiveWindow())
             QApplication::alert(this);
     });
-    m_tabWidget->newTab();
+    StartupProfile::mark("window ctor: wiring done");
+    {
+        StartupProfile::Scope tabScope("window ctor: first newTab");
+        m_tabWidget->newTab();
+    }
     m_tabWidget->currentLocationBar()->setFocus();
 
     // Add each top-level menu's actions to the main window so

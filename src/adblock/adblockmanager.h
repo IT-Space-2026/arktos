@@ -53,6 +53,12 @@ class AdBlockManager : public QObject
 
 signals:
     void rulesChanged();
+    // CA11: a subscription's metadata (title, location, lastUpdate)
+    // changed without touching its rules — drives the save timer and
+    // dialog repopulation but NOT the matcher snapshot rebuild that
+    // rulesChanged schedules.  setEnabled emits rulesChanged
+    // directly since enabled state is part of the snapshot.
+    void subscriptionInfoChanged();
 
 public:
     // TELEM01: remote filter-list downloads are consent-gated — the

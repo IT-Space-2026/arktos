@@ -46,6 +46,7 @@
 #include "commandpalette.h"
 #include "containermanager.h"
 #include "cookiejar.h"
+#include "declarativenetrequest.h"
 #include "downloadmanager.h"
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
@@ -6352,6 +6353,7 @@ int main(int argc, char **argv)
         "nam-smoke", "history-smoke", "download-smoke", "cookie-smoke",
         "bookmarks-smoke", "search-smoke", "search-guess-smoke", "adblock-smoke",
         "adblock-list-smoke", "adblock-rust-smoke", "autofill-smoke",
+        "dnr-bench",
         "settings-smoke", "find-smoke", "source-smoke", "browser-smoke",
         "app-smoke", "extension-smoke", "extension-otr-smoke",
         "extension-update-smoke", "extension-host-smoke",
@@ -9901,7 +9903,10 @@ int main(int argc, char **argv)
         custom->addRule(AdBlockRule(QLatin1String("##.smoke-cosmetic")));
 
         // Snapshot-level check of what the IO-thread matcher sees.
+        // CA11: addRule's rulesChanged only schedules the snapshot —
+        // force it so the probes below see the armed corpus.
         AdBlockNetwork *network = manager->network();
+        network->rebuildRules();
         const bool blockOk =
             network->shouldBlock(QUrl(QLatin1String("http://adblock-smoke.invalid/banner.js")));
         const bool exceptionOk =
@@ -10039,6 +10044,9 @@ int main(int argc, char **argv)
         QObject::connect(subscription, &AdBlockSubscription::rulesChanged,
                          &application,
                          [&application, subscription, network]() {
+            // CA11: rulesChanged now only schedules the snapshot —
+            // force it so the match() probes below see the list.
+            network->rebuildRules();
             const QList<AdBlockRule> rules = subscription->allRules();
             int cosmetic = 0;
             int probes = 0;
@@ -10357,16 +10365,17 @@ int main(int argc, char **argv)
         // and the unset default is now the Rust engine — print both
         // the stored and effective pick before touching it so a
         // fresh-config run proves the default path reaches the
-        // matcher.  The explicit selection below is a no-op then;
-        // rulesChanged rebuilds the snapshot synchronously, which is
-        // also the lazy-construction path the Preferences switch
-        // takes.
+        // matcher.  The explicit selection below is a no-op then.
+        // CA11: setEngine's rulesChanged only schedules the snapshot
+        // rebuild, so the leg forces it synchronously like the
+        // Preferences switch's callers do.
         qInfo() << "adblock-rust-smoke: stored-engine"
                 << int(manager->storedEngine())
                 << "effective" << int(manager->engine());
         manager->setEngine(AdBlockManager::RustEngine);
 
         AdBlockNetwork *network = manager->network();
+        network->rebuildRules();
         const bool rustActive = network->rustEngineActive();
         struct Probe {
             const char *url;
@@ -10418,13 +10427,17 @@ int main(int argc, char **argv)
 
         // ADB06: toggling back to Built-in must drop the engine and
         // leave match() answering through the native matcher — the
-        // same live switch the settings combo drives.
+        // same live switch the settings combo drives.  CA11: the
+        // rebuild each switch schedules is forced so the probe sees
+        // the post-switch engine immediately.
         manager->setEngine(AdBlockManager::NativeEngine);
+        network->rebuildRules();
         const bool toggledOff = !network->rustEngineActive()
             && adblockDecisionKind(network->match(
                     QUrl(QLatin1String("http://ads.example.com/a.js")),
                     QUrl(QLatin1String("http://site.example/")), 3)) == 1;
         manager->setEngine(AdBlockManager::RustEngine);
+        network->rebuildRules();
         const bool toggledOn = network->rustEngineActive();
 
         const bool pass = rustActive && rustExpected == total
@@ -10441,6 +10454,74 @@ int main(int argc, char **argv)
                 << "(built without CONFIG+=adblock_rust)";
         return 0;
 #endif
+    }
+
+    // CA11 bench: registers a uBlock-scale dynamic ruleset and times
+    // evaluate() — the P2 index's before/after probe.
+    if (args.contains(QLatin1String("--dnr-bench"))) {
+        DeclarativeNetRequest *dnr = DeclarativeNetRequest::instance();
+        const QString storeDir = QDir::temp().filePath(
+            QStringLiteral("dnr-bench-%1")
+                .arg(QCoreApplication::applicationPid()));
+        QJsonArray rules;
+        for (int i = 1; i <= 25000; ++i) {
+            rules.append(QJsonObject{
+                {QStringLiteral("id"), i},
+                {QStringLiteral("priority"), 1},
+                {QStringLiteral("action"),
+                 QJsonObject{{QStringLiteral("type"),
+                              QStringLiteral("block")}}},
+                {QStringLiteral("condition"),
+                 QJsonObject{{QStringLiteral("urlFilter"),
+                     QStringLiteral("||track%1.example/ads.js")
+                         .arg(i)}}}});
+        }
+        for (int i = 1; i <= 500; ++i) {
+            rules.append(QJsonObject{
+                {QStringLiteral("id"), 25000 + i},
+                {QStringLiteral("priority"), 1},
+                {QStringLiteral("action"),
+                 QJsonObject{{QStringLiteral("type"),
+                              QStringLiteral("block")}}},
+                {QStringLiteral("condition"),
+                 QJsonObject{{QStringLiteral("requestDomains"),
+                     QJsonArray{QStringLiteral("dom%1.example")
+                         .arg(i)}}}}});
+        }
+        const QJsonObject reg = dnr->updateRules(
+            QStringLiteral("dnrbench-ext-000001"), QString(),
+            QJsonObject(), storeDir,
+            /*sessionScope=*/false, /*withHostAccess=*/false,
+            /*feedbackGranted=*/false, rules, QJsonArray());
+        qInfo() << "dnr-bench: register"
+                << reg.value(QLatin1String("ok")).toBool()
+                << "rules" << DeclarativeNetRequest::registeredRuleCount();
+        const QStringList probeUrls = {
+            QStringLiteral("https://track7.example/ads.js"),
+            QStringLiteral("https://innocent.example/page.js"),
+            QStringLiteral("https://cdn.other.example/lib.css"),
+        };
+        const int iterations = 20000;
+        QElapsedTimer timer;
+        timer.start();
+        int blocked = 0;
+        for (int i = 0; i < iterations; ++i) {
+            DeclarativeNetRequest::EvalInput in;
+            in.url = QUrl(probeUrls.at(i % probeUrls.size()));
+            in.firstPartyUrl =
+                QUrl(QStringLiteral("https://site.example/"));
+            in.resourceType = 3;
+            in.method = QByteArrayLiteral("GET");
+            if (DeclarativeNetRequest::evaluate(in).blocked)
+                ++blocked;
+        }
+        const qint64 ns = timer.nsecsElapsed();
+        qInfo() << "dnr-bench:" << iterations << "evals in"
+                << (ns / 1000000.0) << "ms ="
+                << (double(ns) / iterations) << "ns/eval, blocked"
+                << blocked;
+        dnr->dropExtension(QStringLiteral("dnrbench-ext-000001"));
+        return 0;
     }
 
     // Headless verification for MIG11: the settings dialog's

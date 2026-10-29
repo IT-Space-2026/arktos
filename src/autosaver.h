@@ -67,6 +67,7 @@
 #include <qobject.h>
 #include <qbasictimer.h>
 #include <qelapsedtimer.h>
+#include <qjsonobject.h>
 #include <qstring.h>
 
 /*
@@ -117,6 +118,12 @@ private:
     QBasicTimer m_timer;
     QElapsedTimer m_firstChange;
     QString m_sessionProfile;
+    // CA11: the resolved session policy cached against the rust
+    // verdict-state generation — settings writes bump it, so the
+    // cache re-queries at most once per mutation instead of once
+    // per dirty signal (the per-signal FFI round-trip was P4).
+    quint64 m_policyGen = 0;
+    QJsonObject m_policy;
 
 };
 
