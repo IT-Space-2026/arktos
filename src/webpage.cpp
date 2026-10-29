@@ -2061,12 +2061,6 @@ static QSet<QString> &foreignCertOverrideHosts()
     return hosts;
 }
 
-void WebPage::noteCertErrorOverride(const QString &host)
-{
-    if (!host.isEmpty())
-        foreignCertOverrideHosts().insert(host.toLower());
-}
-
 bool WebPage::certificateErrorOverridden(const QString &host)
 {
     if (host.isEmpty())

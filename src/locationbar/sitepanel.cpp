@@ -24,7 +24,6 @@
 #include "adblockrequestinterceptor.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
-#include "browsertheme.h"
 #include "cookiejar.h"
 #include "domainblocklist.h"
 #include "engineinterface.h"

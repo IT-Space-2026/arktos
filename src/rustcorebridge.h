@@ -435,8 +435,6 @@ public:
     QString engineStorageDir(const QString &id) const;
     QString engineCacheDir(const QString &id) const;
     QString settingsDir(const QString &id) const;
-    // profiles/<id>/<avatar field or profile-avatar.png>.
-    QString avatarPath(const QString &id) const;
 
     // Display name -> filesystem slug ("profile" when nothing
     // survives) — ProfileStore::slugify.

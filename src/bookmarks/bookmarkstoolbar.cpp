@@ -22,7 +22,6 @@
 #include "bookmarkstoolbar.h"
 
 #include "addbookmarkdialog.h"
-#include "bookmarknode.h"
 #include "bookmarksmanager.h"
 #include "bookmarksmenu.h"
 #include "bookmarksmodel.h"

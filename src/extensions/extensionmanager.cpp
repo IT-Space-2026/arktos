@@ -411,7 +411,7 @@ void ExtensionManager::installOnProfile(QWebEngineProfile *profile)
     // it under extensions/enabled/<storage>/<id>, and each engine
     // loadFinished re-applies the stored flag until it lands.
     connect(extensions, &QWebEngineExtensionManager::loadFinished,
-            this, [this, profile, extensions, relay](
+            this, [profile, extensions, relay](
                 const QWebEngineExtensionInfo &info) {
         const QVariant wanted = ProfileSettings(
             BrowserProfile::profileIdFor(profile)).value(

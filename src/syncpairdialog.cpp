@@ -39,12 +39,24 @@ public:
 public slots:
     void call(int kind, int op, QJsonObject payload)
     {
+#ifdef ARKTOS_RUSTCORE
         RustCoreBridge *b = RustCoreBridge::instance();
         QJsonObject err;
         QJsonValue v = b
             ? b->mwCommand(AcMw::Sync, op, payload, &err)
             : QJsonValue();
         emit result(kind, v.isObject() ? v.toObject() : err);
+#else
+        // No-rust build: there is no mw host — answer every call
+        // with an envelope error the dialog renders verbatim.
+        Q_UNUSED(op);
+        Q_UNUSED(payload);
+        emit result(kind, QJsonObject{
+            {QStringLiteral("code"), QStringLiteral("unavailable")},
+            {QStringLiteral("status"), QStringLiteral("error")},
+            {QStringLiteral("message"), QStringLiteral(
+                "Sync is unavailable — the Rust core is not loaded.")}});
+#endif
     }
 signals:
     void result(int kind, const QJsonObject &doc);

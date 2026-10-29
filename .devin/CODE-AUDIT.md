@@ -38,8 +38,8 @@ this pass is dead code + clones only.
 
 | Site | Evidence | Why dead |
 |------|----------|----------|
-| `MaximumKeywords`, `MaximumKeywordLength` | src/opensearch/opensearchreader.cpp:84-85 | `clang -Wunused-const-variable`; bounds now live in rustcore (comment at :82 says the constants exist to "match" the rust store, but nothing reads them) |
-| `kHeaderSize` | src/securestore.cpp:65 | `clang -Wunused-const-variable`; nonce/tag sizes are used individually (:63-64), the combined constant isn't |
+| `MaximumKeywords`, `MaximumKeywordLength` | src/opensearch/opensearchreader.cpp:84-85 | `clang -Wunused-const-variable` **— CA07: FALSE POSITIVE, kept.** Both are read at :246-247 (the `<Alias>` parse), which sits in the `#else` non-rustcore arm — dead only under the default build, live under `no-rust` (D4-class). |
+| `kHeaderSize` | src/securestore.cpp:65 | `clang -Wunused-const-variable` **— CA07: FALSE POSITIVE, kept.** Read at :492/626/644/652, all inside the `#else !ARKTOS_RUSTCORE` OpenSSL-EVP arm — live under `no-rust` (D4-class). |
 
 ### D3. Dead preprocessor blocks
 
@@ -77,7 +77,7 @@ in-function cases; a source scan counts ~50 sites total.
 |------|---------|----------|
 | src/browsermainwindow.cpp:93 | `networkaccessmanager.h` | zero `NetworkAccessManager` references in the TU |
 | src/adblock/adblockmanager.cpp:44 | `networkaccessmanager.h` | uses `AdBlockNetwork` (adblockmanager.h:133), not NAM — leftover |
-| src/webviewsearch.cpp:24 | `webpage.h` | file references only `WebView`/`pdfview.h`; no `WebPage` ident |
+| src/webviewsearch.cpp:24 | `webpage.h` | **CA07: FALSE POSITIVE, kept.** `m_webView->webPage()->showErrorPage(...)` at :167 needs the complete `WebPage` type — removal breaks the build. |
 | src/bookmarks/bookmarkstoolbar.cpp:25 | `bookmarknode.h` | `BookmarkNode` never named; calls go through `BookmarksManager`/`model->index(BookmarkNode*)` — a fwd decl suffices |
 | src/locationbar/sitepanel.cpp:27 | `browsertheme.h` | no `BrowserTheme`/`ColorScheme`/`isDarkPalette` reference in the file |
 
@@ -104,6 +104,13 @@ sidebarpanel.cpp:1330), `serveDelayMs` ×2 (main.cpp:10867, 10906),
 `server` (main.cpp:24020), `docPage` (main.cpp:16527).
 Harmless individually; a shared smoke-lambda shape would remove the
 class (see C14).
+
+**CA07 application:** 43 of 46 flagged captures removed. 3 stayed —
+clang's "not required to be captured" verdict is over-lenient vs GCC:
+`blobSize` (main.cpp:7229, 7308 lambdas) and `serveDelayMs` (:10866)
+are odr-used in ways GCC still requires a capture for (verified by
+build error). `iterationCount` (:3642) and `serveDelayMs` (:10906)
+removed cleanly under both compilers.
 
 ### D7. Rust dead code
 

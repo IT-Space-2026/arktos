@@ -32,6 +32,15 @@ Code health (CA01): tree-wide dead-code + copy-paste duplication audit
 of src/ and the Rust cores; findings (no behavior changes yet) live in
 .devin/CODE-AUDIT.md and are remediated by the CA07-CA13 follow-ups.
 
+Code health (CA07): dead-code sweep applying the confirmed CA01
+findings — deleted never-called members (RustCoreProfiles::avatarPath,
+WebPage::noteCertErrorOverride, ExtensionIdleWatcher::detectionInterval),
+a #if 0 cookie-path arm, four unused includes and 43 redundant lambda
+captures, plus the rustcore SRCS_TRANCO test-seam alias. Also repaired
+the CONFIG+=no-rust build lane: the Sync settings page, pairing dialog
+and tabs-presence publisher now degrade to "Sync is unavailable"
+instead of failing to link without the Rust bridge.
+
 1.0 — Arktos: first release
 - Rebranded the project from Arora to Arktos (BRAND01): product name,
   website (https://arktos-browser.com) and repository

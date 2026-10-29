@@ -1772,7 +1772,7 @@ static int badSslSmoke(BrowserApplication &application, WebView *view)
         // captures the chrome page's own title; on real pages the
         // badssl self-report markers.
         r->view->enginePage()->runJavaScript(QString::fromUtf8(kBadSslProbeJs),
-            [r, writeAndExit, advance, timedOut, c](
+            [r, advance, timedOut, c](
                 const QVariant &payload) {
             QJsonObject rec;
             rec.insert(QStringLiteral("group"),
@@ -2020,7 +2020,7 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
             QStringLiteral(
                 "JSON.stringify(window.xsLeakDump && "
                 "window.xsLeakDump())"),
-            [=, &application](const QVariant &payload) {
+            [=](const QVariant &payload) {
                 const QByteArray json = payload.toString().toUtf8();
                 QJsonParseError parseError;
                 QJsonObject envelope = QJsonDocument::fromJson(
@@ -2089,7 +2089,7 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
             return;
         view->enginePage()->runJavaScript(
             QString::fromUtf8(kXsLeakStatusJs),
-            [=, &application](const QVariant &status) {
+            [=](const QVariant &status) {
                 const QJsonObject state = QJsonDocument::fromJson(
                     status.toString().toUtf8()).object();
                 if (!state.value(QLatin1String("done")).toBool()) {
@@ -2119,7 +2119,7 @@ static int xsLeakSmoke(BrowserApplication &application, WebView *view,
     if (timeoutMs <= 0)
         timeoutMs = 20 * 60 * 1000;
     QTimer::singleShot(timeoutMs, &application,
-                       [&application, liveView, dumpResults]() {
+                       [liveView, dumpResults]() {
         // Still dump whatever the suite produced — a partial result
         // table distinguishes a stalled run from a dead page.
         if (!liveView) {
@@ -3589,7 +3589,7 @@ static int startPageSmoke(BrowserApplication &application, WebView *view)
         if (*phaseDone)
             return;
         view->webPage()->runJavaScript(probeJs,
-            [view, &application, iteration, phaseDone, verifyTicks,
+            [&application, iteration, phaseDone, verifyTicks,
              poll, &startLoad](const QVariant &result) {
             if (*phaseDone)
                 return;
@@ -3639,7 +3639,7 @@ static int startPageSmoke(BrowserApplication &application, WebView *view)
     });
 
     startLoad = [view, startUrl, iteration, phaseDone, deadline,
-                 iterationCount, &application]() {
+                 &application]() {
         if (++*iteration > iterationCount) {
             qInfo() << "startpage-smoke: PASS (" << iterationCount
                     << "loads, channel resolved on every one)";
@@ -7226,8 +7226,7 @@ int main(int argc, char **argv)
                 *remaining -= piece;
             });
             QObject::connect(client, &QTcpSocket::readyRead, client,
-                             [client, header, remaining, pump, stats,
-                              blobSize]() {
+                             [client, header, remaining, pump, stats, blobSize]() {
                 if (*remaining >= 0) {
                     // HTTP pipelining is unused here; drain and ignore.
                     client->readAll();
@@ -8441,7 +8440,7 @@ int main(int argc, char **argv)
         auto ticks = std::make_shared<int>(0);
         QTimer *poll = new QTimer(&application);
         QObject::connect(poll, &QTimer::timeout, &application,
-            [view, poll, phase, probing, ticks, seen, gpcSeen, check,
+            [view, phase, probing, ticks, seen, gpcSeen, check,
              finish, armGpc, port]() {
             const QString tag = *phase == 0 ? QString()
                                             : QStringLiteral("2");
@@ -8921,7 +8920,7 @@ int main(int argc, char **argv)
         poll->start(250);
         view->loadUrl(QUrl(QLatin1String("http://up.test/")));
         QTimer::singleShot(120000, &application,
-                           [&application, finish]() {
+                           [finish]() {
             qInfo() << "httpsonly-smoke: FAIL (overall timeout)";
             finish(1);
         });
@@ -10903,7 +10902,7 @@ int main(int argc, char **argv)
         auto parallelTicks = std::make_shared<int>(0);
         QObject::connect(parallelPoll, &QTimer::timeout, slowViewer,
             [slowViewer, legClock, parallelPoll, parallelTicks,
-             slowExpected, serveDelayMs, finish]() {
+             slowExpected, finish]() {
             if (!slowViewer->isResolved()) {
                 if (++*parallelTicks > 200) {
                     parallelPoll->stop();
@@ -13126,7 +13125,7 @@ int main(int argc, char **argv)
                     QLatin1String("JSON.stringify({"
                                   "y:window.scrollY,"
                                   "title:document.title})"),
-                    [&, heavy2, stageManual](const QVariant &result) {
+                    [&, stageManual](const QVariant &result) {
                     const QJsonObject state = QJsonDocument::fromJson(
                         result.toString().toUtf8()).object();
                     const bool restored =
@@ -13216,7 +13215,7 @@ int main(int argc, char **argv)
         if (!ok)
             ++failures;
     };
-    const auto die = [&application](const QString &why) {
+    const auto die = [](const QString &why) {
         qInfo() << "extension-smoke: FAIL" << why;
         fflush(nullptr);
         // quick_exit, not application.exit: orderly teardown crashes
@@ -13983,7 +13982,7 @@ int main(int argc, char **argv)
                 host->page()->runJavaScript(QStringLiteral(
                     "self.__smokeProbe?JSON.stringify(self.__smokeProbe)"
                     ":'missing'"),
-                    [&, host](const QVariant &v) {
+                    [&](const QVariant &v) {
                     if (*probeTicks > 240) {
                         die(QStringLiteral("shim probe timed out: %1")
                                 .arg(v.toString()));
@@ -14165,7 +14164,7 @@ int main(int argc, char **argv)
                     ":'missing'"),
                     // 'host' by value — this fires after the poll
                     // frame is gone.
-                    [&, host](const QVariant &v) {
+                    [&](const QVariant &v) {
                     const QJsonArray evs = QJsonDocument::fromJson(
                         v.toString().toUtf8()).array();
                     const auto saw = [&evs](const char *name) {
@@ -14403,7 +14402,7 @@ int main(int argc, char **argv)
                 popupPage->runJavaScript(QStringLiteral(
                     "self.__popupProbe?JSON.stringify("
                     "self.__popupProbe):'missing'"),
-                    [&, host](const QVariant &v) {
+                    [&](const QVariant &v) {
                     if (*probeTicks > 160) {
                         die(QStringLiteral("popup probe timed out: %1")
                                 .arg(v.toString()));
@@ -15018,7 +15017,7 @@ int main(int argc, char **argv)
                         "window.postMessage({command:"
                         "'checkIfBWExtensionInstalled'},'*');"
                         "JSON.stringify({hs:window.__afHs})"),
-                        [&, host](const QVariant &v) {
+                        [&](const QVariant &v) {
                         const QJsonObject o = QJsonDocument::fromJson(
                             v.toString().toUtf8()).object();
                         if (o.value(QLatin1String("hs")).isNull()) {
@@ -16477,7 +16476,7 @@ int main(int argc, char **argv)
                             "  ?('err:'+chrome.runtime.lastError"
                             "       .message):resp;});"
                             "return JSON.stringify(o);})()"),
-                            [&, host](const QVariant &v) {
+                            [&](const QVariant &v) {
                             const QJsonObject o =
                                 QJsonDocument::fromJson(
                                     v.toString().toUtf8()).object();
@@ -16524,7 +16523,7 @@ int main(int argc, char **argv)
                     }
                     docPage->runJavaScript(QStringLiteral(
                         "JSON.stringify({resp:self.__offResp})"),
-                        [&, host, docPage](const QVariant &v) {
+                        [&, host](const QVariant &v) {
                         const QJsonObject o = QJsonDocument::fromJson(
                             v.toString().toUtf8()).object();
                         const QJsonValue resp =
@@ -16672,7 +16671,7 @@ int main(int argc, char **argv)
                 host->page()->runJavaScript(QStringLiteral(
                     "self.__offB?JSON.stringify(self.__offB)"
                     ":'missing'"),
-                    [&, host](const QVariant &v) {
+                    [&](const QVariant &v) {
                     if (*probeTicks > 240) {
                         die(QStringLiteral(
                             "offscreen close sweep timed out: %1")
@@ -17457,7 +17456,7 @@ int main(int argc, char **argv)
             if (!ok)
                 ++storFailures;
         };
-        const auto sdie = [&application, &tag](const QString &why) {
+        const auto sdie = [&tag](const QString &why) {
             qInfo().noquote() << "extension-storage-" << tag
                               << "-smoke: FAIL" << why;
             fflush(nullptr);
@@ -17888,7 +17887,7 @@ int main(int argc, char **argv)
             ++*ticks;
             host->page()->runJavaScript(QStringLiteral(
                 "self.__stor?JSON.stringify(self.__stor):'missing'"),
-                [&, host, name](const QVariant &v) {
+                [&, name](const QVariant &v) {
                 if (*ticks > 200) {
                     sdie(name + QLatin1String(": probe timed out: %1")
                              .arg(v.toString()));
@@ -18436,7 +18435,7 @@ int main(int argc, char **argv)
             if (!ok)
                 ++otrExtFailures;
         };
-        const auto die = [&application](const QString &why) {
+        const auto die = [](const QString &why) {
             qInfo() << "extension-otr-smoke: FAIL" << why;
             fflush(nullptr);
             // quick_exit: tearing down a second live profile hits the
@@ -18599,7 +18598,7 @@ int main(int argc, char **argv)
             if (!ok)
                 ++bwFailures;
         };
-        const auto die = [&application](const QString &why) {
+        const auto die = [](const QString &why) {
             qInfo() << "bitwarden-smoke: FAIL" << why;
             fflush(nullptr);
             std::quick_exit(1);
@@ -18904,7 +18903,7 @@ int main(int argc, char **argv)
             qInfo().noquote() << "extension-health-smoke:" << key
                               << "=" << value;
         };
-        const auto die = [&application](const QString &why) {
+        const auto die = [](const QString &why) {
             qInfo() << "extension-health-smoke: FAIL" << why;
             fflush(nullptr);
             std::quick_exit(1);
@@ -19173,7 +19172,7 @@ int main(int argc, char **argv)
             qInfo().noquote() << "mv3-health-smoke:" << key << "="
                               << value;
         };
-        const auto die = [&application](const QString &why) {
+        const auto die = [](const QString &why) {
             qInfo() << "mv3-health-smoke: FAIL" << why;
             fflush(nullptr);
             std::quick_exit(1);
@@ -19517,7 +19516,7 @@ int main(int argc, char **argv)
         const auto popupDone = std::make_shared<bool>(false);
         const auto bwDone = std::make_shared<bool>(false);
 
-        const auto finish = [&application, &mv3Failures]() {
+        const auto finish = [&mv3Failures]() {
             qInfo() << "mv3-health-smoke:"
                     << (mv3Failures == 0 ? "PASS" : "FAIL")
                     << "harness failures:" << mv3Failures;
@@ -19530,7 +19529,7 @@ int main(int argc, char **argv)
         // console captured, then a guarded eval of the two
         // calls its Angular bootstrap dies on plus its rendered size.
         const auto probeBitwarden =
-            [&application, &bwRow, check, note, finish, mv3, profile,
+            [&bwRow, check, note, finish, mv3, profile,
              bwDone]() {
             const auto finishOnce = [bwDone, finish]() {
                 if (*bwDone)
@@ -19764,7 +19763,7 @@ int main(int argc, char **argv)
         // attributes (its own report + the background's message
         // reply) and the page-level SW registration verdict.
         const auto probePage =
-            [&application, view, mv3Page, check, note,
+            [view, mv3Page, check, note,
              pageSnapshot, openFixturePopup]() {
             QTimer *poll = new QTimer(view);
             const auto tries = std::make_shared<int>(0);
@@ -20782,7 +20781,7 @@ int main(int argc, char **argv)
                 if (liveWindow)
                     liveWindow->close();
             });
-            QTimer::singleShot(30000, &application, [&application]() {
+            QTimer::singleShot(30000, &application, []() {
                 qInfo() << "session-smoke: FAIL (save phase timeout)";
                 fflush(nullptr);
                 std::quick_exit(1);
@@ -23362,7 +23361,7 @@ int main(int argc, char **argv)
                     fn(ok);
                 });
         };
-        auto loadAndProbe = [&application, view, pageUrl, probeSource,
+        auto loadAndProbe = [view, pageUrl, probeSource,
                              once](std::function<void(const QJsonObject &)> cb) {
             once([view, probeSource, cb](bool ok) {
                 if (!ok) {
@@ -23471,7 +23470,7 @@ int main(int argc, char **argv)
                     protector->addException(
                         QLatin1String("127.0.0.1"), false);
                     protector->reinstallOnProfiles();
-                    loadAndProbe([&application, check, baseline,
+                    loadAndProbe([check, baseline,
                                   finish](const QJsonObject &probe)
                                      mutable {
                         check(probe.value(QLatin1String("canvas"))
@@ -24017,7 +24016,7 @@ int main(int argc, char **argv)
         };
         QObject::connect(poll, &QTimer::timeout, &application,
             [&, phase, gotLoad, ticks, hits, pdfUrl, fakeUrl,
-             corruptUrl, downloadDir, dangerNeedles, server]() {
+             corruptUrl, downloadDir, dangerNeedles]() {
             if (++*ticks > 200) {   // ~60s ceiling
                 qInfo() << "pdf-smoke: FAIL (timeout in phase" << *phase
                         << ") url:" << view->url();
@@ -24624,7 +24623,7 @@ int main(int argc, char **argv)
 
         auto ticks = std::make_shared<int>(0);
         QTimer *poll = new QTimer(&application);
-        const auto finish = [&application, poll, &ok](bool pass) {
+        const auto finish = [poll, &ok](bool pass) {
             poll->stop();
             qInfo() << "pdfview-smoke:" << (pass && ok ? "PASS" : "FAIL");
             // The verdict is already printed — skip Qt teardown
@@ -25718,7 +25717,7 @@ int main(int argc, char **argv)
                                   stallUrl);
         QPointer<DownloadItem> pendingItem;
         const bool itemArrived = waitFor(
-                [&application, &pendingItem]() {
+                [&pendingItem]() {
             DownloadManager *manager = BrowserApplication::downloadManager();
             for (int row = 0; row < manager->model()->rowCount(); ++row) {
                 DownloadItem *item = manager->itemAt(row);

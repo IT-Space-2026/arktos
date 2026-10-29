@@ -1327,7 +1327,7 @@ QWidget *SidebarPanel::buildNotesPage()
     notesTitle->setSizePolicy(QSizePolicy::Ignored,
                               QSizePolicy::Preferred);
     notesHeader->addWidget(notesTitle, 1);
-    const auto noteButton = [this, notesPage, notesHeader](
+    const auto noteButton = [notesPage, notesHeader](
             const char *objectName, const QString &label,
             const char *iconName) {
         QToolButton *button = new QToolButton(notesPage);

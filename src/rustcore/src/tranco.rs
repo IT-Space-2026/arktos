@@ -538,10 +538,8 @@ pub(crate) fn rank_detail(host: &str) -> (u32, u32, u32) {
         .unwrap_or((0, 0, 0))
 }
 
-/// Source-bit constants re-exported for the test merge seam —
+/// Source-bit constant re-exported for the test merge seam —
 /// sitetrust tests merge fixture rows under the Majestic grammar.
-#[cfg(test)]
-pub(crate) const SRCS_TRANCO: u8 = SRC_TRANCO;
 #[cfg(test)]
 pub(crate) const SRCS_MAJESTIC: u8 = SRC_MAJESTIC;
 

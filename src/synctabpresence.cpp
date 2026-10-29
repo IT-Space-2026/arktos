@@ -82,6 +82,7 @@ bool SyncTabPresence::scopeHasMembers(
 
 void SyncTabPresence::publishNow()
 {
+#ifdef ARKTOS_RUSTCORE
     BrowserApplication *app = BrowserApplication::instance();
     if (!app || BrowserApplication::isPrivate())
         return;
@@ -116,18 +117,13 @@ void SyncTabPresence::publishNow()
     }
 
     // The doc is per profile scope: each window contributes one
-    // "windows" entry to ITS persona's group.  presenceWindowJson
-    // is rustcore-only — a no-rust build publishes nothing.
+    // "windows" entry to ITS persona's group.
     QMap<QString, QJsonArray> byScope;
     const QList<BrowserMainWindow*> windows = app->mainWindows();
     for (BrowserMainWindow *window : windows) {
         if (!window || !window->tabWidget())
             continue;
-#ifdef ARKTOS_RUSTCORE
         const QJsonObject w = window->tabWidget()->presenceWindowJson();
-#else
-        const QJsonObject w;
-#endif
         if (w.value(QStringLiteral("tabs")).toArray().isEmpty())
             continue;
         byScope[window->profileId()].append(w);
@@ -159,6 +155,7 @@ void SyncTabPresence::publishNow()
         if (r.toObject().value(QStringLiteral("ok")).toBool())
             m_lastDocs.insert(scope, canon);
     }
+#endif // ARKTOS_RUSTCORE — a no-rust build publishes nothing
 }
 
 
@@ -173,6 +170,7 @@ SyncTabsMenu::SyncTabsMenu(const QString &profileId, QWidget *parent)
 void SyncTabsMenu::rebuild()
 {
     clear();
+#ifdef ARKTOS_RUSTCORE
     RustCoreBridge *bridge = RustCoreBridge::serving();
     if (!bridge) {
         addAction(tr("Sync is not available"))->setEnabled(false);
@@ -230,4 +228,7 @@ void SyncTabsMenu::rebuild()
         if (!any)
             devMenu->addAction(tr("(no open tabs)"))->setEnabled(false);
     }
+#else
+    addAction(tr("Sync is not available"))->setEnabled(false);
+#endif
 }

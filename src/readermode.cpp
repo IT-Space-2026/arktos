@@ -614,19 +614,19 @@ void ReaderMode::showOverlay(const QVariantMap &article)
     layout->addWidget(readerView, 1);
 
     connect(fontDec, &QToolButton::clicked, this,
-            [this, readerView]() {
+            [readerView]() {
         const int px = qBound(12, fontSize() - 1, 30);
         ProfileSettings().setValue(QLatin1String("reader/fontSize"), px);
         readerView->setZoomFactor(px / 19.0);
     });
     connect(fontInc, &QToolButton::clicked, this,
-            [this, readerView]() {
+            [readerView]() {
         const int px = qBound(12, fontSize() + 1, 30);
         ProfileSettings().setValue(QLatin1String("reader/fontSize"), px);
         readerView->setZoomFactor(px / 19.0);
     });
     connect(themeBtn, &QToolButton::clicked, this,
-            [this, bar, readerView, themeBtn]() {
+            [bar, readerView, themeBtn]() {
         const QString next = theme() == QLatin1String("dark")
             ? QStringLiteral("light") : QStringLiteral("dark");
         ProfileSettings().setValue(QLatin1String("reader/theme"), next);

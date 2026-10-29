@@ -1243,7 +1243,7 @@ public:
                 // request's wall-clock issue time, which the
                 // monotonic waterfall clock cannot reproduce.
                 QStringList lines;
-                const auto seg = [&lines, this](const QString &label,
+                const auto seg = [&lines](const QString &label,
                                                 double start,
                                                 double end) {
                     if (start >= 0.0 && end > start)
@@ -3467,7 +3467,7 @@ void BidiPanel::rebuildContextCombo()
     // Restore by context id; a vanished selection (or a strip whose
     // first slot is a non-CDP tab) must not land on a disabled row —
     // fall back to the first enabled entry, never index 0 blindly.
-    const auto enabledAt = [model, this](int i) {
+    const auto enabledAt = [model](int i) {
         const QStandardItem *item = model ? model->item(i) : nullptr;
         return !item || (item->flags() & Qt::ItemIsEnabled);
     };
@@ -5568,7 +5568,7 @@ QTreeWidgetItem *BidiPanel::stylesSection(const QString &header)
     f.setBold(true);
     s->setFont(0, f);
     // Keep the Chrome order: Attributes, Computed styles, Box model.
-    const auto rankOf = [this](const QString &h) {
+    const auto rankOf = [](const QString &h) {
         return h == tr("Attributes") ? 0
              : h == tr("Box model") ? 2 : 1;
     };

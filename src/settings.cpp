@@ -277,6 +277,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         });
         // The pair dialog is modeless — a finished ceremony lands
         // as a "sync" change topic, which re-reads the device list.
+#ifdef ARKTOS_RUSTCORE
         if (RustCoreBridge *bridge = RustCoreBridge::instance()) {
             connect(bridge, &RustCoreBridge::storeChanged,
                     this, [this](const QString &topic) {
@@ -284,6 +285,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
                     refreshSyncStatus();
             });
         }
+#endif
         pagesList->addItem(tr("Sync"));
         tabWidget->addWidget(syncPage);
     }
@@ -4235,6 +4237,7 @@ void SettingsDialog::refreshSyncStatus()
 {
     if (!m_syncStatusLabel)
         return;
+#ifdef ARKTOS_RUSTCORE
     RustCoreBridge *bridge = RustCoreBridge::instance();
     if (!bridge || !bridge->serving()) {
         m_syncStatusLabel->setText(
@@ -4311,6 +4314,12 @@ void SettingsDialog::refreshSyncStatus()
             item->setFlags(Qt::NoItemFlags);
         }
     }
+#else
+    m_syncStatusLabel->setText(
+        tr("Sync is unavailable — the Rust core is not loaded."));
+    if (m_syncDevicesTree)
+        m_syncDevicesTree->clear();
+#endif
 }
 
 // SYNC09: unpair the selected device from this profile's sync
@@ -4328,6 +4337,7 @@ void SettingsDialog::unpairSyncDevice()
     const QString id = item->data(0, Qt::UserRole).toString();
     if (id.isEmpty())
         return;
+#ifdef ARKTOS_RUSTCORE
     RustCoreBridge *bridge = RustCoreBridge::instance();
     if (!bridge || !bridge->serving())
         return;
@@ -4354,4 +4364,5 @@ void SettingsDialog::unpairSyncDevice()
                 .arg(err.value(QStringLiteral("message")).toString()));
     }
     refreshSyncStatus();
+#endif
 }

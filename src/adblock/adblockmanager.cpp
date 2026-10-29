@@ -41,7 +41,6 @@
 #include "adblocksubscription.h"
 #include "browserpaths.h"
 #include "domainblocklist.h"
-#include "networkaccessmanager.h"
 #include "trancolist.h"
 
 #if defined(ARKTOS_RUSTCORE)

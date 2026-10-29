@@ -414,7 +414,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | CA04 | Code audit: performance pass — startup path, per-tab costs, hot loops, settings load, sync op-log overhead — details below | done | 0 | appended perf section to CODE-AUDIT.md — 9 ranked findings w/ file:line evidence + measured numbers: 2 high (un-coalesced ~160ms adblock rebuildRules double-fires per list download, ~1.5s GUI cold-start; DNR evaluate() O(all rules)/request once any ext registers), 3 med (per-request sitedec FFI, per-signal sessionPolicyCall FFI, ~500ms un-instrumented window-ctor region), 4 low/med (proc sweep, history O(N) title scan, sync oplog per-op txs, redundant historyLimit write) + honest negatives. Verified via --profile-startup timelines + smoke-leg wall times |
 | CA05 | Code audit: Windows-specific pass — path separators, case sensitivity, MSVC warnings, registry/installer assumptions, CRT redist — details below | done | 0 | windows section appended to CODE-AUDIT.md — 15 findings: 3 high/med-high (QSettings NativeFormat-registry vs fileName()-as-path + smoke isolation unrunnable; nativeMessaging discovery filesystem-only, Windows needs registry; sync LAN UDP 14431+mDNS needs firewall rule), 4 med (ProfileVault live-dir parking relies on POSIX rename semantics; reserved device names + NTFS-illegal chars in slugify/download sanitizer; no console on release GUI build for ~40 stdout smokes; file:// drive-letter edges), 8 low + honest-negative list. Read-only audit, no code changes. |
 | CA06 | Code audit: macOS-specific pass — bundle paths, Retina/DPR, unified-toolbar widget visibility (recurring class), qmacstyle metrics, Info.plist/hardened runtime — details below | done | 0 | macos section appended to CODE-AUDIT.md — 12 findings: 2 high (nativeMessaging searchDirs use Linux XDG layout on macOS; Info.plist missing CFBundleURLTypes+version keys), 1 med-high (MAC04 check-indicator class NOT closed — adblock subscriptions, sidebar panels, SEC11 suggestions column), 5 med (fetch-tor sha256sum+XDG path, QSettings CFPreferences vs file ops, hardened-runtime/DYLD/dlopen/entitlements gap, Hide-Menu-Bar+⌘M, navbar drag geometry under NSToolbar), 4 low + honest negatives incl. Ctrl→⌘ auto-mapping verified not-a-bug. Read-only audit, no code changes |
-| CA07 | Code fixes: dead code removal — apply confirmed CA01 dead-code findings — details below | pending | 0 | needs:task:CA01,CA06 — delete only proven-dead code, suite green |
+| CA07 | Code fixes: dead code removal — apply confirmed CA01 dead-code findings — details below | done | 1 | CA01 dead-code applied: 3 dead members + #if 0 arm + 4 dead includes + 43 lambda captures + SRCS_TRANCO deleted; 3 audit false-positives kept+annotated. Also fixed pre-existing no-rust link break (unguarded RustCoreBridge in sync UI). Verified: check-warnings PASS, make 0 warnings, suite reds all pre-existing in untouched code |
 | CA08 | Code fixes: dedup refactor — consolidate confirmed CA01 duplicates — details below | pending | 0 | needs:task:CA07 — shared helpers, no behavior change, suite green |
 | CA09 | Code fixes: security remediations from CA02 — details below | pending | 0 | needs:task:CA02,CA08 — fix or file per-finding follow-ups; never silence a real gap |
 | CA10 | Code fixes: memory-leak remediations from CA03 — details below | pending | 0 | needs:task:CA03,CA08 — fix ownership/parenting; ASan legs clean |
@@ -5177,6 +5177,67 @@ functions/classes/blocks/includes. Only deletions where the audit's
 evidence is solid; anything ambiguous stays with a note. Full test
 suite + make must stay green.
 
+
+Applied (all verified by full build + suite):
+- D1: deleted RustCoreProfiles::avatarPath (rustcorebridge.{h,cpp}),
+  WebPage::noteCertErrorOverride (webpage.{h,cpp} — WK19 comment kept,
+  CA09 marker inline: a foreign-backend proceed-path call may have
+  been lost in the port, see audit D1), ExtensionIdleWatcher::
+  detectionInterval() inline getter (extensionidlewatcher.h).
+- D3: deleted the #if 0 matchingPath reject arm in
+  networkcookiejar.cpp (matchingPath itself stays — live at :122).
+- D5: deleted 4 of 5 "dead" includes (browsermainwindow, adblockmanager,
+  bookmarkstoolbar, sitepanel). webviewsearch.cpp's webpage.h was a
+  FALSE POSITIVE — webPage()->showErrorPage() at :167 needs the
+  complete type; kept + annotated in CODE-AUDIT.
+- D6: removed 43 of 46 flagged lambda captures. 3 stayed: clang's
+  "not required to be captured" is over-lenient vs GCC (odr-use) —
+  blobSize (main.cpp:7229, 7308), serveDelayMs (:10866). iterationCount
+  (:3642) + serveDelayMs (:10906) removed cleanly.
+- D7: deleted SRCS_TRANCO test-seam const (tranco.rs) + singularized
+  its doc comment; cargo check --all-targets clean.
+
+NOT applied (audit mis-classified — annotated in CODE-AUDIT):
+- D2 MaximumKeywords/MaximumKeywordLength (opensearchreader.cpp): read
+  at :246-247 inside the #else non-rustcore arm — D4-class config lane.
+- D2 kHeaderSize (securestore.cpp): read at :492/626/644/652 inside
+  the #else !ARKTOS_RUSTCORE OpenSSL arm — D4-class config lane.
+
+
+Resumed-run verification (second attempt):
+- check-warnings (CONFIG+=no-rust, src+tools): initially FAILED at
+  link — pre-existing breakage from the SYNC rows, unrelated to the
+  deletions: syncpairdialog.cpp, synctabpresence.cpp and settings.cpp
+  called RustCoreBridge::instance()/serving()/mwCommand()/mwQuery()
+  unguarded, but rustcorebridge.cpp only compiles under
+  CONFIG+=rustcore. Fixed per the tree's own convention: every call
+  site wrapped in #ifdef ARKTOS_RUSTCORE (SyncPairWorker::call answers
+  an envelope error doc the dialog renders verbatim; publishNow and
+  unpairSyncDevice become no-ops; SyncTabsMenu::rebuild and
+  refreshSyncStatus fall back to the existing "Sync is unavailable"
+  text; the settings ctor connect is skipped). Gate re-run: PASS —
+  zero diagnostics, link green.
+- Default rust lane: make -j2 green, 0 warnings.
+- Suite (autotests/runTests.sh, isolated HOME, offscreen
+  --disable-gpu): all legs ran; reds are pre-existing, every one in
+  committed code untouched by this diff — tst_arktosstyle
+  groupBoxTitleWeight+flatGroupSection (documented "identical on
+  unmodified HEAD" in MAC09), tst_ExtensionManager chromePageChurn +
+  tst_MemCycle engineTabCycle SIGSEGV (documented offscreen headless
+  trap, MAC05/MAC06/MAC17), tst_SingleApplication messageRoundTrip +
+  stalledClientDoesNotBlockServer (SI01 reply handshake landed in
+  3e24a8ad Oct 22; test never gained a reply path — deterministic
+  fail, nothing in the test exercises CA07 files), tst_RustDownload
+  canHandleGate/managerRouting/gateHttpsOnlyBlocks/gateSsrfRedirect
+  (gate returns GateRewrite=2 where stale legs expect Allow/Block —
+  semantics shifted in 33474171/fb563339-era navpolicy work; gate
+  code, test and privacyrequestinterceptor all untouched by CA07),
+  tst_BrowserMainWindow startPageSingleSurface/extensionActionButtons/
+  navBarOrderPersistence (stale expectations vs committed startpage/
+  extension-bar/nav-item additions — browsermainwindow.cpp diff here
+  is one unused include + one unused lambda capture). Nothing new
+  went red.
+
 ### CA08
 Apply CA01's confirmed duplicate findings: consolidate each verified
 clone into the canonical helper/site. No behavior changes. Suite
@@ -5186,6 +5247,17 @@ green.
 Fix CA02's security findings by severity (high first). Where a fix is
 large, land the safe subset and file a follow-up row — never silence
 or hide a real gap. Suite green.
+
+
+Carried forward from CA07 (audit D1 flag): WebPage::noteCertErrorOverride
+was deleted as provably dead — zero call sites. BUT the WK19 note says
+the foreign-backend cert-proceed path was meant to call it
+("proceed->allow_tls_certificate_for_host + noteCertErrorOverride
+padlock"), and foreignCertOverrideHosts() is now never populated, so
+certificateErrorOverridden() can never return true for a foreign
+backend tab — a foreign tab that proceeded past a cert error wears a
+green padlock. Decide whether a proceed-path call was lost in the port
+(git log bf77195e~ src/webpage.cpp for the removed writer).
 
 ### CA10
 Fix CA03's leak findings: correct ownership/parenting, break cycles,

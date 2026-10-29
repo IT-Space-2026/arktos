@@ -2116,7 +2116,7 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
                 // Boolean state filters — Chrome's query keys map
                 // one-to-one onto the tab object fields now that they
                 // carry real state ('muted' reads mutedInfo.muted).
-                const auto boolFilter = [&q, &tab](
+                const auto boolFilter = [&q](
                         const QString &key, const QJsonValue &actual) {
                     return !q.contains(key)
                         || q.value(key).toBool() == actual.toBool();

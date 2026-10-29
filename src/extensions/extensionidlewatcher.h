@@ -78,7 +78,6 @@ public:
 
     // Diagnostics/test surface.
     QString state() const { return m_state; }
-    int detectionInterval() const { return m_intervalSeconds; }
     bool armed() const { return m_armed; }
     qint64 idleMs() const;
 

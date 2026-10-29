@@ -90,7 +90,6 @@
 #include "extensionactionbar.h"
 #include "history.h"
 #include "languagemanager.h"
-#include "networkaccessmanager.h"
 #include "pdfview.h"
 #include "pictureinpicture.h"
 #include "printpreviewdialog.h"
@@ -2421,7 +2420,7 @@ void BrowserMainWindow::setupToolBar()
                 padlock->refresh();
     };
     connect(m_tabWidget, &QTabWidget::currentChanged, this,
-            [this, rebindTrust](int) { rebindTrust(); });
+            [rebindTrust](int) { rebindTrust(); });
     connect(m_tabWidget, &TabWidget::tabsChanged, this, rebindTrust);
     rebindTrust();
     // SIDE01: sidebar toggle at the far right of the navigation bar —

@@ -963,11 +963,6 @@ QString RustCoreProfiles::settingsDir(const QString &id) const
     return pathVia(fallbackStore(), &rc_profiles_settings_dir, id);
 }
 
-QString RustCoreProfiles::avatarPath(const QString &id) const
-{
-    return pathVia(fallbackStore(), &rc_profiles_avatar_path, id);
-}
-
 QString RustCoreProfiles::slugify(const QString &displayName)
 {
     return takeString(
