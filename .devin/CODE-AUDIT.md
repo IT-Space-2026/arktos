@@ -231,3 +231,250 @@ reference impl — called by autotests/adblock/adblocknetwork:381/399/513).
   **0** (D8 — compiler + scan clean)
 - Clone groups: **127** → ~20 cross-file families (A) + ~35 within-file
   families (B) + smoke-harness boilerplate class + excluded parallels (C)
+
+---
+
+## SECURITY (CA02)
+
+Generated 2026-10-29. Method: adversarial source review of the
+untrusted-input and trust-boundary surfaces — URL scheme/host
+validation, cert/TLS, proxy trust, nativeMessaging manifest+spawn,
+extension shim/bridge boundary, stored secrets, JS-injection
+callers, exec/spawn paths — cross-checked against the SEC01-29,
+VSEC01/02, BADSSL and XSLEAK01 reports so only *open* findings are
+listed. Prior audits fixed the big classes; what remains is below.
+Severity: **high / med / low**. Findings only — no code changes.
+
+### S1 — Tab-hosted extension pages hand `chromeBridge` to foreign subframes — **HIGH**
+
+`ExtensionBackgroundRuntime::attachExtensionPage()`
+(src/extensions/extensionbackgroundhost.cpp:1970-2021) binds a fresh
+`QWebChannel` with `chromeBridge` in `MainWorld` on *any* WebPage whose
+committed url is `chrome-extension://<id>` — reached from
+`WebView::init`'s `aboutToLoadUrl` hook (src/webview.cpp:234-244) and
+the EXT19 view watcher (:2094-2112). A `setWebChannel` is a *page*-
+level property: Qt exposes the transport + objects to **every frame of
+the page in that world**, subframes included.
+
+The hosted background page and popup/probe pages carry the QUAL03 /
+SEC26 navigation locks (`HostedBackgroundPage`, `ExtensionChromePage`
+— extensionbackgroundhost.h:341-400, :759+; main frame locked to the
+extension's own origin, subframes confined to it). A `WebPage` in a
+real tab has **no equivalent rule** — `WebPage::acceptNavigationRequest`
+(webpage.cpp:817+) imposes no subframe confinement for chrome-extension
+documents, and `attachExtensionPage` only checks the *top* url.
+
+**Exploit sketch:** an extension whose options/help page loads remote
+content in an iframe (oauth embeds, dashboards — a real-world pattern
+Chromium's model makes safe) opens it in a tab. The remote subframe
+sees `qt.webChannelTransport` in its MainWorld and can speak the
+channel protocol (it needs nothing from us — the client protocol is
+re-implementable) to call `chromeBridge.invoke(...)` as the extension:
+- `invoke("native","connect",…)` — spawn a registered native host
+  (nativeMessaging grant permitting, extensionbackgroundhost.cpp:632-705);
+- `invoke("scripting","executeScript",…)` — inject into any tab whose
+  url the extension's grants cover (:3578-3820);
+- `invoke("storage",…)` — read the extension's storage (a password
+  manager's vault metadata);
+- `invoke("tabs","sendMessage"/"connect")` / `invoke("relay",…)` —
+  reach the extension's other contexts and page agents.
+
+Chrome exposes **no** extension surface to a web iframe; here the web
+frame inherits the extension's entire bridge. Needs: a hosted
+extension document iframing remote content. Likely fix direction:
+subframe confinement on WebPage for chrome-extension main frames
+(mirror `ExtensionChromePage::navigationAllowed`), or a per-frame
+channel world the bridge binds to only for the top document.
+
+### S2 — PDF worker's `file` field is a parent-side path — traversal to arbitrary delete — **HIGH**
+
+`PdfDocumentClient::handleWorkerOutput()` (src/pdfview.cpp:318-331)
+takes the worker's `"page"` event `file` string and does:
+
+    const QString path = m_workDir->path() + '/' + file;
+    QImage image(path, "PNG");
+    QFile::remove(path);
+
+No normalization or confinement. The worker is the component bwrap
+exists to confine (`SandboxManager::bwrapPath()`, pdfview.cpp:207-216)
+— and where bwrap is absent it runs **unconfined** (`worker` backend).
+A compromised/crashed worker emitting `"file": "../../.bashrc"` gets
+the parent to `QFile::remove()` outside the work dir — escaping the
+sandbox into the parent's fs authority. A PNG-parseable target is also
+read and shown as a page image (info disclosure of renderable files).
+
+Secondary: `m_stdoutBuffer` (:295) grows unbounded — a hostile worker
+emitting newline-free output grows RSS without limit (stderr is capped
+at 8192, :237-238 — the asymmetry shows the intent).
+
+**Exploit sketch:** memory-safety bug in the hayro rasterizer (or in
+the unconfined `worker` backend) → controlled JSON on the worker's
+stdout → parent deletes/reads arbitrary user files. Fix direction:
+hard-confine `file` to the work dir (`QDir(m_workDir->path())
+.filePath(file)` + `canonicalFilePath()` prefix check, refuse `..`),
+cap `m_stdoutBuffer`.
+
+### S3 — App-side `sslErrors` handler persists attacker certs into the CA store — **HIGH**
+
+`NetworkAccessManager::sslErrors()` (src/network/networkaccessmanager.
+cpp:282-349), still the Qt-demo shape:
+
+- On "Yes, ignore" it **appends the presented certificates to
+  `QSslConfiguration::defaultConfiguration()`'s CA list** (:334-338)
+  and persists the merged set to `settings["CaCertificates"]`
+  (:341-344) — a one-time "ignore these errors" click installs the
+  peer's certs as **trust anchors** for every app-side fetch forever
+  (update manifest, adblock lists, opensearch icons, suggestions,
+  sync traffic — all ride this NAM).
+- The skip rule `ca_merge.contains(error.at(i).certificate())`
+  (:297-304) then silently ignores *any* error type for a stored
+  cert — including `HostNameMismatch` when a stored cert is served
+  on a different host → auto-`ignoreSslErrors()` (:305-307), no
+  prompt.
+- `reply->ignoreSslErrors()` (:306, :347) is called with no error
+  list → ignores *all* errors on the reply.
+
+**Exploit sketch:** a MITM/proxy serving a self-signed or attacker CA
+chain; user clicks through once → the CA is a permanent trust anchor;
+all subsequent app-side TLS to any host validates under it. The page-
+load plane is unaffected (WebEngine's cert path is the SEC06
+session-scoped host+fingerprint whitelist — correct), which makes this
+easy to overlook. Fix direction: never add peer certs to the CA store;
+scope the accepted exception to (host, fingerprint) in memory like the
+WebPage path, and don't auto-ignore mismatches.
+
+### S4 — DNR `transform`/`regexSubstitution` redirect outputs are unvalidated — **MED**
+
+`DeclarativeNetRequest`'s literal-`url` redirect is scheme-gated to
+http/https/chrome-extension (declarativenetrequest.cpp:724-733) — but
+`resolveRedirect()` (:1370-1447) re-validates nothing for:
+
+- `transform` (:1379-1437): `setScheme(t["scheme"])` accepts **any**
+  scheme — a rule can rewrite an https request into `file:///etc/passwd`,
+  `data:`, `javascript:`, or `chrome-extension://other-ext/…` (the
+  extension-id scoping applied to `extensionPath` kind 2 doesn't apply
+  to literal/transform targets);
+- `regexSubstitution` (:1439-1443): `out.replace(re, sub)` can produce
+  any string → `QUrl(out)`.
+
+`info.redirect()` then issues the navigation. A `file:` main-frame
+redirect lands on local content; combined with `dnrPatternCovers(
+"<all_urls>")` covering `file:` (:288-291) and `hostPermCoversPattern`
+granting `file` coverage under `<all_urls>` (extensionbackgroundhost.
+cpp:4165-4170) — **with no Chrome-parity "allow access to file URLs"
+opt-in gate found anywhere in the runtime** — an extension declaring
+`<all_urls>` + `declarativeNetRequest` (+ `scripting`) can redirect a
+victim navigation to a local file and script-read it.
+
+**Exploit sketch:** extension with DNR permission registers
+`{regexFilter:"(.*)", transform:{scheme:"file", path:"/etc/passwd"}}`
+on main_frame → user navigation lands on the local file; an
+`executeScript` on the covered `file:` url exfiltrates it. Chrome's
+DNR only permits http/https/extension-resource redirect targets, and
+file: access is a separate user toggle. Fix direction: re-gate the
+resolved redirect url (scheme ∈ http/https/chrome-extension-with-own-
+id), and gate `file:`/`ftp:` out of the coverage grammar or behind a
+file-access setting.
+
+### S5 — nativeMessaging host-name regex is unanchored — **MED**
+
+`NativeMessagingSession::resolve()` (src/extensions/extensionbackground
+host.cpp:400-404):
+
+    static const QRegularExpression nameRe(
+        "[a-z0-9_-]+(\\.[a-z0-9_-]+)*");
+    if (appName.isEmpty() || appName.size() > 128
+            || !nameRe.match(appName).hasMatch()   // substring match
+            || appName.contains("..")) ...
+
+`hasMatch()` accepts a name containing a matching *substring*, so
+`a/b`, `HOST.Name`, `x y`, `.z` all pass the Chrome host-name rule —
+`fileName = "a/b.json"` then resolves **subdirectories** of the search
+dirs, which Chrome's flat `NativeMessagingHosts/` layout never consults
+(the `..` check still blocks parent traversal; `QDir::filePath`
+concatenates so an absolute `appName` can't escape either — the real
+escape is subdir + non-Chrome name shapes).
+
+Secondary, same function: manifest `path` is honored relative to the
+manifest dir (:448-450) — Chrome requires an absolute path on POSIX,
+so a manifest can carry `"path": "../payload"`; and `type` absent is
+accepted (:437-442, Chrome requires `"stdio"`). No ownership/
+permissions check on the manifest file either (a world-writable
+manifest in a compat dir would be honored).
+
+**Exploit sketch:** same-UID attacker able to write under
+`~/.config/chromium/` (a compromised desktop app, a flatpak with
+config access) plants `NativeMessagingHosts/sub/evil.json` +
+`../payload` — an extension's `connectNative("sub/evil")` resolves it.
+Fix direction: `anchoredMatch()` on the full string; refuse relative
+`path` on POSIX; require `type=="stdio"`.
+
+### S6 — DNR `modifyHeaders` values unchecked for control characters — **LOW**
+
+`parseRule` validates header *names* against the token grammar
+(declarativenetrequest.cpp:792-818) but `hop.value = value.toUtf8()`
+(:836) accepts anything — CR/LF included. `setHttpHeader` on the
+request then writes it (privacyrequestinterceptor.cpp:294-302).
+Chromium's header layer likely normalizes or refuses, but a CRLF-
+carrying value reaching the wire is header-splitting/request smuggling.
+Extension-local (needs `declarativeNetRequest`), low severity — flag
+for a `value`-side token validation pass.
+
+### S7 — `randomBytes()` leaves tail bytes uninitialized — **LOW (latent)**
+
+src/securestore.cpp:431-439 fills `count` in 8-byte strides:
+`for (i = 0; i + 8 <= count; i += 8)` — any `count % 8` tail stays
+`Qt::Uninitialized`. Only called with `kKeySize == 32` today, so no
+live impact; a future caller with a non-multiple-of-8 count (e.g. a
+nonce) would mint key material with uninitialized tail bytes.
+
+### S8 — native-messaging inbox has a per-frame cap but no total cap — **LOW**
+
+`NativeMessagingSession::drainStdout()` (extensionbackgroundhost.cpp:
+578-609) bounds each frame at `kMaxNativeHostMessage` (64 MiB) but
+`m_inbox` accumulates unboundedly — a hostile host streaming many
+sub-cap frames (or a partial giant frame) grows memory without limit.
+Chrome's 1MB total-message model never got ported; the per-frame
+bound exists only against the corrupt-length case per the :363-366
+comment. DoS-shaped, same-UID host process only.
+
+### Checked, no findings (honest negatives)
+
+- **Cert-error / HTTPS-Only / site-block interstitials**: nonce-bound
+  action links, session-scoped (host,fingerprint) whitelist per
+  profile, subframe errors hard-denied, `isOverridable` honored,
+  registry bounded at 64 (webpage.cpp:2008-2260, schemeaccesshandler.
+  cpp:100-117). The `arktos-cert-error`/`arktos-http-warning`/
+  `arktos-site-block` schemes serve only published nonces.
+- **file/dir listings**: `arktos-file:` refuses remote initiators
+  (fileaccesshandler.cpp:64-86); not SecureScheme/CorsEnabled.
+- **External scheme handoff**: non-browser schemes → consent prompt
+  with `Qt::PlainText` rendering + modal-stacking guards
+  (webpage.cpp:737-781, 978-984); `javascript:` refused on every
+  untrusted path (argv, single-instance socket, QDesktopServices
+  handler, tor-window argv — SEC23 + spot-verified).
+- **Single-instance IPC**: `messageReceived` feeds
+  `loadStringFromUntrustedSource` (browserapplication.cpp:598-667,
+  tabwidget.cpp:4563-4576) — gated, `file:` allowed by SEC09 design.
+- **Update checker**: trusted-URL gate on assets (https + github/
+  api-host only, no userinfo), 1MB manifest cap, `releaseTitle`
+  rendered PlainText, manual download only — no auto-install
+  (updatechecker.cpp, updatedialog.cpp).
+- **Spawn/exec paths**: all argv, no shells — tor daemon (fixed args,
+  env override `ARKTOS_TOR_BINARY` documented), external download
+  handler (scheme allowlist http/https/ftp + quoted-split argv,
+  downloadmanager.cpp:1715-1754), tor-window respawn, profile-wipe
+  respawn, pdf worker (bwrap when present).
+- **Download filenames**: both separators stripped, per-segment
+  sanitize for Chrome-relative subdir names, `.`/`..`/control
+  chars/drive-letters/`~` rejected, dedup vs on-disk + in-flight
+  (downloadmanager.cpp:494-529, 686-786).
+- **Extension boundary**: page-agent `agentCovers` re-proved per call;
+  sender.url taken from committed page url never caller input;
+  mid/chan namespaced `<extId>#`; scripting.executeScript gated on
+  permission + per-frame coverage incl. blob:/about: inheritance
+  (extensionbackgroundhost.cpp:3234-3820, extensionpagebridge.cpp).
+- **Secrets**: sealed stores + bounded KDF parse (SEC03/SEC28 already
+  covered — re-verified the bounds are live, securestore.cpp:506-512).
+- **Proxy config**: settings-only, tor mode ignores clearnet proxy
+  (networkaccessmanager.cpp:140-165); proxy password sealed (SEC03).
