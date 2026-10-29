@@ -1,3 +1,30 @@
+1.2 — Code audit pass + settings theme
+Code audit (CA01-CA13, findings in .devin/CODE-AUDIT.md):
+- Dead code: unused functions/constants/includes removed, 47 unused
+  lambda captures cleaned; no-rust build lane repaired.
+- Duplicates: 127 clone groups reviewed, verified families
+  consolidated into canonical helpers.
+- Security: chromeBridge no longer handed to foreign subframes in
+  extension pages; PDF worker file-path traversal closed; sslErrors
+  handler no longer persists attacker certs into the CA store; DNR
+  redirect outputs validated; nativeMessaging host-name regex
+  anchored + header values sanitized.
+- Lifetime: CookieJar quit-path use-after-free fixed (cached OTR
+  flag, identity-key gates); dying-window/tab sweeps made safe.
+- Performance: adblock rebuildRules double-fire coalesced (was
+  ~1.65s on the GUI thread at startup); DNR rule matching gets a
+  candidate index instead of a per-request linear scan; FFI
+  round-trips on hot paths removed.
+- Windows: QSettings/registry collisions, nativeMessaging host
+  discovery, Firewall handling for sync LAN, filename legality.
+- macOS: nativeMessaging host dirs use the macOS library layout;
+  Info.plist gains URL schemes + version keys; check-indicator and
+  DPR classes fixed systemically.
+Theme (THEME01):
+- Preferences sidebar categories render as pastel-circle icons
+  (Arktos-Mobile style): 16-color palette, existing glyphs centered,
+  light and dark palette safe, Retina-aware pixmaps.
+
 1.1 — Extension runtime + serverless sync + macOS polish
 Extension runtime (BW01-BW13, hosted chrome.* over QtWebEngine):
 - Full MV3 hosting: service worker, action popup, content scripts.
