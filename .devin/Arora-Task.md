@@ -411,7 +411,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | CA01 | Code audit: dead code + duplicate detection — unused symbols, unreachable branches, dead stores, copy-paste blocks across src/ — details below | done | 0 | .devin/CODE-AUDIT.md written — dead: 3 members (avatarPath/noteCertErrorOverride/detectionInterval), 4 consts, 1 #if0 block, 5 dead includes, 47 dead lambda captures, ~50 rust/no-rust config-gated tails (documented, not deletable), 1 rust dead const; dups: 127 clone groups triaged into ~20 cross-file + ~35 within-file families + smoke-harness class. Tools: clang++ -fsyntax-only -Wunreachable-code replay over 197 TUs + g++ pass (clean), custom symbol/ifdef/include/dup scanners, cargo clippy. No code changes. |
 | CA02 | Code audit: security pass — URL/cert/proxy handling, nativeMessaging spawn args, extension shim surface, secrets, injection paths — details below | done | 0 | security section appended to CODE-AUDIT.md — 8 severity-rated findings: 3 high (chromeBridge→foreign subframes on tab ext pages; pdf-worker file field→parent-side path traversal/delete; NAM sslErrors persists certs into CA store), 2 med (DNR transform/regexSubstitution unvalidated redirect + file: coverage; nativeMessaging unanchored name regex/relative path), 3 low; honest-negative coverage list included |
 | CA03 | Code audit: memory-leak pass — unparented QObjects, new-without-delete, ownership cycles, raw-pointer leaks; ASan/LSan legs where buildable — details below | done | 4 | 0 our-code LSan blocks across 13 smoke legs on at_quick_exit-hooked ASan+UBSan+LSan build; appended leaks section to CODE-AUDIT.md — 3 lifetime findings: L1 HIGH CookieJar::save calls m_profile->isOffTheRecord during profile destroyed emission (settings-smoke SIGSEGV rc=139), L2 MED extensioneventhub removed-tab sweep derefs tab.window mid-destruction (UBSan x3 legs), L3 LOW tabwidget bar-destroyed lambda touches dying this; static pass clean (141 QObject + 22 raw-new sites resolve, FFI opens paired) |
-| CA04 | Code audit: performance pass — startup path, per-tab costs, hot loops, settings load, sync op-log overhead — details below | pending | 0 | needs:task:CA01 — appends perf section to CODE-AUDIT.md |
+| CA04 | Code audit: performance pass — startup path, per-tab costs, hot loops, settings load, sync op-log overhead — details below | done | 0 | appended perf section to CODE-AUDIT.md — 9 ranked findings w/ file:line evidence + measured numbers: 2 high (un-coalesced ~160ms adblock rebuildRules double-fires per list download, ~1.5s GUI cold-start; DNR evaluate() O(all rules)/request once any ext registers), 3 med (per-request sitedec FFI, per-signal sessionPolicyCall FFI, ~500ms un-instrumented window-ctor region), 4 low/med (proc sweep, history O(N) title scan, sync oplog per-op txs, redundant historyLimit write) + honest negatives. Verified via --profile-startup timelines + smoke-leg wall times |
 | CA05 | Code audit: Windows-specific pass — path separators, case sensitivity, MSVC warnings, registry/installer assumptions, CRT redist — details below | pending | 0 | needs:task:CA01 — appends windows section to CODE-AUDIT.md |
 | CA06 | Code audit: macOS-specific pass — bundle paths, Retina/DPR, unified-toolbar widget visibility (recurring class), qmacstyle metrics, Info.plist/hardened runtime — details below | pending | 0 | needs:task:CA01 — appends macos section to CODE-AUDIT.md |
 | CA07 | Code fixes: dead code removal — apply confirmed CA01 dead-code findings — details below | pending | 0 | needs:task:CA01,CA06 — delete only proven-dead code, suite green |
@@ -5115,6 +5115,46 @@ allocation costs, hot loops in completion/adblock/settings paths, sync
 op-log overhead per op, redundant store reads/writes, needless repaints.
 Measure where possible (timing the existing smoke legs), rank by
 expected impact. Append to CODE-AUDIT.md.
+
+
+Appended PERFORMANCE section to .devin/CODE-AUDIT.md. Method:
+StartupProfile timeline (3x --profile-startup offscreen) + smoke-leg
+wall times + source review of startup/per-tab/request/matcher/sync/
+store/repaint paths, cross-checked against in-tree PERF01/PERF03.
+
+Ranked findings (all with file:line evidence in the audit):
+- P1 HIGH: rulesChanged->rebuildRules direct-connected, un-coalesced,
+  double-fired per list event (loadRules emits rulesChanged then
+  rulesDownloaded emits changed, both wired to the rebuild). Measured
+  138-185ms/snapshot; cold start burned 9 extra rebuilds (~1.5s GUI
+  thread) as 5 stale lists finished in pairs; mid-browse refresh =
+  ~160-330ms freeze per list.
+- P2 HIGH (conditional): DNR evaluate() linear-scans the flattened
+  session+dynamic+static-ruleset list per request under the read lock
+  (regex+pattern per rule); gate is only ruleCount>0 — uBlock-scale
+  rulesets degrade matching to O(total rules)/request. No index.
+- P3 MED: SiteDecisionStore::lookup FFI envelope per request in
+  match(); rust side is an in-memory HashMap — all marshal overhead;
+  generation-cache pattern exists in-tree (sendGpcForProfile).
+- P4 MED: AutoSaver changeOccurredFor -> sessionPolicyCall FFI
+  round-trip per tabsChanged/chrome/sidebar/lifecycle signal (~13
+  emit sites, several per navigation).
+- P5 MED: window-ctor ~600-720ms; ~430-510ms un-instrumented between
+  opensearch-parse and bookmarks-load marks (setupMenu/ToolBar/docks).
+- P6 LOW-MED: NetIndicator full /proc stat+cmdline sweep every 5s per
+  window, runs while hidden.
+- P7 LOW-MED: updateHistoryEntry O(history) scan per title update.
+- P8 LOW-MED: sync oplog per-op autocommit (~4 stmts/op) + import()
+  holds global lock across per-op sig verifies; mark_applied re-locks
+  per op. Bulk-import is ~4N txs.
+- P9 LOW: history save() rewrites historyLimit to QSettings every
+  debounced flush (near-no-op under rustcore).
+Honest negatives recorded: PERF01 verdict memoization, completer/suggest
+debounces, observeRequest fast path, lazy menus + deferred warmup,
+indexed adblock matcher, no per-request QSettings.
+
+Measured baseline: first window shown 782-954ms; --quit-after-load
+1.05-1.36s; smoke legs 0.55-4.38s wall.
 
 ### CA05
 Windows-specific pass: path separator assumptions, case-sensitivity

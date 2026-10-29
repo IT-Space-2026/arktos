@@ -672,3 +672,238 @@ EXTEXIT01 trade-off). Logs: /tmp/ca03-leaklogs (not committed).
   `SyncTabPresence` static instance, `recently-closed` value
   snapshots (no live widget refs — tabwidget.cpp:4323+), the
   QWidgetAction default-widget hand-off in profilemenuactions.cpp:220.
+
+## PERFORMANCE (CA04)
+
+Generated 2026-10-29. Method: source review of the startup path (main()
+-> BrowserApplication ctor -> newMainWindow -> postLaunch), per-tab
+allocation, per-request hot paths (request interceptor, adblock/DNR
+matchers, cookie filter), completion path, sync op-log, store
+read/write cadence, and repaint/polling loops — cross-checked against
+the PERF01/PERF03 work already in tree so only *open* findings are
+listed. Dynamic leg: `StartupProfile` timeline via `--profile-startup`
+(offscreen, real profile — 3 runs) and wall-time of the existing smoke
+legs. Severity by expected impact: **high / med / low**. Findings only
+— no code changes.
+
+Measured baseline (offscreen build @HEAD, warm fs cache):
+
+    --profile-startup marks (3 runs):
+      ctor: browsing profile + services prepared   94-165 ms
+      BrowserApplication ctor done                 152-237 ms
+      history load                                  +6-22 ms
+      opensearch engines parse                      +2-9 ms
+      bookmarks xbel load                          +19-68 ms  (at ~640-806 ms)
+      first window shown                            782-954 ms
+      postLaunch: begin                           1043-1646 ms
+      deferred warmup: adblock rules snapshot     +138-185 ms
+      (cold run: NINE further snapshots, see P1)
+    smoke legs (wall):  --quit-after-load 1.05-1.36 s
+      --app-smoke 1.49 s   --browser-smoke 4.38 s   --history-smoke 1.05 s
+      --settings-smoke 1.08 s   --search-smoke 0.55 s
+
+### P1 — `rulesChanged -> rebuildRules` is direct-connected, un-coalesced, and double-fired per list event — **HIGH**
+
+`AdBlockNetwork::rebuildRules()` rebuilds the WHOLE matcher snapshot —
+copies every rule of every enabled subscription into `SubscriptionRules`
+records and rebuilds four n-gram indexes per subscription
+(adblocknetwork.cpp:546-619).  Measured **138-185 ms per call** on the
+GUI thread (StartupProfile marks above).  Three coupling defects make
+that cost fire far more often than once:
+
+- Both `AdBlockSubscription::rulesChanged` AND
+  `AdBlockSubscription::changed` forward to `AdBlockManager::rulesChanged`
+  (adblockmanager.cpp:522-523, 719-720), which is direct-connected to
+  `rebuildRules` (adblockmanager.cpp:291-292, 308-309).  One finished
+  list download emits both: `rulesDownloaded()` calls `loadRules()`
+  (emits `rulesChanged`, adblocksubscription.cpp:241) and then
+  `emit changed()` (:350) — **two full corpus rebuilds per download**.
+- `setEnabled`/`setLocation`/`setTitle`/`addRule`/`removeRule`/
+  `setRules` all emit `changed` or `rulesChanged` per mutation
+  (adblocksubscription.cpp:131,144,158,431,441,453) — every single-rule
+  edit through the dialog or `AdBlockManager::addSiteWhitelistRule`
+  (adblockmanager.cpp:845) rebuilds the whole corpus.  `addRule` also
+  re-derives all per-subscription caches via `populateCache()`
+  (:456-490, O(all rules)) before the rebuild — K adds = K x (O(sub) +
+  O(corpus)).
+- Measured cold-start impact: the first `--profile-startup` run hit
+  NINE extra rebuilds after the deferred warmup — five stale remote
+  lists finishing download in pairs (rulesChanged + changed), ~1.5 s of
+  GUI-thread CPU between 2281-4345 ms, serialized against the first
+  page's layout.  A mid-browse weekly refresh hits the same wall: a
+  ~160-330 ms UI freeze per finishing list.
+
+Fix direction (CA11): coalesce — a dirty flag + `QTimer::singleShot(0)`
+(or a generation counter checked lazily in `match()`, which already
+read-locks `m_lock`) collapses N emissions into one rebuild; disconnect
+the metadata-only `changed` signal from the rebuild path; keep
+`populateCache` incremental (append/remove single rule) or batch it
+behind the same flag.
+
+### P2 — DNR `evaluate()` linear-scans every registered rule per request — **HIGH (conditional)**
+
+`DeclarativeNetRequest::evaluate()` walks `s_rules` — the flat
+concatenation of session + dynamic + **enabled static rulesets** across
+all extensions (rebuildSnapshot, declarativenetrequest.cpp:1877-1910) —
+on every request (declarativenetrequest.cpp:1480).  Per rule it runs
+`ruleMatchesRequest` (:1323-1367): regex `urlRe.match(urlStr)` where
+present, domain-list suffix scans, type/method checks — plus
+`dnrPatternCovers` per host pattern per host-access extension
+(:1484-1491) and a `s_exemptLock` mutex on every allowAllRequests
+match (:1504/:1513).  All under `QReadLocker(&s_lock)` on the IO
+thread, so a `chrome.declarativeNetRequest` update (which takes the
+write lock) stalls in-flight matching, and vice versa.
+
+The only gate is `s_ruleCount > 0` (:1455) — one installed extension
+with DNR rules turns the linear scan on for **every request on every
+profile**.  Chrome's static-ruleset quota is tens of thousands of
+rules per extension (kStaticGuaranteedRules), so enabling a
+uBlock-scale ruleset degrades the intercept path from O(url length)
+to O(total rules) per request — the same class of problem the
+adblock network's n-gram index already solved
+(adblocknetwork.cpp:228-285).  Fix direction: index candidates by
+domain/urlFilter token like `buildIndex`, and hoist per-extension
+hostPattern coverage into a per-(ext, first-party) memo.
+
+### P3 — `SiteDecisionStore::lookup` FFI envelope per request in the adblock match — **MED**
+
+`match()` and `matchNativeUnlocked()` call
+`siteWhitelistedDocument(documentHost)` on EVERY request
+(adblocknetwork.cpp:155, 304) — before touching the rule indexes.
+That goes through `SiteDecisionStore::lookup`
+(sitedecisionstore.cpp:251-278): a full `mwQuery` JSON envelope
+(serialize request -> `ac_mw_dispatch` -> parse response) per request
+on the IO thread.  The Rust side itself is an in-memory suffix walk
+over a HashMap (sitedecisions.rs:387-410) — the cost is all marshal +
+FFI overhead, paid per request even when the whitelist store is
+empty.  `sendGpcForProfile` already shows the in-tree fix
+(privacyrequestinterceptor.cpp:527-558): cache the answer keyed on
+`ac_policy_eval_generation()` (or a sitedec generation), re-querying
+at most once per store mutation.  Alternatively fold the whitelist
+set into the `rebuildRules` snapshot — it is GUI-side state the
+matcher's read lock already guards.
+
+### P4 — `AutoSaver::changeOccurredFor` re-queries the session policy per dirty signal — **MED**
+
+Every `changeOccurred`/`changeOccurredFor` runs `sessionPolicyCall`
+(autosaver.cpp:162-205, 102-135): mints an `AcSession` handle (or opens
+`rc_settings` outright), marshals a JSON request, FFI round-trip,
+parses the reply — for a policy document that only changes when
+`session/*` settings are written.  `tabsChanged` fires from ~13 sites
+in tabwidget.cpp (:774,854,1180,1218,1403,1504,2501,2685,3591,3796,
+3842,4062,4315) — url set, title apply, add/remove/move, strip syncs —
+i.e. several FFI round-trips per navigation, plus one per sidebar /
+chrome / lifecycle event (browsermainwindow.cpp:706,813,1318,3247+).
+The comment at autosaver.cpp:95-101 acknowledges the mint-per-change
+trade for settings freshness — but `ac_policy_eval_generation()` gives
+freshness without the round-trip (same pattern as P3's fix).  Each
+call is small; the count per navigation burst is not.
+
+### P5 — Window-construction is the largest un-decomposed startup bucket — **MED**
+
+`newMainWindow` spans "BrowserApplication ctor" (152-237 ms) to "first
+window shown" (782-954 ms): ~600-720 ms, of which **~430-510 ms sits
+between the "opensearch engines parse" and "bookmarks xbel load" marks
+with no instrumentation** — the `setupMenu()` + `setupToolBar()` +
+dock/statusbar wiring region (browsermainwindow.cpp:355-536).  The
+tail (newTab at :769 + show) accounts for the last ~140-150 ms —
+QWebEngineView/page construction and the async renderer bring-up.
+Menus already populate lazily (modelmenu.cpp:202-238), the sidebar
+panel defers to first show (:700-703), and the heavy stores are
+queued post-show (browserapplication.cpp:846-862) — so the remaining
+bulk is widget/action/dock construction and stylesheet application.
+Fix direction: `StartupProfile::Scope` marks inside setupMenu /
+setupToolBar / dock wiring to decompose the region before optimizing;
+deferred construction of the non-visible docks (bidi panel,
+download/graph docks) behind first-show.
+
+### P6 — `NetIndicator` sweeps all of /proc every 5 s, per window — **LOW-MED**
+
+`NetIndicator` samples every 1 s (statusbarwidgets.cpp:387-388); every
+5th sample `rescanEnginePids()` re-scans **every** /proc entry —
+`stat` + `cmdline` per process (:415-450), i.e. ~2 file opens x N
+system processes (~hundreds-thousands) per rescan, for the life of the
+window.  Each `BrowserMainWindow` owns its own indicator (ctor :337,
+statusbar :673) so the sweep multiplies per window, and it runs while
+the window is hidden/occluded.  The standalone `engineIoTotals`
+(:459-515) repeats the same full sweep without even the pid cache.
+Fix: one process-global sampler shared by all windows (the renderer
+pid set is process-wide anyway); rescan only when a cached pid dies;
+pause the timer when the window is not visible.  `MemIndicator`'s
+single `/proc/<pid>/status` read per 2 s (:255-256,321-341) is fine
+as-is.
+
+### P7 — `updateHistoryEntry` linear-scans all of history per title update — **LOW-MED**
+
+`HistoryManager::updateHistoryEntry` walks `m_history` front-to-back
+comparing `url` per entry (historymanager.cpp:605-621).  Pages set
+their title at least once per load (sometimes several times as JS
+retitles), so each navigation pays an O(history-size) QString-compare
+scan on the GUI thread until the match — misses (OTR-filtered urls,
+title-before-add races) scan the whole list; a large history (tens of
+thousands of rows) makes every title update a noticeable stall.
+`m_atomicStringHash` already interns url strings — a url -> index
+side map (rebuilt with the list) turns this O(1).  Related one-time
+cost: `importLegacyHistory` / `rustReplaceAll` issue one `histAdd`
+envelope round-trip per row (:828-844) — fine for a migration, but a
+bulk-insert op would collapse it.
+
+### P8 — Sync op-log: per-op statements + batch-critical sections — **LOW-MED**
+
+`SyncState::append` (rustcore/src/sync.rs:648-691): per op —
+`next_lamport` (SELECT + UPSERT into meta, :1253-1262), canonical
+serialize, sha256+ed25519 sign, INSERT — ~4 autocommit statements
+per local op (WAL+synchronous=NORMAL, so each is its own commit).
+`import` (:781-900) holds `state.lock` for the WHOLE batch while doing
+per-op: member_pubkey query, member_scope_allows query, ed25519
+verify (~us-tens each, serialized under the global sync mutex),
+`bump_lamport`, `canon`, `INSERT OR IGNORE` — then `mark_applied`
+re-locks and commits a separate UPDATE per applied op (:885-911;
+`drain_pending` same).  A first-pair bulk import of N ops is ~4N
+transactions + N serialized signature verifies under one lock; LAN
+drains hit the same shape.  Fix: one `conn.transaction()` around the
+batch, hoist member key/scope reads (or the verifies) out of the
+lock, batch the applied-marking.
+
+### P9 — Redundant writes: history save(), AutoSaver shape — **LOW**
+
+`HistoryManager::save()` constructs `ProfileSettings` and rewrites
+`history/historyLimit` on EVERY debounced flush
+(historymanager.cpp:857-867), though under rustcore the entries write
+through per mutation and the limit only changes via `setDaysToExpire`
+— a QSettings open+write per flush cycle for a quasi-static key.
+Similarly the history `AutoSaver` still arms on every mutation
+(:614,656,809) to reach a save() that is a near-no-op under the rust
+store — the dirty plumbing outlives its purpose.  Minor per event;
+cheap to gate on `m_daysToExpire` actually changing.
+
+### Checked, no findings (honest negatives)
+
+- **Per-request policy verdict** — PERF01's memoization is sound:
+  generation-keyed, bounded at 4096, whole-header fingerprint in the
+  key, main frames excluded for the consume-once side effects
+  (navigationpolicy.cpp:1626-1689+).
+- **Completion path** — 150 ms type-debounce (historycompleter.cpp
+  :740-757), suggest model bounded at 500 rows per refresh
+  (:237-277), suggestions debounced + gated (omniboxsuggestions.cpp);
+  no per-keystroke store hits beyond the one debounced query.
+- **Extension request observation** — `observeRequest` fast-paths on
+  a zero-subscriber atomic before any JSON work
+  (extensionrequestwatcher.cpp:243-244).
+- **Per-tab allocation** — the eager per-tab objects are a handful of
+  small QObjects (ReaderMode + PiP + ScriptBlockInfoBar,
+  webview.cpp:250-268); Readability bundle is a static
+  (readermode.cpp:276-297); the per-tab `reader-forward.js` read is
+  one small qrc file (:232-242).  Lazy-creating ReaderMode/PiP on
+  first use would shave this further — LOW value.
+- **Menus** — lazy + dirty-flag rebuild (modelmenu.cpp:202-238).
+- **Store writes on hot paths** — no per-request `QSettings`/`setValue`
+  found in the interceptor/cookie paths; privacy exceptions write on
+  user actions only (privacyrequestinterceptor.cpp:816-899); session
+  manifest writes ride the debounced AutoSaver with a MAXWAIT cap
+  (autosaver.cpp:197-204).
+- **AdBlock native matcher** — n-gram token index bounds per-request
+  candidates (adblocknetwork.cpp:228-285); the unindexed
+  `matchLinearUnlocked` arm is the documented differential reference.
+- **MemIndicator** — one small /proc read per 2 s
+  (statusbarwidgets.cpp:321-341).
