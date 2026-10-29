@@ -907,3 +907,341 @@ cheap to gate on `m_daysToExpire` actually changing.
   `matchLinearUnlocked` arm is the documented differential reference.
 - **MemIndicator** — one small /proc read per 2 s
   (statusbarwidgets.cpp:321-341).
+
+## WINDOWS (CA05)
+
+Generated 2026-10-29. Method: read-only source audit on this Linux
+tree — there is no Windows host and no MSVC/MinGW toolchain here, so
+every finding is a static-evidence porting gap, not a compiled
+diagnostic (WIN01 stays `needs:windows`). Sweeps: POSIX-API inventory
+(unistd/sockets/proc/signals vs Q_OS_* guards), path-separator and
+drive-letter handling, case-sensitive filename checks,
+QSettings/registry assumptions, spawn/command lines, wchar/UTF-8
+marshaling at the C/FFI boundary, rename/remove semantics,
+reserved-name and illegal-char paths, MSVC-only language constructs,
+installer/manifest/CRT packaging, sync-LAN socket+firewall review
+(C++ and rustcore), and the smoke/test harness's POSIX dependencies.
+Severity by impact on a real Win10/11 port: **high / med / low**.
+
+The tree is far more Windows-aware than a typical Linux-first app —
+Q_OS_WIN/Q_OS_LINUX branches already exist in most of the right
+places — so the findings below are the residual class, not a flood.
+Findings only — no code changes.
+
+### W1 — `QSettings` NativeFormat→registry collides with `fileName()`-as-path and smoke isolation — **HIGH**
+
+The app never pins `QSettings::setDefaultFormat` outside one macOS
+smoke block (main.cpp:6022-6029), so on Windows `QSettings()` resolves
+to `NativeFormat` = the registry (`HKCU\Software\<org>\<app>`).  Code
+in five places treats `QSettings().fileName()` as a filesystem path:
+
+- `browserpaths.cpp:331-345` — legacy-identity settings migration
+  moves the ini *file*;
+- `profilemenuactions.cpp:405-410` — profile wipe `settings.clear()`
+  (works on the registry) then `QFile::remove(fileName)` (no-op);
+- `profilesettings.cpp:261-263` — `importLegacyIni(QSettings().
+  fileName())` hands a `\\HKEY_...` string to the Rust ini importer;
+- `main.cpp:6034-6041` — the smoke-isolation guard resolves
+  `fileName()` and refuses to continue when it isn't under the store
+  root — **every `--*-smoke` leg aborts on Windows**;
+- `main.cpp:6630-6637` — wipe verification reads the file directly; an
+  unopenable path yields empty content → the "key is gone" check
+  *passes vacuously* (false negative).
+
+Root cause is double: (a) NativeFormat on Windows is a registry
+backend, not a file; (b) `QSettings::setPath` does **not** redirect
+the native backend on Windows (same limitation the existing macOS
+comment documents for CFPreferences — main.cpp:6023-6027).  Fix
+direction (CA12/WIN01): call `QSettings::setDefaultFormat(
+QSettings::IniFormat)` unconditionally early in `main()` — the
+settings code assumes ini semantics everywhere — and extend the
+existing macOS smoke guard to `Q_OS_WIN`.  QSettings::setPath then
+applies and the smoke store confines everything.
+
+### W2 — NativeMessaging host discovery is filesystem-only; Windows uses the registry — **HIGH**
+
+`NativeMessagingSession::searchDirs()` (extensionbackgroundhost.cpp:
+376-390) scans `~/.config/{arktos,chromium,google-chrome}/`
+`NativeMessagingHosts` plus `/etc/{arktos,chromium,opt/chrome}` —
+Chrome's *Unix* layout.  On Windows, Chrome-family hosts register a
+default value under
+`HKCU\Software\<vendor>\NativeMessagingHosts\<name>` (and the HKLM
+variant) whose data is the manifest path — there is no directory
+convention, so `resolve()` returns `not-found` for every host and
+`chrome.runtime.connectNative`/`sendNativeMessage` (the whole BW08
+surface, extensionbackgroundhost.cpp:624-705) is dead on Windows.
+The arktos-side registration path (`userHostsDir()`, used by the
+native-messaging smoke at main.cpp:15740) must likewise write the
+registry value instead of/in addition to a manifest file.  Fix:
+`QSettings("HKEY_CURRENT_USER\\Software\\...", QSettings::
+NativeFormat)` (or winreg) lookup feeding the same manifest JSON
+parser — the manifest validation itself is platform-neutral.
+
+### W3 — Sync LAN needs a Windows Firewall rule; silent pairing failure otherwise — **MED**
+
+The LAN transport binds a QUIC listener on `0.0.0.0:14431` UDP
+(rustcore/src/synctransport/lan.rs:60,466) and the mDNS responder on a
+second UDP socket with multicast membership (mdns.rs:385-405).  On
+Windows, first bind of an inbound-capable UDP listener raises the
+firewall consent dialog — and if the user dismisses it (or it appears
+behind a fullscreen window), *inbound* packets stay dropped:
+discovery never sees peers and pairing times out with no diagnostic
+surfaced to the user.  On networks typed "Public" inbound stays
+blocked even after consent in some profiles.  The NSIS installer
+(BuildProcess/windowsinstaller.nsi) creates no firewall exception —
+add a private-profile inbound UDP rule for arktos.exe at install
+(via the NSIS Firewall or SimpleFC plugin / `netsh advfirewall` in a
+post step) or at minimum document+surface the pending-prompt state.
+Secondary: mdns.rs relies on `SO_REUSEADDR` alone on Windows
+(`#[cfg(unix)] set_reuse_port`, mdns.rs:390-391) — Windows permits a
+second process to bind the same port under REUSEADDR, so a hostile
+or careless local app can squat the mDNS port; SO_EXCLUSIVEADDRUSE
+is the tighter knob if coexistence isn't needed.
+
+### W4 — ProfileVault seal/unseal parks the live profile dir via rename — relies on POSIX open-handle semantics — **MED**
+
+The vault flows move the *live* profile directory with
+`QDir().rename()`: `live → held` and `dir → park` (profilevault.cpp:
+445, 457, 738, 750, 768, 809).  POSIX rename succeeds while files
+inside the tree are still open; on Windows **any** open handle in the
+tree — a QtWebEngineProcess not yet dead, a sqlite WAL, Windows
+Defender/Search-indexer scanning the dir, an AV real-time touch —
+fails the whole seal with "cannot move … aside".  The code fails
+loudly (correct), but on Windows the transient-lock case is routine,
+not exceptional: seal/unseal needs the engine profile verifiably
+torndown *and* bounded retry/backoff for AV/indexer locks before
+failing.  Related uniform-behavior note: `QFile::rename` refuses to
+overwrite on all platforms, and two callers don't check a
+pre-existing target or the return — `notesmodel.cpp:152` (legacy
+notes rename silently skipped → legacy notes never migrate) and
+`opensearchmanager.cpp:933` (`.migrated` retire can collide).  Low,
+but same class.
+
+### W5 — Windows filename legality: reserved device names + NTFS-forbidden chars — **MED**
+
+- **Profile dirs**: `ProfileStore::slugify` (profilestore.cpp:121-137)
+  and the mirrored `profiles.rs::slugify` (rustcore/src/profiles.rs:
+  101-116) emit `[a-z0-9-]{≤64}` — so a display name of "Con", "Nul",
+  "Aux", "PRN", "COM1"…"COM9", "LPT1"…"LPT9" slugs to a Windows-
+  reserved device name and `mkpath` fails (reserved even with an
+  extension — `con.txt` is illegal too).  `isProfileId`/
+  `check_name` don't screen them.  Denylist the ~22 stems or suffix
+  the slug on Windows.
+- **Downloads**: `DownloadItem::sanitizeFileName`
+  (downloadmanager.cpp:494-541) strips control chars, trailing dots,
+  and `.`/`..` — but not the NTFS-forbidden set `< > : " / \ | ? *`
+  and not reserved stems.  `:` is the sharp edge: `report.pdf` is
+  fine, but a suggested `invoice.pdf:payload.exe` becomes an NTFS
+  **alternate data stream** — content lands on an invisible stream,
+  Explorer shows 0-byte/unexpected files.  Any of `?`/`"`/`<`/`>`/`|`
+  just fails the open → download dies with a filesystem error rather
+  than a clean name.  Filter the set (and reserved stems) under
+  `Q_OS_WIN`.
+- Trailing spaces: Windows silently trims — the dedup `-N` logic sees
+  a different on-disk name than requested.  Low.
+
+### W6 — GUI-subsystem release builds have no console; every `--*-smoke` leg is stdout-driven — **MED**
+
+`src.pri:15` sets `win32:Debug:CONFIG += console` — a Release build
+links `/SUBSYSTEM:WINDOWS`, so the ~40 `qInfo`-reporting `--*-smoke`
+legs, `--help`, `--version`, and all `qWarning` diagnostics print to
+a console that isn't there.  The whole in-tree verification harness
+(smokes + their `PASS/FAIL` parsing) is unobservable on Windows
+release builds.  Fix options: keep `CONFIG += console` for the test
+build profile, or `AttachConsole(ATTACH_PARENT_PROCESS)`/`AllocConsole`
+early in `main()` when argv carries a `--*-smoke`/`--help` flag.
+
+### W7 — `file://` assembly + custom-scheme path round-trip on drive letters — **LOW-MED**
+
+- `main.cpp:9863` (search-smoke): `"file://" + fixturePath` — under
+  `QDir::temp()` = `C:\…` this produces `file://C:/…` which parses
+  `C:` as the URL *host* → the fixture leg fails on Windows.  Use
+  `QUrl::fromLocalFile` + `QUrlQuery` for `q={searchTerms}`.
+- `FileAccessHandler::urlForLocalPath` (fileaccesshandler.cpp:56-61)
+  `setPath`s the raw local path — `arktos-file:C:/foo` round-trips
+  through the handler's own `requestUrl().path()` fine, but anything
+  emitting `arktos-file:///C:/foo` yields `/C:/foo`, which `QDir`
+  resolves against the *current* drive — silent wrong-drive access.
+  Normalize leading-slash-on-letter in the handler's path intake.
+
+### W8 — No-rust `SecureStore` fallback needs dlopen'd OpenSSL by SONAME — **LOW (config-gated)**
+
+`securestore.cpp:361-405` resolves libcrypto via
+`QLibrary::setFileNameAndVersion("crypto", {3, 1.1, 1.0.2, ""})` —
+Unix SONAME probing.  On Windows OpenSSL 3 is `libcrypto-3-x64.dll`
+(different naming scheme QLibrary won't generate), and Qt6's default
+Windows TLS backend is Schannel so no OpenSSL is bundled —
+`evp()==nullptr` → sealed secrets (autofill payload, stored proxy
+password, legacy migrate path) silently unopenable and
+`enablePassphraseProtection` fails "crypto backend unavailable" —
+but **only under `CONFIG-=rustcore`/`no-rust` builds**; the shipped
+default uses the aes-gcm crate and is unaffected.  Disposition:
+either declare rustcore mandatory on Windows or give the fallback a
+BCrypt (CNG) path; don't silently ship no-rust on Windows.
+
+### W9 — `SetForegroundWindow` single-instance raise usually no-ops — **LOW**
+
+browserapplication.cpp:634-663: the second-instance `arktosmessage://
+winid` handshake calls `SetForegroundWindow(hwnd)` — modern Windows
+foreground-lock (SPI_GETFOREGROUNDLOCKTIMEOUT) refuses it whenever
+the launching process isn't the foreground owner, so a second
+`arktos.exe url` launch can appear to do nothing.  Standard remedy:
+the already-running instance self-grants via
+`AllowSetForegroundWindow` or `SetForegroundWindow` after
+`AttachThreadInput`/`SwitchToThisWindow` fallback.  Behavior is
+cosmetic, not data loss.
+
+### W10 — Raw `<windows.h>` includes lack NOMINMAX/WIN32_LEAN_AND_MEAN — **LOW (latent)**
+
+profilemenuactions.cpp:58, browserapplication.cpp:141,
+singleapplication.cpp:43 include `windows.h` bare.  That leaks
+`min`/`max` macros and `winsock.h` v1 into the TU — the classic MSVC
+breakage when a later include uses `std::min`/`std::max`/
+`numeric_limits::max` or `winsock2.h`.  No breakage *today* (those
+TUs use neither), but it's a landmine — prefer `<qt_windows.h>` or
+add `DEFINES += NOMINMAX WIN32_LEAN_AND_MEAN` to the win32 scope of
+src.pri.
+
+### W11 — Case-sensitive filename/extension checks — **LOW**
+
+File-extension tests that ignore case (cross-platform correctness,
+most likely *hit* on Windows where `FILE.ZIP`-style names are
+common): `extensionmanager.cpp:1215` & `:1726`
+(`info.suffix() == "zip"` — a `FOO.ZIP` is refused by the install
+flow even though other entries accept case-insensitively, e.g.
+`:996`,`:1045`,`:3209`), `bookmarksmanager.cpp:620`
+(`endsWith(".html")` — `BOOKMARKS.HTML` misroutes to XbelReader; the
+`:694`/`:856` siblings already use CaseInsensitive),
+`languagemanager.cpp:338` (`.qm`), `tabwidget.cpp:587` (`.html`),
+`adblockresourcehandler.cpp:265-275` (stub suffix map).  Also
+`extensionshimbackend.cpp:7847` compares canonicalized paths with
+`actual != wanted` — case-aliased spellings of the same file trigger
+a pointless rename (harmless).
+
+### W12 — Smoke/test/packaging legs assume POSIX tools and env — **LOW**
+
+Not release code, but "suite green on Windows" needs skips or ports:
+`sandbox-smoke` execs bwrap + a `#!/bin/sh` launcher +
+`QFile::link(program,…)` (symlink creation needs
+SeCreateSymbolicLinkPrivilege or developer mode on Windows);
+tor-smoke plants a `#!/bin/sh` fake tor + exec bits and exports
+`HOME`/`XDG_*` (all ignored); `--telemetry-smoke`'s raw-socket proxy
+is `Q_OS_UNIX`-gated already (skips by design); SLEEP01 `/proc` RSS
+counters return -1 → skip by design.  All `.devin/check-*.sh` gates
+are bash → Windows CI needs git-bash/WSL or native ports.  And
+smoke store isolation: `XDG_{CONFIG,DATA,CACHE}_HOME` redirects are
+inert on Windows — `QStandardPaths` follows %APPDATA%; test-mode
+`qttest` namespacing (main.cpp:5985) keeps smoke writes out of the
+real profile tree but they're **not** confined to the temp store and
+not cleaned up.  Fold the QSettings half into W1.
+
+### W13 — Installer is Qt6-era but misses Default-Programs + has a silent-CRT risk — **LOW**
+
+`BuildProcess/windowsinstaller.nsi` is already the windeployqt-era
+rewrite (recursive `deploy\` payload, MultiUser HKLM/HKCU modes, no
+Qt4 file list — the WIN01 "rewrite" comment is already satisfied).
+Gaps: (a) no `HKLM\SOFTWARE\Clients\StartMenuInternet\Arktos` +
+`RegisteredApplications` capabilities → Windows' "default browser"
+setting can never list Arktos; (b) the App Paths key lacks the
+`Path` value; (c) `File /nonfatal "${VCREDIST}\*.dll"` (:96-103)
+silently ships a bundle missing vcruntime/msvcp when the caller
+forgets `/DVCREDIST` — the exe then fails at launch on a clean
+machine with the useless "missing VCRUNTIME140.dll" dialog; consider
+warning at makensis time or shipping the `vc_redist.x64.exe` and
+running it on install; (d) no GPL license page (cosmetic).  The
+windeployqt note (:87-91) is correct — Qt 6 windeployqt
+intentionally does not stage the CRT.
+
+### W14 — No `longPathAware` manifest → >260-char paths fail in Rust fs and spawned tools — **LOW**
+
+No application manifest ships (browser.rc carries only the icon;
+MSVC qmake specs auto-embed supportedOS GUIDs but not
+longPathAware).  Qt's own file APIs prefix `\\?\` internally, but
+Rust `std::fs` (rustcore stores under the profile dir — deep
+%LOCALAPPDATA% + long leaf names can exceed MAX_PATH) and any
+spawned child process hit the 260-char cap unless the manifest
+declares `longPathAware` *and* the host enables
+`LongPathsEnabled`.  Add the manifest element in WIN01 (it is a
+no-op where the policy is off) — via a `.manifest` file +
+`RC_FILE`/`mt.exe` or `QMAKE_MANIFEST`.  DPI is honest-negative:
+Qt 6 sets Per-Monitor-V2 itself at startup.
+
+### W15 — synctor (arti-client) Windows build is unverified — **LOW**
+
+`rustcore` features `synctor` pulls arti-client 0.47 + tokio stack —
+arti's Windows support exists but is the least-exercised target
+(fs-mistrust's permission checks degrade to no-ops, arti's state-dir
+permission enforcement is Unix-shaped); `synclan`'s
+quinn/socket2/rustls-native-certs stack is Windows-capable
+(native-certs reads the Windows cert store — good).  Nothing here
+*blocks* WIN01 but `cargo check --target
+x86_64-pc-windows-msvc` for both crates is the cheap first gate
+before the qmake port; if synctor fails to build, ship Windows with
+`synclan` only and mark tor-sync `needs:arti-windows`.
+
+### Honest negatives (verified clean — do not re-audit)
+
+- **POSIX includes**: every `unistd.h`/`sys/socket.h`/`arpa/inet.h`/
+  `execinfo.h`/`poll.h`/`netdb.h` include site is `Q_OS_UNIX`-gated
+  (main.cpp:228-241, tormanager.cpp:36, profilemenuactions.cpp:53-58,
+  extensionshimbackend.cpp:82, sandboxmanager.cpp:32,
+  rustdownloadengine.cpp:58, crashreporter.cpp:26,
+  terminationsignalhandler.cpp:22, profilevault.cpp:39,
+  singleapplication.cpp:40).  Signal handling, `/proc` readers,
+  `geteuid`, `kill(0)`, `fsync`, `QFile::link` and the raw-socket
+  telemetry proxy are all inside those guards with graceful
+  degradation on the `#else` side.
+- **`/proc` consumers** all degrade: NetIndicator/MemIndicator
+  (statusbarwidgets.cpp:395-599 `#else` zeros), SLEEP01 counters
+  (-1 → caller skips, main.cpp:3658-3663), extension `system.cpu`/
+  `system.memory` (empty/-1 shapes, extensionshimbackend.cpp:
+  5700-5868), `Page::processMemoryKb` (-1, engineinterface.cpp:35).
+- **Spawn surface**: all runtime launches are argv lists —
+  `startDetached(exe, args)` everywhere; no `system()`/`sh -c`/string
+  command lines in runtime paths (downloadmanager.cpp:1710-1754,
+  browserapplication.cpp:2226-2245, profilemenuactions.cpp:484).
+  Reveal-in-folder has the correct `explorer.exe /select` +
+  `toNativeSeparators` branch (downloadmanager.cpp:929-936).
+- **FFI path marshaling**: every path into rustcore leaves as
+  `.toUtf8().constData()` and lands in `Path::new(&str)` (Rust
+  converts UTF-8→UTF-16 for Win32) — Unicode paths are safe end to
+  end.  The lone `fopen` in rustcore/tools/acprobe.c:231 is a dev
+  tool, ANSI-codepage-bound on MSVC — non-ASCII args only.
+- **Rename discipline**: the overwrite-capable cases remove or
+  existence-check the destination first (historymanager.cpp:917-920,
+  autofillmanager.cpp:496-498, bookmarksmanager.cpp:333-336,
+  extensionshimbackend.cpp:7847-7852); history's QTemporaryFile
+  deliberately lives in the target dir (cross-device note at
+  historymanager.cpp:887-890).
+- **Toolchain/build wiring already Windows-aware**: `.qmake.conf`
+  resolves `%USERPROFILE%\.cargo\bin\cargo.exe`; `rustcore.pri`
+  win32-scope `.lib` + `advapi32 bcrypt ntdll userenv ws2_32`;
+  `src.pri` win32 `RC_FILE`+`user32 advapi32`; `tor` resolves
+  `tor.exe` (tormanager.cpp:96-108); `SingleApplication` uses a
+  named-pipe `serverName` with `GetUserNameW` (singleapplication.cpp:
+  166-205); `languagemanager` covers `appDir/locale` (:74-76);
+  `installedDataDirectory()` falls back to `applicationDirPath()`
+  (browserapplication.cpp:1950-1974); `updatechecker` prefers the
+  `*Installer*.exe` asset (:582-585); download reveal uses
+  `explorer /select`.
+- **Rust portability**: all Unix-only Rust is `#[cfg(unix)]` with
+  documented fallbacks (mdns `set_reuse_port`, localtime_r day math,
+  0o600/0o700 modes in store/bookmarkhtml/tor/sync).  No
+  `std::os::unix` escapes a cfg gate; rusqlite is `bundled`
+  (MSVC-clang cc path works); `argon2id.c` is plain C99
+  (stdint/UINT64_C, no extensions) — MSVC-clean.
+- **Path separators**: Qt paths are joined with `/` everywhere —
+  Windows APIs accept it; no `split('/')` on *native* filesystem
+  paths found (all the `'/'`-splits are URL/extension-resource
+  paths by design).  `QUrl::fromUserInput`/`toLocalFile` handle
+  drive letters correctly at every call site checked.
+- **`QFile::setPermissions(0600)` caveat, not bug**: on Windows it
+  maps to the read-only attribute — the real guard on
+  `securestore.key`/vault blobs is the %LOCALAPPDATA% per-user ACL
+  (same model as every browser on Windows); DPAPI would be the
+  platform-idiomatic extra layer but nothing is *broken*.
+- **argv→URL**: drive-letter/bare inputs route through
+  `fromUserInput`/`guessUrlFromString` which treats `C:\…` and
+  `C:/…` as local files before host-guessing (tabwidget.cpp:
+  4578-4598's address-shape check only governs *search*, and
+  `QDir::isAbsolutePath` catches them earlier).

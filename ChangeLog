@@ -5114,3 +5114,11 @@ Code audit (CA01-CA04, no code changes):
   NetRequest rules once an extension registers any) plus lower-severity
   FFI-per-signal, polling, and op-log overhead items; remediations are
   queued under CA11.
+- Windows-portability audit pass appended to .devin/CODE-AUDIT.md:
+  15 findings for the future Win10/11 port (top: QSettings/registry
+  vs the ini-file assumptions that block every smoke leg; native-
+  messaging host discovery needs the Windows registry; LAN sync
+  needs a firewall rule; profile-vault sealing relies on POSIX
+  rename semantics; Windows reserved/illegal filename handling in
+  profile slugs and download names) plus lower-severity items;
+  remediations are queued under CA12.
