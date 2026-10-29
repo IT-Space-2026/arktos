@@ -28,6 +28,10 @@ CEF spike concluded (CS01-CS10): full MV3 capability verified on all
 CEF runtime shapes for one ~850-line graft; verdict recorded in
 .devin/CEF-PATCHED-VERDICT.md - stay on the hosted runtime.
 
+Code health (CA01): tree-wide dead-code + copy-paste duplication audit
+of src/ and the Rust cores; findings (no behavior changes yet) live in
+.devin/CODE-AUDIT.md and are remediated by the CA07-CA13 follow-ups.
+
 1.0 — Arktos: first release
 - Rebranded the project from Arora to Arktos (BRAND01): product name,
   website (https://arktos-browser.com) and repository

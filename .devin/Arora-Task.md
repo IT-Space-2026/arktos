@@ -408,6 +408,19 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | SYNC09 | Serverless sync: revocation + device management — paired-device list UI, fingerprint display, unpair, group-key rotation — details below | done | 0 | syncmeta store + device_revoke/device_list mw ops (since:7): per-profile device list w/ fingerprint+last-seen, unpair rotates group secret (per-recipient ed→x25519 wrapped rekey op, marker-ordered concurrent rotations), drops member+onion grant+presence, vault re-wrap; propagation cuts revoked device group-wide — verified: cargo test 565/565 incl revoke/rekey/no-connect/disjoint-profiles/vault legs + mw e2e, make -j2 green 0 warnings, tst_settingsdialog 61/61 (fixed 2 stale count asserts), --quit-after-load exit 0 offscreen, no-rust TU compile fixed (pre-existing SYNC06 break) |
 | SYNC10 | Serverless sync: LAN fast path — mDNS discovery + direct QUIC when co-located, Tor fallback unchanged — details below | done | 0 | lan+auto backends: mDNS discovery + QUIC device-cert mTLS sync behind SyncTransport; cargo test 584/584, make green, quit-after-load 0 |
 | SYNC11 | Serverless sync: integration verification — two-profile loopback sync over in-process circuits, conflict-merge legs, honest docs — details below | done | 0 | integration legs in mw tests: real pairing + all 5 stores over mem frames both ways, offline-conflict LWW convergence, mid-session revocation cut, real ops over LAN QUIC+mDNS, full pair+sync over live Tor (#[ignore] leg green ~110s); SYNC-DESIGN.md written; fixed real tor bug — parse_hsid strips :14430 port so discovery-key rotate/import/keystore ops stop silently failing (member grant was authorized with a malformed key on real Tor). Verify: cargo test 588/588, synctor-e2e.sh ALL LEGS PASS, acprobe --bridge OK, make -j2 green, --quit-after-load exit 0 offscreen |
+| CA01 | Code audit: dead code + duplicate detection — unused symbols, unreachable branches, dead stores, copy-paste blocks across src/ — details below | done | 0 | .devin/CODE-AUDIT.md written — dead: 3 members (avatarPath/noteCertErrorOverride/detectionInterval), 4 consts, 1 #if0 block, 5 dead includes, 47 dead lambda captures, ~50 rust/no-rust config-gated tails (documented, not deletable), 1 rust dead const; dups: 127 clone groups triaged into ~20 cross-file + ~35 within-file families + smoke-harness class. Tools: clang++ -fsyntax-only -Wunreachable-code replay over 197 TUs + g++ pass (clean), custom symbol/ifdef/include/dup scanners, cargo clippy. No code changes. |
+| CA02 | Code audit: security pass — URL/cert/proxy handling, nativeMessaging spawn args, extension shim surface, secrets, injection paths — details below | pending | 0 | needs:task:CA01 — appends security section to CODE-AUDIT.md; severity-rated findings only, no fixes yet |
+| CA03 | Code audit: memory-leak pass — unparented QObjects, new-without-delete, ownership cycles, raw-pointer leaks; ASan/LSan legs where buildable — details below | pending | 0 | needs:task:CA01 — appends leaks section to CODE-AUDIT.md |
+| CA04 | Code audit: performance pass — startup path, per-tab costs, hot loops, settings load, sync op-log overhead — details below | pending | 0 | needs:task:CA01 — appends perf section to CODE-AUDIT.md |
+| CA05 | Code audit: Windows-specific pass — path separators, case sensitivity, MSVC warnings, registry/installer assumptions, CRT redist — details below | pending | 0 | needs:task:CA01 — appends windows section to CODE-AUDIT.md |
+| CA06 | Code audit: macOS-specific pass — bundle paths, Retina/DPR, unified-toolbar widget visibility (recurring class), qmacstyle metrics, Info.plist/hardened runtime — details below | pending | 0 | needs:task:CA01 — appends macos section to CODE-AUDIT.md |
+| CA07 | Code fixes: dead code removal — apply confirmed CA01 dead-code findings — details below | pending | 0 | needs:task:CA01,CA06 — delete only proven-dead code, suite green |
+| CA08 | Code fixes: dedup refactor — consolidate confirmed CA01 duplicates — details below | pending | 0 | needs:task:CA07 — shared helpers, no behavior change, suite green |
+| CA09 | Code fixes: security remediations from CA02 — details below | pending | 0 | needs:task:CA02,CA08 — fix or file per-finding follow-ups; never silence a real gap |
+| CA10 | Code fixes: memory-leak remediations from CA03 — details below | pending | 0 | needs:task:CA03,CA08 — fix ownership/parenting; ASan legs clean |
+| CA11 | Code fixes: performance remediations from CA04 — top findings only, measured — details below | pending | 0 | needs:task:CA04,CA08 — bounded scope, before/after numbers |
+| CA12 | Code fixes: platform remediations from CA05+CA06 — Windows+macOS issues — details below | pending | 0 | needs:task:CA05,CA06,CA08 |
+| CA13 | Code audit close-out — re-run detectors, full suite green, CODE-AUDIT.md finalized with fixed/deferred dispositions — details below | pending | 0 | needs:task:CA09,CA10,CA11,CA12 |
 
 ## Task details
 
@@ -5050,3 +5063,106 @@ same test fixture against the old src in the identical wait window
 navigation also hits a deterministic renderer CHECK trap here, so
 the nested-clip case is folded into the one popup's fixture instead
 of a second open.  macOS runtime verify still owed.
+
+### CA01
+Static analysis across src/ (Qt/C++ + rustcore): unused functions/
+classes/symbols, unreachable branches, dead stores, #if'd-out blocks
+that never compile, dead headers/includes, and copy-paste duplicate
+blocks (same logic in 2+ places — name the canonical vs the clone).
+Use real tools where available (compiler warnings, clang-based scans,
+cppcheck, grep heuristics); never report a finding without file:line
+evidence and a reason it's dead/dup. Write .devin/CODE-AUDIT.md with
+dead + dup sections. No code changes — findings only.
+
+
+Full findings land in .devin/CODE-AUDIT.md (dead + dup sections,
+every finding with file:line evidence + reason). Method summary:
+- clang++ -fsyntax-only -Wall -Wextra -Wunreachable-code replayed over
+  all 197 non-generated TUs (flags lifted from `make -Bn`); g++ pass
+  for dead-store warnings (zero — tree is warning-clean).
+- Custom scanners (kept under /tmp, not committed): header-declared
+  member/signal/field usage scan (4945 decls), whole-class liveness,
+  free-function liveness, #ifdef never-defined scan (0 hits — all
+  *_DEBUG toggles + AUTOTESTS/ACPROBE/SIGHUP live), project-include
+  IWYU-lite (5 confirmed dead of 10 candidates), normalized-window
+  rolling-hash clone detector (127 groups -> curated families).
+- cargo clippy --offline --all-targets on rustcore/rustdl/adblock-rust:
+  one dead_code hit (tranco.rs SRCS_TRANCO test-seam const).
+Key not-dead verdicts recorded in the audit so CA07 doesn't re-chase:
+webchannel-invoked names (ChromeBridge::reportError, PipPlayerBridge
+slots, ReaderBridge::setPreference), Qt overrides, matchLinear
+differential impl, and all #ifdef ARKTOS_* early-return tails (they
+are the CONFIG+=no-rust build lanes — alive in that flavor).
+
+### CA02
+Security pass: URL scheme/host validation paths, certificate and TLS
+handling, proxy config trust, nativeMessaging host manifest parsing
++ argv construction, extension shim boundary (extshim/bridge surface),
+stored secrets handling, JS-injection / runJavaScript callers, and
+any exec/spawn paths. Rate each finding sev high/med/low with file:line
+and exploitation sketch. Append to CODE-AUDIT.md. Findings only.
+
+### CA03
+Memory-leak pass: QObjects created without parents or never deleted,
+ownership cycles (shared_ptr/parent-child), raw new/delete mismatches,
+signal/slot connections keeping dead objects alive, C++ RAII gaps in
+rust-adjacent FFI boundaries. Where buildable, run an ASan/LSan leg on
+the smoke paths to confirm top candidates. Append to CODE-AUDIT.md.
+
+### CA04
+Performance pass: startup path (what runs before first window), per-tab
+allocation costs, hot loops in completion/adblock/settings paths, sync
+op-log overhead per op, redundant store reads/writes, needless repaints.
+Measure where possible (timing the existing smoke legs), rank by
+expected impact. Append to CODE-AUDIT.md.
+
+### CA05
+Windows-specific pass: path separator assumptions, case-sensitivity
+bugs, %APPDATA%/registry paths vs hardcoded ~/, MSVC-only warnings,
+installer/NSIS assumptions, CRT redist handling, wchar/UTF-8 path
+edge cases, Windows Firewall/service assumptions in the sync LAN
+path. Append to CODE-AUDIT.md.
+
+### CA06
+macOS-specific pass: .app bundle path lookups (Resources vs
+Contents/MacOS relative), Retina/DPR in all size/measure paths (the
+MAC12/16/17 class), unified NSToolbar widget visibility (the MAC03/14
+recurring class), qmacstyle metric differences (the MAC04/10/13
+class), Info.plist completeness, hardened-runtime/notarization
+constraints on spawned helpers (nativeMessaging!). Append.
+
+### CA07
+Apply CA01's confirmed dead-code findings: delete provably-dead
+functions/classes/blocks/includes. Only deletions where the audit's
+evidence is solid; anything ambiguous stays with a note. Full test
+suite + make must stay green.
+
+### CA08
+Apply CA01's confirmed duplicate findings: consolidate each verified
+clone into the canonical helper/site. No behavior changes. Suite
+green.
+
+### CA09
+Fix CA02's security findings by severity (high first). Where a fix is
+large, land the safe subset and file a follow-up row — never silence
+or hide a real gap. Suite green.
+
+### CA10
+Fix CA03's leak findings: correct ownership/parenting, break cycles,
+match new/delete. Re-run any ASan/LSan legs used in the audit; they
+must come back clean.
+
+### CA11
+Fix CA04's top performance findings only (bounded — this is not a
+rewrite). Record before/after numbers in the task notes for each
+fix.
+
+### CA12
+Fix CA05+CA06 platform findings: Windows and macOS issues both. The
+macOS widget-visibility and metric classes are known-recurring —
+check for the systemic root, not just the instances.
+
+### CA13
+Close-out: re-run the CA01 detectors (dead/dup counts should drop),
+full suite + make green, finalize CODE-AUDIT.md — every finding gets
+a fixed/deferred/wontfix disposition with a reason.
