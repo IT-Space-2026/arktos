@@ -416,7 +416,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | CA06 | Code audit: macOS-specific pass — bundle paths, Retina/DPR, unified-toolbar widget visibility (recurring class), qmacstyle metrics, Info.plist/hardened runtime — details below | done | 0 | macos section appended to CODE-AUDIT.md — 12 findings: 2 high (nativeMessaging searchDirs use Linux XDG layout on macOS; Info.plist missing CFBundleURLTypes+version keys), 1 med-high (MAC04 check-indicator class NOT closed — adblock subscriptions, sidebar panels, SEC11 suggestions column), 5 med (fetch-tor sha256sum+XDG path, QSettings CFPreferences vs file ops, hardened-runtime/DYLD/dlopen/entitlements gap, Hide-Menu-Bar+⌘M, navbar drag geometry under NSToolbar), 4 low + honest negatives incl. Ctrl→⌘ auto-mapping verified not-a-bug. Read-only audit, no code changes |
 | CA07 | Code fixes: dead code removal — apply confirmed CA01 dead-code findings — details below | done | 1 | CA01 dead-code applied: 3 dead members + #if 0 arm + 4 dead includes + 43 lambda captures + SRCS_TRANCO deleted; 3 audit false-positives kept+annotated. Also fixed pre-existing no-rust link break (unguarded RustCoreBridge in sync UI). Verified: check-warnings PASS, make 0 warnings, suite reds all pre-existing in untouched code |
 | CA08 | Code fixes: dedup refactor — consolidate confirmed CA01 duplicates — details below | done | 0 | CA01 dups applied: 20/20 cross-file families consolidated into shared helpers (hostmatch/menufit/chromecommon/workerio/remotelistfetch/policyrequestmarshal/sitebinding/streamingutils + rustcorebridge/browserpaths/engineinterface/streaming + hub trackableTabs + ArktosStyle badge + icon-engine base); ~12 within-file extractions incl. 13 shim ok/err lambda pairs, fanOut, EBH helpers; torcontrol/securestore confirmed config-lane, adblock pair intentional; leftover smoke-leg boilerplate deferred to CA13. make 0 warnings, --quit-after-load exit 0 |
-| CA09 | Code fixes: security remediations from CA02 — details below | pending | 0 | needs:task:CA02,CA08 — fix or file per-finding follow-ups; never silence a real gap |
+| CA09 | Code fixes: security remediations from CA02 — details below | done | 0 | All 8 findings fixed high->low: ext subframe confinement (WebPage+self-wire gate), pdf-worker path pin+buffer cap, NAM session cert whitelist (no more CA-store planting+persisted set purged), DNR redirect re-gate+file/ftp coverage dropped, nativeMessaging anchored/stdio/abs-path+inbox bound, header-value validation, randomBytes tail; dead foreignCertOverrideHosts removed (WPE call deleted with backend, not lost). Verified: clean build 0 warnings, quit-after-load exit 0, webpage/downloadmanager/nam/securestore/certerror/webpermissions/schemehandlers all PASS; ext self-wire legs updated to ExtensionChromePage fixtures and PASS; remaining reds are documented pre-existing flakes/stale legs |
 | CA10 | Code fixes: memory-leak remediations from CA03 — details below | pending | 0 | needs:task:CA03,CA08 — fix ownership/parenting; ASan legs clean |
 | CA11 | Code fixes: performance remediations from CA04 — top findings only, measured — details below | pending | 0 | needs:task:CA04,CA08 — bounded scope, before/after numbers |
 | CA12 | Code fixes: platform remediations from CA05+CA06 — Windows+macOS issues — details below | pending | 0 | needs:task:CA05,CA06,CA08 |
@@ -5311,6 +5311,58 @@ certificateErrorOverridden() can never return true for a foreign
 backend tab — a foreign tab that proceeded past a cert error wears a
 green padlock. Decide whether a proceed-path call was lost in the port
 (git log bf77195e~ src/webpage.cpp for the removed writer).
+
+
+Applied all 8 findings + the carried-forward D1 question:
+
+- S1 HIGH (extensionbridge subframe leak): two-sided fix.
+  WebPage::acceptNavigationRequest now confines subframes to the
+  extension's own origin (+ about:blank/srcdoc, same trust domain)
+  while the committed main frame is chrome-extension:// — runs ahead
+  of navpolicy consults.  syncPageBridge self-wiring is limited to
+  page classes that navigation-lock subframes (WebPage,
+  ExtensionChromePage, HostedBackgroundPage); a plain QWebEnginePage
+  showing extension chrome keeps the shim's honest "background not
+  running" panel instead of a bridge any foreign subframe could
+  drive.  Stale fixtures updated to openPopup's real post-SEC26
+  ExtensionChromePage construction (extensionPopupContext live leg,
+  actionPopupSelfWires, realExtensionPopup, bitwardenGapBaseline).
+- S2 HIGH (pdf-worker path traversal): the "page" event's file field
+  is pinned to the protocol-fixed name r<req>.png and joined via the
+  work dir's filePath() — a hostile worker's "../" can no longer
+  reach parent-side QFile::remove or the image read.  m_stdoutBuffer
+  capped at 16 MiB (stderr's 8192 cap already existed) — kill +
+  workerDead.
+- S3 HIGH (NAM CA-store planting): sslErrors no longer appends peer
+  certs to QSslConfiguration's CA list nor persists CaCertificates;
+  loadSettings removes the persisted store (both spellings) so
+  previously-anchored certs die.  Accepted exceptions are a
+  session-scoped in-memory (host|sha256fingerprint) set mirroring
+  WebPage's SEC06 whitelist; ignoreSslErrors is now called with the
+  exact reported error list only.
+- S4 MED (DNR redirect validation): evaluate() re-gates the
+  resolved redirect URL to http/https or chrome-extension://<own
+  id>.  matchPatternCovers refuses file:/ftp: URLs outright —
+  isAllowedFileSchemeAccess is hardwired false with no toggle, so
+  no extension surface (DNR meta, agentCovers, seesUrls, request
+  watcher) can cover them; hostPermCoversPattern likewise refuses
+  file:/ftp:-scheme registrations.
+- S5 MED (nativeMessaging): host-name regex anchored (substring
+  names like "a/b" no longer pass); manifest requires
+  type=="stdio"; manifest path must be absolute (relative no
+  longer resolved inside the manifest dir).
+- S6 LOW: modifyHeaders values validated as RFC 9110 field content
+  (htab/VCHAR/obs-text) — CR/LF and DEL refused.
+- S7 LOW: randomBytes fills the count%8 tail from one more draw.
+- S8 LOW: drainStdout asserts the post-drain inbox bound
+  (4+kMaxNativeHostMessage) — a peer exceeding it is streaming
+  garbage.
+- Carried-forward: foreignCertOverrideHosts() removed with its
+  reader branch.  noteCertErrorOverride's only caller was the WPE
+  backend's proceed path, deleted with that engine in f593bfe1 —
+  NOT lost in a port; Servo emits no certificateError today.  The
+  WK19 comment now records that a future foreign proceed path must
+  reintroduce the writer.
 
 ### CA10
 Fix CA03's leak findings: correct ownership/parenting, break cycles,

@@ -293,6 +293,17 @@ void PdfDocumentClient::handleWorkerOutput()
     if (!m_process)
         return;
     m_stdoutBuffer += m_process->readAllStandardOutput();
+    // The stderr reader's 8192 cap exists for the same reason as
+    // this one: the worker is the component bwrap exists to confine,
+    // and a hostile or wedged one emitting a newline-free stream
+    // must not grow parent RSS without bound.  Legit events are
+    // small — the meta's sizes array is the largest, a few bytes
+    // per document page.
+    if (m_stdoutBuffer.size() > 16 * 1024 * 1024) {
+        m_process->kill();
+        workerDead(tr("pdf worker emitted an over-sized event"));
+        return;
+    }
     int nl;
     while ((nl = m_stdoutBuffer.indexOf('\n')) >= 0) {
         const QByteArray line = m_stdoutBuffer.left(nl).trimmed();
@@ -322,12 +333,20 @@ void PdfDocumentClient::handleWorkerOutput()
             m_pending.remove(req);
             // The png lands in the host-side work dir; the sandbox
             // binds it at /arktos-rt/work but the parent reads its own
-            // path.
-            const QString path = m_workDir
-                ? m_workDir->path() + QLatin1Char('/') + file
-                : QString();
-            QImage image(path, "PNG");
-            QFile::remove(path);
+            // path.  CA09/S2: the worker is exactly what bwrap exists
+            // to confine, so its stdout is untrusted — the protocol
+            // fixes the name at r<req>.png, and anything else must
+            // never become a parent-side path (a "../" name would
+            // reach QFile::remove outside the work dir — an
+            // arbitrary delete escaping the sandbox — and a
+            // PNG-parseable target would leak through the image).
+            const QString name = QStringLiteral("r%1.png").arg(req);
+            QImage image;
+            if (m_workDir && file == name) {
+                const QString path = m_workDir->filePath(name);
+                image = QImage(path, "PNG");
+                QFile::remove(path);
+            }
             if (image.isNull())
                 emit renderFailed(req, tr("page render unreadable"));
             else

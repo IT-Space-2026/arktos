@@ -778,6 +778,19 @@ bool parseRule(const QJsonObject &in, const QString &rulesetId,
                     *err = QStringLiteral("invalid-argument");
                     return false;
                 }
+                // CA09/S6: header names carry the token grammar but
+                // values sailed straight to setHttpHeader — a CR/LF
+                // payload reaching the wire is header splitting.
+                // Restrict to RFC 9110 field content: htab, VCHAR,
+                // obs-text.
+                for (const QChar c : value) {
+                    const ushort u = c.unicode();
+                    if (u == 0x7f
+                            || (u < 0x20 && c != QLatin1Char('\t'))) {
+                        *err = QStringLiteral("invalid-argument");
+                        return false;
+                    }
+                }
                 hop.value = value.toUtf8();
             }
             r.headerOps.append(hop);
@@ -1541,7 +1554,22 @@ DeclarativeNetRequest::Verdict DeclarativeNetRequest::evaluate(
             } else if (winner->rule.action == ActionRedirect) {
                 const QUrl out =
                     resolveRedirect(winner->rule, in.url, urlStr);
-                if (out.isValid())
+                // CA09/S4: transform and regexSubstitution produce
+                // their target at eval time, so parse-time validation
+                // cannot see it — a rule could otherwise rewrite an
+                // https request into file:///etc/passwd, data:,
+                // javascript:, or another extension's
+                // chrome-extension: document.  Chrome only lets a
+                // DNR redirect land on http(s) or the extension's
+                // own resources — re-gate the resolved url the same
+                // way and drop anything else.
+                const QString outScheme = out.scheme();
+                const bool allowed =
+                    outScheme == QLatin1String("http")
+                    || outScheme == QLatin1String("https")
+                    || (outScheme == QLatin1String("chrome-extension")
+                        && out.host() == winner->rule.extId);
+                if (out.isValid() && allowed)
                     verdict.redirectUrl = out;
             }
         }

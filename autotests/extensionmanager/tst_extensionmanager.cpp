@@ -6491,14 +6491,17 @@ void tst_ExtensionManager::extensionPopupContext()
     QCOMPARE(eval(popup, QStringLiteral("self.__ct")).toString(),
              QStringLiteral("undef"));
 
-    // --- EXT19: the live action-bar path — a plain view + page on
-    // the profile must self-wire: no explicit attachExtensionPage,
-    // the runtime's view watch attaches the channel once the
-    // chrome-extension document commits. --------------------------
+    // --- EXT19: the live action-bar path — an ExtensionChromePage
+    // view on the profile must self-wire: no explicit
+    // attachExtensionPage, the runtime's view watch attaches the
+    // channel once the chrome-extension document commits.
+    // (ExtensionChromePage is openPopup's real construction since
+    // SEC26 — and CA09/S1 limits self-wiring to page classes that
+    // navigation-lock their subframes.) ------------------------------
     auto *liveFrame = new QFrame;
     auto *liveView = new QWebEngineView(liveFrame);
-    QWebEnginePage *livePage =
-        new QWebEnginePage(host->page()->profile(), liveView);
+    QWebEnginePage *livePage = new ExtensionChromePage(
+        host->page()->profile(), id, liveView);
     liveView->setPage(livePage);
     livePage->load(QUrl(QStringLiteral("chrome-extension://") + id
                         + QStringLiteral("/popup.html")));
@@ -13118,10 +13121,11 @@ void tst_ExtensionManager::extensionScriptCss()
 
 // SEC-EXT white-popup regression probe: replicate
 // ExtensionActionBar::openPopup's EXACT construction — a view inside
-// a popup frame, a plain page on the AMBIENT webEngineProfile() (not
-// host->page()->profile()), view->load() with no explicit attach.
-// The runtime's view watch must wire the bridge itself; a profile
-// mismatch or a missed watch is the blank-popup failure mode.
+// a popup frame, an ExtensionChromePage on the AMBIENT
+// webEngineProfile() (not host->page()->profile()), view->load()
+// with no explicit attach.  The runtime's view watch must wire the
+// bridge itself; a profile mismatch or a missed watch is the
+// blank-popup failure mode.
 void tst_ExtensionManager::actionPopupSelfWires()
 {
     if (!ExtensionManager::isSupported())
@@ -13200,12 +13204,13 @@ void tst_ExtensionManager::actionPopupSelfWires()
         return *result;
     };
 
-    // openPopup verbatim: view inside a popup frame, plain page on
-    // the ambient profile, load, no explicit attach.
+    // openPopup verbatim: view inside a popup frame, an
+    // ExtensionChromePage on the ambient profile, load, no explicit
+    // attach.
     auto *frame = new QFrame(nullptr, Qt::Popup);
     auto *view = new QWebEngineView(frame);
-    QWebEnginePage *page = new QWebEnginePage(
-        BrowserApplication::instance()->webEngineProfile(), view);
+    QWebEnginePage *page = new ExtensionChromePage(
+        BrowserApplication::instance()->webEngineProfile(), id, view);
     view->setPage(page);
     view->load(QUrl(QStringLiteral("chrome-extension://") + id
                     + QStringLiteral("/popup.html")));
@@ -14997,11 +15002,12 @@ void tst_ExtensionManager::realExtensionPopup()
         qWarning() << "HOST STATE:" << int(host->state())
                    << "errors:" << runtime->contextsJson(id);
 
-    // openPopup verbatim — ambient profile, plain page, no attach.
+    // openPopup verbatim — ambient profile, ExtensionChromePage, no
+    // attach.
     auto *frame = new QFrame(nullptr, Qt::Popup);
     auto *view = new QWebEngineView(frame);
-    QWebEnginePage *page = new QWebEnginePage(
-        BrowserApplication::instance()->webEngineProfile(), view);
+    QWebEnginePage *page = new ExtensionChromePage(
+        BrowserApplication::instance()->webEngineProfile(), id, view);
     view->setPage(page);
     QSignalSpy loadSpy(page, &QWebEnginePage::loadFinished);
     // Resolve the action popup URL like the action bar does.
@@ -15216,8 +15222,8 @@ void tst_ExtensionManager::bitwardenGapBaseline()
     }
     auto *frame = new QFrame(nullptr, Qt::Popup);
     auto *view = new QWebEngineView(frame);
-    QWebEnginePage *page = new QWebEnginePage(
-        BrowserApplication::instance()->webEngineProfile(), view);
+    QWebEnginePage *page = new ExtensionChromePage(
+        BrowserApplication::instance()->webEngineProfile(), id, view);
     view->setPage(page);
     auto popupCrashed = std::make_shared<bool>(false);
     connect(page, &QWebEnginePage::renderProcessTerminated,

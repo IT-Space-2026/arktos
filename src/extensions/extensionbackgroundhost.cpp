@@ -33,6 +33,7 @@
 #include "extensionshimbackend.h"
 #include "profilesettings.h"
 #include "tabwidget.h"
+#include "webpage.h"
 #include "webview.h"
 
 #include <qapplication.h>
@@ -384,9 +385,14 @@ bool NativeMessagingSession::resolve(const QString &appName,
     // Chrome's host-name rule: lowercase alnum, '.', '_', '-'; no
     // leading/trailing dot, no empty components.  '/' can never
     // appear, so the manifest lookup can never leave the search
-    // dirs.
+    // dirs.  Anchored (CA09/S5): a bare match() would accept any
+    // name CONTAINING one valid component — "a/b", "x y", ".z" all
+    // pass hasMatch() — and the fileName join would then resolve
+    // subdirectories of the host dirs Chrome's flat layout never
+    // consults.
     static const QRegularExpression nameRe(
-        QStringLiteral("[a-z0-9_-]+(\\.[a-z0-9_-]+)*"));
+        QRegularExpression::anchoredPattern(
+            QStringLiteral("[a-z0-9_-]+(\\.[a-z0-9_-]+)*")));
     if (appName.isEmpty() || appName.size() > 128
             || !nameRe.match(appName).hasMatch()
             || appName.contains(QLatin1String(".."))) {
@@ -424,18 +430,21 @@ bool NativeMessagingSession::resolve(const QString &appName,
     }
     const QString type =
         manifest.value(QLatin1String("type")).toString();
-    if (!type.isEmpty() && type != QLatin1String("stdio")) {
+    // Chrome requires "type":"stdio" — an absent type is not an
+    // implicit default (CA09/S5).
+    if (type != QLatin1String("stdio")) {
         *error = QStringLiteral("unsupported-type");
         return false;
     }
-    QString path = manifest.value(QLatin1String("path")).toString();
-    if (path.isEmpty()) {
+    const QString path =
+        manifest.value(QLatin1String("path")).toString();
+    // Chrome requires an absolute path on POSIX — a relative one
+    // would resolve inside the manifest's own directory, letting a
+    // planted manifest smuggle its payload in beside itself.
+    if (path.isEmpty() || QDir::isRelativePath(path)) {
         *error = QStringLiteral("invalid-manifest");
         return false;
     }
-    if (QDir::isRelativePath(path))
-        path = QDir(QFileInfo(manifestPath).absolutePath())
-            .absoluteFilePath(path);
     const QFileInfo exe(path);
     if (!exe.exists() || !exe.isFile() || !exe.isExecutable()) {
         // A manifest pointing at nothing runnable answers like an
@@ -594,6 +603,12 @@ void NativeMessagingSession::drainStdout()
             return;
         }
     }
+    // CA09/S8: whatever survives the drain is an incomplete frame —
+    // never larger than one maximum message (a larger declared
+    // length already failed above).  A peer streaming past that
+    // bound is filling memory without completing frames.
+    if (m_inbox.size() > qint64(kMaxNativeHostMessage) + 4)
+        fail(QStringLiteral("bad-message"), -1);
 }
 
 void NativeMessagingSession::fail(const QString &code, int exitCode)
@@ -2092,10 +2107,27 @@ void ExtensionBackgroundRuntime::syncPageBridge(QWebEngineView *view)
     if (!page)
         return;
     const QUrl url = page->url();
-    if (url.scheme() == QLatin1String("chrome-extension"))
-        attachExtensionPage(page, url.host());
-    else
+    if (url.scheme() == QLatin1String("chrome-extension")) {
+        // CA09/S1: the channel is a page-level property — every frame
+        // in MainWorld can reach qt.webChannelTransport, so a page
+        // may only carry the bridge when it navigation-locks its
+        // subframes to the extension's own origin.  WebPage confines
+        // chrome-extension documents itself (acceptNavigationRequest);
+        // ExtensionChromePage/HostedBackgroundPage carry their own
+        // locks.  A plain QWebEnginePage has no gate — the committed
+        // document keeps the shim's honest "background not running"
+        // panel rather than a bridge any foreign subframe could
+        // drive.  Explicit attachExtensionPage() callers keep their
+        // contract — they own the surface (test fixtures, surfaces
+        // wired before a commit).
+        // (HostedBackgroundPage carries no Q_OBJECT — dynamic_cast.)
+        if (qobject_cast<WebPage *>(page)
+                || qobject_cast<ExtensionChromePage *>(page)
+                || dynamic_cast<HostedBackgroundPage *>(page))
+            attachExtensionPage(page, url.host());
+    } else {
         detachExtensionPage(page);
+    }
 }
 
 QJsonArray ExtensionBackgroundRuntime::contextsJson(
@@ -4016,14 +4048,20 @@ bool hostPermCoversPattern(const QString &hp, const QString &reg)
     const RegMatchParts r = parseRegPattern(reg);
     if (!h.valid || !r.valid)
         return false;
+    // CA09/S4: file-scheme access is never granted in this runtime —
+    // isAllowedFileSchemeAccess answers false and no user toggle
+    // exists — so a file:/ftp: registration can never match a URL
+    // (matchPatternCovers refuses both) and fails the coverage proof
+    // instead of arming dead access.
+    if (r.scheme == QLatin1String("file")
+            || r.scheme == QLatin1String("ftp"))
+        return false;
     if (r.allUrls)
         return h.allUrls;
     if (h.allUrls) {
         return r.scheme == QLatin1String("*")
             || r.scheme == QLatin1String("http")
-            || r.scheme == QLatin1String("https")
-            || r.scheme == QLatin1String("file")
-            || r.scheme == QLatin1String("ftp");
+            || r.scheme == QLatin1String("https");
     }
     if (h.scheme == QLatin1String("*")) {
         if (r.scheme != QLatin1String("http")

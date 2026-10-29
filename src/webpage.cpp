@@ -818,6 +818,30 @@ bool WebPage::acceptNavigationRequest(const QUrl &url, NavigationType type, bool
 {
     const QString scheme = url.scheme();
 
+    // CA09/S1: while this page's committed document is a
+    // chrome-extension:// one, it may carry a chromeBridge channel
+    // (ExtensionBackgroundRuntime::attachExtensionPage) — and
+    // setWebChannel exposes qt.webChannelTransport to EVERY frame in
+    // MainWorld, so a foreign subframe could speak the bridge
+    // protocol with the extension's full authority (native
+    // messaging, scripting, storage).  Chrome never exposes an
+    // extension surface to web frames.  Confine subframes to the
+    // extension's own origin — the same lock ExtensionChromePage's
+    // navigationAllowed applies — plus the origin-inheriting blank
+    // frames, which are the document's own trust domain.  This runs
+    // ahead of every consult and override: it is not a policy
+    // decision but a channel boundary.
+    if (!isMainFrame
+            && this->url().scheme() == QLatin1String("chrome-extension")) {
+        const bool ownOrigin =
+            scheme == QLatin1String("chrome-extension")
+            && url.host() == this->url().host();
+        if (!ownOrigin
+                && url != QUrl(QStringLiteral("about:blank"))
+                && url != QUrl(QStringLiteral("about:srcdoc")))
+            return false;
+    }
+
 #if defined(ARKTOS_RUSTCORE)
     // MD02: the "pre" consult — the interstitial carriers, the
     // per-profile nav-block/nav-scheme overrides, the abp-subscribe
@@ -2051,22 +2075,21 @@ static QString certErrorKey(const QWebEngineCertificateError &error)
 // false green on a bypassed certificate.  The fingerprint half of
 // the key cannot be matched post-hoc (Qt never sees the committed
 // chain), so host granularity it is.
-// WK19: hosts a foreign backend granted a session cert-error override
-// — keyed by bare host (the engine network session holds the actual
-// certificate exception; this set exists only so certificateError-
-// Overridden's red verdict reaches non-WebEngine tabs).
-static QSet<QString> &foreignCertOverrideHosts()
-{
-    static QSet<QString> hosts;
-    return hosts;
-}
-
+// WK19/CA09: the foreign-backend override set that used to live here
+// was fed by WebPage::noteCertErrorOverride — a writer whose only
+// call site was the WPE WebKit backend's cert-proceed path and which
+// died with that backend (f593bfe1 "Remove the WPE WebKit engine"),
+// not lost in a port.  The remaining foreign backend (Servo) emits
+// no certificateError at all, so no foreign tab can hold a cert
+// override today; the set went with its writer rather than staying
+// as a permanently-empty padlock input.  A future foreign backend
+// that gains a proceed path must reintroduce the writer hook
+// alongside its certificateError emission or the padlock verdict
+// will again go green over a proceeded chain.
 bool WebPage::certificateErrorOverridden(const QString &host)
 {
     if (host.isEmpty())
         return false;
-    if (foreignCertOverrideHosts().contains(host.toLower()))
-        return true;
     const QString prefix = host.toLower() + QLatin1Char('|');
     const QHash<QWebEngineProfile *, QSet<QString> > &whitelist =
         certErrorWhitelists();

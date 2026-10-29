@@ -83,8 +83,10 @@
 #include <qstyle.h>
 
 #include <qauthenticator.h>
+#include <qcryptographichash.h>
 #include <qnetworkreply.h>
 #include <qnetworkrequest.h>
+#include <qset.h>
 #include <qsslerror.h>
 
 // #define NETWORKACCESSMANAGER_DEBUG
@@ -165,12 +167,15 @@ void NetworkAccessManager::loadSettings()
     settings.endGroup();
 
 #ifndef QT_NO_OPENSSL
-    QSslConfiguration sslCfg = QSslConfiguration::defaultConfiguration();
-    QList<QSslCertificate> ca_list = sslCfg.caCertificates();
-    QList<QSslCertificate> ca_new = QSslCertificate::fromData(settings.value(QLatin1String("CaCertificates")).toByteArray());
-    ca_list += ca_new;
-    sslCfg.setCaCertificates(ca_list);
-    QSslConfiguration::setDefaultConfiguration(sslCfg);
+    // CA09/S3: the "CaCertificates" store this used to hydrate into
+    // the default configuration's CA list is gone — a one-click
+    // sslErrors "ignore" installed the peer's chain as a permanent
+    // trust anchor for every app-side fetch.  Accepted exceptions
+    // are session-scoped (host, fingerprint) in memory now (see
+    // sslErrors()); drop the persisted set so certs a prior version
+    // anchored stop being honored here.
+    settings.remove(QLatin1String("CaCertificates"));
+    settings.remove(QLatin1String("network/CaCertificates"));
 #endif
 
     m_acceptLanguage = acceptLanguage();
@@ -284,6 +289,29 @@ QString NetworkAccessManager::certToFormattedString(QSslCertificate cert)
     return result;
 }
 
+// CA09/S3: app-side certificate exceptions are session-scoped
+// (host, certificate-fingerprint) pairs kept in memory — the
+// Qt-demo flow this replaced installed the peer's chain into the
+// default configuration's CA list AND persisted it, so one "ignore"
+// click minted a permanent trust anchor covering every host and
+// every error type on every app-side fetch (update checks, list
+// downloads, sync).  This mirrors WebPage's SEC06 whitelist on the
+// page-load plane; nothing is persisted and a changed certificate
+// prompts again.
+static QSet<QString> &appCertOverrides()
+{
+    static QSet<QString> overrides;
+    return overrides;
+}
+
+static QString appCertOverrideKey(const QString &host,
+                                  const QSslCertificate &cert)
+{
+    return host + QLatin1Char('|')
+        + QString::fromLatin1(
+            cert.digest(QCryptographicHash::Sha256).toHex());
+}
+
 void NetworkAccessManager::sslErrors(QNetworkReply *reply, const QList<QSslError> &error)
 {
 #ifdef NETWORKACCESSMANAGER_DEBUG
@@ -291,62 +319,63 @@ void NetworkAccessManager::sslErrors(QNetworkReply *reply, const QList<QSslError
 #endif
     QWidget *mainWindow = dialogParentWindow();
 
-    ProfileSettings settings;
-    QList<QSslCertificate> ca_merge = QSslCertificate::fromData(settings.value(QLatin1String("CaCertificates")).toByteArray());
-
-    QList<QSslCertificate> ca_new;
+    // Errors the user already proceeded past for this (host,
+    // certificate) pair skip the prompt — but only errors carrying a
+    // certificate can ever be whitelisted, and a cert-less error or
+    // a new certificate always asks again.
+    const QString host = reply->url().host().toLower();
+    QList<QSslError> pending;
     QStringList errorStrings;
-    for (int i = 0; i < error.count(); ++i) {
-        if (ca_merge.contains(error.at(i).certificate()))
+    QStringList certInfos;
+    QList<QSslCertificate> shownCerts;
+    for (const QSslError &e : error) {
+        if (!e.certificate().isNull()
+                && appCertOverrides().contains(
+                    appCertOverrideKey(host, e.certificate())))
             continue;
-        errorStrings += error.at(i).errorString();
-        if (!error.at(i).certificate().isNull()) {
-            ca_new.append(error.at(i).certificate());
+        pending.append(e);
+        errorStrings += e.errorString();
+        if (!e.certificate().isNull()
+                && !shownCerts.contains(e.certificate())) {
+            shownCerts.append(e.certificate());
+            certInfos += certToFormattedString(e.certificate());
         }
     }
-    if (errorStrings.isEmpty()) {
-        reply->ignoreSslErrors();
+    if (pending.isEmpty()) {
+        // Every reported error is one already accepted for this
+        // (host, certificate) pair — ignore exactly those, nothing
+        // more.
+        reply->ignoreSslErrors(error);
         return;
     }
 
     QString errors = errorStrings.join(QLatin1String("</li><li>"));
-    int ret = QMessageBox::warning(mainWindow,
+    const int ret = QMessageBox::warning(mainWindow,
                            QCoreApplication::applicationName() + tr(" - SSL Errors"),
                            tr("<qt>SSL Errors:"
                               "<br/><br/>for: <tt>%1</tt>"
-                              "<ul><li>%2</li></ul>\n\n"
-                              "Do you want to ignore these errors?</qt>").arg(reply->url().toString().toHtmlEscaped()).arg(errors),
+                              "<ul><li>%2</li></ul>"
+                              "%3\n\n"
+                              "Do you want to ignore these errors for "
+                              "this host and certificate until you "
+                              "quit?</qt>").arg(reply->url().toString().toHtmlEscaped()).arg(errors)
+                              .arg(certInfos.isEmpty()
+                                   ? QString()
+                                   : tr("<br/>Certificates:<br/>%1")
+                                       .arg(certInfos.join(QString()))),
                            QMessageBox::Yes | QMessageBox::No,
                            QMessageBox::No);
 
     if (ret == QMessageBox::Yes) {
-        if (ca_new.count() > 0) {
-            QStringList certinfos;
-            for (int i = 0; i < ca_new.count(); ++i)
-                certinfos += certToFormattedString(ca_new.at(i));
-            ret = QMessageBox::question(mainWindow, QCoreApplication::applicationName(),
-                tr("<qt>Certificates:<br/>"
-                   "%1<br/>"
-                   "Do you want to accept all these certificates?</qt>")
-                    .arg(certinfos.join(QString())),
-                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-            if (ret == QMessageBox::Yes) {
-                ca_merge += ca_new;
-
-                QSslConfiguration sslCfg = QSslConfiguration::defaultConfiguration();
-                QList<QSslCertificate> ca_list = sslCfg.caCertificates();
-                ca_list += ca_new;
-                sslCfg.setCaCertificates(ca_list);
-                QSslConfiguration::setDefaultConfiguration(sslCfg);
-                reply->setSslConfiguration(sslCfg);
-
-                QByteArray pems;
-                for (int i = 0; i < ca_merge.count(); ++i)
-                    pems += ca_merge.at(i).toPem() + '\n';
-                settings.setValue(QLatin1String("CaCertificates"), pems);
-            }
+        for (const QSslError &e : pending) {
+            if (!e.certificate().isNull())
+                appCertOverrides().insert(
+                    appCertOverrideKey(host, e.certificate()));
         }
-        reply->ignoreSslErrors();
+        // Ignore only the errors this reply actually reported — an
+        // error arriving later (renegotiation, a different chain)
+        // still fails.
+        reply->ignoreSslErrors(error);
     }
 }
 #endif

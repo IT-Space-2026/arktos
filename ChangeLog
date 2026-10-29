@@ -5141,3 +5141,18 @@ Code audit (CA01-CA04, no code changes):
   constraints on spawned helpers undocumented) plus lower-severity
   toolbar/Retina/shortcut items; remediations are queued under CA12.
 - Internal cleanup: deduplicated ~30 copy-pasted helper blocks across the codebase (shared host-matching, menu-fit, badge painting, reply-envelope, match-pattern, worker-IO, list-fetch, and session-policy helpers). No behavior changes.
+- Security fixes from the code audit: extension pages shown in a tab
+  can no longer expose the extension's privileged bridge to web
+  iframes (extension documents confine their subframes to their own
+  origin; only surfaces that lock subframes may carry the bridge);
+  the PDF renderer worker can no longer trick the app into reading
+  or deleting files outside its sandbox; accepting an app-side SSL
+  error no longer installs the site's certificate as a permanent
+  trusted root for all downloads and updates (exceptions are now
+  per-host, per-certificate, session-only); extension-declared web
+  rules can no longer redirect browsing to local files or another
+  extension's pages, and file:/ftp: are never covered by extension
+  permissions (matching the already-reported "no file access");
+  native-messaging host names and manifests are validated more
+  strictly (anchored name match, absolute host path, stdio required,
+  inbound buffer bound).

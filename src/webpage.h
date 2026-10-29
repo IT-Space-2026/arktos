@@ -160,13 +160,13 @@ public:
     // verified.  Session-scoped like the whitelist it reads; nothing
     // is persisted.
     static bool certificateErrorOverridden(const QString &host);
-    // WK19: a foreign backend was meant to record its session
-    // cert-error overrides here — the engine's network session holds the
-    // certificate exception itself, this flag only feeds the padlock
-    // red verdict so a foreign tab can't wear green over a chain the
-    // user proceeded past.  The writer hook was removed as dead code
-    // (CA07): no call site survived the port — CA09 decides whether a
-    // foreign-backend proceed path lost its call.
+    // WK19/CA09: foreign-backend session cert-error overrides used to
+    // feed this verdict through noteCertErrorOverride — its only
+    // caller was the WPE backend's proceed path and was deleted with
+    // that backend (f593bfe1), not lost in the port.  Servo emits no
+    // certificateError, so nothing records foreign overrides today;
+    // a backend that gains a proceed path must reintroduce a writer
+    // or its tabs will wear green over a proceeded chain.
 
     // WK19: the interstitial markup builder lifted off the
     // QWebEngineCertificateError carrier so foreign backends fill

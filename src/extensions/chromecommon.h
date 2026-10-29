@@ -60,15 +60,24 @@ inline QJsonObject errReply(const QString &code)
 
 // Chrome match-pattern check against a concrete URL —
 // scheme://host/path decomposition, '*' wildcards and the
-// '<all_urls>' meta-pattern (http/https/file/ftp).
+// '<all_urls>' meta-pattern.  file:/ftp: URLs are never covered:
+// file-scheme access stays ungranted (isAllowedFileSchemeAccess is
+// false and there is no toggle) and Chrome retired ftp outright.
 inline bool matchPatternCovers(const QString &pattern, const QUrl &url)
 {
     const QString scheme = url.scheme();
+    // CA09/S4: no file-scheme access exists in this runtime —
+    // chrome.extension.isAllowedFileSchemeAccess answers false and
+    // there is no user toggle to grant it — so a declared pattern
+    // must never cover file: (Chrome gates the same coverage behind
+    // that exact per-extension toggle).  ftp: went with Chrome's own
+    // removal of the scheme.
+    if (scheme == QLatin1String("file")
+            || scheme == QLatin1String("ftp"))
+        return false;
     if (pattern == QLatin1String("<all_urls>"))
         return scheme == QLatin1String("http")
-            || scheme == QLatin1String("https")
-            || scheme == QLatin1String("file")
-            || scheme == QLatin1String("ftp");
+            || scheme == QLatin1String("https");
     const int sep = pattern.indexOf(QLatin1String("://"));
     if (sep < 0)
         return false;

@@ -431,9 +431,18 @@ struct KdfParams {
 QByteArray randomBytes(int count)
 {
     QByteArray bytes(count, Qt::Uninitialized);
-    for (int i = 0; i + 8 <= count; i += 8) {
+    int i = 0;
+    for (; i + 8 <= count; i += 8) {
         const quint64 v = QRandomGenerator::system()->generate64();
         std::memcpy(bytes.data() + i, &v, 8);
+    }
+    // CA09/S7: the 8-byte stride leaves a count % 8 tail of
+    // uninitialized memory — every caller today passes 32, but a
+    // future nonce-sized count would ship unwritten bytes as key
+    // material.  Fill the tail from one more draw.
+    if (i < count) {
+        const quint64 v = QRandomGenerator::system()->generate64();
+        std::memcpy(bytes.data() + i, &v, qsizetype(count - i));
     }
     return bytes;
 }
