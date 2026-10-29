@@ -122,6 +122,7 @@ private slots:
     void themePreview();
     void themePicker();
     void uniformSidebarIcons();
+    void circledSidebarIcons();
     void scrollablePages();
     void densityAndFooter();
     void subDialogButtons();
@@ -1997,6 +1998,104 @@ void tst_SettingsDialog::uniformSidebarIcons()
         checkRows();
     }
     ArktosIcon::setTheme(originalTheme);
+}
+
+// THEME01: the sidebar category icons are the Arktos-Mobile
+// composite — a pastel circle backing the same monochrome glyph.
+// Check the mapped circle color shows through inside the disc, the
+// corners stay transparent, a dark glyph is drawn in the inner 2/3,
+// every row's circle is distinct, and all of it holds identically
+// under the forced dark palette (the glyph ink resolves against the
+// fixed pastel, so dark ButtonText cannot wash it out).  With
+// ARKTOS_SETTINGS_SHOT_DIR set the nav is also grabbed to PNGs for a
+// visual dump under both palettes (same convention as
+// ARKTOS_TOR_GRAB_DIR).
+void tst_SettingsDialog::circledSidebarIcons()
+{
+    // The mobile icon_circle_* mapping, in nav order.
+    static const char *const expected[] = {
+        "#D7E5F8", // General — blue
+        "#D7F8F8", // Search — cyan
+        "#F8E0D7", // Appearance — peach
+        "#D7F8E7", // Privacy — mint
+        "#FFE2B6", // Tab Settings — lt-amber
+        "#B2EBF2", // Proxy — teal
+        "#F8D7DF", // AutoFill — pink
+        "#F8F3D7", // Advanced — yellow
+        "#DAD7F8", // Extensions — lavender
+        "#EDD7F8", // Containers — purple
+        "#FFDDB0", // Downloads — amber
+        "#F2BCF8", // Performance — lilac
+        "#E1F5FE", // Sync — ice
+    };
+    const QByteArray shotDir = qgetenv("ARKTOS_SETTINGS_SHOT_DIR");
+    if (!shotDir.isEmpty())
+        QDir().mkpath(QString::fromLocal8Bit(shotDir));
+
+    SettingsDialog dialog;
+    const QSize extent = dialog.pagesList->iconSize();
+    const qreal dpr = dialog.pagesList->devicePixelRatioF();
+    const int rows = qMin(dialog.pagesList->count(),
+                          int(sizeof(expected) / sizeof(expected[0])));
+
+    const auto checkIcons = [rows, extent, dpr, &dialog]() {
+        QSet<QRgb> seen;
+        for (int i = 0; i < rows; ++i) {
+            QListWidgetItem *item = dialog.pagesList->item(i);
+            QVERIFY(item);
+            QVERIFY(!item->icon().isNull());
+            const QImage image =
+                item->icon().pixmap(extent, dpr).toImage()
+                    .convertToFormat(QImage::Format_ARGB32);
+            // Corners clear -> the art reads as a circle, not a tile.
+            QVERIFY(QColor::fromRgba(image.pixel(0, 0)).alpha() < 32);
+            // ~12% down the vertical center line: inside the disc,
+            // clear of the glyph box.
+            const QColor ring = QColor::fromRgba(image.pixel(
+                image.width() / 2, qRound(image.height() * 0.12)));
+            const QColor want(QLatin1String(expected[i]));
+            QVERIFY2(qAbs(ring.red() - want.red()) <= 3
+                     && qAbs(ring.green() - want.green()) <= 3
+                     && qAbs(ring.blue() - want.blue()) <= 3
+                     && ring.alpha() > 200,
+                     qPrintable(QString::fromLatin1(
+                         "%1: got %2 want %3")
+                         .arg(item->text(), ring.name(), want.name())));
+            seen.insert(ring.rgba());
+            // The glyph must land dark pixels inside the inner 2/3
+            // — readable on the pastel on any palette.
+            int darkPixels = 0;
+            for (int y = image.height() / 6; y < image.height() * 5 / 6;
+                 ++y)
+                for (int x = image.width() / 6; x < image.width() * 5 / 6;
+                     ++x) {
+                    const QColor pixel =
+                        QColor::fromRgba(image.pixel(x, y));
+                    if (pixel.alpha() > 200 && pixel.lightness() < 128)
+                        ++darkPixels;
+                }
+            QVERIFY2(darkPixels >= 4, qPrintable(item->text()));
+        }
+        QCOMPARE(seen.size(), rows);
+    };
+
+    checkIcons();
+    if (!shotDir.isEmpty())
+        dialog.pagesList->grab().save(
+            QString::fromLocal8Bit(shotDir)
+            + QLatin1String("/settings-nav-light.png"));
+
+    // Forced dark palette: identical circles, still-dark glyph ink.
+    dialog.themePicker->setCurrentIndex(2);
+    QVERIFY(BrowserTheme::isDarkPalette(QApplication::palette()));
+    checkIcons();
+    if (!shotDir.isEmpty())
+        dialog.pagesList->grab().save(
+            QString::fromLocal8Bit(shotDir)
+            + QLatin1String("/settings-nav-dark.png"));
+
+    dialog.themePicker->setCurrentIndex(0);   // System default
+    QVERIFY(!BrowserTheme::isDarkPalette(QApplication::palette()));
 }
 
 // UIP06: every stacked page lives inside a scroll area so a page

@@ -302,26 +302,40 @@ SettingsDialog::SettingsDialog(QWidget *parent)
             }
         }
     });
-    static const char *const pageIcons[] = {
-        "go-home",          // General
-        "edit-find",        // Search
-        "zoom-original",    // Appearance
-        "security-high",    // Privacy
-        "tab-new",          // Tab Settings
-        "go-next",          // Proxy
-        "user-bookmarks",   // AutoFill
-        "system-run",       // Advanced
-        "list-add",         // Extensions
-        "folder-new",       // Containers
-        "emblem-downloads", // Downloads
-        "view-refresh",     // Performance
-        "network-server",   // Sync (SYNC03)
+    // THEME01: the Arktos-Mobile settings look — each category glyph
+    // rides a pastel circle (mobile colors.xml icon_circle_*).  The
+    // glyphs are the same chrome set as before; only the backing
+    // disc is new.  The mobile repo ships no dark variants, and the
+    // engine inks the glyph against the circle, so the one palette
+    // serves light and dark chrome alike.
+    static const struct {
+        const char *iconName;
+        const char *circleColor;
+    } pageIcons[] = {
+        { "go-home",          "#D7E5F8" }, // General — blue
+        { "edit-find",        "#D7F8F8" }, // Search — cyan
+        { "zoom-original",    "#F8E0D7" }, // Appearance — peach
+        { "security-high",    "#D7F8E7" }, // Privacy — mint
+        { "tab-new",          "#FFE2B6" }, // Tab Settings — lt-amber
+        { "go-next",          "#B2EBF2" }, // Proxy — teal
+        { "user-bookmarks",   "#F8D7DF" }, // AutoFill — pink
+        { "system-run",       "#F8F3D7" }, // Advanced — yellow
+        { "list-add",         "#DAD7F8" }, // Extensions — lavender
+        { "folder-new",       "#EDD7F8" }, // Containers — purple
+        { "emblem-downloads", "#FFDDB0" }, // Downloads — amber
+        { "view-refresh",     "#F2BCF8" }, // Performance — lilac
+        // SYNC03: "network-server" resolved in NO bundled set and the
+        // row rendered blank — document-revert's circular arrows are
+        // the sync metaphor the shipped art has.
+        { "document-revert",  "#E1F5FE" }, // Sync — ice
     };
     for (int i = 0;
          i < pagesList->count()
          && i < int(sizeof(pageIcons) / sizeof(pageIcons[0])); ++i) {
         if (QListWidgetItem *item = pagesList->item(i))
-            item->setIcon(ArktosIcon::getChrome(QLatin1String(pageIcons[i])));
+            item->setIcon(ArktosIcon::getCircledChrome(
+                QLatin1String(pageIcons[i].iconName),
+                QColor(QLatin1String(pageIcons[i].circleColor))));
     }
     // ICONS02: with no explicit iconSize the view paints each icon at
     // whatever nominal size the resolved asset carries — themes ship

@@ -185,6 +185,73 @@ private:
     bool m_hasPalette = false;
 };
 
+// THEME01: pastel-circle chrome engine — the Arktos-Mobile settings
+// icon ported to the desktop: a filled circle with the themed glyph
+// centered at the mobile 36dp-circle/24dp-glyph ratio (inner 2/3 of
+// the extent).  The circle is fixed art, so the glyph tint resolves
+// against IT via contrastTextColor — every shipped circle is light,
+// which pins the ink dark on light AND dark palettes alike (a dark
+// palette's near-white ButtonText would sink into pastel).  The
+// Disabled mode takes the ink/circle midpoint rather than Qt's
+// generated ghosting — that washed out on the tinted surfaces before
+// (ICONS06).  Selected mode keeps the same ink: the circle rides the
+// Highlight card and the glyph must still read on the circle.
+class CircledChromeIconEngine : public ScaledPixmapIconEngine
+{
+public:
+    CircledChromeIconEngine(const QString &name,
+                            const QColor &circleColor)
+        : m_name(name)
+        , m_circleColor(circleColor)
+    {
+    }
+
+    QIconEngine *clone() const override
+    {
+        return new CircledChromeIconEngine(m_name, m_circleColor);
+    }
+
+    QPixmap scaledPixmap(const QSize &size, QIcon::Mode mode,
+                         QIcon::State state, qreal scale) override
+    {
+        // Mobile's 6dp inset on a 36dp circle: the glyph box is the
+        // inner 2/3.  Same logical-size-with-scale request as
+        // ChromeIconEngine — QIcon::pixmap already multiplies dpr.
+        const int glyphExtent =
+            qMax(1, qRound(size.width() * 2.0 / 3.0));
+        QPixmap base = ArktosIcon::get(m_name).pixmap(
+            QSize(glyphExtent, glyphExtent), scale,
+            QIcon::Normal, state);
+        if (base.isNull())
+            return base;
+        const QColor ink = ArktosStyle::contrastTextColor(m_circleColor);
+        const QPixmap glyph = tintedPixmap(base,
+            mode == QIcon::Disabled
+                ? ArktosStyle::blend(m_circleColor, ink, 0.55)
+                : ink);
+        QPixmap out(size * scale);
+        out.setDevicePixelRatio(scale);
+        out.fill(Qt::transparent);
+        QPainter painter(&out);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(m_circleColor);
+        // Inset half a device point so the antialiased edge is not
+        // clipped at the pixmap boundary.
+        painter.drawEllipse(QRectF(0.5, 0.5,
+                                   size.width() - 1.0,
+                                   size.height() - 1.0));
+        painter.drawPixmap((size.width() - glyphExtent) / 2,
+                           (size.height() - glyphExtent) / 2, glyph);
+        painter.end();
+        return out;
+    }
+
+private:
+    const QString m_name;
+    const QColor m_circleColor;
+};
+
 } // namespace
 
 QIcon ArktosIcon::get(const QString &name)
@@ -246,6 +313,13 @@ QIcon ArktosIcon::getChrome(const QString &name, const QPalette &palette)
 {
     init();
     return QIcon(new ChromeIconEngine(name, palette));
+}
+
+QIcon ArktosIcon::getCircledChrome(const QString &name,
+                                   const QColor &circleColor)
+{
+    init();
+    return QIcon(new CircledChromeIconEngine(name, circleColor));
 }
 
 QStringList ArktosIcon::themeIds()

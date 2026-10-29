@@ -138,6 +138,17 @@ QIcon getChrome(const QString &name);
 // actually sits on.
 QIcon getChrome(const QString &name, const QPalette &palette);
 
+// THEME01: the Arktos-Mobile settings look — the chrome glyph drawn
+// inside a filled pastel circle (mobile ic_settings_*_layers: a 36dp
+// circle carrying the glyph in the inner 24dp, i.e. a 1/6 inset on
+// every side).  `circleColor` is the category's fixed identity art
+// (mobile colors.xml icon_circle_*), so the glyph ink resolves
+// against the circle — not the palette — and stays readable under a
+// dark application palette whose ButtonText is near-white on pastel.
+// Same live-re-resolve contract as getChrome: theme swaps and
+// palette flips reach already-installed icons.
+QIcon getCircledChrome(const QString &name, const QColor &circleColor);
+
 // Selectable sets — the bundled ids only (ICONS12: "native" is
 // retired).
 QStringList themeIds();

@@ -5218,3 +5218,9 @@ Code audit (CA01-CA04, no code changes):
   bookmarks bar is no longer clipped to 19 px, private-tab favicons
   render sharp on Retina, and fullscreen/history get the platform
   shortcuts (Ctrl+Cmd+F / Cmd-Y).
+- 2026-10-29 THEME01: Preferences sidebar sections now wear the
+  Arktos-Mobile icon style — each category glyph (General, Search,
+  Appearance, Privacy, Tab Settings, Proxy, AutoFill, Advanced,
+  Extensions, Containers, Downloads, Performance, Sync) sits in a
+  pastel circle from the mobile palette, readable on both light and
+  dark themes; the previously blank Sync icon is fixed too.
