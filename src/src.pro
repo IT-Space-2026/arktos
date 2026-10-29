@@ -39,6 +39,30 @@ DESTDIR = ../
 
 include(locale/locale.pri)
 
+mac {
+    # CA12/M9: the whole !mac INSTALLS payload is skipped inside the
+    # bundle — translations and useragents.xml must ride
+    # QMAKE_BUNDLE_DATA like the EXT07 extension files above.
+    # LanguageManager probes
+    # Contents/Resources/share/arktos/locale for the .qm set;
+    # useragents.xml keeps its compiled-in qrc fallback either way.
+    # One entry per file — globs don't expand on the generated cp line.
+    for(tsfile, TRANSLATIONS) {
+        qmname = $$basename(tsfile)
+        qmname ~= s/\\.ts$//
+        varname = $$qmname
+        varname ~= s/[^A-Za-z0-9_]/_/g
+        eval(bundle_locale_$${varname}.path = \
+            Contents/Resources/share/arktos/locale)
+        eval(bundle_locale_$${varname}.files = \
+            $$PWD/.qm/locale/$${qmname}.qm)
+        QMAKE_BUNDLE_DATA += bundle_locale_$${varname}
+    }
+    bundle_useragents.path = Contents/Resources/share/arktos
+    bundle_useragents.files = $$PWD/useragent/useragents.xml
+    QMAKE_BUNDLE_DATA += bundle_useragents
+}
+
 !mac {
 unix {
     INSTALLS += translations desktop iconxpm iconsvg icon16 icon32 icon128 icon512 man man-compress useragentdata bundledext sandboxlauncher

@@ -85,19 +85,37 @@ pub struct ProfileRecord {
     pub created_at: String,
 }
 
+/// CA12/W5: Windows reserves these ~22 stems verbatim in every
+/// directory — profiles/<id>/ with one can never materialize there.
+/// Screened unconditionally so an id minted on one OS stays valid on
+/// another (mirrors BrowserPaths::isReservedDeviceStem).
+pub(crate) fn is_reserved_device_stem(id: &str) -> bool {
+    matches!(
+        id,
+        "con" | "prn" | "aux" | "nul"
+            | "com1" | "com2" | "com3" | "com4" | "com5" | "com6" | "com7"
+            | "com8" | "com9"
+            | "lpt1" | "lpt2" | "lpt3" | "lpt4" | "lpt5" | "lpt6" | "lpt7"
+            | "lpt8" | "lpt9"
+    )
+}
+
 /// The profile-id slug check, byte-identical to
 /// BrowserPaths::isProfileId / ProfileRegistry::isValidProfileId:
-/// lowercase ASCII letters, digits, '-' and '_', 1..=64 bytes.
+/// lowercase ASCII letters, digits, '-' and '_', 1..=64 bytes — and
+/// never a Windows-reserved device stem (CA12/W5).
 pub fn is_profile_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
+        && !is_reserved_device_stem(id)
         && id.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
 
 /// Display name -> filesystem slug, mirroring ProfileStore::slugify:
 /// lowercase, non-[a-z0-9] runs collapse to a single '-', empty
-/// result falls back to "profile", capped at 64 chars.
+/// result falls back to "profile", a Windows device stem gets a
+/// "-profile" suffix, capped at 64 chars.
 pub fn slugify(display_name: &str) -> String {
     let mut slug = String::new();
     let mut last_dash = false;
@@ -115,6 +133,9 @@ pub fn slugify(display_name: &str) -> String {
     }
     if slug.is_empty() {
         slug.push_str("profile");
+    }
+    if is_reserved_device_stem(&slug) {
+        slug.push_str("-profile");
     }
     slug.truncate(64);
     slug

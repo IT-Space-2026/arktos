@@ -377,7 +377,12 @@ void HistoryMenu::postPopulated()
         addSeparator();
 
     QAction *showAllAction = new QAction(tr("Show All History"), this);
-#if !defined(Q_OS_MACOS)
+#if defined(Q_OS_MACOS)
+    // CA12/M12: Ctrl+H is compiled out on macOS (⌘H is Hide) — the
+    // platform convention is ⌘Y.
+    showAllAction->setShortcut(
+        QKeySequence(Qt::ControlModifier | Qt::Key_Y));
+#else
     showAllAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_H));
 #endif
     connect(showAllAction, &QAction::triggered, this, &HistoryMenu::showHistoryPage);

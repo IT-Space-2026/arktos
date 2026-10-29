@@ -575,14 +575,12 @@ BrowserMainWindow::BrowserMainWindow(QWidget *parent, Qt::WindowFlags flags,
     m_bookmarksToolbar->setAutoFillBackground(true);
     m_bookmarksToolbar->setPalette(p);
     m_bookmarksToolbar->setBackgroundRole(QPalette::Window);
-    m_bookmarksToolbar->setMaximumHeight(19);
-
-    QWidget *w = new QWidget(this);
-    w->setMaximumHeight(0);
-    layout->addWidget(w); // <- OS X tab widget style bug
+    // CA12/M10: the Qt4-era 19px cap clipped bookmark text against
+    // current qmacstyle metrics — the bar sizes itself now, and the
+    // 0px spacer hack ("OS X tab widget style bug") that rode beside
+    // it is gone with it.
 #else
-    // UIP01: modest padding around the bookmarks row (skipped on macOS
-    // where the toolbar is hard-capped to 19px for the unified look).
+    // UIP01: modest padding around the bookmarks row.
     m_bookmarksToolbar->setContentsMargins(
         ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small,
         ArktosStyle::Spacing::Small, ArktosStyle::Spacing::Small);
@@ -1321,8 +1319,15 @@ void BrowserMainWindow::setupMenu()
     // that the menubar is hidden by default; the window-level
     // addAction keeps the Ctrl+M shortcut and the page context
     // menu's hidden-menubar entry working.
+    // CA12/M7: on macOS the QMenuBar IS the shared system menubar —
+    // there is no per-window menu row to hide, and Ctrl+M maps to
+    // ⌘M, the platform Minimize accelerator.  The action stays
+    // constructed (later setText calls still run) but is never
+    // surfaced or bound.
+#if !defined(Q_OS_MACOS)
     addAction(m_viewShowMenuBarAction);
     m_viewMenu->addAction(m_viewShowMenuBarAction);
+#endif
 
     m_viewToolbarAction = new QAction(this);
     connect(m_viewToolbarAction, &QAction::triggered, this, &BrowserMainWindow::viewToolbar);
@@ -1467,7 +1472,16 @@ void BrowserMainWindow::setupMenu()
     m_viewMenu->addAction(m_viewPipAction);
 
     m_viewFullScreenAction = new QAction(m_viewMenu);
+#ifdef Q_OS_MACOS
+    // CA12/M12: F11 is Mission Control's Show-Desktop default — keep
+    // it for anyone who rebound it, but carry the platform ⌃⌘F too.
+    m_viewFullScreenAction->setShortcuts(
+        {Qt::Key_F11,
+         QKeySequence(Qt::ControlModifier | Qt::MetaModifier
+                      | Qt::Key_F)});
+#else
     m_viewFullScreenAction->setShortcut(Qt::Key_F11);
+#endif
     connect(m_viewFullScreenAction, &QAction::triggered,
             this, &BrowserMainWindow::viewFullScreen);
     m_viewFullScreenAction->setCheckable(true);
@@ -2970,6 +2984,17 @@ void BrowserMainWindow::resetNavBarOrder()
 // window — persistence + Reset are NAVB04.
 void BrowserMainWindow::setNavBarEditMode(bool enabled)
 {
+#ifdef Q_OS_MACOS
+    // CA12/M8: under setUnifiedTitleAndToolBarOnMac the items are
+    // native NSToolbarItems — actionGeometry() reports the hidden Qt
+    // layout, so drop geometry is meaningless and re-adding a
+    // QWidgetAction can detach the embedded widget from its native
+    // item view.  Interactive reorder stays off on macOS until it is
+    // verified on target (applyNavBarOrder's programmatic path is
+    // unaffected — persisted orders still apply).
+    if (enabled)
+        return;
+#endif
     if (m_navBarEditMode == enabled)
         return;
     m_navBarEditMode = enabled;

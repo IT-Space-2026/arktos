@@ -660,10 +660,29 @@ void BrowserApplication::messageReceived(QLocalSocket *socket)
 #endif
 #ifdef Q_OS_WIN
         WId wid = (WId)winid.toLongLong();
-        SetForegroundWindow(reinterpret_cast<HWND>(wid));
+        // CA12/W9: the foreground lock refuses SetForegroundWindow
+        // unless the caller holds the foreground right — a second
+        // launch usually doesn't, so the raise used to no-op.  Hand
+        // the right out (ASFW_ANY) and retry; if it still loses, the
+        // running instance is now allowed to raise its own window,
+        // so ask it to.
+        AllowSetForegroundWindow(ASFW_ANY);
+        if (!SetForegroundWindow(reinterpret_cast<HWND>(wid)))
+            socket->write("arktosmessage://raise");
 #endif
         return;
     }
+
+#ifdef Q_OS_WIN
+    if (message.startsWith(QLatin1String("arktosmessage://raise"))) {
+        // CA12/W9: the second instance granted the foreground right
+        // via ASFW_ANY — raise our own window, which the foreground
+        // lock now permits.
+        if (BrowserMainWindow *mw = mainWindow())
+            SetForegroundWindow(reinterpret_cast<HWND>(mw->winId()));
+        return;
+    }
+#endif
 }
 
 void BrowserApplication::quitBrowser()

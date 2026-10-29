@@ -62,7 +62,10 @@ bool ProfileRegistry::isValidProfileId(const QString &id)
     // Filesystem slug: lowercase letters/digits with '-' separators —
     // the id becomes a profiles/<id>/ path segment, so '.', '/', '..'
     // and friends are refused outright rather than sanitized.
-    if (id.isEmpty() || id.size() > 64)
+    // CA12/W5: so are Windows' reserved device stems (shared table in
+    // BrowserPaths) — refused unconditionally so ids stay portable.
+    if (id.isEmpty() || id.size() > 64
+            || BrowserPaths::isReservedDeviceStem(id))
         return false;
     for (const QChar c : id) {
         const ushort u = c.unicode();
@@ -107,6 +110,11 @@ QString ProfileRegistry::slugify(const QString &displayName)
         slug.chop(1);
     if (slug.isEmpty())
         slug = QStringLiteral("profile");
+    // CA12/W5: a display name slugging to a Windows device stem
+    // ("Con" -> "con", "NUL" -> "nul") gets a suffix — the stem is
+    // illegal as a directory name even with an extension.
+    if (BrowserPaths::isReservedDeviceStem(slug))
+        slug += QLatin1String("-profile");
     return slug.left(64);
 }
 

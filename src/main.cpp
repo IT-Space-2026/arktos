@@ -240,6 +240,10 @@
 #include <unistd.h>
 #endif
 
+#if defined(Q_OS_WIN)
+#include <qt_windows.h>
+#endif
+
 #if defined(ARKTOS_ADBLOCK_RUST)
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
@@ -5807,6 +5811,29 @@ static int vaultSmoke(BrowserApplication &application,
 
 int main(int argc, char **argv)
 {
+#if defined(Q_OS_WIN)
+    // CA12/W6: a Release build links /SUBSYSTEM:WINDOWS — the
+    // --*-smoke legs, --help and --version all report on stdout, so a
+    // console-flagged invocation reattaches to the parent console
+    // (the smoke run still creates no window of its own; allocation
+    // is the fallback for a console-less launch).
+    for (int i = 1; i < argc; ++i) {
+        const QByteArray arg(argv[i]);
+        if ((arg.startsWith("--") && arg.endsWith("-smoke"))
+                || arg == "--help" || arg == "--version") {
+            if (AttachConsole(ATTACH_PARENT_PROCESS)
+                    || AllocConsole()) {
+                // The GUI-subsystem CRT starts with null std handles —
+                // rebind them or qInfo/qWarning still write nowhere.
+                freopen("CONIN$", "r", stdin);
+                freopen("CONOUT$", "w", stdout);
+                freopen("CONOUT$", "w", stderr);
+            }
+            break;
+        }
+    }
+#endif
+
     // SAND01: a browsing launch re-execs itself inside the filesystem
     // sandbox before anything else happens.  Dev/utility runs (any
     // --flag except --tor) pass through unwrapped so the harnesses keep
@@ -5954,6 +5981,16 @@ int main(int argc, char **argv)
     // BrowserApplication constructor sets the same values again.
     QCoreApplication::setOrganizationName(QLatin1String("Arktos"));
     QCoreApplication::setApplicationName(QLatin1String("Arktos"));
+    // CA12 (audit W1/M5): pin every plain QSettings() to the ini
+    // backend on ALL platforms.  NativeFormat is already ini on
+    // Linux, but on Windows it is the registry and on macOS the
+    // CFPreferences plist — while the codebase assumes ini semantics
+    // (browserpaths identity migration moves QSettings().fileName(),
+    // profile wipe removes it, importLegacyIni feeds it to the Rust
+    // ini parser, and neither registry nor CFPreferences honors
+    // QSettings::setPath, which would break smoke-store isolation).
+    // Must run before the first QSettings is constructed anywhere.
+    QSettings::setDefaultFormat(QSettings::IniFormat);
     // PKG02: inside flatpak the desktop entry is the app id — set it so
     // the Wayland app_id / taskbar association matches
     // com.arktos_browser.Arktos.desktop instead of a bare "arktos".
@@ -6015,15 +6052,11 @@ int main(int argc, char **argv)
                                QSettings::UserScope, configDir);
             QSettings::setPath(QSettings::IniFormat,
                                QSettings::UserScope, configDir);
-#if defined(Q_OS_MACOS)
-            // NativeFormat on macOS is the CFPreferences plist and
-            // ignores setPath entirely — a smoke run would resolve
-            // ~/Library/Preferences/<domain>.plist and the isolation
-            // guard below would (correctly) refuse to continue.
-            // Force IniFormat for smoke runs so setPath applies and
-            // writes really are confined to the store.
-            QSettings::setDefaultFormat(QSettings::IniFormat);
-#endif
+            // The default format is pinned to IniFormat in main()
+            // (CA12/W1/M5) precisely because the registry and
+            // CFPreferences backends ignore setPath — under either of
+            // them this redirect would silently not apply and the
+            // isolation guard below would (correctly) refuse to run.
         }
         // GUARD: the resolved settings file must live inside the
         // active store root — a run that would write to the real
@@ -9856,9 +9889,15 @@ int main(int argc, char **argv)
 
             OpenSearchEngine *suggest = new OpenSearchEngine(&application);
             suggest->setName(QLatin1String("smoke"));
-            suggest->setSuggestionsUrlTemplate(
-                QLatin1String("file://") + fixturePath
-                + QLatin1String("?q={searchTerms}"));
+            // CA12/W7: "file://" + path misparses a Windows drive
+            // letter ("file://C:/…" reads "C:" as the URL host) —
+            // fromLocalFile + QUrlQuery is the portable assembly.
+            QUrl suggestUrl = QUrl::fromLocalFile(fixturePath);
+            QUrlQuery suggestQuery;
+            suggestQuery.addQueryItem(QStringLiteral("q"),
+                                    QStringLiteral("{searchTerms}"));
+            suggestUrl.setQuery(suggestQuery);
+            suggest->setSuggestionsUrlTemplate(suggestUrl.toString());
             suggest->setNetworkAccessManager(networkAccessManager);
             QObject::connect(suggest, &OpenSearchEngine::suggestions,
                              &application,

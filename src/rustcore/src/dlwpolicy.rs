@@ -132,12 +132,34 @@ pub fn sanitize_name(suggested: &str) -> String {
         .filter(|&c| c >= '\u{20}' && c != '\u{7f}')
         .collect();
     let mut name = cleaned.trim().to_string();
+    // CA12/W5: on Windows the NTFS-forbidden set maps to '_' (':' is
+    // the sharp edge — "f.pdf:evil.exe" would land the payload on an
+    // alternate data stream) and trailing spaces are stripped so the
+    // dedup suffix tracks the on-disk name.  Mirrors the C++ lane's
+    // Q_OS_WIN arm.
+    if cfg!(windows) {
+        name = name
+            .chars()
+            .map(|c| if "<>:\"|?*".contains(c) { '_' } else { c })
+            .collect();
+        while name.ends_with(' ') {
+            name.pop();
+        }
+    }
     while name.ends_with('.') {
         name.pop();
     }
     // "." and ".." resolve outside the download directory.
     if name.is_empty() || name == "." || name == ".." {
         return String::new();
+    }
+    // CA12/W5: device stems are illegal even with an extension —
+    // "con.txt" cannot exist; prefix the stem like the C++ lane.
+    if cfg!(windows) {
+        let stem = name.split('.').next().unwrap_or("").to_lowercase();
+        if crate::profiles::is_reserved_device_stem(&stem) {
+            name = format!("_{name}");
+        }
     }
     // NAME_MAX headroom for the "-NN" dedup suffix, keeping the
     // extension readable.

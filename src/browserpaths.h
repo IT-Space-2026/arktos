@@ -79,7 +79,15 @@ void setActiveProfileId(const QString &profileId);
 
 // Slug check shared with ProfileRegistry: lowercase letters, digits,
 // '-'/'_' — an id is a path segment, so anything else is refused.
+// CA12/W5: the Windows-reserved device stems (con, nul, aux, prn,
+// com1-9, lpt1-9) are refused too — unconditionally, so an id minted
+// on one OS can always materialize on another.
 bool isProfileId(const QString &id);
+
+// CA12/W5: true for the ~22 path segments Windows reserves as device
+// names — illegal even with an extension, so a profiles/<id>/ leaf
+// can never be one.  Shared by every slug validator/mint.
+bool isReservedDeviceStem(const QString &id);
 
 // <active profile dir>/<fileName>.  Was
 // BrowserApplication::dataFilePath(); MIG15 should delegate to this.

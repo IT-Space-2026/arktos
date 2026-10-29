@@ -12,12 +12,44 @@
         <string>com.arktos-browser.Arktos</string>
         <key>CFBundleExecutable</key>
         <string>@EXECUTABLE@</string>
+        <!-- CA12/M2: a custom QMAKE_INFO_PLIST is copied verbatim with
+             only @ICON@/@EXECUTABLE@ substituted — qmake injects
+             nothing — so the version/identity keys must be declared
+             here for Finder, Get Info and any notarization compare. -->
+        <key>CFBundleName</key>
+        <string>Arktos</string>
+        <key>CFBundleDisplayName</key>
+        <string>Arktos</string>
+        <key>CFBundleShortVersionString</key>
+        <string>1.1</string>
+        <key>CFBundleVersion</key>
+        <string>1.1</string>
+        <key>CFBundleInfoDictionaryVersion</key>
+        <string>6.0</string>
+        <key>NSHumanReadableCopyright</key>
+        <string>Copyright 2026 Arktos Browser - IT-Space</string>
         <key>NSPrincipalClass</key>
         <string>NSApplication</string>
         <key>NSHighResolutionCapable</key>
         <true/>
         <key>LSMinimumSystemVersion</key>
         <string>13.0</string>
+        <!-- CA12/M2: LaunchServices picks default-browser candidates
+             from declared URL schemes — without CFBundleURLTypes the
+             app can never appear in the default-web-browser picker
+             nor receive open -a / link activations. -->
+        <key>CFBundleURLTypes</key>
+        <array>
+                <dict>
+                        <key>CFBundleURLName</key>
+                        <string>Web site URL</string>
+                        <key>CFBundleURLSchemes</key>
+                        <array>
+                                <string>http</string>
+                                <string>https</string>
+                        </array>
+                </dict>
+        </array>
         <key>CFBundleDocumentTypes</key>
         <array>
                 <dict>
@@ -39,8 +71,24 @@
                         </array>
                         <key>CFBundleTypeRole</key>
                         <string>Viewer</string>
+                        <!-- Modern macOS consults UTI + handler rank
+                             for the Open With ranking (CA12/M2). -->
+                        <key>LSItemContentTypes</key>
+                        <array>
+                                <string>public.html</string>
+                        </array>
+                        <key>LSHandlerRank</key>
+                        <string>Alternate</string>
                 </dict>
         </array>
+        <!-- CA12/M2: NSCameraUsageDescription and
+             NSMicrophoneUsageDescription are deliberately ABSENT —
+             WebPermissionManager hard-denies media requests before
+             Chromium reaches TCC (SEC05), so media is intentionally
+             un-grantable; declaring the keys would invite a getUserMedia
+             path that today does not exist.  If one is ever added,
+             declare BOTH keys first — a missing usage string is a
+             SIGKILL, not a denial. -->
         <key>NOTE</key>
         <string>Arktos Browser by the Arktos team</string>
 </dict>

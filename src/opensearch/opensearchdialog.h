@@ -41,6 +41,10 @@ protected slots:
     void restoreButtonClicked();
 
 private:
+    // CA12/M3: (re)installs the real QCheckBox index widgets on the
+    // Suggestions column — index widgets die on model reset/insert.
+    void syncSuggestionBoxes();
+
     OpenSearchEngineModel *m_model;
 };
 

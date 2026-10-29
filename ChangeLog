@@ -5177,3 +5177,23 @@ Code audit (CA01-CA04, no code changes):
   indicator sweeps /proc once per interval for all windows, history
   title updates on unknown URLs skip their full-history scan, and the
   startup profiler now decomposes window construction.
+- 2026-10-29 CA12: platform fixes from the code audit's Windows +
+  macOS findings — settings are now always stored in ini format on
+  every OS (instead of the Windows registry / macOS preferences
+  domain, which broke smoke isolation and file-path migrations),
+  native-messaging host lookup now works on Windows (registry) and
+  macOS (Application Support), every checkable list row — extension
+  toggles, ad-block subscriptions, sidebar panels, search-engine
+  suggestions — is now a real checkbox widget rather than a
+  style-painted indicator that could vanish on macOS, profile
+  seal/unseal retries transient Windows file locks, profile and
+  download names can no longer be Windows-illegal (reserved device
+  names, NTFS-forbidden characters), the installer registers Arktos
+  as a default-browser candidate and opens a firewall rule for LAN
+  sync, the Mac bundle declares http/https URL schemes and ships
+  translations, a hardened-runtime entitlements file exists for the
+  future signing step, Hide Menu Bar is gone on macOS (where it
+  broke the shared menubar and collided with Minimize), the Mac
+  bookmarks bar is no longer clipped to 19 px, private-tab favicons
+  render sharp on Retina, and fullscreen/history get the platform
+  shortcuts (Ctrl+Cmd+F / Cmd-Y).

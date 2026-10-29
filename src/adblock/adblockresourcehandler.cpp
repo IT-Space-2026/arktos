@@ -257,19 +257,21 @@ QByteArray AdBlockResourceHandler::canonicalResourceName(const QString &name)
     if (!alias.isEmpty())
         return alias;
 
-    // Extension fallback for the long tail of named stubs.
-    if (cleaned.endsWith(QLatin1String(".js")))
+    // Extension fallback for the long tail of named stubs —
+    // case-insensitive (CA12/W11): a rule naming "STUB.GIF" maps the
+    // same as "stub.gif".
+    if (cleaned.endsWith(QLatin1String(".js"), Qt::CaseInsensitive))
         return QByteArrayLiteral("noop.js");
-    if (cleaned.endsWith(QLatin1String(".gif")))
+    if (cleaned.endsWith(QLatin1String(".gif"), Qt::CaseInsensitive))
         return QByteArrayLiteral("1x1.gif");
-    if (cleaned.endsWith(QLatin1String(".png")))
+    if (cleaned.endsWith(QLatin1String(".png"), Qt::CaseInsensitive))
         return QByteArrayLiteral("2x2.png");
-    if (cleaned.endsWith(QLatin1String(".html"))
-        || cleaned.endsWith(QLatin1String(".htm")))
+    if (cleaned.endsWith(QLatin1String(".html"), Qt::CaseInsensitive)
+        || cleaned.endsWith(QLatin1String(".htm"), Qt::CaseInsensitive))
         return QByteArrayLiteral("noop.html");
-    if (cleaned.endsWith(QLatin1String(".css")))
+    if (cleaned.endsWith(QLatin1String(".css"), Qt::CaseInsensitive))
         return QByteArrayLiteral("noop.css");
-    if (cleaned.endsWith(QLatin1String(".txt")))
+    if (cleaned.endsWith(QLatin1String(".txt"), Qt::CaseInsensitive))
         return QByteArrayLiteral("noop.txt");
 
     return QByteArray();

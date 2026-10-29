@@ -143,7 +143,8 @@
 
 // Defined near webViewIconChanged() — the tab marker for
 // off-the-record pages (PTAB01).
-static QPixmap privateBadgedPixmap(const QIcon &icon);
+static QPixmap privateBadgedPixmap(const QIcon &icon,
+                                   const QWidget *device);
 
 // The pin flag (and the group/container hidden stores) key on the
 // tab's page widget — the WebViewWithSearch.  PDF02's document
@@ -582,9 +583,12 @@ static bool isBrandedStartPageUrl(const QUrl &url)
     if (url.scheme() != QLatin1String("qrc"))
         return false;
     const QString path = url.path();
-    return path == QLatin1String("/startpage.html")
+    // CA12/W11: case-insensitive like the other extension checks.
+    return path.compare(QLatin1String("/startpage.html"),
+                        Qt::CaseInsensitive) == 0
         || (path.startsWith(QLatin1String("/startpage-"))
-            && path.endsWith(QLatin1String(".html")));
+            && path.endsWith(QLatin1String(".html"),
+                             Qt::CaseInsensitive));
 }
 
 void TabWidget::newTab()
@@ -1144,7 +1148,8 @@ WebView *TabWidget::makeNewTabOnProfile(Engine::Profile *profile, bool makeCurre
         const int newIndex = indexOf(webViewWithSearch);
         if (QLabel *label = animationLabel(newIndex, false))
             label->setPixmap(privateBadgedPixmap(
-                QIcon(QLatin1String(":graphics/defaulticon.png"))));
+                QIcon(QLatin1String(":graphics/defaulticon.png")),
+                this));
         setTabToolTip(newIndex, tr("Private tab — visits are not recorded"));
     }
     // SLEEP01: the idle clock starts at creation — a freshly opened
@@ -3950,7 +3955,8 @@ int TabWidget::adoptTransferredTab(const TransferredTab &tab, int index)
         if (QLabel *label = animationLabel(idx, false)) {
             const QIcon icon = BrowserApplication::icon(view->url());
             label->setPixmap(isTabPrivate(idx)
-                ? privateBadgedPixmap(icon) : icon.pixmap(16, 16));
+                ? privateBadgedPixmap(icon, this)
+                : icon.pixmap(QSize(16, 16), devicePixelRatioF()));
         }
     }
 #endif
@@ -4245,12 +4251,19 @@ void TabWidget::webViewLoadFinished(bool ok)
 // bottom-right corner — the off-the-record marker survives whatever
 // favicon the page resolves to (a private page never stores icons, so
 // the base is usually the default glyph).
-static QPixmap privateBadgedPixmap(const QIcon &icon)
+static QPixmap privateBadgedPixmap(const QIcon &icon,
+                                   const QWidget *device)
 {
-    QPixmap base = icon.pixmap(16, 16);
+    // CA12/M11: request at the paint device's DPR — a bare
+    // pixmap(16,16) renders at 1x and stays soft on Retina.  The
+    // device-pixel math below is DPR-relative, so only the fetch
+    // changes.
+    const qreal dpr = device ? device->devicePixelRatioF() : 1.0;
+    QPixmap base = icon.pixmap(QSize(16, 16), dpr);
     if (base.isNull()) {
         base = QPixmap(16, 16);
         base.fill(Qt::transparent);
+        base.setDevicePixelRatio(dpr);
     }
     const QPixmap badge(QLatin1String(":graphics/private.png"));
     const int size = base.width() / 2 + 1;
@@ -4272,8 +4285,8 @@ void TabWidget::webViewIconChanged()
         delete movie;
         label->setMovie(nullptr);
         label->setPixmap(isTabPrivate(index)
-            ? privateBadgedPixmap(icon)
-            : icon.pixmap(16, 16));
+            ? privateBadgedPixmap(icon, this)
+            : icon.pixmap(QSize(16, 16), devicePixelRatioF()));
 #endif
     }
 }
@@ -5584,8 +5597,9 @@ bool TabWidget::restoreSessionSnapshot(const TabSessionSnapshot &snap)
                     const QIcon icon = BrowserApplication::icon(url);
                     if (QLabel *label = animationLabel(index, false)) {
                         label->setPixmap(isTabPrivate(index)
-                            ? privateBadgedPixmap(icon)
-                            : icon.pixmap(16, 16));
+                            ? privateBadgedPixmap(icon, this)
+                            : icon.pixmap(QSize(16, 16),
+                                              devicePixelRatioF()));
                     }
                 } else {
                     // SESS01: the tab detached into a filtered

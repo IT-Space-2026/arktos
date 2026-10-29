@@ -17,6 +17,18 @@
 # works unchanged; Cargo.lock pins the resolved tree and SEC21's
 # `cargo deny` policy lives in $$PWD/deny.toml.
 
+# CA12/W8: the Qt-fallback SecureStore resolves libcrypto by Unix
+# SONAME — Qt's default Windows TLS backend is Schannel, so no
+# OpenSSL ships and every sealed secret (autofill payload, stored
+# proxy password, the legacy migrate path) is silently unopenable in
+# a no-rust build.  rustcore is therefore MANDATORY on Windows: the
+# only sanctioned fallback is a ported BCrypt (CNG) backend, which
+# does not exist yet.
+win32:!rustcore: \
+    error("Windows builds require rustcore (the Qt SecureStore fallback resolves OpenSSL by Unix SONAME and cannot work there); install a cargo toolchain, or port a BCrypt backend before opting out")
+win32:no-rust: \
+    error("CONFIG+=no-rust cannot ship on Windows (see W8: the Qt SecureStore fallback has no crypto backend there)")
+
 rustcore:!no-rust {
     CARGO = $$ARKTOS_CARGO
     isEmpty(CARGO): CARGO = cargo

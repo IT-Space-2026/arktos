@@ -48,6 +48,7 @@
 #include <qjsonobject.h>
 #include <qprocess.h>
 #include <qregularexpression.h>
+#include <qsettings.h>
 #include <qstandardpaths.h>
 #include <qtimer.h>
 #include <qwidget.h>
@@ -357,13 +358,50 @@ static constexpr quint32 kMaxNativeHostMessage = 64u * 1024u * 1024u;
 
 QString NativeMessagingSession::userHostsDir()
 {
+#if defined(Q_OS_MACOS)
+    // CA12/M1: GenericConfigLocation on macOS is ~/Library/
+    // Preferences — Chrome-family host registration lives under
+    // ~/Library/Application Support instead, so the dir is rooted at
+    // GenericDataLocation there.
+    return QStandardPaths::writableLocation(
+               QStandardPaths::GenericDataLocation)
+        + QLatin1String("/arktos/NativeMessagingHosts");
+#else
     return QStandardPaths::writableLocation(
                QStandardPaths::GenericConfigLocation)
         + QLatin1String("/arktos/NativeMessagingHosts");
+#endif
 }
 
 QStringList NativeMessagingSession::searchDirs()
 {
+#if defined(Q_OS_MACOS)
+    // CA12/M1: macOS keeps hosts under Application Support (user
+    // scope) and /Library (system scope) — the Linux ~/.config +
+    // /etc layout resolves to Preferences and /etc paths that do not
+    // exist there.
+    const QString appSupport = QStandardPaths::writableLocation(
+        QStandardPaths::GenericDataLocation);
+    return {
+        // Ours first — an arktos-registered host outranks the compat
+        // dirs a Chrome/Chromium-targeted desktop app installs into.
+        appSupport + QLatin1String("/arktos/NativeMessagingHosts"),
+        appSupport + QLatin1String("/Chromium/NativeMessagingHosts"),
+        appSupport
+            + QLatin1String("/Google/Chrome/NativeMessagingHosts"),
+        QStringLiteral(
+            "/Library/Application Support/arktos/NativeMessagingHosts"),
+        QStringLiteral("/Library/Chromium/NativeMessagingHosts"),
+        QStringLiteral(
+            "/Library/Google/Chrome/NativeMessagingHosts"),
+    };
+#elif defined(Q_OS_WIN)
+    // CA12/W2: Windows has no filesystem convention for Chrome-family
+    // hosts — registration is a registry default value (see
+    // manifestPathFor()).  Our own userHostsDir() stays a directory
+    // so local installs and the smoke fixture keep working.
+    return { userHostsDir() };
+#else
     const QString config = QStandardPaths::writableLocation(
         QStandardPaths::GenericConfigLocation);
     return {
@@ -376,7 +414,50 @@ QStringList NativeMessagingSession::searchDirs()
         QStringLiteral("/etc/chromium/native-messaging-hosts"),
         QStringLiteral("/etc/opt/chrome/native-messaging-hosts"),
     };
+#endif
 }
+
+#if defined(Q_OS_WIN)
+// CA12/W2: on Windows a native host registers its manifest path as
+// the default value of
+// HKCU|HKLM\Software\<vendor>\NativeMessagingHosts\<name> — there is
+// no directory convention.  The lookup walks our own hosts dir
+// first (it outranks compat registrations), then the registry roots
+// in Chrome's HKCU-over-HKLM precedence.  QSettings' registry
+// backend exposes a key's default value as "<key>/Default".
+static QString nativeHostManifestRegistryPath(const QString &appName)
+{
+    static const QStringList roots = {
+        QStringLiteral(
+            "HKEY_CURRENT_USER\\Software\\Arktos\\NativeMessagingHosts"),
+        QStringLiteral(
+            "HKEY_CURRENT_USER\\Software\\Chromium"
+            "\\NativeMessagingHosts"),
+        QStringLiteral(
+            "HKEY_CURRENT_USER\\Software\\Google\\Chrome"
+            "\\NativeMessagingHosts"),
+        QStringLiteral(
+            "HKEY_LOCAL_MACHINE\\Software\\Arktos"
+            "\\NativeMessagingHosts"),
+        QStringLiteral(
+            "HKEY_LOCAL_MACHINE\\Software\\Chromium"
+            "\\NativeMessagingHosts"),
+        QStringLiteral(
+            "HKEY_LOCAL_MACHINE\\Software\\Google\\Chrome"
+            "\\NativeMessagingHosts"),
+    };
+    for (const QString &root : roots) {
+        const QSettings reg(root, QSettings::NativeFormat);
+        QString path =
+            reg.value(appName + QLatin1String("/Default")).toString();
+        if (path.isEmpty())
+            path = reg.value(appName + QLatin1String("/.")).toString();
+        if (!path.isEmpty() && QFileInfo::exists(path))
+            return path;
+    }
+    return QString();
+}
+#endif
 
 bool NativeMessagingSession::resolve(const QString &appName,
                                      const QString &extensionId,
@@ -408,6 +489,10 @@ bool NativeMessagingSession::resolve(const QString &appName,
             break;
         }
     }
+#if defined(Q_OS_WIN)
+    if (manifestPath.isEmpty())
+        manifestPath = nativeHostManifestRegistryPath(appName);
+#endif
     if (manifestPath.isEmpty()) {
         *error = QStringLiteral("not-found");
         return false;

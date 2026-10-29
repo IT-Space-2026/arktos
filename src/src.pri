@@ -12,7 +12,16 @@ clang {
     QMAKE_CXXFLAGS += -Wall -Wextra -Wdeprecated -Wdeprecated-declarations
 }
 
-win32:Debug:CONFIG += console
+win32 {
+    Debug:CONFIG += console
+    # CA12/W10: keep the bare <windows.h> includes in the tree from
+    # leaking min/max macros and winsock v1 into every TU they reach.
+    DEFINES += NOMINMAX WIN32_LEAN_AND_MEAN
+    # CA12/W14: no application manifest ships today, so Rust std::fs
+    # and spawned helpers die at MAX_PATH on deep profile trees; the
+    # manifest is a no-op where the LongPathsEnabled policy is off.
+    QMAKE_MANIFEST = $$PWD/../BuildProcess/arktos.manifest
+}
 
 include($$PWD/../coverage.pri)
 include($$PWD/../sanitize.pri)

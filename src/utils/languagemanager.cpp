@@ -74,6 +74,13 @@ LanguageManager *LanguageManager::instance()
         // Windows deploy layout: payload beside arktos.exe (appDir/locale).
         manager->addLocaleDirectory(qApp->applicationDirPath()
                                     + QLatin1String("/locale"));
+#ifdef Q_OS_MACOS
+        // CA12/M9: the .app bundle ships them under
+        // Contents/Resources/share/arktos/locale — appDirPath() is
+        // Contents/MacOS, so the probe climbs into Resources.
+        manager->addLocaleDirectory(qApp->applicationDirPath()
+            + QLatin1String("/../Resources/share/arktos/locale"));
+#endif
 #ifdef PKGDATADIR
         manager->addLocaleDirectory(QLatin1String(PKGDATADIR) + QLatin1String("/locale"));
 #endif
@@ -335,7 +342,8 @@ void LanguageManager::loadAvailableLanguages() const
         QDirIterator it(dir);
         while (it.hasNext()) {
             QString fileName = it.next();
-            if (!fileName.endsWith(QLatin1String(".qm")))
+            if (!fileName.endsWith(QLatin1String(".qm"),
+                                   Qt::CaseInsensitive))
                 continue;
             const QFileInfo info = it.fileInfo();
             QString language = info.completeBaseName();

@@ -71,13 +71,23 @@ QStringList TorManager::binarySearchPaths()
          << QStringLiteral("/usr/local/bin")
          << QStringLiteral("/usr/sbin");
 #endif
+#ifdef Q_OS_MACOS
+    // CA12/M4: /usr/local covers Intel Homebrew only — a Finder-
+    // launched .app gets launchd's minimal PATH, so the Apple-Silicon
+    // prefix must be enumerated explicitly.
+    dirs << QStringLiteral("/opt/homebrew/bin");
+#endif
     // Bundled expert-bundle layouts: a tor/ dir shipped beside the
     // binary, one level up, or under lib/.
     const QString appDir = QCoreApplication::applicationDirPath();
     if (!appDir.isEmpty())
         dirs << appDir + QLatin1String("/tor")
              << appDir + QLatin1String("/../tor")
-             << appDir + QLatin1String("/../lib/tor");
+             << appDir + QLatin1String("/../lib/tor")
+             // CA12/M4: the .app bundle layout puts payload under
+             // Contents/{Resources,lib} — Contents/MacOS/../ covers
+             // the first, the second needs its own candidate.
+             << appDir + QLatin1String("/../Resources/tor");
     // BuildProcess/fetch-tor.sh installs the per-user bundle here.
     const QString dataDir =
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);

@@ -125,9 +125,30 @@ QString globalDataFilePath(const QString &fileName)
     return dataRoot() + QLatin1Char('/') + fileName;
 }
 
+bool isReservedDeviceStem(const QString &id)
+{
+    // Windows device names are reserved verbatim in every directory —
+    // profiles/con/, profiles/nul/… can never be created there.
+    static const QSet<QString> reserved = {
+        QStringLiteral("con"), QStringLiteral("prn"),
+        QStringLiteral("aux"), QStringLiteral("nul"),
+        QStringLiteral("com1"), QStringLiteral("com2"),
+        QStringLiteral("com3"), QStringLiteral("com4"),
+        QStringLiteral("com5"), QStringLiteral("com6"),
+        QStringLiteral("com7"), QStringLiteral("com8"),
+        QStringLiteral("com9"), QStringLiteral("lpt1"),
+        QStringLiteral("lpt2"), QStringLiteral("lpt3"),
+        QStringLiteral("lpt4"), QStringLiteral("lpt5"),
+        QStringLiteral("lpt6"), QStringLiteral("lpt7"),
+        QStringLiteral("lpt8"), QStringLiteral("lpt9"),
+    };
+    return reserved.contains(id);
+}
+
 bool isProfileId(const QString &id)
 {
-    if (id.isEmpty() || id.size() > 64)
+    if (id.isEmpty() || id.size() > 64
+            || isReservedDeviceStem(id))
         return false;
     for (const QChar c : id) {
         const ushort u = c.unicode();

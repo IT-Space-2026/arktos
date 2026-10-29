@@ -517,16 +517,41 @@ QString DownloadItem::sanitizeFileName(const QString &suggestedName)
     QString cleaned;
     cleaned.reserve(name.size());
     for (const QChar &c : name) {
-        if (c.unicode() >= 0x20 && c.unicode() != 0x7f)
-            cleaned += c;
+        if (c.unicode() < 0x20 || c.unicode() == 0x7f)
+            continue;
+#ifdef Q_OS_WIN
+        // CA12/W5: the NTFS-forbidden set — ':' is the sharp edge
+        // (a suggested "f.pdf:evil.exe" lands the payload on an
+        // alternate data stream, invisible to Explorer); the rest
+        // just fail the open with a filesystem error.
+        if (QStringLiteral("<>:\"|?*").contains(c)) {
+            cleaned += QLatin1Char('_');
+            continue;
+        }
+#endif
+        cleaned += c;
     }
     name = cleaned.trimmed();
+#ifdef Q_OS_WIN
+    // Windows silently trims trailing spaces — strip them here so the
+    // dedup "-N" suffix tracks the name that actually lands on disk.
+    while (name.endsWith(QLatin1Char(' ')))
+        name.chop(1);
+#endif
     while (name.endsWith(QLatin1Char('.')))
         name.chop(1);
     // "." and ".." resolve outside the download directory.
     if (name.isEmpty() || name == QLatin1String(".")
         || name == QLatin1String(".."))
         return QString();
+#ifdef Q_OS_WIN
+    // CA12/W5: reserved device stems are illegal even with an
+    // extension — "con.txt" cannot be created; prefix the stem
+    // rather than let the download die on the open.
+    if (BrowserPaths::isReservedDeviceStem(
+            name.section(QLatin1Char('.'), 0, 0).toLower()))
+        name.prepend(QLatin1Char('_'));
+#endif
 
     // NAME_MAX is 255 bytes on common filesystems; leave headroom for
     // the "-NN" dedup suffix while keeping the extension readable.

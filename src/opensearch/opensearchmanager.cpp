@@ -928,10 +928,19 @@ void OpenSearchManager::importLegacyRegistry(ProfileSettings &settings)
     }
 
     // Retire the legacy paths — a leftover descriptor dir or stale
-    // keys must never re-import over the canonical store.
-    if (dir.exists())
-        QDir().rename(dirName,
-                      dirName + QLatin1String(".migrated"));
+    // keys must never re-import over the canonical store.  CA12/W4:
+    // rename refuses an existing target on every platform — a stale
+    // .migrated from an earlier retire would leave the live dir in
+    // place — and a transient handle can still lose the rename; both
+    // are handled (the loud warning keeps the failure visible).
+    if (dir.exists()) {
+        const QString retired = dirName + QLatin1String(".migrated");
+        if (QFileInfo::exists(retired))
+            QDir(retired).removeRecursively();
+        if (!QDir().rename(dirName, retired))
+            qWarning() << "opensearch: could not retire legacy engine"
+                          " dir" << dirName;
+    }
     settings.remove(QLatin1String("keywords"));
     settings.remove(QLatin1String("engineOrder"));
     settings.remove(QLatin1String("removedBundledEngines"));

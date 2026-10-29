@@ -90,6 +90,7 @@
 #include "extensionreviewdialog.h"
 #include "fingerprintprotector.h"
 #include "historymanager.h"
+#include "indexcheckbox.h"
 #include "languagemanager.h"
 #include "networkaccessmanager.h"
 #include "opensearchengine.h"
@@ -180,40 +181,12 @@ static QString extensionsEngineScope()
 }
 
 // MAC04: column 0 of the extensions tree carries a real QCheckBox
-// index widget (refreshExtensions) — the item's own painted
-// indicator+text would smear through the widget's transparent
-// background, so the delegate drops the painted pieces for that
-// column only.  The model data stays put: Name still drives sorting
-// and CheckStateRole stays the state itemChanged/the box exchange.
-class ExtensionEnableBoxDelegate : public PlainTextItemDelegate
-{
-public:
-    using PlainTextItemDelegate::PlainTextItemDelegate;
-
-    void initStyleOption(QStyleOptionViewItem *option,
-                         const QModelIndex &index) const override
-    {
-        PlainTextItemDelegate::initStyleOption(option, index);
-        if (index.column() != 0)
-            return;
-        option->features &= ~(QStyleOptionViewItem::HasDisplay
-                              | QStyleOptionViewItem::HasCheckIndicator
-                              | QStyleOptionViewItem::HasDecoration);
-        // MAC11: the feature flags are only half the suppression —
-        // QCommonStyle::drawControl(CE_ItemViewItem) gates the item
-        // text on !option->text.isEmpty(), not HasDisplay, so the
-        // item's own copy still painted under the index widget and
-        // double-drew the name on macOS.  Empty the paintable
-        // content itself (same idiom Qt's sheet style uses to blank
-        // an item's content) so the delegate contributes only the
-        // cell backdrop; the real QCheckBox is the column's single
-        // renderer.  Sizing is unaffected — viewItemSize measures
-        // off the feature flags, which are already stripped.
-        option->text.clear();
-        option->icon = QIcon();
-        option->checkState = Qt::Unchecked;
-    }
-};
+// index widget (refreshExtensions).  The delegate half of that fix
+// moved into utils/indexcheckbox.h as IndexCheckBoxDelegate (CA12/M3
+// — the same painted-indicator class turned up in three more views,
+// so the pattern is now shared).  The model data stays put: Name
+// still drives sorting and CheckStateRole stays the state
+// itemChanged/the box exchange.
 
 SettingsDialog::SettingsDialog(QWidget *parent)
     : QWidget(parent)
@@ -568,6 +541,13 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // enlarged font and extent for visual parity.
     sidebarPanelsList->setFont(navFont);
     sidebarPanelsList->setIconSize(QSize(navIconExtent, navIconExtent));
+    // CA12/M3: real QCheckBox index widgets, not the style-painted
+    // indicator (the recurring MAC04 class — utils/indexcheckbox.h).
+    // Install AFTER the font/icon pins so the boxes inherit them;
+    // the takeItem/insertItem reorder paths re-run the install walk.
+    sidebarPanelsList->setItemDelegate(
+        new IndexCheckBoxDelegate(0, sidebarPanelsList));
+    installSidebarPanelBoxes();
 
     connect(cookiesButton, &QPushButton::clicked, this, &SettingsDialog::showCookies);
     connect(standardFontButton, &QPushButton::clicked, this, &SettingsDialog::chooseFont);
@@ -638,7 +618,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     // Extension names come from manifest.json and userscript names
     // from filenames — markup-looking text stays literal.
     extensionsTree->setItemDelegate(
-        new ExtensionEnableBoxDelegate(extensionsTree));
+        new IndexCheckBoxDelegate(0, extensionsTree));
     userScriptsList->setItemDelegate(new PlainTextItemDelegate(userScriptsList));
     // EXT06: the Description column is the long free-text one — it
     // takes the leftover width while Name/Status/Source keep their
@@ -1344,6 +1324,9 @@ void SettingsDialog::loadFromSettings()
             }
         }
     }
+    // The reorder's takeItem/insertItem dropped index widgets on the
+    // moved rows (CA12/M3).
+    installSidebarPanelBoxes();
     // SIDE02: which panels the rail offers — default on, keyed under
     // sidebar/panels/<id> by the registered id in each row's UserRole.
     for (int row = 0; row < sidebarPanelsList->count(); ++row) {
@@ -2407,7 +2390,22 @@ void SettingsDialog::sidebarPanelMove(int offset)
     sidebarPanelsList->insertItem(target,
                                   sidebarPanelsList->takeItem(row));
     sidebarPanelsList->setCurrentRow(target);
+    // takeItem destroyed the moved row's index widget.
+    installSidebarPanelBoxes();
     updateSidebarPanelButtonStates();
+}
+
+void SettingsDialog::installSidebarPanelBoxes()
+{
+    for (int row = 0; row < sidebarPanelsList->count(); ++row) {
+        QListWidgetItem *item = sidebarPanelsList->item(row);
+        if (!item || sidebarPanelsList->itemWidget(item))
+            continue;
+        installIndexCheckBox(sidebarPanelsList,
+                             sidebarPanelsList->indexFromItem(item),
+                             item->text(), item->icon(),
+                             item->toolTip());
+    }
 }
 
 void SettingsDialog::updateSidebarPanelButtonStates()
@@ -3302,24 +3300,8 @@ void SettingsDialog::extensionUpdateCheckFinished(
 
 void SettingsDialog::extensionSelectionChanged()
 {
-    // MAC04: the per-row QCheckBox index widgets paint their own
-    // label — the painted item text they replace used to switch to
-    // HighlightedText on selection, so the boxes follow the same
-    // cue or the selected row reads as dark-on-Highlight.
-    const QPalette treePalette = extensionsTree->palette();
-    for (int i = 0; i < extensionsTree->topLevelItemCount(); ++i) {
-        QTreeWidgetItem *row = extensionsTree->topLevelItem(i);
-        QCheckBox *box = qobject_cast<QCheckBox *>(
-            extensionsTree->itemWidget(row, 0));
-        if (!box)
-            continue;
-        QPalette boxPalette = box->palette();
-        boxPalette.setColor(QPalette::WindowText,
-            treePalette.color(row->isSelected()
-                ? QPalette::HighlightedText : QPalette::Text));
-        box->setPalette(boxPalette);
-    }
-
+    // The per-row QCheckBox index widgets handle their own selection
+    // palette through installIndexCheckBox's selectionChanged hook.
     QTreeWidgetItem *item = extensionsTree->currentItem();
     extensionRemoveButton->setEnabled(item != nullptr);
     if (!item) {
@@ -3441,14 +3423,9 @@ void SettingsDialog::extensionItemChanged(QTreeWidgetItem *item, int column)
 {
     if (column != 0 || !item)
         return;
-    // MAC04: the index-widget checkbox is a view of CheckStateRole —
-    // programmatic checkState writes (tests, other callers) must move
-    // it too.
-    if (QCheckBox *enableBox = qobject_cast<QCheckBox *>(
-            extensionsTree->itemWidget(item, 0))) {
-        const QSignalBlocker blocker(enableBox);
-        enableBox->setChecked(item->checkState(0) == Qt::Checked);
-    }
+    // installIndexCheckBox's dataChanged hook mirrors programmatic
+    // checkState writes into the box — only the enabled-state
+    // notification is left to do here.
     const QString id = item->data(0, Qt::UserRole).toString();
     if (id.isEmpty())
         return;
@@ -3550,27 +3527,16 @@ void SettingsDialog::refreshExtensions()
                             : tr("(no description)")));
         item->setData(0, Qt::UserRole, info.id);
         item->setToolTip(0, SafeText::escaped(info.path));
-        // MAC04: the style-painted item check indicator does not
-        // reach the user on macOS (v1.0 dmg report) — under the app
-        // style stack (sheet style -> ChromeProxyStyle -> QMacStyle)
-        // the indicator primitive is the one render step that is
-        // platform-style dependent, and every other enable affordance
-        // in this dialog is a real QCheckBox.  Give each row a real
-        // one as an index widget so the toggle can never vanish with
-        // a style quirk.  The item keeps its CheckStateRole data:
-        // toggling routes through itemChanged -> extensionItemChanged
-        // -> setExtensionEnabled exactly like the painted checkbox
-        // did, and the box mirrors item state in extensionItemChanged.
-        QCheckBox *enableBox = new QCheckBox(item->text(0));
-        enableBox->setChecked(info.enabled);
-        enableBox->setFont(extensionsTree->font());
+        // MAC04/CA12-M3: a real QCheckBox index widget, not the
+        // style-painted check indicator — see utils/indexcheckbox.h.
+        // The item keeps its CheckStateRole data: toggling routes
+        // through itemChanged -> extensionItemChanged ->
+        // setExtensionEnabled exactly like the painted checkbox did.
+        QCheckBox *enableBox = installIndexCheckBox(
+            extensionsTree,
+            extensionsTree->indexFromItem(item, 0),
+            item->text(0), QIcon(), item->toolTip(0));
         enableBox->setAccessibleName(tr("Enable %1").arg(item->text(0)));
-        enableBox->setToolTip(item->toolTip(0));
-        connect(enableBox, &QCheckBox::toggled, this,
-                [item](bool on) {
-            item->setCheckState(0, on ? Qt::Checked : Qt::Unchecked);
-        });
-        extensionsTree->setItemWidget(item, 0, enableBox);
         if (info.id == selectedId)
             extensionsTree->setCurrentItem(item);
     }

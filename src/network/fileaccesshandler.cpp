@@ -73,6 +73,21 @@ bool FileAccessHandler::initiatorAllowed(const QString &scheme)
         || scheme == QLatin1String("qrc");
 }
 
+// CA12/W7: urlForLocalPath() setPath()s the raw local path, but a
+// hand-assembled "arktos-file:///C:/foo" arrives here as "/C:/foo" —
+// which QDir resolves against the CURRENT drive, silently reading the
+// wrong one.  Strip the leading slash on a letter-colon intake.
+static QString localPathFromRequest(const QUrl &url)
+{
+    QString path = url.path();
+#if defined(Q_OS_WIN)
+    if (path.size() > 2 && path.at(0) == QLatin1Char('/')
+            && path.at(1).isLetter() && path.at(2) == QLatin1Char(':'))
+        path.remove(0, 1);
+#endif
+    return path;
+}
+
 void FileAccessHandler::requestStarted(QWebEngineUrlRequestJob *job)
 {
     if (job->requestMethod() != "GET") {
@@ -87,7 +102,7 @@ void FileAccessHandler::requestStarted(QWebEngineUrlRequestJob *job)
 
     // This handler only lists directories; a regular file URL should
     // never reach it because WebPage only redirects directories.
-    const QString path = job->requestUrl().path();
+    const QString path = localPathFromRequest(job->requestUrl());
     if (!QFileInfo(path).isDir()) {
         job->fail(QWebEngineUrlRequestJob::UrlNotFound);
         return;
@@ -211,7 +226,8 @@ void FileAccessHandler::replyToJob(QPointer<QWebEngineUrlRequestJob> job)
         ->fontSize(QWebEngineSettings::DefaultFontSize);
     QByteArray html;
     const ListingError error =
-        directoryListing(job->requestUrl().path(), iconSize, &html);
+        directoryListing(localPathFromRequest(job->requestUrl()),
+                         iconSize, &html);
     if (error == ListingError::NotFound) {
         job->fail(QWebEngineUrlRequestJob::UrlNotFound);
         return;

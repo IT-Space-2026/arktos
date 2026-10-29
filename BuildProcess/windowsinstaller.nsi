@@ -20,6 +20,11 @@ SetCompressor /SOLID /FINAL lzma
 !endif
 !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\arktos.exe"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
+; CA12/W13: Default Programs registration — without the
+; StartMenuInternet capabilities + RegisteredApplications entry,
+; Windows' "default browser" setting can never list Arktos.
+!define PRODUCT_CLIENTS_KEY "Software\Clients\StartMenuInternet\Arktos"
+!define PRODUCT_REGAPPS_KEY "Software\RegisteredApplications"
 
 ; Dual-mode install: MultiUser adds an "all users vs just me" page —
 ; all-users lands in %ProgramFiles% (elevates via runas only when that
@@ -49,6 +54,7 @@ SetCompressor /SOLID /FINAL lzma
 !define MUI_UNICON "${ICONFILE}"
 
 !insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_LICENSE "..\..\LICENSE.GPL2"
 !insertmacro MULTIUSER_PAGE_INSTALLMODE
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -101,6 +107,12 @@ Section "Main Components"
     File /nonfatal "${VCREDIST}\msvcp140_atomic_wait.dll"
     File /nonfatal "${VCREDIST}\concrt140.dll"
     File /nonfatal "${VCREDIST}\vcamp140.dll"
+  !else
+    ; CA12/W13: a bundle built without /DVCREDIST silently ships no
+    ; CRT — arktos.exe then dies at launch on a clean machine with
+    ; the useless "missing VCRUNTIME140.dll" dialog.  Fail makensis
+    ; loudly instead.
+    !warning "VCREDIST undefined — installer ships NO MSVC runtime; arktos.exe will fail on clean machines. Pass /DVCREDIST."
   !endif
 SectionEnd
 
@@ -112,18 +124,58 @@ SectionEnd
 Section Uninstaller
   WriteUninstaller "$INSTDIR\uninst.exe"
   WriteRegStr SHCTX "${PRODUCT_DIR_REGKEY}" "" "$INSTDIR\arktos.exe"
+  ; CA12/W13: App Paths carries the exe's install dir so shellexec of
+  ; the bare name resolves sibling DLLs.
+  WriteRegStr SHCTX "${PRODUCT_DIR_REGKEY}" "Path" "$INSTDIR"
   WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "DisplayName" "$(^Name)"
   WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninst.exe"
   WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$INSTDIR\arktos.exe"
   WriteRegStr SHCTX "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
+
+  ; CA12/W13: Default Programs registration — the capabilities key is
+  ; what StartMenuInternet candidates enumerate, and
+  ; RegisteredApplications points Windows at it.
+  WriteRegStr SHCTX "${PRODUCT_CLIENTS_KEY}" "" "Arktos"
+  WriteRegStr SHCTX "${PRODUCT_CLIENTS_KEY}\Capabilities" \
+      "ApplicationName" "Arktos"
+  WriteRegStr SHCTX "${PRODUCT_CLIENTS_KEY}\Capabilities" \
+      "ApplicationDescription" "Arktos web browser"
+  WriteRegStr SHCTX "${PRODUCT_CLIENTS_KEY}\Capabilities" \
+      "ApplicationIcon" "$INSTDIR\arktos.exe,0"
+  WriteRegStr SHCTX "${PRODUCT_CLIENTS_KEY}\Capabilities\URLAssociations" \
+      "http" "Arktos"
+  WriteRegStr SHCTX "${PRODUCT_CLIENTS_KEY}\Capabilities\URLAssociations" \
+      "https" "Arktos"
+  WriteRegStr SHCTX "${PRODUCT_CLIENTS_KEY}\Capabilities\FileAssociations" \
+      ".htm" "Arktos"
+  WriteRegStr SHCTX "${PRODUCT_CLIENTS_KEY}\Capabilities\FileAssociations" \
+      ".html" "Arktos"
+  WriteRegStr SHCTX "${PRODUCT_CLIENTS_KEY}\shell\open\command" \
+      "" '"$INSTDIR\arktos.exe"'
+  WriteRegStr SHCTX "${PRODUCT_REGAPPS_KEY}" "Arktos" \
+      "Software\Clients\StartMenuInternet\Arktos\Capabilities"
+
+  ; CA12/W3: the sync LAN transport binds an inbound QUIC listener
+  ; (UDP 14431) plus the mDNS responder (UDP 5353) — without an
+  ; inbound allow rule, private-profile pairing silently times out
+  ; whenever the consent prompt was dismissed.  Program-scoped so a
+  ; reinstall updates it; private profile only (Public stays locked
+  ; down, matching Windows' own default posture).  netsh needs
+  ; elevation in all-users mode only — a just-me install where the
+  ; call fails simply keeps the first-run consent prompt.
+  nsExec::Exec 'netsh advfirewall firewall add rule name="Arktos LAN Sync" dir=in action=allow program="$INSTDIR\arktos.exe" enable=yes profile=private protocol=UDP localport=14431,5353'
 SectionEnd
 
 Section Uninstall
   Delete "$SMPROGRAMS\Arktos.lnk"
   Delete "$DESKTOP\Arktos.lnk"
+  ; CA12/W3: retire the install-time firewall rule.
+  nsExec::Exec 'netsh advfirewall firewall delete rule name="Arktos LAN Sync" program="$INSTDIR\arktos.exe"'
   RMDir /r "$INSTDIR"
   DeleteRegKey SHCTX "${PRODUCT_UNINST_KEY}"
   DeleteRegKey SHCTX "${PRODUCT_DIR_REGKEY}"
+  DeleteRegKey SHCTX "${PRODUCT_CLIENTS_KEY}"
+  DeleteRegValue SHCTX "${PRODUCT_REGAPPS_KEY}" "Arktos"
 SectionEnd
 
 BrandingText "arktos-browser.com"

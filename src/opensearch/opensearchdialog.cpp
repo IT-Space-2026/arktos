@@ -21,6 +21,7 @@
 
 #include "opensearchdialog.h"
 
+#include "indexcheckbox.h"
 #include "opensearchenginemodel.h"
 #include "opensearchmanager.h"
 #include "toolbarsearch.h"
@@ -45,10 +46,33 @@ OpenSearchDialog::OpenSearchDialog(QWidget *parent)
     m_tableView->setShowGrid(false);
     m_tableView->setAlternatingRowColors(true);
 
+    // CA12/M3: the Suggestions column's check affordance is a real
+    // QCheckBox index widget, not the style-painted indicator (the
+    // MAC04 class, added to this view after that fix — see
+    // utils/indexcheckbox.h).  Index widgets die on model reset and
+    // row insert, so they are (re)installed on every shape change.
+    m_tableView->setItemDelegate(new IndexCheckBoxDelegate(2, m_tableView));
+    connect(m_model, &QAbstractItemModel::modelReset,
+            this, &OpenSearchDialog::syncSuggestionBoxes);
+    connect(m_model, &QAbstractItemModel::rowsInserted,
+            this, &OpenSearchDialog::syncSuggestionBoxes);
+    syncSuggestionBoxes();
+
     connect(m_closeButton, &QPushButton::clicked, this, &QDialog::close);
     connect(m_addButton, &QPushButton::clicked, this, &OpenSearchDialog::addButtonClicked);
     connect(m_deleteButton, &QPushButton::clicked, this, &OpenSearchDialog::deleteButtonClicked);
     connect(m_restoreButton, &QPushButton::clicked, this, &OpenSearchDialog::restoreButtonClicked);
+}
+
+void OpenSearchDialog::syncSuggestionBoxes()
+{
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+        const QModelIndex index = m_model->index(row, 2);
+        if (!(m_model->flags(index) & Qt::ItemIsUserCheckable)
+                || m_tableView->indexWidget(index))
+            continue;
+        installIndexCheckBox(m_tableView, index);
+    }
 }
 
 void OpenSearchDialog::addButtonClicked()

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- CA12/M6: hardened-runtime entitlements consumed by the MAC01
+         sign step (codesign --entitlements arktos.entitlements --options
+         runtime …), then notarize as usual.  Each key exists because a
+         shipped code path needs it — do not strip without checking:
+
+         * QtWebEngineProcess runs Chromium's V8 JIT — without
+           allow-unsigned-executable-memory every WebContents dies
+           under the hardened runtime. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- * tormanager spawns the expert-bundle tor with
+           DYLD_FALLBACK_LIBRARY_PATH (TOR17) — dyld strips DYLD_* for
+           a hardened-runtime process lacking this key, so a signed
+           build would regress to "tor dies at exec". -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <!-- * servobackend dlopen()s libservo_embed.dylib (a separate-team
+           artifact) — in-process dlopen of a non-same-team dylib needs
+           disable-library-validation.  When servo ships unsigned, this
+           is the difference between "backend present" and "silently
+           absent". -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- NOT included, deliberately:
+         * get-task-allow — debug-only, never ship it in a notarized
+           build.
+         * audio-input/camera/device entitlements — WebPermissionManager
+           hard-denies media before TCC (SEC05); Info_mac.plist carries
+           no usage strings either.
+         * network.client — the sandbox profile, not an entitlement;
+           networking is unentitled-by-default on macOS anyway.
+         Native-messaging hosts spawn via QProcess exec — exec is not
+         library-validated, so no entitlement is needed for them; a
+         quarantined host binary still fails at exec with a Gatekeeper
+         denial, which is surfaced as 'spawn-failed'. -->
+</dict>
+</plist>

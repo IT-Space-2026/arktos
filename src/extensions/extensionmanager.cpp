@@ -1212,7 +1212,8 @@ ExtensionManager::Manifest ExtensionManager::inspectManifest(const QString &path
         manifestPath = info.absoluteFilePath() + QLatin1String("/manifest.json");
     else if (info.isFile() && info.fileName() == QLatin1String("manifest.json"))
         manifestPath = info.absoluteFilePath();
-    else if (info.isFile() && info.suffix() == QLatin1String("zip")) {
+    else if (info.isFile() && info.suffix().compare(
+            QLatin1String("zip"), Qt::CaseInsensitive) == 0) {
 #if defined(ARKTOS_RUSTCORE)
         // EXT06: the archive is verified in Rust and its embedded
         // manifest comes back pre-classified — the review dialog
@@ -1723,7 +1724,8 @@ QString ExtensionManager::hostedEnginePath(const QString &path)
                 && !sourceDir.startsWith(extensionStagingRoot()))
             oursInPlace = true;
     } else if (info.isFile()
-               && info.suffix() == QLatin1String("zip")) {
+               && info.suffix().compare(
+                   QLatin1String("zip"), Qt::CaseInsensitive) == 0) {
         // Packages: the verified manifest check decides whether
         // staging is even needed before the unpack pays for it.
         const Manifest packaged = inspectManifest(info.absoluteFilePath());

@@ -26,7 +26,14 @@ case "$(uname -m)" in
     *)              echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
 esac
 
-DEST=${ARKTOS_TOR_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/Arktos/Arktos}/tor
+# CA12/M4: the destination must match TorManager's AppDataLocation
+# probe — on macOS that is ~/Library/Application Support/Arktos/Arktos,
+# not the XDG path.
+if [ "$os" = macos ]; then
+    DEST=${ARKTOS_TOR_PREFIX:-$HOME/Library/Application Support/Arktos/Arktos}/tor
+else
+    DEST=${ARKTOS_TOR_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/Arktos/Arktos}/tor
+fi
 TARBALL="tor-expert-bundle-${os}-${arch}-${VERSION}.tar.gz"
 BASE="https://dist.torproject.org/torbrowser/${VERSION}"
 SUMS="sha256sums-unsigned-build.txt"
@@ -43,7 +50,12 @@ if [ -z "$expected" ]; then
     echo "no sha256 entry for $TARBALL in $SUMS" >&2
     exit 1
 fi
-actual=$(sha256sum "$work/$TARBALL" | awk '{print $1}')
+# CA12/M4: sha256sum is GNU — macOS ships BSD shasum instead.
+if command -v sha256sum >/dev/null 2>&1; then
+    actual=$(sha256sum "$work/$TARBALL" | awk '{print $1}')
+else
+    actual=$(shasum -a 256 "$work/$TARBALL" | awk '{print $1}')
+fi
 if [ "$expected" != "$actual" ]; then
     echo "checksum mismatch: expected $expected got $actual" >&2
     exit 1
@@ -60,5 +72,10 @@ chmod 700 "$DEST" "$DEST/.." 2>/dev/null || true
 
 echo "installed tor to $DEST/tor"
 # The expert bundle's libs (libevent/libssl/libcrypto) sit beside the
-# binary — resolve them like TorManager's LD_LIBRARY_PATH spawn does.
-LD_LIBRARY_PATH="$DEST" "$DEST/tor" --version | head -1
+# binary — resolve them like TorManager's library-path spawn does
+# (DYLD_FALLBACK_LIBRARY_PATH is the macOS twin of LD_LIBRARY_PATH).
+if [ "$os" = macos ]; then
+    DYLD_FALLBACK_LIBRARY_PATH="$DEST" "$DEST/tor" --version | head -1
+else
+    LD_LIBRARY_PATH="$DEST" "$DEST/tor" --version | head -1
+fi

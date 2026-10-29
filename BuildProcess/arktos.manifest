@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- CA12/W14: without longPathAware, Rust std::fs paths and spawned
+     helper processes still die at MAX_PATH (260 chars) on deep
+     %LOCALAPPDATA% profile trees even though Qt's own file APIs use
+     the \\?\ prefix internally.  The element is a no-op on hosts
+     where the LongPathsEnabled policy is off.  DPI is deliberately
+     absent — Qt 6 promotes the process to Per-Monitor-V2 itself at
+     startup (audit honest-negative). -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity version="1.0.0.0" name="Arktos" type="win32"/>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>

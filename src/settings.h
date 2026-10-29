@@ -231,6 +231,10 @@ private slots:
     // the committed order lands in sidebar/panelOrder on save.
     void sidebarPanelMove(int offset);
     void updateSidebarPanelButtonStates();
+    // CA12/M3: (re)installs the per-row QCheckBox index widgets on
+    // sidebarPanelsList — takeItem/insertItem reordering destroys
+    // them, so the move paths re-run this walk.
+    void installSidebarPanelBoxes();
 
     // THEME02: the Appearance Theme combo previews instantly — the
     // palette flips on index change without touching the persisted

@@ -7807,7 +7807,15 @@ void ExtensionShimBackend::downloadsFileFixup(DownloadItem *item)
     const QString wanted =
         QFileInfo(item->m_outputFileName).absoluteFilePath();
     if (item->downloadedSuccessfully()) {
-        if (actual != wanted && QFileInfo(actual).isFile()
+        // CA12/W11: on Windows a case-aliased spelling of the same
+        // file would trigger a pointless rename.
+#ifdef Q_OS_WIN
+        const bool samePath =
+            actual.compare(wanted, Qt::CaseInsensitive) == 0;
+#else
+        const bool samePath = actual == wanted;
+#endif
+        if (!samePath && QFileInfo(actual).isFile()
                 && !wanted.isEmpty() && !QFileInfo::exists(wanted)
                 && !QFile::rename(actual, wanted)) {
             // Cross-mount destinations fall back to copy+remove.

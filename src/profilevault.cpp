@@ -34,6 +34,9 @@
 #include <qjsondocument.h>
 #include <qjsonobject.h>
 #include <qsavefile.h>
+#ifdef Q_OS_WIN
+#include <qthread.h>
+#endif
 #include <qtimer.h>
 
 #ifdef Q_OS_UNIX
@@ -82,6 +85,26 @@ bool idIsSlug(const QString &id)
 QString vaultPath(const QString &vaultDir, const QString &name)
 {
     return vaultDir + QLatin1Char('/') + name;
+}
+
+// CA12/W4: every seal/unseal relocation below moves a directory that
+// may still have open handles inside — on POSIX rename ignores them,
+// on Windows ANY surviving handle (a QtWebEngineProcess still dying,
+// a sqlite WAL, an AV/search-indexer scan of the dir) fails the whole
+// move.  Give the transient-lock case a bounded retry (~2.75s of
+// backoff) before failing; a real lock still reports loudly.
+bool renameTree(const QString &from, const QString &to)
+{
+#ifdef Q_OS_WIN
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        if (QDir().rename(from, to))
+            return true;
+        QThread::msleep(50ul * (attempt + 1));
+    }
+    return false;
+#else
+    return QDir().rename(from, to);
+#endif
 }
 
 // Registered lazily on first unlock — runs the shutdown seal no
@@ -427,7 +450,7 @@ bool ProfileVault::holdExcluded(const QString &id, bool hold,
             // etc) — leave it so the sealer packs the link itself,
             // and restore resurrects the same setup.
             if (liveExists && !QFileInfo(live).isSymLink()
-                    && !QDir().rename(live, held)) {
+                    && !renameTree(live, held)) {
                 if (error)
                     *error = QStringLiteral("cannot move %1 aside")
                                  .arg(live);
@@ -439,7 +462,7 @@ bool ProfileVault::holdExcluded(const QString &id, bool hold,
                 // vault may have packed it) — drop the held copy.
                 if (heldExists && !secureEraseTree(held, error))
                     return false;
-            } else if (heldExists && !QDir().rename(held, live)) {
+            } else if (heldExists && !renameTree(held, live)) {
                 if (error)
                     *error = QStringLiteral("cannot restore %1")
                                  .arg(held);
@@ -720,7 +743,7 @@ ProfileVault::Error ProfileVault::unseal(const QString &profileId,
                 return fail(Io, ioError);
         } else {
             QDir(dir).removeRecursively();
-            if (!QDir().rename(park, dir))
+            if (!renameTree(park, dir))
                 return fail(Io, QStringLiteral(
                     "cannot recover parked plaintext for %1").arg(id));
         }
@@ -732,7 +755,7 @@ ProfileVault::Error ProfileVault::unseal(const QString &profileId,
             return fail(PlaintextPresent, QStringLiteral(
                 "refusing to unseal over existing plaintext in %1 "
                 "without confirmation").arg(dir));
-        if (!QDir().rename(dir, park))
+        if (!renameTree(dir, park))
             return fail(Io, QStringLiteral(
                 "cannot park existing plaintext for %1").arg(id));
         parked = true;
@@ -750,7 +773,7 @@ ProfileVault::Error ProfileVault::unseal(const QString &profileId,
         &ProfileVault::progressTrampoline, &ctx);
     if (st != RC_OK) {
         if (parked && !QFile::exists(dir)
-            && !QDir().rename(park, dir))
+            && !renameTree(park, dir))
             qWarning() << "ProfileVault: unseal failed AND the parked"
                           " plaintext could not be restored — it is"
                           " still at" << park;
@@ -791,7 +814,7 @@ ProfileVault::Error ProfileVault::unseal(const QString &profileId,
                 vault, QLatin1String("engine-hold")), &ioError);
         } else {
             QDir(engineDst).removeRecursively();
-            if (QDir().rename(hold, engineDst)) {
+            if (renameTree(hold, engineDst)) {
                 // Shrink the check→rename race: a link swapped in at
                 // the last instant lands at the destination — remove
                 // it rather than let the engine write through it.

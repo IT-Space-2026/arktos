@@ -1560,3 +1560,111 @@ file:// listings, `tabwidget.cpp:1484/2543` favicon labels
   consistent (only the 1x fallback is soft — M11); pdfview renders at
   zoom × devicePixelRatioF; ArktosIcon/searchbutton/sidebarpanel/
   tortitlebar all resolve painter DPR correctly.
+
+## PLATFORM REMEDIATION (CA12)
+
+Generated 2026-10-29. Dispositions for the CA05 WINDOWS and CA06
+MACOS findings — all fixes are static (no Windows/macOS host here);
+runtime verification stays owed to WIN01/MAC01.
+
+### Windows (W*)
+
+- W1 FIXED: `QSettings::setDefaultFormat(IniFormat)` is now pinned
+  unconditionally in main() (all platforms — ini semantics are what
+  the codebase assumes; registry/CFPreferences honor no setPath).
+  The macOS-only smoke-guard workaround was removed; the smoke-store
+  setPath redirect + guard now works identically everywhere.
+- W2 FIXED: `nativeHostManifestRegistryPath()` looks hosts up in
+  HKCU/HKLM `Software\{Arktos,Chromium,Google\Chrome}\
+  NativeMessagingHosts` registry default values after the filesystem
+  dirs; our own userHostsDir() stays a dir for local installs/smokes.
+- W3 FIXED (installer half): the .nsi adds a private-profile inbound
+  UDP rule (program-scoped, ports 14431+5353) at install and deletes
+  it at uninstall.  mdns REUSEADDR kept deliberately (documented —
+  EXCLUSIVEADDRUSE would bar a legitimate coexistent responder).
+- W4 FIXED: profilevault dir moves go through renameTree() —
+  bounded ~2.75 s backoff retry on Windows for transient AV/indexer/
+  engine-handle locks.  notesmodel legacy-store rename gained a
+  copy+remove fallback; opensearch .migrated retire clears a stale
+  target and warns loudly instead of silently skipping.
+- W5 FIXED: reserved device stems (con/nul/aux/prn/com1-9/lpt1-9)
+  screened in BrowserPaths::isReservedDeviceStem — isProfileId +
+  ProfileRegistry::isValidProfileId + profiles.rs::is_profile_id all
+  refuse them, both slugify impls suffix "-profile".  Download
+  sanitizeFileName + dlwpolicy.rs sanitize_name map the NTFS-
+  forbidden set to '_', strip trailing spaces, and prefix reserved
+  stems — all under Q_OS_WIN / cfg!(windows).
+- W6 FIXED: --*-smoke/--help/--version argv triggers
+  AttachConsole(ATTACH_PARENT_PROCESS) (+AllocConsole fallback and
+  CONIN$/CONOUT$ rebinds) at the top of main().
+- W7 FIXED: search-smoke file:// URL built via QUrl::fromLocalFile +
+  QUrlQuery; arktos-file handler strips the "/" prefix off
+  "/C:/…" intake on Windows.
+- W8 FIXED (policy): rustcore.pri errors out on win32 without
+  rustcore — the SONAME-probing Qt fallback has no crypto backend
+  there; a BCrypt port is the sanctioned alternative.
+- W9 FIXED: second instance grants ASFW_ANY before
+  SetForegroundWindow; on failure it asks the running instance to
+  self-raise via the arktosmessage://raise handshake.
+- W10 FIXED: src.pri win32 scope adds DEFINES += NOMINMAX
+  WIN32_LEAN_AND_MEAN.
+- W11 FIXED: zip/html/qm suffix checks and the adblock stub suffix
+  map are case-insensitive; the downloads fixup path compare is
+  case-insensitive on Windows.
+- W12 NOTED-DEFERRED: the POSIX-shaped smoke/test harness (bwrap,
+  #!/bin/sh fixtures, XDG env redirects) can only be ported/skipped
+  on a Windows host — WIN01 scope.
+- W13 FIXED: StartMenuInternet capabilities + RegisteredApplications,
+  App Paths "Path" value, makensis-time !warning when VCREDIST is
+  absent, GPL2 license page.
+- W14 FIXED: BuildProcess/arktos.manifest declares longPathAware;
+  wired via QMAKE_MANIFEST in src.pri's win32 scope.
+- W15 NOTED-DEFERRED: needs an x86_64-pc-windows-msvc cargo check on
+  a Windows-capable host — WIN01 scope.
+
+### macOS (M*)
+
+- M1 FIXED: searchDirs() resolves the macOS layout — ~/{Library/
+  Application Support}/{arktos,Chromium,Google/Chrome} +
+  /Library/{Application Support/arktos,Chromium,Google/Chrome};
+  userHostsDir() re-rooted at GenericDataLocation.
+- M2 FIXED: Info_mac.plist declares CFBundleURLTypes (http/https),
+  CFBundleName/DisplayName/ShortVersionString/Version/
+  InfoDictionaryVersion/NSHumanReadableCopyright, LSItemContentTypes
+  (public.html) + LSHandlerRank, and records the deliberate absence
+  of camera/mic usage strings (SEC05 hard-deny — a future media path
+  must declare BOTH first or die at SIGKILL).
+- M3 FIXED SYSTEMIC: utils/indexcheckbox.h — IndexCheckBoxDelegate
+  (the MAC11 paint-suppression lesson) + installIndexCheckBox()
+  (CheckStateRole mirrored both ways, selection-palette cue,
+  dataChanged sync) now backs EVERY CheckStateRole-bearing view:
+  extensionsTree (MAC04 refactored onto the shared helper), adblock
+  subscriptionsTree, sidebarPanelsList (reinstall walk after
+  takeItem/insertItem reorders), and the OpenSearch Suggestions
+  column (reinstall on modelReset/rowsInserted).
+- M4 FIXED: fetch-tor.sh uses shasum -a 256 when sha256sum is absent
+  and installs under ~/Library/Application Support on Darwin;
+  TorManager probes /opt/homebrew/bin and Contents/Resources/tor.
+- M5 FIXED: same as W1 — IniFormat is now global; the CFPreferences
+  failure modes listed here no longer apply.
+- M6 FIXED (recipe): BuildProcess/arktos.entitlements carries the
+  hardened-runtime keys each shipped path needs (unsigned-executable-
+  memory for the WebEngine JIT, dyld-env for the tor spawn,
+  disable-library-validation for the servo cdylib) with the
+  deliberately-absent set documented; the MAC01 sign step consumes it.
+- M7 FIXED: the Hide/Show-Menu-Bar action is never added or bound on
+  macOS (no per-window menubar exists; ⌘M is Minimize).
+- M8 GATED: nav-bar drag edit mode refuses to engage on macOS —
+  actionGeometry is meaningless under native NSToolbarItems and
+  widget-action re-add can detach embedded widgets; programmatic
+  order apply is unaffected.  On-target verify owed to MAC01.
+- M9 FIXED: src.pro loops TRANSLATIONS into QMAKE_BUNDLE_DATA under
+  Contents/Resources/share/arktos/locale + ships useragents.xml;
+  LanguageManager probes the Resources path on macOS.
+- M10 FIXED: the Qt4-era 19px bookmarks-toolbar cap and the
+  undocumented 0px spacer hack are removed — the bar sizes itself.
+- M11 FIXED: privateBadgedPixmap + its callers fetch pixmaps at the
+  paint device's devicePixelRatioF; the transparent fallback carries
+  the DPR too.
+- M12 FIXED: Show All History binds ⌘Y on macOS; fullscreen carries
+  ⌃⌘F alongside F11.

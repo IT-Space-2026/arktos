@@ -386,6 +386,11 @@ pub fn local_addrs(extra: &[Ipv4Addr]) -> Vec<Ipv4Addr> {
 pub fn bind_socket(group: Ipv4Addr, mport: u16, iface: Ipv4Addr) -> io::Result<UdpSocket> {
     let dom = socket2::Domain::IPV4;
     let sock = socket2::Socket::new(dom, socket2::Type::DGRAM, Some(socket2::Protocol::UDP))?;
+    // SO_REUSEADDR stays on Windows too (CA12/W3): EXCLUSIVEADDRUSE
+    // is the tighter knob but would also bar a legitimate coexistent
+    // system mDNS responder — 5353 port-sharing is required mDNS
+    // behavior, not a bug.  The installer-time firewall rule covers
+    // the inbound half.
     sock.set_reuse_address(true)?;
     #[cfg(unix)]
     sock.set_reuse_port(true)?;

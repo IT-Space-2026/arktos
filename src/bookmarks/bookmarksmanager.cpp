@@ -617,7 +617,9 @@ void BookmarksManager::importBookmarks()
 
     XbelReader reader;
     BookmarkNode *importRootNode = nullptr;
-    if (fileName.endsWith(QLatin1String(".html"))) {
+    // CA12/W11: case-insensitive like the :694/:856 siblings — a
+    // "BOOKMARKS.HTML" export must not misroute to the Xbel reader.
+    if (fileName.endsWith(QLatin1String(".html"), Qt::CaseInsensitive)) {
         // Convert in-process: the Netscape-HTML parser is shared with
         // tools/htmlToXBel and is internally bounded (256 KiB
         // closing-tag scan windows), so it is safe on the GUI thread.

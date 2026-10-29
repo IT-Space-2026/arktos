@@ -34,6 +34,7 @@
 #include "adblockrule.h"
 #include "adblocksubscription.h"
 #include "arktosicon.h"
+#include "indexcheckbox.h"
 #include "safetext.h"
 #include "searchlineedit.h"
 
@@ -78,9 +79,12 @@ AdBlockDialog::AdBlockDialog(QWidget *parent)
     // expanded into per-rule rows (a 60k-rule list was unusable and
     // slow, and the comment/metadata lines were never toggleable).
     // Titles and locations come from abp:subscribe urls — page-
-    // controlled — so the tree paints them literally.
+    // controlled — so the tree paints them literally.  CA12/M3: the
+    // check affordance is a real QCheckBox index widget (the MAC04
+    // painted-indicator class), so the delegate both keeps the
+    // plain-text discipline and suppresses the painted column.
     subscriptionsTree->setItemDelegate(
-        new PlainTextItemDelegate(subscriptionsTree));
+        new IndexCheckBoxDelegate(0, subscriptionsTree));
     subscriptionsTree->header()->setSectionResizeMode(
         0, QHeaderView::Stretch);
     connect(manager, &AdBlockManager::rulesChanged,
@@ -307,6 +311,12 @@ void AdBlockDialog::repopulateSubscriptions()
         item->setStatusTip(0, SafeText::escaped(tip));
         item->setData(0, Qt::UserRole, QVariant::fromValue(
             reinterpret_cast<qintptr>(subscription)));
+        // CA12/M3: the enable affordance is a real checkbox, not the
+        // style-painted indicator — toggling writes CheckStateRole,
+        // so itemChanged -> setEnabled flows unchanged.
+        installIndexCheckBox(subscriptionsTree,
+                             subscriptionsTree->indexFromItem(item, 0),
+                             item->text(0), QIcon(), item->toolTip(0));
         if (subscription == selected)
             subscriptionsTree->setCurrentItem(item);
     }

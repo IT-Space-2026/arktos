@@ -149,7 +149,14 @@ NotesModel *NotesModel::instanceFor(const QString &profileId)
                 + QLatin1Char('/') + legacyName + QLatin1String(".json");
             if (QFile::exists(legacy)) {
                 QDir().mkpath(QFileInfo(storageFile).absolutePath());
-                QFile::rename(legacy, storageFile);
+                // CA12/W4: QFile::rename refuses an existing target
+                // on every platform and can lose to a transient
+                // handle — fall back to copy+remove so the legacy
+                // store still migrates instead of being skipped.
+                if (!QFile::rename(legacy, storageFile)
+                        && !QFile::exists(storageFile)
+                        && QFile::copy(legacy, storageFile))
+                    QFile::remove(legacy);
                 break;
             }
         }
