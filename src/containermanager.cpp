@@ -494,15 +494,8 @@ static bool hostIsPublicSuffix(const QString &host)
     if (lastDot < 0)
         return true;
     const QStringView tld = QStringView(host).mid(lastDot + 1);
-    bool twoLevel = false;
-    for (int i = 0; twoLevelDomains[i]; ++i) {
-        if (!tld.compare(QLatin1String(twoLevelDomains[i]),
-                         Qt::CaseInsensitive)) {
-            twoLevel = true;
-            break;
-        }
-    }
-    return twoLevel && host.count(QLatin1Char('.')) < 2;
+    return isTwoLevelDomainLabel(tld)
+           && host.count(QLatin1Char('.')) < 2;
 }
 
 // Canonical rule key: lowercased, trailing root dot dropped, and one

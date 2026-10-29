@@ -1202,20 +1202,7 @@ int TabWidget::addWidgetTab(QWidget *page, const QString &title,
     // CONT06: widget tabs live under the default header — a
     // Preferences/History tab raised in a filtered strip switches to
     // it; a background one waits in the default level's store.
-    if (m_twoLevelStrip && !m_containerFilterAdjust
-        && !m_activeContainerHeader.isEmpty()) {
-        if (makeCurrent)
-            setActiveContainerHeader(QString());
-        else
-            detachTabIntoContainerStore(index);
-        syncContainerStrip();
-    }
-    // The filter pass reorders the strip — re-resolve the slot.
-    if (makeCurrent)
-        setCurrentIndex(indexOf(page));
-    if (count() == 1)
-        currentChanged(currentIndex());
-    emit tabsChanged();
+    finishTabInsert(index, page, makeCurrent);
     return index;
 }
 
@@ -1489,19 +1476,7 @@ EngineTab *TabWidget::addEngineTab(Engine::Backend *backend, bool makeCurrent)
     setTabToolTip(index, backend->displayName());
     // CONT06: same strip bookkeeping as addWidgetTab — engine tabs
     // live under the default header.
-    if (m_twoLevelStrip && !m_containerFilterAdjust
-        && !m_activeContainerHeader.isEmpty()) {
-        if (makeCurrent)
-            setActiveContainerHeader(QString());
-        else
-            detachTabIntoContainerStore(index);
-        syncContainerStrip();
-    }
-    if (makeCurrent)
-        setCurrentIndex(indexOf(tab));
-    if (count() == 1)
-        currentChanged(currentIndex());
-    emit tabsChanged();
+    finishTabInsert(index, tab, makeCurrent);
     return tab;
 }
 
@@ -2000,26 +1975,7 @@ void TabWidget::detachGroupMember(int index)
     if (index == currentIndex())
         setCurrentIndex(members.first());
 
-    HiddenGroupTab hidden;
-    hidden.tab = widget(index);
-    hidden.bar = m_locationBars->widget(index);
-    hidden.text = tabText(index);
-    hidden.toolTip = tabToolTip(index);
-    hidden.data = m_tabBar->tabData(index);
-    // The transient tab-button widgets (favicon label, close button)
-    // are dropped and re-created on expand through tabInserted() plus
-    // the icon refresh — detaching them first keeps removeTab() from
-    // deleting widgets we still reference.
-    const QTabBar::ButtonPosition sides[2] = { QTabBar::LeftSide,
-                                               QTabBar::RightSide };
-    for (const QTabBar::ButtonPosition side : sides) {
-        if (QWidget *button = m_tabBar->tabButton(index, side)) {
-            m_tabBar->setTabButton(index, side, nullptr);
-            button->deleteLater();
-        }
-    }
-    m_locationBars->removeWidget(hidden.bar);
-    removeTab(index);
+    HiddenGroupTab hidden = detachHiddenTab(index);
     it->hidden.append(hidden);
 }
 
@@ -2505,14 +2461,36 @@ void TabWidget::applyContainerFilter()
 // collapsed group's hidden member: the page widget and its location
 // bar are kept, the transient tab buttons are dropped (tabInserted()
 // re-creates them on the way back).
-void TabWidget::detachTabIntoContainerStore(int index)
+// CONT06's strip bookkeeping after an insert — the raised/background
+// routing under a filtered header, then the makeCurrent re-resolve.
+void TabWidget::finishTabInsert(int index, QWidget *page,
+                                bool makeCurrent)
 {
-    QWidget *page = widget(index);
-    if (!page)
-        return;
-    const QString containerId = containerIdForTab(index);
+    if (m_twoLevelStrip && !m_containerFilterAdjust
+        && !m_activeContainerHeader.isEmpty()) {
+        if (makeCurrent)
+            setActiveContainerHeader(QString());
+        else
+            detachTabIntoContainerStore(index);
+        syncContainerStrip();
+    }
+    // The filter pass reorders the strip — re-resolve the slot.
+    if (makeCurrent)
+        setCurrentIndex(indexOf(page));
+    if (count() == 1)
+        currentChanged(currentIndex());
+    emit tabsChanged();
+}
+
+// Snapshot the tab out of the strip into a HiddenGroupTab — the
+// transient tab-button widgets (favicon label, close button) are
+// dropped and re-created on reinsert through tabInserted() plus the
+// icon refresh, so detaching them first keeps removeTab() from
+// deleting widgets we still reference.
+TabWidget::HiddenGroupTab TabWidget::detachHiddenTab(int index)
+{
     HiddenGroupTab hidden;
-    hidden.tab = page;
+    hidden.tab = widget(index);
     hidden.bar = m_locationBars->widget(index);
     hidden.text = tabText(index);
     hidden.toolTip = tabToolTip(index);
@@ -2527,6 +2505,16 @@ void TabWidget::detachTabIntoContainerStore(int index)
     }
     m_locationBars->removeWidget(hidden.bar);
     removeTab(index);
+    return hidden;
+}
+
+void TabWidget::detachTabIntoContainerStore(int index)
+{
+    QWidget *page = widget(index);
+    if (!page)
+        return;
+    const QString containerId = containerIdForTab(index);
+    HiddenGroupTab hidden = detachHiddenTab(index);
     m_containerHidden[containerId].append(hidden);
 }
 
@@ -4791,52 +4779,6 @@ QUrl TabWidget::guessUrlFromStringCpp(const QString &string, bool privateContext
     return fallbackUrl();
 }
 
-#ifdef ARKTOS_RUSTCORE
-// MD08: one granular call into rustcore's sesspolicy module — the
-// same consult autosaver.cpp/browserapplication.cpp run.  The
-// profile-bound AcSession is minted per call — cheap, and a
-// mid-process settings-dialog save lands without a stale cached
-// document.  With no bridge serving the rc_* spelling runs against a
-// bound RcSettings (an empty id binds "default" like every other
-// store consumer).  An empty verdict means "run the direct
-// ProfileSettings reads" — an FFI failure can never silently change
-// the timers.
-static QJsonObject sessionPolicyCall(const QString &profileId,
-                                     const QJsonObject &request)
-{
-    AcSession *h = nullptr;
-    if (RustCoreBridge *bridge = RustCoreBridge::serving())
-        h = bridge->session(profileId);
-    RcSettings *s = nullptr;
-    if (!h) {
-        const QByteArray root = BrowserPaths::dataRoot().toUtf8();
-        const QByteArray id = profileId.isEmpty()
-            ? QByteArrayLiteral("default") : profileId.toUtf8();
-        s = rc_settings_open(root.constData(), id.constData());
-        if (!s)
-            return QJsonObject();
-    }
-    const QByteArray json =
-        QJsonDocument(request).toJson(QJsonDocument::Compact);
-    char *raw = h
-        ? ac_session_policy(h,
-                            reinterpret_cast<const uint8_t *>(json.constData()),
-                            size_t(json.size()))
-        : rc_sesspolicy_call(s,
-                             reinterpret_cast<const uint8_t *>(json.constData()),
-                             size_t(json.size()));
-    ac_session_close(h);
-    if (s)
-        rc_settings_close(s);
-    if (!raw)
-        return QJsonObject();
-    QByteArray out = QByteArray::fromRawData(raw, int(strlen(raw)));
-    out.detach();
-    rc_string_free(raw);
-    return QJsonDocument::fromJson(out).object();
-}
-#endif // ARKTOS_RUSTCORE
-
 /*
    Somewhere in the browser interface a users wants to open a url
 
@@ -4927,7 +4869,7 @@ void TabWidget::loadSettings()
     // silently change the timers).
     QJsonObject lifecycle;
 #ifdef ARKTOS_RUSTCORE
-    lifecycle = sessionPolicyCall(
+    lifecycle = rustCoreSessionPolicyCall(
         profileId(),
         QJsonObject{
             {QLatin1String("op"), QLatin1String("lifecycle")}});
@@ -5439,14 +5381,9 @@ bool TabWidget::restoreState(const QByteArray &state)
 {
     QByteArray sd = state;
     QDataStream stream(&sd, QIODevice::ReadOnly);
-    if (stream.atEnd())
-        return false;
-
-    qint32 marker;
     qint32 v;
-    stream >> marker;
-    stream >> v;
-    if (marker != TabWidgetMagic || v < 1 || v > 8)
+    if (!StreamingUtils::readStreamHeader(stream, TabWidgetMagic,
+                                          1, 8, &v))
         return false;
 
     TabSessionSnapshot snap;

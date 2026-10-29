@@ -226,15 +226,7 @@ bool LocationBar::registrableDomainRange(const QString &displayText,
         ? view.mid(hostStart, end - hostStart)
         : view.mid(lastDot + 1, end - lastDot - 1);
 
-    bool twoLevel = false;
-    for (int i = 0; twoLevelDomains[i]; ++i) {
-        if (!tld.compare(QLatin1String(twoLevelDomains[i]),
-                         Qt::CaseInsensitive)) {
-            twoLevel = true;
-            break;
-        }
-    }
-    const int needed = twoLevel ? 3 : 2;
+    const int needed = isTwoLevelDomainLabel(tld) ? 3 : 2;
 
     // Walk the dots backwards; each one delimits one more label.
     int pos = end;

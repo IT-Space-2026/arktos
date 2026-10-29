@@ -191,6 +191,17 @@ void NetworkAccessManager::loadSettings()
     settings.endGroup();
 }
 
+// The parent every auth/cert dialog centers on — the focused
+// window, falling back to the app's first registered one.
+static QWidget *dialogParentWindow()
+{
+    QWidget *mainWindow = QApplication::activeWindow();
+    if (BrowserApplication *application = BrowserApplication::instance())
+        if (!application->mainWindows().isEmpty())
+            mainWindow = application->mainWindow();
+    return mainWindow;
+}
+
 void NetworkAccessManager::authenticationRequired(QNetworkReply *reply, QAuthenticator *auth)
 {
 #ifdef NETWORKACCESSMANAGER_DEBUG
@@ -199,10 +210,7 @@ void NetworkAccessManager::authenticationRequired(QNetworkReply *reply, QAuthent
     // Parent the dialog on the application's main window when one is
     // already up; under a plain QApplication (autotests, the standalone
     // smoke harness) the active window is the best we have.
-    QWidget *mainWindow = QApplication::activeWindow();
-    if (BrowserApplication *application = BrowserApplication::instance())
-        if (!application->mainWindows().isEmpty())
-            mainWindow = application->mainWindow();
+    QWidget *mainWindow = dialogParentWindow();
 
     QDialog dialog(mainWindow);
     dialog.setWindowFlags(Qt::Sheet);
@@ -229,10 +237,7 @@ void NetworkAccessManager::proxyAuthenticationRequired(const QNetworkProxy &prox
 #ifdef NETWORKACCESSMANAGER_DEBUG
     qDebug() << __FUNCTION__;
 #endif
-    QWidget *mainWindow = QApplication::activeWindow();
-    if (BrowserApplication *application = BrowserApplication::instance())
-        if (!application->mainWindows().isEmpty())
-            mainWindow = application->mainWindow();
+    QWidget *mainWindow = dialogParentWindow();
 
     QDialog dialog(mainWindow);
     dialog.setWindowFlags(Qt::Sheet);
@@ -284,10 +289,7 @@ void NetworkAccessManager::sslErrors(QNetworkReply *reply, const QList<QSslError
 #ifdef NETWORKACCESSMANAGER_DEBUG
     qDebug() << __FUNCTION__;
 #endif
-    QWidget *mainWindow = QApplication::activeWindow();
-    if (BrowserApplication *application = BrowserApplication::instance())
-        if (!application->mainWindows().isEmpty())
-            mainWindow = application->mainWindow();
+    QWidget *mainWindow = dialogParentWindow();
 
     ProfileSettings settings;
     QList<QSslCertificate> ca_merge = QSslCertificate::fromData(settings.value(QLatin1String("CaCertificates")).toByteArray());

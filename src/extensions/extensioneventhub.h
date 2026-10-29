@@ -153,6 +153,13 @@ public:
     // originless documents.
     int domReadyProbeHits() const { return m_domReadyProbeHits; }
 
+    // CA08: (window, view) pairs of every trackable tab across the
+    // browsing windows, in tab order — the enumeration the chrome.*
+    // handlers each hand-walked to resolve a tabId or find the tab
+    // hosting a page.
+    static QList<QPair<BrowserMainWindow *, WebView *> >
+        trackableTabs();
+
     // Every top-level BrowserMainWindow — the real window set.  The
     // app's m_mainWindows registry deliberately excludes private
     // windows and is empty under qtest (windows constructed

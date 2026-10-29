@@ -5140,3 +5140,4 @@ Code audit (CA01-CA04, no code changes):
   macOS twice; QSettings file ops race cfprefsd; hardened-runtime
   constraints on spawned helpers undocumented) plus lower-severity
   toolbar/Retina/shortcut items; remediations are queued under CA12.
+- Internal cleanup: deduplicated ~30 copy-pasted helper blocks across the codebase (shared host-matching, menu-fit, badge painting, reply-envelope, match-pattern, worker-IO, list-fetch, and session-policy helpers). No behavior changes.

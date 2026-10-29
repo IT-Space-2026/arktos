@@ -543,6 +543,23 @@ void ReaderMode::collectHtml(
 #endif
 
 #ifdef ARKTOS_RUSTCORE
+// The reader bar's two theme arms — dark over #262628/#b9b4aa,
+// light over #efece4/#4a463d.
+static QString readerBarStyleSheet(bool dark)
+{
+    return QStringLiteral(
+        "#arktosReaderBar{background:%1;color:%2}"
+        "#arktosReaderBar QLabel{font:13px system-ui;opacity:.7}"
+        "#arktosReaderBar QToolButton{font:13px system-ui;color:%2;"
+        "background:transparent;border:1px solid transparent;"
+        "border-radius:4px;padding:3px 8px}"
+        "#arktosReaderBar QToolButton:hover{"
+        "background:rgba(127,127,127,.18);"
+        "border-color:rgba(127,127,127,.35)}")
+        .arg(dark ? QLatin1String("#262628") : QLatin1String("#efece4"),
+             dark ? QLatin1String("#b9b4aa") : QLatin1String("#4a463d"));
+}
+
 void ReaderMode::showOverlay(const QVariantMap &article)
 {
     closeOverlay();
@@ -564,17 +581,7 @@ void ReaderMode::showOverlay(const QVariantMap &article)
     QWidget *bar = new QWidget(overlay);
     bar->setObjectName(QLatin1String("arktosReaderBar"));
     const bool dark = startTheme == QLatin1String("dark");
-    bar->setStyleSheet(QStringLiteral(
-        "#arktosReaderBar{background:%1;color:%2}"
-        "#arktosReaderBar QLabel{font:13px system-ui;opacity:.7}"
-        "#arktosReaderBar QToolButton{font:13px system-ui;color:%2;"
-        "background:transparent;border:1px solid transparent;"
-        "border-radius:4px;padding:3px 8px}"
-        "#arktosReaderBar QToolButton:hover{"
-        "background:rgba(127,127,127,.18);"
-        "border-color:rgba(127,127,127,.35)}")
-        .arg(dark ? QLatin1String("#262628") : QLatin1String("#efece4"),
-             dark ? QLatin1String("#b9b4aa") : QLatin1String("#4a463d")));
+    bar->setStyleSheet(readerBarStyleSheet(dark));
     QHBoxLayout *barLayout = new QHBoxLayout(bar);
     barLayout->setContentsMargins(16, 6, 16, 6);
     QLabel *tag = new QLabel(tr("Reader"), bar);
@@ -633,19 +640,7 @@ void ReaderMode::showOverlay(const QVariantMap &article)
         const bool darkNext = next == QLatin1String("dark");
         themeBtn->setText(darkNext ? QStringLiteral("\u2600")
                                    : QStringLiteral("\u263E"));
-        bar->setStyleSheet(QStringLiteral(
-            "#arktosReaderBar{background:%1;color:%2}"
-            "#arktosReaderBar QLabel{font:13px system-ui;opacity:.7}"
-            "#arktosReaderBar QToolButton{font:13px system-ui;color:%2;"
-            "background:transparent;border:1px solid transparent;"
-            "border-radius:4px;padding:3px 8px}"
-            "#arktosReaderBar QToolButton:hover{"
-            "background:rgba(127,127,127,.18);"
-            "border-color:rgba(127,127,127,.35)}")
-            .arg(darkNext ? QLatin1String("#262628")
-                          : QLatin1String("#efece4"),
-                 darkNext ? QLatin1String("#b9b4aa")
-                          : QLatin1String("#4a463d")));
+        bar->setStyleSheet(readerBarStyleSheet(darkNext));
         // The surface's own document — live-apply the theme class
         // without a reload (article scroll position survives).
         readerView->page()->runJavaScript(QStringLiteral(

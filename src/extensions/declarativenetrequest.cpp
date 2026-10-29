@@ -19,6 +19,8 @@
 
 #include "declarativenetrequest.h"
 
+#include "chromecommon.h"
+
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
 #include "extensionshimbackend.h"
@@ -275,63 +277,6 @@ int capturingGroupCount(const QString &pattern)
         }
     }
     return count;
-}
-
-// ---- host-pattern coverage -----------------------------------------
-// Same Chrome match-pattern grammar the webRequest watcher applies —
-// declarativeNetRequestWithHostAccess scopes every rule lookup to
-// hosts the extension was actually granted.
-bool dnrPatternCovers(const QString &pattern, const QUrl &url)
-{
-    const QString scheme = url.scheme();
-    if (pattern == QLatin1String("<all_urls>"))
-        return scheme == QLatin1String("http")
-            || scheme == QLatin1String("https")
-            || scheme == QLatin1String("file")
-            || scheme == QLatin1String("ftp");
-    const int sep = pattern.indexOf(QLatin1String("://"));
-    if (sep < 0)
-        return false;
-    const QString pscheme = pattern.left(sep);
-    const QString rest = pattern.mid(sep + 3);
-    const int slash = rest.indexOf(QLatin1Char('/'));
-    QString phost = slash < 0 ? rest : rest.left(slash);
-    const QString ppath =
-        slash < 0 ? QStringLiteral("/*") : rest.mid(slash);
-    QString pport;
-    const int colon = phost.lastIndexOf(QLatin1Char(':'));
-    if (colon >= 0) {
-        pport = phost.mid(colon + 1);
-        phost = phost.left(colon);
-    }
-    if (pscheme == QLatin1String("*")) {
-        if (scheme != QLatin1String("http")
-                && scheme != QLatin1String("https"))
-            return false;
-    } else if (pscheme != scheme) {
-        return false;
-    }
-    if (!pport.isEmpty() && pport != QLatin1String("*")) {
-        const int defPort = scheme == QLatin1String("https") ? 443
-            : scheme == QLatin1String("http") ? 80 : -1;
-        if (url.port(defPort) != pport.toInt())
-            return false;
-    }
-    const QString host = url.host();
-    if (phost == QLatin1String("*")) {
-    } else if (phost.startsWith(QLatin1String("*."))) {
-        const QString base = phost.mid(2);
-        if (host != base && !host.endsWith(QLatin1Char('.') + base))
-            return false;
-    } else if (phost != host) {
-        return false;
-    }
-    QString path = url.path(QUrl::FullyEncoded);
-    if (url.hasQuery())
-        path += QLatin1Char('?') + url.query(QUrl::FullyEncoded);
-    const QRegularExpression re(
-        QRegularExpression::wildcardToRegularExpression(ppath));
-    return re.match(path).hasMatch();
 }
 
 bool domainMatches(const QString &host, const QSet<QString> &domains)
@@ -1482,9 +1427,9 @@ DeclarativeNetRequest::Verdict DeclarativeNetRequest::evaluate(
             if (meta.withHostAccess) {
                 bool covered = false;
                 for (const QString &p : meta.hostPatterns) {
-                    if (dnrPatternCovers(p, in.url)
+                    if (matchPatternCovers(p, in.url)
                             || (!in.firstPartyUrl.isEmpty()
-                                && dnrPatternCovers(p, in.firstPartyUrl))) {
+                                && matchPatternCovers(p, in.firstPartyUrl))) {
                         covered = true;
                         break;
                     }

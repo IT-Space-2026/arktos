@@ -18,6 +18,7 @@
  */
 
 #include "scriptcontrolmanager.h"
+#include "hostmatch.h"
 #include "profilesettings.h"
 
 #include "privacyrequestinterceptor.h"
@@ -149,14 +150,7 @@ ScriptControlManager *ScriptControlManager::instance()
 
 QString ScriptControlManager::normalizeHost(const QString &host)
 {
-    QString normalized = host.toLower();
-    while (normalized.endsWith(QLatin1Char('.')))
-        normalized.chop(1);
-    // A leading dot is meaningless in this store — the suffix match
-    // already covers "example.com or any subdomain".
-    while (normalized.startsWith(QLatin1Char('.')))
-        normalized = normalized.mid(1);
-    return normalized;
+    return HostMatch::normalize(host);
 }
 
 // CookieJar-style suffix matching: "example.com" governs
@@ -164,11 +158,7 @@ QString ScriptControlManager::normalizeHost(const QString &host)
 bool ScriptControlManager::matchesHost(const QStringList &list,
                                        const QString &host)
 {
-    for (const QString &rule : list) {
-        if (host == rule || host.endsWith(QLatin1Char('.') + rule))
-            return true;
-    }
-    return false;
+    return HostMatch::matchesRule(list, host);
 }
 
 // The length of the longest rule entry matching host, or -1 — an

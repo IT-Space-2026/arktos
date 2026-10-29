@@ -19,6 +19,8 @@
 
 #include "navigationpolicy.h"
 
+#include "hostmatch.h"
+
 #include <qatomic.h>
 #include <qelapsedtimer.h>
 #include <qhash.h>
@@ -1391,6 +1393,27 @@ static bool hasQuery(const QUrl &url)
     return url.hasQuery();
 }
 
+// The Referer header scan + policy rewrite both evaluate arms end
+// on — an absent header leaves refererSet false.
+static void applyRefererVerdict(PolicyVerdict *v,
+                                const PolicyRequest &req)
+{
+    QByteArray refHeader;
+    for (const auto &pair : req.headers) {
+        if (pair.first == "Referer") {
+            refHeader = pair.second;
+            break;
+        }
+    }
+    QByteArray refValue;
+    if (NavigationPolicy::refererForRequest(
+            QString::fromUtf8(req.url.toEncoded()), refHeader,
+            req.minRefererLevel, refValue)) {
+        v->refererSet = true;
+        v->refererValue = refValue;
+    }
+}
+
 static PolicyVerdict evaluatePrivacy(const PolicyRequest &req)
 {
     PolicyVerdict v;
@@ -1464,20 +1487,7 @@ static PolicyVerdict evaluatePrivacy(const PolicyRequest &req)
     v.action = PolicyVerdict::Action::Allow;
     // PRIV08: the clearnet signal follows the toggle.
     v.sendGpc = gpcSignal;
-    QByteArray refHeader;
-    for (const auto &pair : req.headers) {
-        if (pair.first == "Referer") {
-            refHeader = pair.second;
-            break;
-        }
-    }
-    QByteArray refValue;
-    if (NavigationPolicy::refererForRequest(QString::fromUtf8(url.toEncoded()),
-                                            refHeader, req.minRefererLevel,
-                                            refValue)) {
-        v.refererSet = true;
-        v.refererValue = refValue;
-    }
+    applyRefererVerdict(&v, req);
     return v;
 }
 
@@ -1550,20 +1560,7 @@ static PolicyVerdict evaluateTor(const PolicyRequest &req)
     // the fingerprint bit Tor Browser avoids by shipping none at all
     // (see PolicyVerdict::sendGpc).
     v.sendGpc = true;
-    QByteArray refHeader;
-    for (const auto &pair : req.headers) {
-        if (pair.first == "Referer") {
-            refHeader = pair.second;
-            break;
-        }
-    }
-    QByteArray refValue;
-    if (NavigationPolicy::refererForRequest(QString::fromUtf8(url.toEncoded()),
-                                            refHeader, req.minRefererLevel,
-                                            refValue)) {
-        v.refererSet = true;
-        v.refererValue = refValue;
-    }
+    applyRefererVerdict(&v, req);
     return v;
 }
 
@@ -1581,21 +1578,7 @@ static PolicyVerdict evaluateUncached(const PolicyRequest &request)
 
 static bool isOnDomainList(const QStringList &rules, const QString &domain)
 {
-    for (const QString &rule : rules) {
-        if (rule.startsWith(QLatin1String("."))) {
-            if (domain.endsWith(rule))
-                return true;
-            const QStringView withoutDot = QStringView(rule).right(rule.size() - 1);
-            if (domain == withoutDot)
-                return true;
-        } else {
-            if (domain.endsWith(QLatin1Char('.') + rule))
-                return true;
-            if (rule == domain)
-                return true;
-        }
-    }
-    return false;
+    return HostMatch::isOnDomainList(rules, domain);
 }
 
 bool NavigationPolicy::cookieFilter(const CookieGateInput &input)

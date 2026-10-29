@@ -33,6 +33,7 @@
 #include <qthread.h>
 
 #include <atomic>
+#include <cstring>
 
 #include <arktos_core.h>
 
@@ -380,6 +381,41 @@ void rustCoreEnsureDataDirFor(const QString &profileId)
     const QByteArray dir =
         BrowserPaths::profileDataDir(profileId).toUtf8();
     rc_set_data_dir(dir.constData());
+}
+
+QJsonObject rustCoreSessionPolicyCall(const QString &profileId,
+                                      const QJsonObject &request)
+{
+    AcSession *h = nullptr;
+    if (RustCoreBridge *bridge = RustCoreBridge::serving())
+        h = bridge->session(profileId);
+    RcSettings *s = nullptr;
+    if (!h) {
+        const QByteArray root = BrowserPaths::dataRoot().toUtf8();
+        const QByteArray id = profileId.isEmpty()
+            ? QByteArrayLiteral("default") : profileId.toUtf8();
+        s = rc_settings_open(root.constData(), id.constData());
+        if (!s)
+            return QJsonObject();
+    }
+    const QByteArray json =
+        QJsonDocument(request).toJson(QJsonDocument::Compact);
+    char *raw = h
+        ? ac_session_policy(h,
+                            reinterpret_cast<const uint8_t *>(json.constData()),
+                            size_t(json.size()))
+        : rc_sesspolicy_call(s,
+                             reinterpret_cast<const uint8_t *>(json.constData()),
+                             size_t(json.size()));
+    ac_session_close(h);
+    if (s)
+        rc_settings_close(s);
+    if (!raw)
+        return QJsonObject();
+    QByteArray out = QByteArray::fromRawData(raw, int(strlen(raw)));
+    out.detach();
+    rc_string_free(raw);
+    return QJsonDocument::fromJson(out).object();
 }
 
 // ---- RC02: RustCoreSettings ---------------------------------------

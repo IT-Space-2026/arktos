@@ -37,6 +37,7 @@
 
 #include "networkcookiejar.h"
 #include "networkcookiejar_p.h"
+#include "streamingutils.h"
 #include "twoleveldomains_p.h"
 
 //#define NETWORKCOOKIEJAR_DEBUG
@@ -176,13 +177,8 @@ bool NetworkCookieJar::restoreState(const QByteArray &state)
     int version = 1;
     QByteArray sd = state;
     QDataStream stream(&sd, QIODevice::ReadOnly);
-    if (stream.atEnd())
-        return false;
-    qint32 marker;
-    qint32 v;
-    stream >> marker;
-    stream >> v;
-    if (marker != NetworkCookieJarMagic || v != version)
+    if (!StreamingUtils::readStreamHeader(
+            stream, NetworkCookieJarMagic, version, version))
         return false;
     stream >> d->tree;
     return stream.status() == QDataStream::Ok;

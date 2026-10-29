@@ -415,7 +415,7 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | CA05 | Code audit: Windows-specific pass — path separators, case sensitivity, MSVC warnings, registry/installer assumptions, CRT redist — details below | done | 0 | windows section appended to CODE-AUDIT.md — 15 findings: 3 high/med-high (QSettings NativeFormat-registry vs fileName()-as-path + smoke isolation unrunnable; nativeMessaging discovery filesystem-only, Windows needs registry; sync LAN UDP 14431+mDNS needs firewall rule), 4 med (ProfileVault live-dir parking relies on POSIX rename semantics; reserved device names + NTFS-illegal chars in slugify/download sanitizer; no console on release GUI build for ~40 stdout smokes; file:// drive-letter edges), 8 low + honest-negative list. Read-only audit, no code changes. |
 | CA06 | Code audit: macOS-specific pass — bundle paths, Retina/DPR, unified-toolbar widget visibility (recurring class), qmacstyle metrics, Info.plist/hardened runtime — details below | done | 0 | macos section appended to CODE-AUDIT.md — 12 findings: 2 high (nativeMessaging searchDirs use Linux XDG layout on macOS; Info.plist missing CFBundleURLTypes+version keys), 1 med-high (MAC04 check-indicator class NOT closed — adblock subscriptions, sidebar panels, SEC11 suggestions column), 5 med (fetch-tor sha256sum+XDG path, QSettings CFPreferences vs file ops, hardened-runtime/DYLD/dlopen/entitlements gap, Hide-Menu-Bar+⌘M, navbar drag geometry under NSToolbar), 4 low + honest negatives incl. Ctrl→⌘ auto-mapping verified not-a-bug. Read-only audit, no code changes |
 | CA07 | Code fixes: dead code removal — apply confirmed CA01 dead-code findings — details below | done | 1 | CA01 dead-code applied: 3 dead members + #if 0 arm + 4 dead includes + 43 lambda captures + SRCS_TRANCO deleted; 3 audit false-positives kept+annotated. Also fixed pre-existing no-rust link break (unguarded RustCoreBridge in sync UI). Verified: check-warnings PASS, make 0 warnings, suite reds all pre-existing in untouched code |
-| CA08 | Code fixes: dedup refactor — consolidate confirmed CA01 duplicates — details below | pending | 0 | needs:task:CA07 — shared helpers, no behavior change, suite green |
+| CA08 | Code fixes: dedup refactor — consolidate confirmed CA01 duplicates — details below | done | 0 | CA01 dups applied: 20/20 cross-file families consolidated into shared helpers (hostmatch/menufit/chromecommon/workerio/remotelistfetch/policyrequestmarshal/sitebinding/streamingutils + rustcorebridge/browserpaths/engineinterface/streaming + hub trackableTabs + ArktosStyle badge + icon-engine base); ~12 within-file extractions incl. 13 shim ok/err lambda pairs, fanOut, EBH helpers; torcontrol/securestore confirmed config-lane, adblock pair intentional; leftover smoke-leg boilerplate deferred to CA13. make 0 warnings, --quit-after-load exit 0 |
 | CA09 | Code fixes: security remediations from CA02 — details below | pending | 0 | needs:task:CA02,CA08 — fix or file per-finding follow-ups; never silence a real gap |
 | CA10 | Code fixes: memory-leak remediations from CA03 — details below | pending | 0 | needs:task:CA03,CA08 — fix ownership/parenting; ASan legs clean |
 | CA11 | Code fixes: performance remediations from CA04 — top findings only, measured — details below | pending | 0 | needs:task:CA04,CA08 — bounded scope, before/after numbers |
@@ -5242,6 +5242,59 @@ Resumed-run verification (second attempt):
 Apply CA01's confirmed duplicate findings: consolidate each verified
 clone into the canonical helper/site. No behavior changes. Suite
 green.
+
+
+Applied cross-file (A) consolidation — all 20 families:
+- New shared homes: hostmatch.h (A3 normalize/matchesRule + A12
+  isOnDomainList), utils/menufit.h (A4a), ArktosStyle::drawCountBadge
+  (A4b + siteshield), locationbar/sitebinding_p.h (A5 unbindPageBinding/
+  liveEngineBackend/wireTrustListRefresh — also covered a 3rd copy in
+  SiteShieldButton), BrowserPaths::pathChainHasLink (A6),
+  Engine::replacePageScript (A7, worldId explicit per audit note),
+  StreamingUtils::readStreamHeader (A8), policyrequestmarshal.h (A9
+  marshal incl. script-allowed switch), extensions/chromecommon.h (A10
+  matchPatternCovers — a THIRD copy hostCovers found + folded; A13
+  okReply/errReply — a 3rd site in declarativenetrequest kept its
+  okResult/errResult names, folded), workerio.h (A11 emitLine + job
+  prologue + probes), ExtensionEventHub::trackableTabs (A20, 3 sites),
+  network/remotelistfetch.h (A15 consent/staleness + https-gate +
+  reply teardown), modeldnd_p.h (A18), containermanager+locationbar
+  isTwoLevelDomainLabel via twoleveldomains_p.h (A19),
+  siteStorageWipeScript (A16), ScaledPixmapIconEngine base (A17).
+- A1: sessionPolicyCall x3 -> rustCoreSessionPolicyCall in
+  rustcorebridge.
+- A2: profiles.json codec statics on ProfileRegistry
+  (sanitizedAvatarName/parseProfilesDocument/profilesDocument/
+  ensureDefaultEntry/upsertProfile); ProfileStore delegates
+  isValidProfileId/slugify/load/save/updateProfile; avatarPixmap
+  shares ProfileIdentity::avatarPixmapFor + silhouetteAvatar.
+- A14: applyExtensionChromePageRules shared by ExtensionChromePage +
+  HostedBackgroundPage.
+
+Within-file (B) applied: applyRefererVerdict (navigationpolicy),
+dialogParentWindow x3 (NAM), readerBarStyleSheet, detachedPrivateView
+(webview), GlyphCanvas (sidebarpanel), showRestoredCard
+(downloadmanager), drawShiftedBandTab (tabbar), finishTabInsert +
+detachHiddenTab (tabwidget), fanOutEvent for the 3 *FanOut members +
+13 ok/err lambda pairs -> shared okReply/errReply +
+emitPortDisconnects + hostShimSource (extensionbackgroundhost),
+listenOnLoopback (main.cpp smoke fixtures).
+
+Deliberately not consolidated (noted in CODE-AUDIT section C/B):
+torcontrol sendCommand/authenticateCookie pair — #if/#else config
+lanes (C-family); securestore ditto; adblocknetwork match*Unlocked —
+intentional differential impl; cookiemodel/cookieexceptionsmodel
+FontRole arm — single-expression arm, no extractable body.
+Deferred B leftovers (small, mechanical follow-ups for CA13):
+main.cpp's ~28 smoke-leg serve/poll/report skeletons (only the
+loopback-listen prologue was verbatim), extensionshimbackend's
+remaining FFI handle boilerplate groups, tabwidget's
+collapsed-group/session-page walk variants, statusbarwidgets /proc
+scan pair, bidipanel sendEval pair, opensearch manager/writer arms,
+browserapplication restore-slot pair, readersanitizer tag-table
+overlap, historycompleter FontRole arm, extensionmanager error tail.
+Verified: clean qmake6+make, 0 warnings, ./arktos --quit-after-load
+exit 0 offscreen.
 
 ### CA09
 Fix CA02's security findings by severity (high first). Where a fix is

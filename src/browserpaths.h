@@ -144,6 +144,14 @@ QString engineCacheDir(const QString &profileId);
 // a profile that already opened storage cannot be re-pointed.
 bool ensureEngineStorageLayout(QString *error = nullptr);
 
+// The lstat-not-follow rule shared by the layout migrations and the
+// profile vault's relocation sweep (CA08 — the vault carried its own
+// copy): every path component a rename writes through is checked for
+// links, so a planted junction can never route the move outside the
+// tree.  Only components strictly BELOW `root` are considered — the
+// root itself may legitimately sit behind a user-symlinked dir.
+bool pathChainHasLink(const QString &path, const QString &root);
+
 } // namespace BrowserPaths
 
 #endif // BROWSERPATHS_H

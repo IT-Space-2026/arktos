@@ -64,6 +64,7 @@
 ****************************************************************************/
 
 #include "cookiejar.h"
+#include "hostmatch.h"
 #include "profilesettings.h"
 
 #include "autosaver.h"
@@ -788,23 +789,7 @@ bool CookieJar::isOnDomainList(const QStringList &rules, const QString &domain)
 {
     // Either the rule matches the domain exactly
     // or the domain ends with ".rule"
-    for (const QString &rule : rules) {
-        if (rule.startsWith(QLatin1String("."))) {
-            if (domain.endsWith(rule))
-                return true;
-
-            QStringView withoutDot = QStringView(rule).right(rule.size() - 1);
-            if (domain == withoutDot)
-                return true;
-        } else {
-            if (domain.endsWith(QLatin1Char('.') + rule))
-                return true;
-
-            if (rule == domain)
-                return true;
-        }
-    }
-    return false;
+    return HostMatch::isOnDomainList(rules, domain);
 }
 
 CookieJar::AcceptPolicy CookieJar::acceptPolicy() const

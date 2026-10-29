@@ -19,6 +19,8 @@
 
 #include "downloadworker.h"
 
+#include "workerio.h"
+
 #include "rustdl.h"
 
 #include <qfileinfo.h>
@@ -45,7 +47,6 @@
 
 namespace {
 
-std::mutex g_outMutex;
 std::mutex g_replyMutex;
 std::condition_variable g_replyCv;
 QHash<quint64, QJsonObject> g_gateReplies;
@@ -54,14 +55,6 @@ std::atomic<bool> g_stdinEof{false};
 std::atomic<bool> g_cancelRequested{false};
 std::atomic<DlHandle> g_handle{0};
 
-void emitLine(const QJsonObject &obj)
-{
-    const QByteArray data =
-        QJsonDocument(obj).toJson(QJsonDocument::Compact) + '\n';
-    std::lock_guard<std::mutex> lock(g_outMutex);
-    std::fwrite(data.constData(), 1, size_t(data.size()), stdout);
-    std::fflush(stdout);
-}
 
 void copyOut(char *dst, size_t cap, const QByteArray &payload)
 {
@@ -113,7 +106,7 @@ int workerGate(const char *urlUtf8, const char *prevUtf8,
                                                   : ""));
     request.insert(QLatin1String("scope"),
                    QString::fromUtf8(scopeUtf8 ? scopeUtf8 : ""));
-    emitLine(request);
+    WorkerIO::emitLine(request);
 
     int action = DL_GATE_BLOCK;
     QByteArray payload;
@@ -180,33 +173,13 @@ void readerLoop()
 int downloadWorkerMain()
 {
     // The job description arrives on the first stdin line.
-    std::string jobLine;
-    if (!std::getline(std::cin, jobLine)) {
-        std::fprintf(stderr, "arktos: download worker got no job\n");
+    QJsonObject job;
+    if (!WorkerIO::readJob("download", &job))
         return 2;
-    }
-    const QJsonObject job = QJsonDocument::fromJson(
-        QByteArray::fromStdString(jobLine)).object();
-    if (job.value(QLatin1String("cmd")).toString()
-        != QLatin1String("job")) {
-        std::fprintf(stderr, "arktos: download worker got bad job\n");
-        return 2;
-    }
 
     // Diagnostic/test hook: report whether each requested path is
     // visible inside this sandbox before any work starts.
-    const QJsonArray probes =
-        job.value(QLatin1String("probe_paths")).toArray();
-    for (const QJsonValue &entry : probes) {
-        const QString path = entry.toString();
-        const QFileInfo info(path);
-        QJsonObject out;
-        out.insert(QLatin1String("ev"), QLatin1String("probe"));
-        out.insert(QLatin1String("path"), path);
-        out.insert(QLatin1String("readable"),
-                   info.exists() && info.isReadable());
-        emitLine(out);
-    }
+    WorkerIO::emitPathProbes(job);
 
     const QByteArray url =
         job.value(QLatin1String("url")).toString().toUtf8();
@@ -227,14 +200,14 @@ int downloadWorkerMain()
             .toJson(QJsonDocument::Compact);
 
     if (url.isEmpty() || destDir.isEmpty() || workDir.isEmpty()) {
-        emitLine({{QLatin1String("ev"), QLatin1String("error")},
+        WorkerIO::emitLine({{QLatin1String("ev"), QLatin1String("error")},
                   {QLatin1String("code"), int(DL_INVALID_ARGUMENT)},
                   {QLatin1String("message"),
                    QLatin1String("job missing url/dest_dir/work_dir")}});
         return 2;
     }
     if (dl_set_temp_dir(workDir.constData()) != DL_OK) {
-        emitLine({{QLatin1String("ev"), QLatin1String("error")},
+        WorkerIO::emitLine({{QLatin1String("ev"), QLatin1String("error")},
                   {QLatin1String("code"), int(DL_IO)},
                   {QLatin1String("message"),
                    QLatin1String("dl_set_temp_dir failed")}});
@@ -256,7 +229,7 @@ int downloadWorkerMain()
         cookieFile.isEmpty() ? nullptr : cookieFile.constData(),
         options.constData(), &handle);
     if (started != DL_OK || !handle) {
-        emitLine({{QLatin1String("ev"), QLatin1String("error")},
+        WorkerIO::emitLine({{QLatin1String("ev"), QLatin1String("error")},
                   {QLatin1String("code"), int(started)},
                   {QLatin1String("message"),
                    QLatin1String("dl_start failed")}});
@@ -284,7 +257,7 @@ int downloadWorkerMain()
                 out.insert(QLatin1String("ev"),
                            QLatin1String("file-name"));
                 out.insert(QLatin1String("file_name"), current);
-                emitLine(out);
+                WorkerIO::emitLine(out);
             }
         }
 
@@ -319,7 +292,7 @@ int downloadWorkerMain()
                     dl_string_free(msg);
                 }
             }
-            emitLine(out);
+            WorkerIO::emitLine(out);
             break;
         }
 
@@ -331,7 +304,7 @@ int downloadWorkerMain()
         out.insert(QLatin1String("total"),
                    double(progress.bytes_total));
         out.insert(QLatin1String("speed"), double(progress.speed_bps));
-        emitLine(out);
+        WorkerIO::emitLine(out);
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 

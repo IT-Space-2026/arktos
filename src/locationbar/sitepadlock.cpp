@@ -25,6 +25,7 @@
 #include "engineinterface.h"
 #include "engineregistry.h"
 #include "enginetab.h"
+#include "sitebinding_p.h"
 #include "sitepanel.h"
 #include "siteshield.h"
 #include "tlsverifier.h"
@@ -112,16 +113,7 @@ SitePadlockButton::SitePadlockButton(QWidget *parent)
     // host already on screen — drop the shared level cache (the panel
     // and the toolbar shield clear it on the same signals; a second
     // clear is a no-op) and repaint.
-    connect(DomainBlocklist::instance(), &DomainBlocklist::updateFinished,
-            this, [this](bool) {
-        SiteShieldButton::clearTrustCache();
-        refresh();
-    });
-    connect(TrancoList::instance(), &TrancoList::updateFinished,
-            this, [this](bool) {
-        SiteShieldButton::clearTrustCache();
-        refresh();
-    });
+    wireTrustListRefresh(this, [this] { refresh(); });
 
     // The tier colors are theme-aware — re-bake on a light<->dark
     // flip.  Queued: the signal fires mid-flip, before the palette
@@ -156,12 +148,7 @@ void SitePadlockButton::setWebView(WebView *webView)
     // is still set would skip the visibility/state update entirely.
     if (m_webView == webView && !m_engineTab)
         return;
-    if (m_engineTab) {
-        disconnect(m_engineTab, nullptr, this, nullptr);
-        m_engineTab = nullptr;
-    }
-    if (m_webView)
-        disconnect(m_webView, nullptr, this, nullptr);
+    unbindPageBinding(this, m_webView, m_engineTab);
     m_webView = webView;
     if (webView) {
         // urlChanged is the navigation commit — the state tracks the
@@ -183,23 +170,9 @@ void SitePadlockButton::setEngineTab(EngineTab *tab)
 {
     if (m_engineTab == tab && !m_webView)
         return;
-    if (m_webView) {
-        disconnect(m_webView, nullptr, this, nullptr);
-        m_webView = nullptr;
-    }
-    if (m_engineTab)
-        disconnect(m_engineTab, nullptr, this, nullptr);
+    unbindPageBinding(this, m_webView, m_engineTab);
     m_engineTab = tab;
-    // The tab's backend pointer is raw — a stack-owned backend (the
-    // autotest fakes) can die while a bound tab still stands, and
-    // refresh paths still run during tab-stack teardown.  Keep it as
-    // a QPointer so a dead backend reads as absent; the registry
-    // membership probe is a plain pointer compare, safe even if the
-    // backend is already gone.
-    Engine::Backend *backend = tab ? tab->backend() : nullptr;
-    m_engineBackend = (backend
-        && EngineRegistry::backends().contains(backend))
-        ? backend : nullptr;
+    m_engineBackend = liveEngineBackend(tab);
     if (tab) {
         // The tab re-emits the page's navigation beats — same bracket
         // the WebView signals provide on webengine tabs.

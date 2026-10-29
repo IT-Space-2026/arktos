@@ -19,6 +19,8 @@
 
 #include "trancolist.h"
 
+#include "remotelistfetch.h"
+
 #include "adblockmanager.h"
 #include "browserpaths.h"
 #include "networkaccessmanager.h"
@@ -138,11 +140,7 @@ void TrancoList::updateIfStale()
     // TELEM01: identical consent gate to the remote filter lists —
     // enabling the blocker or the first-launch prompt is the user's
     // "yes"; until then the vendored seed alone does the ranking.
-    if (!AdBlockManager::remoteListsAllowed())
-        return;
-    const QDateTime last = lastUpdate();
-    if (last.isValid()
-        && last.addDays(RefreshIntervalDays) >= QDateTime::currentDateTime())
+    if (!RemoteListFetch::updateDue(lastUpdate(), RefreshIntervalDays))
         return;
     updateNow();
 }
@@ -159,19 +157,10 @@ void TrancoList::updateNow()
     m_replyFile.clear();
     for (const Source &source : m_sources) {
         // List downloads are HTTPS — a plaintext list could be
-        // rewritten on the wire to fake rank coverage.  A loopback
-        // source is the test fixture's exception.
+        // rewritten on the wire to fake rank coverage.
         const QUrl &url = source.url;
-        const QHostAddress literal(url.host());
-        const bool loopback = literal.isLoopback()
-            || url.host().compare(QLatin1String("localhost"),
-                                  Qt::CaseInsensitive) == 0;
-        if (url.scheme() != QLatin1String("https") && !loopback) {
-            qWarning() << "TrancoList: refusing non-https source"
-                       << url;
-            continue;
-        }
-        fetch(url, source.fileName);
+        if (RemoteListFetch::sourceAllowed(url, "TrancoList"))
+            fetch(url, source.fileName);
     }
     if (m_replies.isEmpty())
         emit updateFinished(false);
@@ -196,17 +185,13 @@ void TrancoList::replyFinished()
     m_replies.removeAll(reply);
     const QString fileName = m_replyFile.take(reply);
 
-    const QByteArray body = reply->size() <= MaximumListSize
-        ? reply->readAll() : QByteArray();
-    const QUrl redirect = reply->attribute(
-        QNetworkRequest::RedirectionTargetAttribute).toUrl();
-    const QNetworkReply::NetworkError error = reply->error();
-    const QString errorString = reply->errorString();
-    reply->close();
-    reply->deleteLater();
+    const RemoteListFetch::Reply got =
+        RemoteListFetch::take(reply, MaximumListSize);
+    const QByteArray &body = got.body;
+    const QUrl &redirect = got.redirect;
 
-    if (error != QNetworkReply::NoError) {
-        qWarning() << "TrancoList: fetch failed:" << errorString;
+    if (got.failed) {
+        qWarning() << "TrancoList: fetch failed:" << got.errorString;
     } else if (redirect.isValid()) {
         // One redirect hop, same as AdBlockSubscription — must land
         // on https as well (a downgrade would strip the integrity

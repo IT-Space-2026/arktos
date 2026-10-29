@@ -495,12 +495,13 @@ static QString engineVaultHold(const QString &root, const QString &id)
     return QString();
 }
 
-// The lstat-not-follow rule shared by both layout migrations: every
-// path component a rename writes through is checked for links, so a
-// planted junction can never route the move outside the tree.  Only
-// components strictly BELOW the data root are considered — the root
-// itself may legitimately sit behind a user symlinked XDG dir.
-static bool pathChainHasLink(const QString &path, const QString &root)
+// The lstat-not-follow rule shared by both layout migrations and the
+// profile vault's relocation sweep: every path component a rename
+// writes through is checked for links, so a planted junction can
+// never route the move outside the tree.  Only components strictly
+// BELOW the data root are considered — the root itself may
+// legitimately sit behind a user symlinked XDG dir.
+bool pathChainHasLink(const QString &path, const QString &root)
 {
     QString current = path;
     while (current.startsWith(root + QLatin1Char('/'))

@@ -463,6 +463,25 @@ QColor ArktosStyle::onAccentColor(const QPalette &palette)
     return contrastTextColor(fill);
 }
 
+void ArktosStyle::drawCountBadge(QPainter *painter,
+                                 const QPalette &palette, int count)
+{
+    const QString text = count > 999
+        ? QStringLiteral("…") : QString::number(count);
+    QFont font = painter->font();
+    font.setPixelSize(8);
+    font.setBold(true);
+    painter->setFont(font);
+    const int w = qMin(15,
+        painter->fontMetrics().horizontalAdvance(text) + 4);
+    const QRect badge(16 - w, 7, w, 9);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(accentFillColor(palette));
+    painter->drawRoundedRect(badge, 2, 2);
+    painter->setPen(onAccentColor(palette));
+    painter->drawText(badge, Qt::AlignCenter, text);
+}
+
 // THEME01's dark variant moved here (THEM04) — the palette
 // BrowserTheme forces when the platform has no dark scheme.  It is
 // the classic Fusion dark set; every color is a variant definition,

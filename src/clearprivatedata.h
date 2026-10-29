@@ -82,5 +82,26 @@ private:
     QCheckBox *m_favIcons;
 };
 
+
+// CA08: the in-memory per-site storage wipe both the clear-plan
+// sweep and the site panel's per-site clear inject — one payload,
+// one home.  Wipes localStorage/sessionStorage/indexedDB/service
+// workers/cache storage, each arm isolated so a missing API or
+// blocked script cannot abort the rest.
+inline QString siteStorageWipeScript()
+{
+    return QStringLiteral(
+        "try{localStorage.clear()}catch(e){}"
+        "try{sessionStorage.clear()}catch(e){}"
+        "try{if(window.indexedDB&&indexedDB.databases)"
+        "indexedDB.databases().then(function(dbs){dbs.forEach("
+        "function(db){indexedDB.deleteDatabase(db.name)})})}catch(e){}"
+        "try{if(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations)"
+        "navigator.serviceWorker.getRegistrations().then(function(rs){"
+        "rs.forEach(function(r){r.unregister()})})}catch(e){}"
+        "try{if(window.caches&&caches.keys)"
+        "caches.keys().then(function(ns){ns.forEach(function(n){caches.delete(n)})})}catch(e){}");
+}
+
 #endif // CLEARPRIVATEDATA_H
 

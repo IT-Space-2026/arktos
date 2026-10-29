@@ -86,6 +86,16 @@ public:
     // silhouette.  A null pixmap means even the fallback failed.
     QPixmap avatarPixmap(int extent) const;
 
+    // CA08: the DPR-aware circular-crop cover-fit paint shared by
+    // every surface that renders a profile avatar (identity button,
+    // MPROF05's lane store) — `source` null or a non-positive extent
+    // yields a null pixmap.
+    static QPixmap avatarPixmapFor(const QImage &source, int extent);
+    // The bundled silhouette fallback — QImageReader first, the
+    // QIcon rasterizer second (iconengines/qsvgicon ships where
+    // imageformats/qsvg does not).
+    static QImage silhouetteAvatar();
+
     // Scales image to AvatarSize and writes the avatar PNG atomically
     // (QSaveFile's temp+rename).  Returns false on a null image or a
     // write failure; emits avatarChanged() on success.

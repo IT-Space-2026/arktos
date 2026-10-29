@@ -64,6 +64,8 @@
 
 #include "modelmenu.h"
 
+#include "modeldnd_p.h"
+
 #include "browserapplication.h"
 #include "safetext.h"
 #include "startupprofile.h"
@@ -363,23 +365,9 @@ void ModelMenu::dropEvent(QDropEvent *event)
         return;
     }
 
-    int row;
-    QAction *action = actionAt(mapFromGlobal(QCursor::pos()));
-    QModelIndex index;
-    QModelIndex parentIndex = m_root;
-    if (!action) {
-        row = m_model->rowCount(m_root);
-    } else {
-        index = this->index(action);
-        Q_ASSERT(index.isValid());
-        row = index.row();
-
-        if (m_model->hasChildren(index))
-            parentIndex = index;
-    }
-
-    event->acceptProposedAction();
-    m_model->dropMimeData(event->mimeData(), event->dropAction(), row, 0, parentIndex);
+    modelDropMimeData(event, m_model, m_root,
+                      actionAt(mapFromGlobal(QCursor::pos())),
+                      [this](QAction *action) { return index(action); });
     QMenu::dropEvent(event);
 }
 

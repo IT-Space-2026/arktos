@@ -100,24 +100,9 @@ bool dirHasContents(const QString &path)
                 .isEmpty();
 }
 
-// AUDIT04: the lstat-not-follow rule the relocation sweep applies —
-// every component strictly below `boundary` is checked so a planted
-// link cannot route a hold restore outside its own tree.  The
-// boundary itself may legitimately sit behind a user-symlinked dir.
-bool pathChainHasLink(const QString &path, const QString &boundary)
-{
-    QString current = path;
-    while (current.startsWith(boundary + QLatin1Char('/'))
-           && current != boundary) {
-        if (QFileInfo(current).isSymLink())
-            return true;
-        const QString parent = QFileInfo(current).absolutePath();
-        if (parent == current || parent.isEmpty())
-            break;
-        current = parent;
-    }
-    return false;
-}
+// AUDIT04's lstat-not-follow rule for the relocation sweep lives in
+// BrowserPaths::pathChainHasLink (CA08 — shared with the layout
+// migrations).
 #endif
 
 // Single zero overwrite + fsync, then unlink.  This is the honest
@@ -788,7 +773,7 @@ ProfileVault::Error ProfileVault::unseal(const QString &profileId,
     const QString hold = vaultPath(
         vault, QLatin1String("engine-hold/QtWebEngine"));
     const QString engineDst = dir + QLatin1String("/QtWebEngine");
-    if (pathChainHasLink(hold, vault)) {
+    if (BrowserPaths::pathChainHasLink(hold, vault)) {
         qWarning() << "ProfileVault: refusing a linked engine-hold"
                       " for profile" << id;
         if (!secureEraseTree(

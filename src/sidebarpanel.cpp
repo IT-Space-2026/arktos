@@ -950,21 +950,39 @@ QWidget *SidebarPanel::buildHistoryPage()
     return historyPage;
 }
 
+// The hand-painted chrome glyphs share one scaffold — a
+// transparent 16x16 dpr-aware pixmap, an antialiased painter and
+// the ButtonText brush the rail icons resolve.
+struct GlyphCanvas {
+    explicit GlyphCanvas(const QWidget *forPalette)
+        : pixmap(16 * (forPalette ? forPalette->devicePixelRatioF()
+                                  : 1.0),
+                 16 * (forPalette ? forPalette->devicePixelRatioF()
+                                  : 1.0)),
+          painter(&pixmap)
+    {
+        const qreal dpr =
+            forPalette ? forPalette->devicePixelRatioF() : 1.0;
+        pixmap.setDevicePixelRatio(dpr);
+        pixmap.fill(Qt::transparent);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(forPalette
+            ? forPalette->palette().color(QPalette::ButtonText)
+            : QColor(Qt::black));
+    }
+    QPixmap pixmap;
+    QPainter painter;
+};
+
 // DOWN04: no bundled set ships a pause glyph (media-playback-pause
 // isn't covered) — paint two bars in ButtonText like the rail icon so
 // the action row stays monochrome under every palette, dark included.
 static QIcon downloadPauseIcon(const QWidget *forPalette)
 {
-    const qreal dpr = forPalette ? forPalette->devicePixelRatioF() : 1.0;
-    QPixmap pixmap(16 * dpr, 16 * dpr);
-    pixmap.setDevicePixelRatio(dpr);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(forPalette
-        ? forPalette->palette().color(QPalette::ButtonText)
-        : QColor(Qt::black));
+    GlyphCanvas canvas(forPalette);
+    QPixmap &pixmap = canvas.pixmap;
+    QPainter &painter = canvas.painter;
     painter.drawRoundedRect(QRectF(4.4, 3.4, 3.0, 9.2), 1.0, 1.0);
     painter.drawRoundedRect(QRectF(9.0, 3.4, 3.0, 9.2), 1.0, 1.0);
     return QIcon(pixmap);
@@ -1237,16 +1255,9 @@ QWidget *SidebarPanel::buildDownloadsPage()
 // three-dot mark from the palette like the rail icon does.
 static QIcon notesMenuIcon(const QWidget *forPalette)
 {
-    const qreal dpr = forPalette ? forPalette->devicePixelRatioF() : 1.0;
-    QPixmap pixmap(16 * dpr, 16 * dpr);
-    pixmap.setDevicePixelRatio(dpr);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(forPalette
-        ? forPalette->palette().color(QPalette::ButtonText)
-        : QColor(Qt::black));
+    GlyphCanvas canvas(forPalette);
+    QPixmap &pixmap = canvas.pixmap;
+    QPainter &painter = canvas.painter;
     for (int i = 0; i < 3; ++i)
         painter.drawEllipse(QPointF(8, 3.5 + i * 4.5), 1.4, 1.4);
     return QIcon(pixmap);

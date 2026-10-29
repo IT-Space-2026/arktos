@@ -23,6 +23,8 @@
 
 #include <qcolor.h>
 #include <qicon.h>
+#include <qiconengine.h>
+#include <qpainter.h>
 #include <qpalette.h>
 #include <qstringlist.h>
 
@@ -170,5 +172,31 @@ QStringList names();
 QIcon iconForTheme(const QString &id, const QString &name);
 
 } // namespace ArktosIcon
+
+
+class QPainter;
+
+// CA08: the paint()/pixmap() trampolines every scaled-pixmap icon
+// engine re-declared (ChromeIconEngine, the reader button's engine).
+// Subclasses implement scaledPixmap() only.
+class ScaledPixmapIconEngine : public QIconEngine
+{
+public:
+    void paint(QPainter *painter, const QRect &rect, QIcon::Mode mode,
+               QIcon::State state) override
+    {
+        const qreal scale = painter->device()
+            ? painter->device()->devicePixelRatioF() : 1.0;
+        painter->drawPixmap(rect.topLeft(),
+                            scaledPixmap(rect.size(), mode, state,
+                                         scale));
+    }
+
+    QPixmap pixmap(const QSize &size, QIcon::Mode mode,
+                   QIcon::State state) override
+    {
+        return scaledPixmap(size, mode, state, 1.0);
+    }
+};
 
 #endif // ARKTOSICON_H

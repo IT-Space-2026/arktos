@@ -192,18 +192,24 @@ QImage ProfileIdentity::avatarSource() const
         // macOS dmgs), where QImageReader returns a null image and
         // the button falls back to painting its "Profile" text.
         if (m_source.isNull())
-            m_source = QImageReader(
-                QLatin1String(kSilhouetteResource)).read();
-        if (m_source.isNull())
-            m_source = QIcon(QLatin1String(kSilhouetteResource))
-                .pixmap(QSize(AvatarSize, AvatarSize)).toImage();
+            m_source = silhouetteAvatar();
     }
     return m_source;
 }
 
-QPixmap ProfileIdentity::avatarPixmap(int extent) const
+QImage ProfileIdentity::silhouetteAvatar()
 {
-    const QImage source = avatarSource();
+    QImage source = QImageReader(
+        QLatin1String(kSilhouetteResource)).read();
+    if (source.isNull())
+        source = QIcon(QLatin1String(kSilhouetteResource))
+            .pixmap(QSize(AvatarSize, AvatarSize)).toImage();
+    return source;
+}
+
+QPixmap ProfileIdentity::avatarPixmapFor(const QImage &source,
+                                       int extent)
+{
     if (source.isNull() || extent <= 0)
         return QPixmap();
     QGuiApplication *guiApp =
@@ -232,6 +238,11 @@ QPixmap ProfileIdentity::avatarPixmap(int extent) const
     QPixmap pixmap = QPixmap::fromImage(out);
     pixmap.setDevicePixelRatio(dpr);
     return pixmap;
+}
+
+QPixmap ProfileIdentity::avatarPixmap(int extent) const
+{
+    return avatarPixmapFor(avatarSource(), extent);
 }
 
 bool ProfileIdentity::setAvatarImage(const QImage &image)

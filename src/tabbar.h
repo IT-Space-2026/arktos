@@ -316,6 +316,7 @@ private:
     void paintResizeGrip(QPainter *painter);
     void persistStripSize();
     QRect rowLabelRect(const QRect &rowRect, int index) const;
+    void drawShiftedBandTab(QPainter &painter, QStyleOptionTab &option, int index);
     void layoutRowTabButtons();
     void hideNativeMovingTab();
     // CONT06: level-1 band helpers — header geometry and painting

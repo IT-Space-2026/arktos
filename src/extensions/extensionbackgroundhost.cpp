@@ -22,6 +22,7 @@
 #include "browserapplication.h"
 #include "browsermainwindow.h"
 #include "browserprofile.h"
+#include "chromecommon.h"
 #include "declarativenetrequest.h"
 #include "extensioncommands.h"
 #include "extensioneventhub.h"
@@ -263,46 +264,33 @@ QJsonObject ChromeBridge::invokeRelay(const QString &method,
 {
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
-    auto ok = [](const QJsonValue &v = QJsonValue()) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), true);
-        if (!v.isUndefined())
-            o.insert(QStringLiteral("result"), v);
-        return o;
-    };
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     if (method == QLatin1String("register")) {
         const QString kind =
             args.value(QStringLiteral("kind")).toString();
         if (kind.isEmpty())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         const QString contextId =
             runtime->registerRelayContext(
                 this, kind,
                 args.value(QStringLiteral("url")).toString());
-        return ok(contextId);
+        return okReply(contextId);
     }
     if (method == QLatin1String("send")) {
         const QString mid =
             args.value(QStringLiteral("mid")).toString();
         const QJsonValue msg = args.value(QStringLiteral("msg"));
         if (mid.isEmpty() || msg.isUndefined())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         const int peers = runtime->relaySend(this, mid,
                                              msg.toObject());
-        return ok(QJsonObject{{QStringLiteral("peers"), peers}});
+        return okReply(QJsonObject{{QStringLiteral("peers"), peers}});
     }
     if (method == QLatin1String("respond")) {
         const QString mid =
             args.value(QStringLiteral("mid")).toString();
         const bool routed = runtime->relayRespond(
             this, mid, args.value(QStringLiteral("response")));
-        return ok(routed);
+        return okReply(routed);
     }
     if (method == QLatin1String("portConnect")) {
         const QString chan =
@@ -310,12 +298,12 @@ QJsonObject ChromeBridge::invokeRelay(const QString &method,
         const QString portId =
             args.value(QStringLiteral("portId")).toString();
         if (chan.isEmpty() || portId.isEmpty())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         const int peers = runtime->relayPortConnect(
             this, chan, portId,
             args.value(QStringLiteral("name")).toString(),
             args.value(QStringLiteral("senderUrl")).toString());
-        return ok(QJsonObject{{QStringLiteral("peers"), peers}});
+        return okReply(QJsonObject{{QStringLiteral("peers"), peers}});
     }
     if (method == QLatin1String("portAccept")) {
         const QString chan =
@@ -323,9 +311,9 @@ QJsonObject ChromeBridge::invokeRelay(const QString &method,
         const QString portId =
             args.value(QStringLiteral("portId")).toString();
         if (chan.isEmpty() || portId.isEmpty())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         runtime->relayPortAccept(this, chan, portId);
-        return ok();
+        return okReply();
     }
     if (method == QLatin1String("portMessage")) {
         const QString chan =
@@ -333,18 +321,18 @@ QJsonObject ChromeBridge::invokeRelay(const QString &method,
         const QString portId =
             args.value(QStringLiteral("portId")).toString();
         if (chan.isEmpty() || portId.isEmpty())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         const int delivered = runtime->relayPortMessage(
             this, chan, portId, args.value(QStringLiteral("msg")));
-        return ok(delivered);
+        return okReply(delivered);
     }
     if (method == QLatin1String("portDisconnect")) {
         runtime->relayPortDisconnect(
             this, args.value(QStringLiteral("chan")).toString(),
             args.value(QStringLiteral("portId")).toString());
-        return ok();
+        return okReply();
     }
-    return err(QStringLiteral("unimplemented"));
+    return errReply(QStringLiteral("unimplemented"));
 }
 
 // ------------------------------------------------------------------
@@ -632,25 +620,12 @@ void NativeMessagingSession::fail(const QString &code, int exitCode)
 QJsonObject ChromeBridge::invokeNative(const QString &method,
                                        const QJsonObject &args)
 {
-    auto ok = [](const QJsonValue &v = QJsonValue()) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), true);
-        if (!v.isUndefined())
-            o.insert(QStringLiteral("result"), v);
-        return o;
-    };
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
     if (!runtime
             || !runtime->hasExtensionPermission(
                 m_extensionId, QStringLiteral("nativeMessaging")))
-        return err(QStringLiteral("no-permission"));
+        return errReply(QStringLiteral("no-permission"));
     const QString portId =
         args.value(QStringLiteral("portId")).toString();
     if (method == QLatin1String("connect")) {
@@ -658,11 +633,11 @@ QJsonObject ChromeBridge::invokeNative(const QString &method,
             args.value(QStringLiteral("app")).toString();
         if (app.isEmpty() || portId.isEmpty()
                 || m_nativePorts.contains(portId))
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         QString program, error;
         if (!NativeMessagingSession::resolve(app, m_extensionId,
                                              &program, &error))
-            return err(error);
+            return errReply(error);
         auto *session =
             new NativeMessagingSession(m_extensionId, app, this);
         connect(session, &NativeMessagingSession::message, this,
@@ -684,14 +659,14 @@ QJsonObject ChromeBridge::invokeNative(const QString &method,
         });
         m_nativePorts.insert(portId, session);
         session->start(program);
-        return ok();
+        return okReply();
     }
     if (method == QLatin1String("post")) {
         NativeMessagingSession *session = m_nativePorts.value(portId);
         if (!session)
-            return err(QStringLiteral("disconnected"));
+            return errReply(QStringLiteral("disconnected"));
         session->post(args.value(QStringLiteral("msg")));
-        return ok();
+        return okReply();
     }
     if (method == QLatin1String("disconnect")) {
         if (NativeMessagingSession *session =
@@ -699,9 +674,9 @@ QJsonObject ChromeBridge::invokeNative(const QString &method,
             session->stop();
             session->deleteLater();
         }
-        return ok();
+        return okReply();
     }
-    return err(QStringLiteral("unimplemented"));
+    return errReply(QStringLiteral("unimplemented"));
 }
 
 // ------------------------------------------------------------------
@@ -745,6 +720,33 @@ void resolveExtensionChromePermission(
         permission.deny();
 }
 
+void applyExtensionChromePageRules(QWebEnginePage *page,
+                                   const QString &extensionId)
+{
+    // PRIV07 bookkeeping — extensions refuse OTR loads outright, so
+    // this is a no-op today; the self-registering rule keeps every
+    // QWebEnginePage subclass covered if that ever changes.
+    BrowserProfile::trackPrivateProfilePage(page);
+    // BW13: extension chrome resolves its own permission requests.
+    QObject::connect(page, &QWebEnginePage::permissionRequested, page,
+            [extensionId](const QWebEnginePermission &permission) {
+        resolveExtensionChromePermission(extensionId, permission);
+    });
+    // BW13: Chrome wires an extension's declared clipboardRead/
+    // clipboardWrite to the renderer's AllowReadFromClipboard/
+    // AllowWriteToClipboard content-settings hooks; Qt's per-page
+    // attribute is the same switch.  Grant-holders' chrome gets it so
+    // execCommand('copy') — the offscreen-document path Bitwarden
+    // actually uses — reaches the real clipboard and a FOCUSED
+    // extension page (the popup) auto-grants navigator.clipboard.
+    // navigator.clipboard in a hidden context still hits Blink's
+    // focus gate — Chrome parity (crbug.com/1404835), never silently
+    // faked.
+    page->settings()->setAttribute(
+        QWebEngineSettings::JavascriptCanAccessClipboard,
+        extensionChromeClipboardGranted(extensionId));
+}
+
 namespace {
 
 // QUAL03: setWebChannel binds 'chromeBridge' to the PAGE, not the
@@ -767,28 +769,8 @@ public:
         , m_extensionId(extensionId)
         , m_mainUrl(mainUrl)
     {
-        // PRIV07 bookkeeping — same no-op-today rule as
-        // ExtensionChromePage (extensions refuse OTR loads).
-        BrowserProfile::trackPrivateProfilePage(this);
-        // BW13: same verdict the popup/probe pages get — clipboard
-        // is granted iff the manifest declared it; every other
-        // feature denies typed instead of hanging unanswered.
-        connect(this, &QWebEnginePage::permissionRequested, this,
-                [this](const QWebEnginePermission &permission) {
-            resolveExtensionChromePermission(m_extensionId,
-                                             permission);
-        });
-        // BW13: Chrome wires an extension's declared clipboardRead/
-        // clipboardWrite to the renderer's AllowReadFromClipboard/
-        // AllowWriteToClipboard content-settings hooks; Qt's per-page
-        // attribute is the same switch.  execCommand('copy') — the
-        // offscreen-document path Bitwarden actually uses — reaches
-        // the real clipboard for grant-holders; navigator.clipboard
-        // in a hidden context still hits Blink's focus gate (Chrome
-        // parity, crbug.com/1404835), never silently faked.
-        settings()->setAttribute(
-            QWebEngineSettings::JavascriptCanAccessClipboard,
-            extensionChromeClipboardGranted(m_extensionId));
+        // PRIV07 + BW13 wiring — shared with ExtensionChromePage.
+        applyExtensionChromePageRules(this, m_extensionId);
         // ER20: extension chrome is not web content — the profile's
         // JavascriptEnabled preference governs pages, never extension
         // contexts (Chrome parity; devtoolswindow.cpp does the same
@@ -878,6 +860,8 @@ QString jsLiteral(const QString &text)
 // MainWorld script so the shim lands before any extension code —
 // extension pages forbid eval() under MV3 CSP, which is exactly why
 // the preamble cannot be delivered by runJavaScript.
+QString hostShimSource(const QJsonObject &config, const QString &guard);
+
 QString injectionSource(const QString &extensionId,
                         const QString &extensionName,
                         const QString &extensionPath,
@@ -903,11 +887,27 @@ QString injectionSource(const QString &extensionId,
         list.append(script);
     config.insert(QStringLiteral("scripts"), list);
 
-    QString source = QStringLiteral("(function(){")
-        + QLatin1String("if(window.top!==window||location.href!==")
+    const QString guard =
+        QLatin1String("if(window.top!==window||location.href!==")
         + jsLiteral(ExtensionBackgroundHost::hostUrl(extensionId)
                         .toString())
-        + QLatin1String(")return;window.__ARKTOS_HOST_CONFIG=")
+        + QLatin1String(")return;");
+    return hostShimSource(config, guard);
+}
+
+// EXT17 — sibling-page injection: the same preamble+shim payload on
+// every other top-level document at the extension's own origin (the
+// action popup, options_ui pages, offscreen documents).  No
+// background code — cfg.kind 'page' tells exthost.js to skip the
+// script loader, and the shim registers the context with the relay
+// so runtime.sendMessage reaches the hosted background.
+// The shared shim payload tail — __ARKTOS_HOST_CONFIG plus the
+// three library scripts wrapped in the IIFE; `guard` carries the
+// caller's context check (which document may arm the shim).
+QString hostShimSource(const QJsonObject &config, const QString &guard)
+{
+    QString source = QStringLiteral("(function(){") + guard
+        + QLatin1String("window.__ARKTOS_HOST_CONFIG=")
         + QString::fromUtf8(
             QJsonDocument(config).toJson(QJsonDocument::Compact))
         + QLatin1Char(';');
@@ -919,12 +919,6 @@ QString injectionSource(const QString &extensionId,
     return source;
 }
 
-// EXT17 — sibling-page injection: the same preamble+shim payload on
-// every other top-level document at the extension's own origin (the
-// action popup, options_ui pages, offscreen documents).  No
-// background code — cfg.kind 'page' tells exthost.js to skip the
-// script loader, and the shim registers the context with the relay
-// so runtime.sendMessage reaches the hosted background.
 QString pageInjectionSource(const QString &extensionId,
                             const QString &extensionName,
                             const QString &extensionPath)
@@ -944,24 +938,16 @@ QString pageInjectionSource(const QString &extensionId,
     // The EXT12 health probe measures the REAL engine worker from a
     // bare extension-origin page — it must keep pristine native
     // chrome.* bindings, so its marker fragment skips this shim.
-    QString source = QStringLiteral("(function(){")
-        + QLatin1String("if(window.top!==window)return;"
+    const QString guard =
+        QLatin1String("if(window.top!==window)return;"
                         "var l=location;if(l.origin!==")
         + jsLiteral(origin)
         + QLatin1String("||l.href===")
         + jsLiteral(ExtensionBackgroundHost::hostUrl(extensionId)
                         .toString())
         + QLatin1String("||l.hash==='#arktos-healthprobe'"
-                        ")return;window.__ARKTOS_HOST_CONFIG=")
-        + QString::fromUtf8(
-            QJsonDocument(config).toJson(QJsonDocument::Compact))
-        + QLatin1Char(';');
-    source += resourceText(
-        QStringLiteral(":/qtwebchannel/qwebchannel.js"));
-    source += resourceText(QStringLiteral(":exthost.js"));
-    source += resourceText(QStringLiteral(":extshim.js"));
-    source += QLatin1String("})();");
-    return source;
+                        ")return;");
+    return hostShimSource(config, guard);
 }
 
 // The extension's own background code, merged into a single injected
@@ -2144,23 +2130,13 @@ QJsonArray ExtensionBackgroundRuntime::contextsJson(
         int tabId = -1, windowId = -1;
         QWebEnginePage *ctxPage = ctx.bridge->contextPage();
         if (ctxPage) {
-            for (BrowserMainWindow *window
-                 : ExtensionEventHub::browsingWindows()) {
-                if (!window || !window->tabWidget())
-                    continue;
-                TabWidget *tw = window->tabWidget();
-                for (int i = 0; i < tw->count(); ++i) {
-                    WebView *view = tw->webView(i);
-                    if (ExtensionEventHub::trackable(view)
-                            && view->page() == ctxPage) {
-                        tabId = ExtensionShimBackend::tabIdFor(view);
-                        windowId =
-                            ExtensionShimBackend::windowIdFor(window);
-                        break;
-                    }
-                }
-                if (tabId >= 0)
+            for (const auto &tab : ExtensionEventHub::trackableTabs()) {
+                if (tab.second->page() == ctxPage) {
+                    tabId = ExtensionShimBackend::tabIdFor(tab.second);
+                    windowId =
+                        ExtensionShimBackend::windowIdFor(tab.first);
                     break;
+                }
             }
         }
         entry.insert(QStringLiteral("tabId"), tabId);
@@ -2190,19 +2166,6 @@ void ExtensionBackgroundRuntime::pushContexts(
 QJsonObject ExtensionBackgroundRuntime::reloadContextPage(
         const QString &extensionId, const QString &contextId)
 {
-    auto ok = [](const QJsonValue &v = QJsonValue()) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), true);
-        if (!v.isUndefined())
-            o.insert(QStringLiteral("result"), v);
-        return o;
-    };
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     for (const RelayContext &ctx : m_relayContexts) {
         if (ctx.extensionId != extensionId
                 || ctx.contextId != contextId)
@@ -2210,11 +2173,11 @@ QJsonObject ExtensionBackgroundRuntime::reloadContextPage(
         QWebEnginePage *page = ctx.bridge
             ? ctx.bridge->contextPage() : nullptr;
         if (!page)
-            return err(QStringLiteral("no-page"));
+            return errReply(QStringLiteral("no-page"));
         page->triggerAction(QWebEnginePage::Reload);
-        return ok();
+        return okReply();
     }
-    return err(QStringLiteral("not-found"));
+    return errReply(QStringLiteral("not-found"));
 }
 
 ExtensionBackgroundHost *ExtensionBackgroundRuntime::host(
@@ -2342,13 +2305,19 @@ void ExtensionBackgroundRuntime::unregisterRelayContext(
             if (parked.isEmpty())
                 m_parkedPortMsgs.erase(pit);
         }
-        for (const PortEnd &end : std::as_const(ends)) {
-            if (end.target) {
-                emitToEnd(end.target,
-                          QStringLiteral("__arktos.portDisconnect"),
-                          QJsonObject{{QStringLiteral("portId"),
-                                       end.localPortId}});
-            }
+        emitPortDisconnects(ends);
+    }
+}
+
+void ExtensionBackgroundRuntime::emitPortDisconnects(
+        const QList<PortEnd> &ends)
+{
+    for (const PortEnd &end : std::as_const(ends)) {
+        if (end.target) {
+            emitToEnd(end.target,
+                      QStringLiteral("__arktos.portDisconnect"),
+                      QJsonObject{{QStringLiteral("portId"),
+                                   end.localPortId}});
         }
     }
 }
@@ -2655,14 +2624,7 @@ void ExtensionBackgroundRuntime::relayPortDisconnect(
         m_parkedPortMsgs.remove(chan);
         return;
     }
-    for (const PortEnd &end : std::as_const(ends)) {
-        if (end.target) {
-            emitToEnd(end.target,
-                      QStringLiteral("__arktos.portDisconnect"),
-                      QJsonObject{{QStringLiteral("portId"),
-                                   end.localPortId}});
-        }
-    }
+    emitPortDisconnects(ends);
 }
 
 // -------------------------------------------------------------------
@@ -2748,67 +2710,6 @@ QString eventGate(const QString &name)
     if (ns == QLatin1String("declarativeNetRequest"))
         return QStringLiteral("declarativeNetRequestFeedback");
     return QString();
-}
-
-// Chrome match-pattern check for the tabs/url gate — a host
-// permission covering the tab's URL unhides url/title the same way
-// the 'tabs' permission does.
-bool hostCovers(const QString &pattern, const QUrl &url)
-{
-    const QString scheme = url.scheme();
-    if (pattern == QLatin1String("<all_urls>")) {
-        return scheme == QLatin1String("http")
-            || scheme == QLatin1String("https")
-            || scheme == QLatin1String("file")
-            || scheme == QLatin1String("ftp");
-    }
-    const int sep = pattern.indexOf(QLatin1String("://"));
-    if (sep < 0)
-        return false;
-    const QString pscheme = pattern.left(sep);
-    const QString rest = pattern.mid(sep + 3);
-    const int slash = rest.indexOf(QLatin1Char('/'));
-    QString phost = slash < 0 ? rest : rest.left(slash);
-    const QString ppath =
-        slash < 0 ? QStringLiteral("/*") : rest.mid(slash);
-    // Chrome lets a pattern pin a port ('127.0.0.1:*') — split it
-    // off before the host compare.
-    QString pport;
-    const int colon = phost.lastIndexOf(QLatin1Char(':'));
-    if (colon >= 0) {
-        pport = phost.mid(colon + 1);
-        phost = phost.left(colon);
-    }
-    if (pscheme == QLatin1String("*")) {
-        // '*://' covers http + https only (Chrome semantics).
-        if (scheme != QLatin1String("http")
-                && scheme != QLatin1String("https"))
-            return false;
-    } else if (pscheme != scheme) {
-        return false;
-    }
-    if (!pport.isEmpty() && pport != QLatin1String("*")) {
-        const int defPort = scheme == QLatin1String("https") ? 443
-            : scheme == QLatin1String("http") ? 80 : -1;
-        if (url.port(defPort) != pport.toInt())
-            return false;
-    }
-    const QString host = url.host();
-    if (phost == QLatin1String("*")) {
-        // any host
-    } else if (phost.startsWith(QLatin1String("*."))) {
-        const QString base = phost.mid(2);
-        if (host != base && !host.endsWith(QLatin1Char('.') + base))
-            return false;
-    } else if (phost != host) {
-        return false;
-    }
-    QString path = url.path(QUrl::FullyEncoded);
-    if (url.hasQuery())
-        path += QLatin1Char('?') + url.query(QUrl::FullyEncoded);
-    const QRegularExpression re(
-        QRegularExpression::wildcardToRegularExpression(ppath));
-    return re.match(path).hasMatch();
 }
 
 // url-bearing fields hidden without 'tabs'/host access — Chrome
@@ -2943,7 +2844,7 @@ bool ExtensionBackgroundRuntime::seesUrls(const QString &extensionId,
         return true;
     const QUrl qurl(QString::fromUtf8(url.toUtf8()));
     for (const QString &pattern : hostPermissionsFor(extensionId)) {
-        if (hostCovers(pattern, qurl))
+        if (matchPatternCovers(pattern, qurl))
             return true;
     }
     return false;
@@ -2957,7 +2858,7 @@ bool ExtensionBackgroundRuntime::requestVisibleTo(
         const QString &extensionId, const QUrl &url) const
 {
     for (const QString &pattern : hostPermissionsFor(extensionId)) {
-        if (hostCovers(pattern, url))
+        if (matchPatternCovers(pattern, url))
             return true;
     }
     return false;
@@ -3189,7 +3090,7 @@ bool ExtensionBackgroundRuntime::agentCovers(
     // page-level channel bootstrap does not inject there (verified
     // with a world probe), so no forwarder could ever carry the call.
     for (const QString &pattern : patterns) {
-        if (hostCovers(pattern, pageUrl))
+        if (matchPatternCovers(pattern, pageUrl))
             return true;
     }
     return false;
@@ -3233,24 +3134,11 @@ QJsonObject pageErr(const QString &code)
 // sibling helpers from the anonymous namespace above.)
 QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
 {
-    auto ok = [](const QJsonValue &v = QJsonValue()) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), true);
-        if (!v.isUndefined())
-            o.insert(QStringLiteral("result"), v);
-        return o;
-    };
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     const QString mid = args.value(QStringLiteral("mid")).toString();
     const QJsonValue msg = args.value(QStringLiteral("msg"));
     if (mid.isEmpty() || msg.isUndefined()
             || !ownsRelayKey(m_extensionId, mid))
-        return err(QStringLiteral("invalid-argument"));
+        return errReply(QStringLiteral("invalid-argument"));
     // options.frameId: BW12 — a nonzero id addresses exactly one
     // subframe (frame ids are the DFS positions chrome.scripting
     // exposes).  The subframe path lives in
@@ -3262,20 +3150,20 @@ QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
     const QJsonObject opts =
         args.value(QStringLiteral("opts")).toObject();
     if (opts.contains(QStringLiteral("documentId")))
-        return err(QStringLiteral("unsupported"));
+        return errReply(QStringLiteral("unsupported"));
     const int frameId =
         opts.contains(QStringLiteral("frameId"))
             ? int(opts.value(QStringLiteral("frameId"))
                       .toDouble(-1))
             : 0;
     if (frameId < 0)
-        return err(QStringLiteral("invalid-argument"));
+        return errReply(QStringLiteral("invalid-argument"));
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
     WebView *view = ExtensionShimBackend::viewForTabId(
         int(args.value(QStringLiteral("id")).toDouble(-1)));
     if (!view || !view->page())
-        return err(QStringLiteral("not-found"));
+        return errReply(QStringLiteral("not-found"));
     // A Chrome-shaped MessageSender for an extension context: the
     // id is trusted from the bridge; url is the calling document's
     // real url minus our internal marker fragment; no .tab field.
@@ -3294,17 +3182,17 @@ QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
         return deliverTabMessageToFrame(mid, msg, sender,
                                         view->page(), frameId);
     if (!runtime->agentCovers(m_extensionId, view->page()->url()))
-        return err(QStringLiteral("no-host-access"));
+        return errReply(QStringLiteral("no-host-access"));
     ExtensionPageBridge *page =
         view->page()->findChild<ExtensionPageBridge *>();
     if (!page)
-        return err(QStringLiteral("no-receiver"));
+        return errReply(QStringLiteral("no-receiver"));
     if (!runtime->pageDeliver(page, m_extensionId, mid, msg,
                               sender, this))
         // SEC26-3: a duplicate in-flight mid or a full delivery map
         // — answered typed like every other refused relay op.
-        return err(QStringLiteral("delivery-refused"));
-    return ok(QJsonObject{{QStringLiteral("delivered"), true}});
+        return errReply(QStringLiteral("delivery-refused"));
+    return okReply(QJsonObject{{QStringLiteral("delivered"), true}});
 }
 
 // MD12 — chrome.tabs.connect: a long-lived Port between this shim
@@ -3318,18 +3206,12 @@ QJsonObject ChromeBridge::invokeTabMessage(const QJsonObject &args)
 // typed errors here surface shim-side as an immediate onDisconnect.
 QJsonObject ChromeBridge::invokeTabConnect(const QJsonObject &args)
 {
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     const QString chan = args.value(QStringLiteral("chan")).toString();
     const QString portId =
         args.value(QStringLiteral("portId")).toString();
     if (chan.isEmpty() || portId.isEmpty()
             || !ownsRelayKey(m_extensionId, chan))
-        return err(QStringLiteral("invalid-argument"));
+        return errReply(QStringLiteral("invalid-argument"));
     // connectInfo.frameId/documentId: a connect's channel rides the
     // SEC24 postMessage forwarder, which lives on the main frame
     // only — unlike sendMessage's one-shot BW12 delivery there is
@@ -3341,19 +3223,19 @@ QJsonObject ChromeBridge::invokeTabConnect(const QJsonObject &args)
          && int(opts.value(QStringLiteral("frameId"))
                     .toDouble(-1)) != 0)
             || opts.contains(QStringLiteral("documentId")))
-        return err(QStringLiteral("unsupported"));
+        return errReply(QStringLiteral("unsupported"));
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
     WebView *view = ExtensionShimBackend::viewForTabId(
         int(args.value(QStringLiteral("id")).toDouble(-1)));
     if (!view || !view->page())
-        return err(QStringLiteral("not-found"));
+        return errReply(QStringLiteral("not-found"));
     if (!runtime->agentCovers(m_extensionId, view->page()->url()))
-        return err(QStringLiteral("no-host-access"));
+        return errReply(QStringLiteral("no-host-access"));
     ExtensionPageBridge *page =
         view->page()->findChild<ExtensionPageBridge *>();
     if (!page)
-        return err(QStringLiteral("no-receiver"));
+        return errReply(QStringLiteral("no-receiver"));
     return runtime->tabPortConnect(
         this, page, chan, portId,
         args.value(QStringLiteral("name")).toString());
@@ -3578,21 +3460,8 @@ QString cssSource(bool insert, const QString &origin,
 QJsonObject ChromeBridge::invokeScripting(const QString &method,
                                           const QJsonObject &args)
 {
-    auto ok = [](const QJsonValue &v = QJsonValue()) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), true);
-        if (!v.isUndefined())
-            o.insert(QStringLiteral("result"), v);
-        return o;
-    };
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     if (!m_backend)
-        return err(QStringLiteral("backend-gone"));
+        return errReply(QStringLiteral("backend-gone"));
     // ER09: the registration ops share the namespace but none of the
     // execId machinery — synchronous registry answers.
     if (method == QLatin1String("registerContentScripts")
@@ -3604,12 +3473,12 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
     const bool cssOp =
         insertCss || method == QLatin1String("removeCSS");
     if (method != QLatin1String("executeScript") && !cssOp)
-        return err(QStringLiteral("unimplemented"));
+        return errReply(QStringLiteral("unimplemented"));
 
     const QString execId =
         args.value(QStringLiteral("execId")).toString();
     if (execId.isEmpty() || !ownsRelayKey(m_extensionId, execId))
-        return err(QStringLiteral("invalid-argument"));
+        return errReply(QStringLiteral("invalid-argument"));
 
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
@@ -3618,7 +3487,7 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
     // the absent namespace.
     if (!runtime->hasExtensionPermission(
             m_extensionId, QStringLiteral("scripting")))
-        return err(QStringLiteral("no-permission"));
+        return errReply(QStringLiteral("no-permission"));
 
     const QJsonObject target =
         args.value(QStringLiteral("target")).toObject();
@@ -3626,19 +3495,19 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
              .isEmpty())
         // Document ids are a Chrome-internal handle we never mint —
         // typed, never a silent main-frame substitution.
-        return err(QStringLiteral("unsupported"));
+        return errReply(QStringLiteral("unsupported"));
     if (!target.contains(QStringLiteral("tabId")))
-        return err(QStringLiteral("invalid-argument"));
+        return errReply(QStringLiteral("invalid-argument"));
     WebView *view = ExtensionShimBackend::viewForTabId(
         int(target.value(QStringLiteral("tabId")).toDouble(-1)));
     if (!view || !view->page())
-        return err(QStringLiteral("not-found"));
+        return errReply(QStringLiteral("not-found"));
     QWebEnginePage *page = view->page();
     // The security boundary, BEFORE any source is generated into the
     // page — the same check the page agent's per-call gate runs
     // against the committed url.
     if (!runtime->agentCovers(m_extensionId, page->url()))
-        return err(QStringLiteral("no-host-access"));
+        return errReply(QStringLiteral("no-host-access"));
 
     QList<QWebEngineFrame> frames;
     QList<QUrl> coverUrls;
@@ -3646,14 +3515,14 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
     if (mainFrame.isValid())
         collectFrames(mainFrame, page->url(), &frames, &coverUrls);
     if (frames.isEmpty())
-        return err(QStringLiteral("no-frame"));
+        return errReply(QStringLiteral("no-frame"));
 
     const bool allFrames =
         target.value(QStringLiteral("allFrames")).toBool();
     const QJsonArray frameIds =
         target.value(QStringLiteral("frameIds")).toArray();
     if (allFrames && !frameIds.isEmpty())
-        return err(QStringLiteral("invalid-argument"));
+        return errReply(QStringLiteral("invalid-argument"));
     QList<int> selected;
     if (allFrames) {
         for (int i = 0; i < frames.size(); ++i)
@@ -3662,7 +3531,7 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
         for (const QJsonValue &v : frameIds) {
             const int fid = int(v.toDouble(-1));
             if (fid < 0 || fid >= frames.size())
-                return err(QStringLiteral("not-found"));
+                return errReply(QStringLiteral("not-found"));
             if (!selected.contains(fid))
                 selected.append(fid);
         }
@@ -3682,7 +3551,7 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
         for (const int frameId : selected) {
             if (!runtime->agentCovers(
                     m_extensionId, coverUrls.at(frameId)))
-                return err(QStringLiteral("no-host-access"));
+                return errReply(QStringLiteral("no-host-access"));
         }
     }
 
@@ -3710,22 +3579,22 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
                         .toString(QStringLiteral("AUTHOR"));
         if (cssOrigin != QLatin1String("AUTHOR")
                 && cssOrigin != QLatin1String("USER"))
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         const QJsonValue cssValue =
             args.value(QStringLiteral("css"));
         if (!cssValue.isUndefined() && !cssValue.isString())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         if (cssValue.isString() && !filesArg.isEmpty())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         if (cssValue.isString()) {
             cssUnits.append(cssValue.toString());
         } else {
             if (filesArg.isEmpty())
-                return err(QStringLiteral("invalid-argument"));
+                return errReply(QStringLiteral("invalid-argument"));
             const QString error = loadBundleFiles(
                 m_extensionPath, filesArg, &cssUnits);
             if (!error.isEmpty())
-                return err(error);
+                return errReply(error);
         }
     } else {
         const QString world =
@@ -3733,20 +3602,20 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
                 .toString(QStringLiteral("ISOLATED"));
         if (world != QLatin1String("ISOLATED")
                 && world != QLatin1String("MAIN"))
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         if (world == QLatin1String("MAIN"))
             worldId = quint32(QWebEngineScript::MainWorld);
         if (!filesArg.isEmpty()) {
             if (!funcSource.isEmpty())
-                return err(QStringLiteral("invalid-argument"));
+                return errReply(QStringLiteral("invalid-argument"));
             // Bundle files only — the same path hygiene the
             // background loader applies.
             const QString error = loadBundleFiles(
                 m_extensionPath, filesArg, &fileSources);
             if (!error.isEmpty())
-                return err(error);
+                return errReply(error);
         } else if (funcSource.isEmpty()) {
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         }
     }
 
@@ -3816,7 +3685,7 @@ QJsonObject ChromeBridge::invokeScripting(const QString &method,
                                     frame, worldId, key);
             });
     }
-    return ok();
+    return okReply();
 }
 
 void ChromeBridge::finishExecFrame(const QString &execId, int slot,
@@ -3998,32 +3867,19 @@ QJsonObject ChromeBridge::deliverTabMessageToFrame(
         const QJsonObject &sender, QWebEnginePage *page,
         int frameId)
 {
-    auto ok = [](const QJsonValue &v = QJsonValue()) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), true);
-        if (!v.isUndefined())
-            o.insert(QStringLiteral("result"), v);
-        return o;
-    };
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     if (!page)
-        return err(QStringLiteral("not-found"));
+        return errReply(QStringLiteral("not-found"));
     QList<QWebEngineFrame> frames;
     QList<QUrl> coverUrls;
     const QWebEngineFrame mainFrame = page->mainFrame();
     if (mainFrame.isValid())
         collectFrames(mainFrame, page->url(), &frames, &coverUrls);
     if (frameId < 0 || frameId >= frames.size())
-        return err(QStringLiteral("not-found"));
+        return errReply(QStringLiteral("not-found"));
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
     if (!runtime->agentCovers(m_extensionId, coverUrls.at(frameId)))
-        return err(QStringLiteral("no-host-access"));
+        return errReply(QStringLiteral("no-host-access"));
     QWebEngineFrame frame = frames.at(frameId);
     // The delivery source: invoke the addressed frame's agent entry
     // point.  A frame whose world never ran the agent (no profile
@@ -4069,7 +3925,7 @@ QJsonObject ChromeBridge::deliverTabMessageToFrame(
                 envelope.value(QStringLiteral("response")),
                 hadListeners);
         });
-    return ok(QJsonObject{{QStringLiteral("delivered"), true}});
+    return okReply(QJsonObject{{QStringLiteral("delivered"), true}});
 }
 
 // -------------------------------------------------------------------
@@ -4961,33 +4817,20 @@ QJsonObject ExtensionBackgroundRuntime::updateContentScripts(
 QJsonObject ChromeBridge::invokeScriptRegistration(
         const QString &method, const QJsonObject &args)
 {
-    auto ok = [](const QJsonValue &v = QJsonValue()) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), true);
-        if (!v.isUndefined())
-            o.insert(QStringLiteral("result"), v);
-        return o;
-    };
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     if (!m_backend)
-        return err(QStringLiteral("backend-gone"));
+        return errReply(QStringLiteral("backend-gone"));
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
     // The same call-level gate executeScript carries —
     // chrome.scripting requires the declared 'scripting' permission.
     if (!runtime->hasExtensionPermission(
             m_extensionId, QStringLiteral("scripting")))
-        return err(QStringLiteral("no-permission"));
+        return errReply(QStringLiteral("no-permission"));
 
     if (method == QLatin1String("registerContentScripts")) {
         const QJsonValue value = args.value(QStringLiteral("scripts"));
         if (!value.isArray())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         return runtime->registerContentScripts(
             m_extensionId, m_extensionPath, value.toArray(),
             QStringLiteral("scripting"));
@@ -5007,38 +4850,25 @@ QJsonObject ChromeBridge::invokeScriptRegistration(
                  args.value(QStringLiteral("filter")).toObject()
                      .value(QStringLiteral("ids")).toArray())
             ids.append(v.toString());
-        return ok(runtime->registeredContentScripts(
+        return okReply(runtime->registeredContentScripts(
             m_extensionId, QStringLiteral("scripting"), ids));
     }
     if (method == QLatin1String("updateContentScripts")) {
         const QJsonValue value = args.value(QStringLiteral("scripts"));
         if (!value.isArray())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         return runtime->updateContentScripts(
             m_extensionId, m_extensionPath, value.toArray(),
             QStringLiteral("scripting"));
     }
-    return err(QStringLiteral("unimplemented"));
+    return errReply(QStringLiteral("unimplemented"));
 }
 
 QJsonObject ChromeBridge::invokeContentScripts(
         const QString &method, const QJsonObject &args)
 {
-    auto ok = [](const QJsonValue &v = QJsonValue()) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), true);
-        if (!v.isUndefined())
-            o.insert(QStringLiteral("result"), v);
-        return o;
-    };
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     if (!m_backend)
-        return err(QStringLiteral("backend-gone"));
+        return errReply(QStringLiteral("backend-gone"));
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
 
@@ -5046,7 +4876,7 @@ QJsonObject ChromeBridge::invokeContentScripts(
         const QJsonObject options =
             args.value(QStringLiteral("options")).toObject();
         if (options.isEmpty())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         // No 'scripting' permission exists for the Firefox-shape
         // surface — the per-match host-coverage check inside
         // registration is the whole gate (the MV2 model).
@@ -5061,17 +4891,17 @@ QJsonObject ChromeBridge::invokeContentScripts(
                 .value(QStringLiteral("id")).toString();
         }
         if (id.isEmpty())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         return runtime->unregisterContentScripts(
             m_extensionId, QStringList{id},
             QStringLiteral("contentScripts"));
     }
     if (method == QLatin1String("getScripts")) {
-        return ok(runtime->registeredContentScripts(
+        return okReply(runtime->registeredContentScripts(
             m_extensionId, QStringLiteral("contentScripts"),
             QStringList()));
     }
-    return err(QStringLiteral("unimplemented"));
+    return errReply(QStringLiteral("unimplemented"));
 }
 
 // MD32 — chrome.userScripts: the MV3 user-script front of the ER09
@@ -5087,31 +4917,18 @@ QJsonObject ChromeBridge::invokeContentScripts(
 QJsonObject ChromeBridge::invokeUserScripts(const QString &method,
                                             const QJsonObject &args)
 {
-    auto ok = [](const QJsonValue &v = QJsonValue()) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), true);
-        if (!v.isUndefined())
-            o.insert(QStringLiteral("result"), v);
-        return o;
-    };
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     if (!m_backend)
-        return err(QStringLiteral("backend-gone"));
+        return errReply(QStringLiteral("backend-gone"));
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
     if (!runtime->hasExtensionPermission(
             m_extensionId, QStringLiteral("userScripts")))
-        return err(QStringLiteral("no-permission"));
+        return errReply(QStringLiteral("no-permission"));
 
     if (method == QLatin1String("register")) {
         const QJsonValue value = args.value(QStringLiteral("scripts"));
         if (!value.isArray())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         return runtime->registerContentScripts(
             m_extensionId, m_extensionPath, value.toArray(),
             QStringLiteral("userScripts"));
@@ -5131,13 +4948,13 @@ QJsonObject ChromeBridge::invokeUserScripts(const QString &method,
                  args.value(QStringLiteral("filter")).toObject()
                      .value(QStringLiteral("ids")).toArray())
             ids.append(v.toString());
-        return ok(runtime->registeredContentScripts(
+        return okReply(runtime->registeredContentScripts(
             m_extensionId, QStringLiteral("userScripts"), ids));
     }
     if (method == QLatin1String("update")) {
         const QJsonValue value = args.value(QStringLiteral("scripts"));
         if (!value.isArray())
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         return runtime->updateContentScripts(
             m_extensionId, m_extensionPath, value.toArray(),
             QStringLiteral("userScripts"));
@@ -5149,12 +4966,12 @@ QJsonObject ChromeBridge::invokeUserScripts(const QString &method,
             m_extensionId, properties);
     }
     if (method == QLatin1String("getWorldConfigurations"))
-        return ok(runtime->userScriptWorldConfigurations(
+        return okReply(runtime->userScriptWorldConfigurations(
             m_extensionId));
     if (method == QLatin1String("resetWorldConfiguration"))
         return runtime->resetUserScriptWorld(
             m_extensionId, args.value(QStringLiteral("worldId")));
-    return err(QStringLiteral("unimplemented"));
+    return errReply(QStringLiteral("unimplemented"));
 }
 
 QJsonObject ExtensionBackgroundRuntime::configureUserScriptWorld(
@@ -5241,22 +5058,16 @@ QJsonObject ExtensionBackgroundRuntime::resetUserScriptWorld(
 QJsonObject ChromeBridge::invokeWebRequest(const QString &method,
                                            const QJsonObject &args)
 {
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
     if (!runtime->hasExtensionPermission(
             m_extensionId, QStringLiteral("webRequest")))
-        return err(QStringLiteral("no-webRequest-permission"));
+        return errReply(QStringLiteral("no-webRequest-permission"));
     ExtensionRequestWatcher *watcher =
         ExtensionRequestWatcher::instance();
     const QString regId = args.value(QLatin1String("regId")).toString();
     if (!ownsRelayKey(m_extensionId, regId))
-        return err(QStringLiteral("invalid-argument"));
+        return errReply(QStringLiteral("invalid-argument"));
     if (method == QLatin1String("subscribe")) {
         return watcher->subscribe(
             this, m_extensionId, regId,
@@ -5266,7 +5077,7 @@ QJsonObject ChromeBridge::invokeWebRequest(const QString &method,
     }
     if (method == QLatin1String("unsubscribe"))
         return watcher->unsubscribe(m_extensionId, regId);
-    return err(QStringLiteral("unimplemented"));
+    return errReply(QStringLiteral("unimplemented"));
 }
 
 QJsonObject ExtensionBackgroundRuntime::pageSend(
@@ -5734,21 +5545,8 @@ const QSet<QString> &offscreenReasons()
 QJsonObject ChromeBridge::invokeOffscreen(const QString &method,
                                           const QJsonObject &args)
 {
-    auto ok = [](const QJsonValue &v = QJsonValue()) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), true);
-        if (!v.isUndefined())
-            o.insert(QStringLiteral("result"), v);
-        return o;
-    };
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     if (!m_backend)
-        return err(QStringLiteral("backend-gone"));
+        return errReply(QStringLiteral("backend-gone"));
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
     // Chrome exposes chrome.offscreen only to extensions declaring
@@ -5756,18 +5554,18 @@ QJsonObject ChromeBridge::invokeOffscreen(const QString &method,
     // the absent namespace, same as chrome.scripting's.
     if (!runtime->hasExtensionPermission(
             m_extensionId, QStringLiteral("offscreen")))
-        return err(QStringLiteral("no-permission"));
+        return errReply(QStringLiteral("no-permission"));
     if (method == QLatin1String("hasDocument"))
-        return ok(runtime->offscreenHasDocument(m_extensionId));
+        return okReply(runtime->offscreenHasDocument(m_extensionId));
     if (method == QLatin1String("closeDocument"))
         return runtime->offscreenClose(m_extensionId);
     if (method != QLatin1String("createDocument"))
-        return err(QStringLiteral("unimplemented"));
+        return errReply(QStringLiteral("unimplemented"));
 
     const QString docId = args.value(QStringLiteral("docId"))
         .toString();
     if (docId.isEmpty() || !ownsRelayKey(m_extensionId, docId))
-        return err(QStringLiteral("invalid-argument"));
+        return errReply(QStringLiteral("invalid-argument"));
 
     // Chrome resolves parameters.url against the extension's origin
     // and requires the document to be inside it — only a bundle-
@@ -5784,13 +5582,13 @@ QJsonObject ChromeBridge::invokeOffscreen(const QString &method,
             || rel.contains(QLatin1Char(':'))
             || rel.split(QLatin1Char('/')).contains(
                 QStringLiteral("..")))
-        return err(QStringLiteral("bad-path"));
+        return errReply(QStringLiteral("bad-path"));
     const QString filePath = rel.section(QLatin1Char('?'), 0, 0)
         .section(QLatin1Char('#'), 0, 0);
     const QFileInfo fileInfo(
         QDir(m_extensionPath).absoluteFilePath(filePath));
     if (!fileInfo.isFile() || fileInfo.size() > 8 * 1024 * 1024)
-        return err(QStringLiteral("no-such-file"));
+        return errReply(QStringLiteral("no-such-file"));
 
     const QJsonArray reasonValues =
         args.value(QStringLiteral("reasons")).toArray();
@@ -5798,12 +5596,12 @@ QJsonObject ChromeBridge::invokeOffscreen(const QString &method,
     for (const QJsonValue &v : reasonValues) {
         const QString reason = v.toString();
         if (!offscreenReasons().contains(reason))
-            return err(QStringLiteral("invalid-argument"));
+            return errReply(QStringLiteral("invalid-argument"));
         if (!reasons.contains(reason))
             reasons.append(reason);
     }
     if (reasons.isEmpty())
-        return err(QStringLiteral("invalid-argument"));
+        return errReply(QStringLiteral("invalid-argument"));
     const QString justification =
         args.value(QStringLiteral("justification")).toString();
 
@@ -5816,30 +5614,17 @@ QJsonObject ExtensionBackgroundRuntime::offscreenCreate(
         ChromeBridge *caller, const QString &docId, const QString &url,
         const QStringList &reasons, const QString &justification)
 {
-    auto ok = [](const QJsonValue &v = QJsonValue()) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), true);
-        if (!v.isUndefined())
-            o.insert(QStringLiteral("result"), v);
-        return o;
-    };
-    auto err = [](const QString &code) {
-        QJsonObject o;
-        o.insert(QStringLiteral("ok"), false);
-        o.insert(QStringLiteral("error"), code);
-        return o;
-    };
     if (!caller || docId.isEmpty())
-        return err(QStringLiteral("invalid-argument"));
+        return errReply(QStringLiteral("invalid-argument"));
     const QString extId = caller->extensionId();
     ExtensionBackgroundHost *host = m_hosts.value(extId);
     if (!host || !host->page() || !host->page()->profile())
-        return err(QStringLiteral("not-hosted"));
+        return errReply(QStringLiteral("not-hosted"));
     QWebEngineProfile *profile = host->page()->profile();
     if (m_offscreenDocs.contains(extId))
         // Chrome's rule — the shim maps this code onto the verbatim
         // message Bitwarden compares against.
-        return err(QStringLiteral("single-document"));
+        return errReply(QStringLiteral("single-document"));
 
     // The second-class host page: hidden, navigation-locked to the
     // declared url, channel + shared-backend bridge attached BEFORE
@@ -5850,7 +5635,7 @@ QJsonObject ExtensionBackgroundRuntime::offscreenCreate(
     view->setPage(page);
     if (!attachExtensionPage(page, extId)) {
         delete view;
-        return err(QStringLiteral("attach-failed"));
+        return errReply(QStringLiteral("attach-failed"));
     }
 
     OffscreenDoc doc;
@@ -5900,7 +5685,7 @@ QJsonObject ExtensionBackgroundRuntime::offscreenCreate(
     nudge->start();
     page->setLifecycleState(QWebEnginePage::LifecycleState::Active);
     page->load(QUrl(url));
-    return ok();
+    return okReply();
 }
 
 QJsonObject ExtensionBackgroundRuntime::offscreenClose(

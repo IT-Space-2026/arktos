@@ -19,6 +19,7 @@
 
 #include "torcircuitbutton.h"
 
+#include "menufit.h"
 #include "torcircuitpanel.h"
 
 #include <qaction.h>
@@ -545,13 +546,7 @@ void TorCircuitButton::applyPanelContent()
 // the "creeping" relayout TOR13 removed.
 void TorCircuitButton::growMenuToFit()
 {
-    if (!m_menu->isVisible())
-        return;
-    const QSize chrome = m_menu->size() - m_panel->size();
-    const QSize grow = (m_panel->sizeHint() + chrome)
-        .expandedTo(m_menu->size());
-    if (grow != m_menu->size())
-        m_menu->resize(grow);
+    ::growMenuToFit(m_menu, m_panel);
 }
 
 void TorCircuitButton::populateMenu()

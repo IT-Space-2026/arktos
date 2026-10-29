@@ -413,6 +413,8 @@ private:
     // manifest snapshot); a bare backend with no registered context
     // (tests, mid-respawn) still sees the event on pushEvent — the
     // same fallback the notification center applies.
+    void fanOutEvent(const QString &name,
+                     const QJsonArray &eventArgs);
     void managementFanOut(const QString &name,
                           const QJsonArray &eventArgs);
     // MD21: chrome.bookmarks over the RC05 store — same fan-out

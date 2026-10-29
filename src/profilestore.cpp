@@ -90,53 +90,17 @@ bool ProfileStore::isValidProfileId(const QString &id)
     // Filesystem slug: lowercase letters/digits with '-'/'_'
     // separators — the id becomes a profiles/<id>/ path segment, so
     // '.', '/', '..' and friends are refused outright rather than
-    // sanitized.
-    if (id.isEmpty() || id.size() > 64)
-        return false;
-    for (const QChar c : id) {
-        const ushort u = c.unicode();
-        const bool ok = (u >= 'a' && u <= 'z') || (u >= '0' && u <= '9')
-                        || c == QLatin1Char('-') || c == QLatin1Char('_');
-        if (!ok)
-            return false;
-    }
-    return true;
+    // sanitized.  CA08: the check lives on ProfileRegistry — the two
+    // registries share the profiles.json codec.
+    return ProfileRegistry::isValidProfileId(id);
 }
 
-// VSEC01: the registry's avatar field is a FILENAME joined under
-// profiles/<id>/ — a value carrying separators or dot segments would
-// turn avatar reads, the PNG write and the remove into path
-// traversal.  Only a plain basename survives.
-static QString sanitizedAvatarName(const QString &name)
-{
-    if (name.isEmpty() || name.size() > 255
-        || name.contains(QLatin1Char('/'))
-        || name.contains(QLatin1Char('\\'))
-        || name == QLatin1String(".")
-        || name == QLatin1String(".."))
-        return QString();
-    return name;
-}
+// VSEC01's avatar-basename rule lives on ProfileRegistry —
+// sanitizedAvatarName (CA08, shared with the lane's codec).
 
 QString ProfileStore::slugify(const QString &displayName)
 {
-    QString slug;
-    bool lastWasDash = false;
-    for (const QChar c : displayName.toLower()) {
-        if ((c >= QLatin1Char('a') && c <= QLatin1Char('z'))
-            || (c >= QLatin1Char('0') && c <= QLatin1Char('9'))) {
-            slug.append(c);
-            lastWasDash = false;
-        } else if (!slug.isEmpty() && !lastWasDash) {
-            slug.append(QLatin1Char('-'));
-            lastWasDash = true;
-        }
-    }
-    while (slug.endsWith(QLatin1Char('-')))
-        slug.chop(1);
-    if (slug.isEmpty())
-        slug = QStringLiteral("profile");
-    return slug.left(64);
+    return ProfileRegistry::slugify(displayName);
 }
 
 QString ProfileStore::dataRoot()
@@ -193,46 +157,22 @@ void ProfileStore::load()
     m_profiles.clear();
     const bool hadFile = QFile::exists(m_filePath);
     QFile file(m_filePath);
-    if (file.open(QIODevice::ReadOnly)) {
-        const QJsonObject root = QJsonDocument::fromJson(file.readAll())
-            .object();
-        const QJsonArray entries = root.value(QLatin1String("profiles"))
-            .toArray();
-        for (const QJsonValue &value : entries) {
-            const QJsonObject entry = value.toObject();
-            ProfileContext context;
-            context.id = entry.value(QLatin1String("id")).toString();
-            context.name = entry.value(QLatin1String("name")).toString();
-            context.avatar = sanitizedAvatarName(
-                entry.value(QLatin1String("avatar")).toString());
-            context.createdAt = QDateTime::fromString(
-                entry.value(QLatin1String("createdAt")).toString(),
-                Qt::ISODate);
-            if (isValidProfileId(context.id))
-                m_profiles.append(context);
-        }
-    }
+    if (file.open(QIODevice::ReadOnly))
+        m_profiles = ProfileRegistry::parseProfilesDocument(
+            file.readAll());
 
     // The registry always describes at least the default profile.
     // Its display name seeds from the PROF01-era QSettings key when
     // the entry is first synthesized — afterwards syncIdentityName
     // keeps the two honest while this lane's identity still lives in
     // QSettings.
-    if (profile(defaultProfileId()).isValid())
-        return;
-    ProfileContext fallback;
-    fallback.id = defaultProfileId();
-    fallback.name = QSettings()
-        .value(QLatin1String("profile/name")).toString();
-    if (fallback.name.isEmpty())
-        fallback.name = tr("Profile");
-    fallback.avatar = QLatin1String(kAvatarFileName);
-    fallback.createdAt = QDateTime::currentDateTime();
-    m_profiles.append(fallback);
+    bool created = false;
+    ProfileRegistry::ensureDefaultEntry(&m_profiles, tr("Profile"),
+                                        &created);
     // A fresh install materializes the registry on first read; a
     // corrupt file is kept on disk untouched — the next write
     // rewrites it cleanly.
-    if (!hadFile)
+    if (created && !hadFile)
         save();
 }
 
@@ -252,24 +192,17 @@ ProfileContext ProfileStore::profile(const QString &id) const
 
 bool ProfileStore::updateProfile(const ProfileContext &context)
 {
-    if (!isValidProfileId(context.id))
+    switch (ProfileRegistry::upsertProfile(&m_profiles, context)) {
+    case ProfileRegistry::Upsert::Replaced:
+        if (!save())
+            return false;
+        emit profileChanged(context.id);
+        return true;
+    case ProfileRegistry::Upsert::NoChange:
+        return true;
+    default:
         return false;
-    // A traversal-shaped avatar must never reach the file even when a
-    // caller hands updateProfile one directly.
-    ProfileContext clean = context;
-    clean.avatar = sanitizedAvatarName(clean.avatar);
-    for (int i = 0; i < m_profiles.size(); ++i) {
-        if (m_profiles.at(i).id == clean.id) {
-            if (m_profiles.at(i) == clean)
-                return true;
-            m_profiles[i] = clean;
-            if (!save())
-                return false;
-            emit profileChanged(context.id);
-            return true;
-        }
     }
-    return false;
 }
 
 ProfileContext ProfileStore::createProfile(const QString &displayName)
@@ -468,41 +401,10 @@ QPixmap ProfileStore::avatarPixmap(const ProfileContext &context,
         }
     }
     // An unreadable/corrupt avatar falls back to the silhouette rather
-    // than painting nothing.  Same QIcon rasterizer fallback as
-    // ProfileIdentity: iconengines/qsvgicon ships in bundles that lack
-    // the imageformats/qsvg decoder QImageReader needs.
+    // than painting nothing (ProfileIdentity's two-step rasterizer).
     if (source.isNull())
-        source = QImageReader(QLatin1String(kSilhouetteResource)).read();
-    if (source.isNull())
-        source = QIcon(QLatin1String(kSilhouetteResource))
-            .pixmap(QSize(ProfileIdentity::AvatarSize,
-                          ProfileIdentity::AvatarSize)).toImage();
-    if (source.isNull() || extent <= 0)
-        return QPixmap();
-
-    QGuiApplication *guiApp =
-        qobject_cast<QGuiApplication *>(QCoreApplication::instance());
-    const qreal dpr = guiApp ? guiApp->devicePixelRatio() : 1.0;
-    const int side = qMax(1, qRound(extent * dpr));
-    QImage out(side, side, QImage::Format_ARGB32_Premultiplied);
-    out.fill(Qt::transparent);
-    QPainter painter(&out);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    QPainterPath clip;
-    clip.addEllipse(QRectF(0, 0, side, side));
-    painter.setClipPath(clip);
-    const QSize scaled = source.size().scaled(
-        side, side, Qt::KeepAspectRatioByExpanding);
-    painter.drawImage(
-        QRect((side - scaled.width()) / 2,
-              (side - scaled.height()) / 2,
-              scaled.width(), scaled.height()),
-        source);
-    painter.end();
-    QPixmap pixmap = QPixmap::fromImage(out);
-    pixmap.setDevicePixelRatio(dpr);
-    return pixmap;
+        source = ProfileIdentity::silhouetteAvatar();
+    return ProfileIdentity::avatarPixmapFor(source, extent);
 }
 
 QString ProfileStore::filePath() const
@@ -512,24 +414,10 @@ QString ProfileStore::filePath() const
 
 bool ProfileStore::save()
 {
-    QJsonArray entries;
-    for (const ProfileContext &context : m_profiles) {
-        QJsonObject entry;
-        entry.insert(QLatin1String("id"), context.id);
-        entry.insert(QLatin1String("name"), context.name);
-        entry.insert(QLatin1String("avatar"), context.avatar);
-        entry.insert(QLatin1String("createdAt"),
-                     context.createdAt.toString(Qt::ISODate));
-        entries.append(entry);
-    }
-    QJsonObject root;
-    root.insert(QLatin1String("version"), 1);
-    root.insert(QLatin1String("profiles"), entries);
-
     QSaveFile file(m_filePath);
     if (!file.open(QIODevice::WriteOnly))
         return false;
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    file.write(ProfileRegistry::profilesDocument(m_profiles));
     return file.commit();
 }
 

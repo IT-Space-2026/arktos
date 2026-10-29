@@ -658,6 +658,7 @@ private:
     void applyContainerFilter();
     void syncContainerStrip();
     void detachTabIntoContainerStore(int index);
+    void finishTabInsert(int index, QWidget *page, bool makeCurrent);
     void restoreHiddenContainerTabs(const QString &containerId);
     void closeHiddenTab(WebView *view);
     void closeHiddenPage(QWidget *page);
@@ -706,6 +707,7 @@ private:
         QString toolTip;
         QVariant data;
     };
+    HiddenGroupTab detachHiddenTab(int index);
     struct TabGroup {
         QString id;
         QString name;

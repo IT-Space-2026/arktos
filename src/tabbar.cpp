@@ -2124,6 +2124,27 @@ QRect TabBar::rowLabelRect(const QRect &rowRect, int index) const
     return rect;
 }
 
+// TABS17: the band rows draw centered text on the shifted label
+// rect — the painter is translated rather than the option re-asked
+// (some styles re-query tabRect), so every style's centered text
+// lands centered on the band.
+void TabBar::drawShiftedBandTab(QPainter &painter,
+                                QStyleOptionTab &option, int index)
+{
+    const int labelShift =
+        rowLabelRect(option.rect, index).center().y()
+        - option.rect.center().y();
+    style()->drawControl(QStyle::CE_TabBarTabShape, &option,
+                         &painter, this);
+    painter.save();
+    if (labelShift)
+        painter.translate(0, labelShift);
+    style()->drawControl(QStyle::CE_TabBarTabLabel, &option,
+                         &painter, this);
+    painter.restore();
+    painter.setClipping(false);
+}
+
 // CONT02: after the style paints the tab, container tabs get their
 // accent — a strip on the tab's outer edge (top for a horizontal bar,
 // the free side for a vertical one) plus a name chip just inside it.
@@ -2207,18 +2228,7 @@ void TabBar::paintEvent(QPaintEvent *event)
             // then lands centered on the band.  The clip was set in
             // device space above, so the shifted draw still cannot
             // leave the row.
-            const int labelShift =
-                rowLabelRect(option.rect, index).center().y()
-                - option.rect.center().y();
-            style()->drawControl(QStyle::CE_TabBarTabShape, &option,
-                                 &painter, this);
-            painter.save();
-            if (labelShift)
-                painter.translate(0, labelShift);
-            style()->drawControl(QStyle::CE_TabBarTabLabel, &option,
-                                 &painter, this);
-            painter.restore();
-            painter.setClipping(false);
+            drawShiftedBandTab(painter, option, index);
         }
         // The tab under a move drag floats with the cursor; Qt's own
         // moving-tab pixmap (painted rotated) is hidden.
@@ -2249,18 +2259,7 @@ void TabBar::paintEvent(QPaintEvent *event)
             painter.setClipRect(option.rect);
             // TABS17: same painter-shifted band label as the docked
             // rows above.
-            const int labelShift =
-                rowLabelRect(option.rect, m_pressedTabIndex)
-                    .center().y() - option.rect.center().y();
-            style()->drawControl(QStyle::CE_TabBarTabShape, &option,
-                                 &painter, this);
-            painter.save();
-            if (labelShift)
-                painter.translate(0, labelShift);
-            style()->drawControl(QStyle::CE_TabBarTabLabel, &option,
-                                 &painter, this);
-            painter.restore();
-            painter.setClipping(false);
+            drawShiftedBandTab(painter, option, m_pressedTabIndex);
         }
     } else if (band > 0) {
         // CONT06: horizontal shapes hand-paint each tab under the

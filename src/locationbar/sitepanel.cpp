@@ -24,6 +24,7 @@
 #include "adblockrequestinterceptor.h"
 #include "browserapplication.h"
 #include "browserprofile.h"
+#include "clearprivatedata.h"
 #include "cookiejar.h"
 #include "domainblocklist.h"
 #include "engineinterface.h"
@@ -33,6 +34,7 @@
 #include "popupblocker.h"
 #include "privacyrequestinterceptor.h"
 #include "scriptcontrolmanager.h"
+#include "sitebinding_p.h"
 #include "siteshield.h"
 #include "tlsverifier.h"
 #include "trancolist.h"
@@ -143,16 +145,7 @@ SitePanel::SitePanel(QWidget *parent)
     // cache on the same signals but slot order across objects is not
     // guaranteed, so the panel clears it too and repaints; an open
     // popup picks the new color up immediately.
-    connect(DomainBlocklist::instance(), &DomainBlocklist::updateFinished,
-            this, [this](bool) {
-        SiteShieldButton::clearTrustCache();
-        refresh();
-    });
-    connect(TrancoList::instance(), &TrancoList::updateFinished,
-            this, [this](bool) {
-        SiteShieldButton::clearTrustCache();
-        refresh();
-    });
+    wireTrustListRefresh(this, [this] { refresh(); });
 
     QFrame *line = new QFrame(this);
     line->setFrameShape(QFrame::HLine);
@@ -332,12 +325,7 @@ void SitePanel::setWebView(WebView *webView)
     // is still set would keep stale connections alive.
     if (m_webView == webView && !m_engineTab)
         return;
-    if (m_engineTab) {
-        disconnect(m_engineTab, nullptr, this, nullptr);
-        m_engineTab = nullptr;
-    }
-    if (m_webView)
-        disconnect(m_webView, nullptr, this, nullptr);
+    unbindPageBinding(this, m_webView, m_engineTab);
     m_webView = webView;
     if (webView) {
         // A new load (or a same-tab navigation to another host) starts
@@ -366,23 +354,9 @@ void SitePanel::setEngineTab(EngineTab *tab)
 {
     if (m_engineTab == tab && !m_webView)
         return;
-    if (m_webView) {
-        disconnect(m_webView, nullptr, this, nullptr);
-        m_webView = nullptr;
-    }
-    if (m_engineTab)
-        disconnect(m_engineTab, nullptr, this, nullptr);
+    unbindPageBinding(this, m_webView, m_engineTab);
     m_engineTab = tab;
-    // The tab's backend pointer is raw — a stack-owned backend (the
-    // autotest fakes) can die while a bound tab still stands, and
-    // refresh paths still run during tab-stack teardown.  Keep it as
-    // a QPointer so a dead backend reads as absent; the registry
-    // membership probe is a plain pointer compare, safe even if the
-    // backend is already gone.
-    Engine::Backend *backend = tab ? tab->backend() : nullptr;
-    m_engineBackend = (backend
-        && EngineRegistry::backends().contains(backend))
-        ? backend : nullptr;
+    m_engineBackend = liveEngineBackend(tab);
     if (tab) {
         // The tab re-emits the page's own beats — the same baseline/
         // refresh rhythm the WebView signals drive.
@@ -1148,17 +1122,8 @@ void SitePanel::clearSiteData()
     // lifted path reaches pages whose scripts are blocked (JSCTL) —
     // a plain runJavaScript is silently dropped there and the wipe
     // would not happen.
-    m_webView->enginePage()->runJavaScriptLifted(QStringLiteral(
-        "try{localStorage.clear()}catch(e){}"
-        "try{sessionStorage.clear()}catch(e){}"
-        "try{if(window.indexedDB&&indexedDB.databases)"
-        "indexedDB.databases().then(function(dbs){dbs.forEach("
-        "function(db){indexedDB.deleteDatabase(db.name)})})}catch(e){}"
-        "try{if(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations)"
-        "navigator.serviceWorker.getRegistrations().then(function(rs){"
-        "rs.forEach(function(r){r.unregister()})})}catch(e){}"
-        "try{if(window.caches&&caches.keys)"
-        "caches.keys().then(function(ns){ns.forEach(function(n){caches.delete(n)})})}catch(e){}"));
+    m_webView->enginePage()->runJavaScriptLifted(
+        siteStorageWipeScript());
 
     refresh();
 }

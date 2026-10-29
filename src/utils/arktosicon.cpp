@@ -119,7 +119,7 @@ QPixmap tintedPixmap(const QPixmap &source, const QColor &color)
 // light<->dark flip (THEME01 preview, desktop scheme change) or an
 // icon-theme swap reaches already-installed icons without any widget
 // having to listen for it.
-class ChromeIconEngine : public QIconEngine
+class ChromeIconEngine : public ScaledPixmapIconEngine
 {
 public:
     explicit ChromeIconEngine(const QString &name)
@@ -144,21 +144,6 @@ public:
         engine->m_palette = m_palette;
         engine->m_hasPalette = m_hasPalette;
         return engine;
-    }
-
-    void paint(QPainter *painter, const QRect &rect, QIcon::Mode mode,
-               QIcon::State state) override
-    {
-        const qreal scale = painter->device()
-            ? painter->device()->devicePixelRatioF() : 1.0;
-        painter->drawPixmap(rect.topLeft(),
-                            scaledPixmap(rect.size(), mode, state, scale));
-    }
-
-    QPixmap pixmap(const QSize &size, QIcon::Mode mode,
-                   QIcon::State state) override
-    {
-        return scaledPixmap(size, mode, state, 1.0);
     }
 
     QPixmap scaledPixmap(const QSize &size, QIcon::Mode mode,

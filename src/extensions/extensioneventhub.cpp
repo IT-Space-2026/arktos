@@ -159,6 +159,23 @@ QList<BrowserMainWindow *> ExtensionEventHub::browsingWindows()
     return out;
 }
 
+QList<QPair<BrowserMainWindow *, WebView *> >
+    ExtensionEventHub::trackableTabs()
+{
+    QList<QPair<BrowserMainWindow *, WebView *> > out;
+    for (BrowserMainWindow *window : browsingWindows()) {
+        if (!window || !window->tabWidget())
+            continue;
+        TabWidget *tw = window->tabWidget();
+        for (int i = 0; i < tw->count(); ++i) {
+            WebView *view = tw->webView(i);
+            if (trackable(view))
+                out.append({window, view});
+        }
+    }
+    return out;
+}
+
 // A tab is trackable when its page lives on a real browsing profile —
 // off-the-record (private tab, private window) and the tor profile
 // are invisible to extensions by design.

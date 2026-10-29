@@ -105,20 +105,7 @@ void PopupBlockerButton::refresh()
     // treatment the ad-block button uses.
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
-    const QString text = count > 999
-        ? QStringLiteral("…") : QString::number(count);
-    QFont font = painter.font();
-    font.setPixelSize(8);
-    font.setBold(true);
-    painter.setFont(font);
-    const int w = qMin(15,
-        painter.fontMetrics().horizontalAdvance(text) + 4);
-    const QRect badge(16 - w, 7, w, 9);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(ArktosStyle::accentFillColor(palette()));
-    painter.drawRoundedRect(badge, 2, 2);
-    painter.setPen(ArktosStyle::onAccentColor(palette()));
-    painter.drawText(badge, Qt::AlignCenter, text);
+    ArktosStyle::drawCountBadge(&painter, palette(), count);
     painter.end();
     setIcon(QIcon(pixmap));
 

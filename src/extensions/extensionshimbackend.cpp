@@ -19,6 +19,8 @@
 
 #include "extensionshimbackend.h"
 
+#include "chromecommon.h"
+
 #include "autofillmanager.h"
 #include "bookmarksmanager.h"
 #include "bookmarknode.h"
@@ -103,26 +105,6 @@
 #include <limits>
 
 namespace {
-
-// Reply shapes: every invoke() answers {ok:true,result:...} or
-// {ok:false,error:"<typed code>"} — the JS shim turns failures into
-// health-surface gaps.
-QJsonObject okReply(const QJsonValue &result = QJsonValue())
-{
-    QJsonObject o;
-    o.insert(QStringLiteral("ok"), true);
-    if (!result.isUndefined())
-        o.insert(QStringLiteral("result"), result);
-    return o;
-}
-
-QJsonObject errReply(const QString &code)
-{
-    QJsonObject o;
-    o.insert(QStringLiteral("ok"), false);
-    o.insert(QStringLiteral("error"), code);
-    return o;
-}
 
 // Per-extension action state — chrome.action/browserAction setters
 // land here; EXT08's action bar (main lane) reads it through
@@ -1345,17 +1327,9 @@ WebView *ExtensionShimBackend::viewForTabId(int tabId)
 {
     if (tabId < 0)
         return nullptr;
-    for (BrowserMainWindow *window
-         : ExtensionEventHub::browsingWindows()) {
-        if (!window || !window->tabWidget())
-            continue;
-        TabWidget *tw = window->tabWidget();
-        for (int i = 0; i < tw->count(); ++i) {
-            WebView *view = tw->webView(i);
-            if (ExtensionEventHub::trackable(view)
-                    && idFor(view) == tabId)
-                return view;
-        }
+    for (const auto &tab : ExtensionEventHub::trackableTabs()) {
+        if (idFor(tab.second) == tabId)
+            return tab.second;
     }
     return nullptr;
 }
@@ -2882,16 +2856,14 @@ QJsonObject ExtensionShimBackend::invokeTabs(const QString &method,
 QJsonObject ExtensionShimBackend::tabForPageReply(QWebEnginePage *page)
 {
     if (page) {
-        for (BrowserMainWindow *window
-             : ExtensionEventHub::browsingWindows()) {
-            if (!window || !window->tabWidget())
-                continue;
-            TabWidget *tw = window->tabWidget();
-            for (int i = 0; i < tw->count(); ++i) {
-                WebView *view = tw->webView(i);
-                if (ExtensionEventHub::trackable(view)
-                        && view->page() == page)
-                    return okReply(tabObject(view, i, idFor(window)));
+        const auto tabs = ExtensionEventHub::trackableTabs();
+        for (const auto &tab : tabs) {
+            WebView *view = tab.second;
+            if (view->page() == page) {
+                const int index =
+                    tab.first->tabWidget()->indexOf(view);
+                return okReply(
+                    tabObject(view, index, idFor(tab.first)));
             }
         }
     }
@@ -4435,7 +4407,11 @@ QJsonObject ExtensionShimBackend::invokeManagement(
     return errReply(QStringLiteral("unsupported"));
 }
 
-void ExtensionShimBackend::managementFanOut(
+// The broadcast covers every registered context — the caller's
+// included.  A bare backend (tests, a host mid-respawn) has no
+// registered context, so pushEvent is its only surface — the same
+// fallback the notification center applies.
+void ExtensionShimBackend::fanOutEvent(
         const QString &name, const QJsonArray &eventArgs)
 {
     const QJsonObject payload{
@@ -4443,12 +4419,14 @@ void ExtensionShimBackend::managementFanOut(
     ExtensionBackgroundRuntime *runtime =
         ExtensionBackgroundRuntime::instance();
     runtime->broadcastEvent(name, payload);
-    // The broadcast covers every registered context — the caller's
-    // included.  A bare backend (tests, a host mid-respawn) has no
-    // registered context, so pushEvent is its only surface — the
-    // same fallback the notification center applies.
     if (!runtime->hasRelayContext(m_extensionId))
         emit pushEvent(name, payload);
+}
+
+void ExtensionShimBackend::managementFanOut(
+        const QString &name, const QJsonArray &eventArgs)
+{
+    fanOutEvent(name, eventArgs);
 }
 
 // -------------------------------------------------------------------
@@ -4468,15 +4446,7 @@ void ExtensionShimBackend::managementFanOut(
 void ExtensionShimBackend::bookmarksFanOut(
         const QString &name, const QJsonArray &eventArgs)
 {
-    const QJsonObject payload{
-        {QStringLiteral("__args"), eventArgs}};
-    ExtensionBackgroundRuntime *runtime =
-        ExtensionBackgroundRuntime::instance();
-    runtime->broadcastEvent(name, payload);
-    // Same bare-backend fallback managementFanOut applies — tests
-    // and mid-respawn hosts have no registered context.
-    if (!runtime->hasRelayContext(m_extensionId))
-        emit pushEvent(name, payload);
+    fanOutEvent(name, eventArgs);
 }
 
 QJsonObject ExtensionShimBackend::invokeBookmarks(
@@ -4888,15 +4858,7 @@ QJsonObject ExtensionShimBackend::invokeBookmarks(
 void ExtensionShimBackend::historyFanOut(
         const QString &name, const QJsonArray &eventArgs)
 {
-    const QJsonObject payload{
-        {QStringLiteral("__args"), eventArgs}};
-    ExtensionBackgroundRuntime *runtime =
-        ExtensionBackgroundRuntime::instance();
-    runtime->broadcastEvent(name, payload);
-    // Same bare-backend fallback bookmarksFanOut applies — tests
-    // and mid-respawn hosts have no registered context.
-    if (!runtime->hasRelayContext(m_extensionId))
-        emit pushEvent(name, payload);
+    fanOutEvent(name, eventArgs);
 }
 
 QJsonObject ExtensionShimBackend::invokeHistory(

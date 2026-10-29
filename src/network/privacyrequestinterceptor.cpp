@@ -26,6 +26,7 @@
 #include "declarativenetrequest.h"
 #include "extensionrequestwatcher.h"
 #include "navigationpolicy.h"
+#include "policyrequestmarshal.h"
 #include "scriptcontrolmanager.h"
 
 #include <qatomic.h>
@@ -133,41 +134,14 @@ void PrivacyRequestInterceptor::resetTrackerCounts()
     s_cleanedCounts.clear();
 }
 
-static HeaderList toHeaderList(const QHash<QByteArray, QByteArray> &headers)
-{
-    HeaderList list;
-    list.reserve(headers.size());
-    for (auto it = headers.cbegin(); it != headers.cend(); ++it)
-        list.append(qMakePair(it.key(), it.value()));
-    return list;
-}
-
 static PolicyRequest buildRequest(QWebEngineUrlRequestInfo &info,
                                   const QString &scope, bool torMode,
                                   int minRefererLevel)
 {
-    PolicyRequest req;
-    req.url = info.requestUrl();
-    req.firstPartyUrl = info.firstPartyUrl();
-    req.resourceType = static_cast<int>(info.resourceType());
-    req.method = info.requestMethod();
-    req.headers = toHeaderList(info.httpHeaders());
+    PolicyRequest req = PolicyRequestMarshal::fromRequestInfo(info);
     req.scope = scope;
     req.torMode = torMode;
     req.minRefererLevel = minRefererLevel;
-    // The JSCTL per-site grant is data the policy cannot reach —
-    // the caller resolves it (only script-execution types need it).
-    switch (info.resourceType()) {
-    case QWebEngineUrlRequestInfo::ResourceTypeScript:
-    case QWebEngineUrlRequestInfo::ResourceTypeWorker:
-    case QWebEngineUrlRequestInfo::ResourceTypeSharedWorker:
-    case QWebEngineUrlRequestInfo::ResourceTypeServiceWorker:
-        req.scriptAllowed = ScriptControlManager::isAllowedHostSnapshot(
-            req.firstPartyUrl.host());
-        break;
-    default:
-        break;
-    }
     return req;
 }
 
@@ -721,7 +695,8 @@ bool PrivacyRequestInterceptor::shouldBlockResource(
         const QHash<QByteArray, QByteArray> &headers)
 {
     return NavigationPolicy::shouldBlockResource(
-        static_cast<int>(type), toHeaderList(headers));
+        static_cast<int>(type),
+        PolicyRequestMarshal::toHeaderList(headers));
 }
 
 bool PrivacyRequestInterceptor::isPrivateOrLocalHost(const QString &host)

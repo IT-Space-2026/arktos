@@ -624,14 +624,15 @@ static void telemetryAcceptLoop(int listenFd)
     }
 }
 
-// Opens the capture proxy: binds + listens on an ephemeral loopback
-// port and starts the accept thread.  Returns the port, or 0 on
+// Binds + listens on an ephemeral loopback port — the shared
+// socket prologue behind the smoke fixtures' capture/proxy servers.
+// Returns the fd and fills *portOut with the bound port, -1 on
 // failure.
-static quint16 startTelemetryCapture()
+static int listenOnLoopback(quint16 *portOut)
 {
     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd == -1)
-        return 0;
+        return -1;
     int one = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
     sockaddr_in address;
@@ -642,17 +643,30 @@ static quint16 startTelemetryCapture()
                sizeof(address)) != 0
         || ::listen(fd, 32) != 0) {
         ::close(fd);
-        return 0;
+        return -1;
     }
     sockaddr_in bound;
     socklen_t length = sizeof(bound);
     if (::getsockname(fd, reinterpret_cast<sockaddr *>(&bound),
                       &length) != 0) {
         ::close(fd);
-        return 0;
+        return -1;
     }
+    *portOut = ntohs(bound.sin_port);
+    return fd;
+}
+
+// Opens the capture proxy: binds + listens on an ephemeral loopback
+// port and starts the accept thread.  Returns the port, or 0 on
+// failure.
+static quint16 startTelemetryCapture()
+{
+    quint16 port = 0;
+    const int fd = listenOnLoopback(&port);
+    if (fd == -1)
+        return 0;
     std::thread(telemetryAcceptLoop, fd).detach();
-    return ntohs(bound.sin_port);
+    return port;
 }
 
 // SAFE01: --httpsonly-smoke's answering proxy.  Chromium points at it
@@ -748,30 +762,12 @@ static void httpOnlyProxyAcceptLoop(int listenFd)
 
 static quint16 startHttpOnlyProxy()
 {
-    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    quint16 port = 0;
+    const int fd = listenOnLoopback(&port);
     if (fd == -1)
         return 0;
-    int one = 1;
-    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    sockaddr_in address;
-    memset(&address, 0, sizeof(address));
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (::bind(fd, reinterpret_cast<sockaddr *>(&address),
-               sizeof(address)) != 0
-        || ::listen(fd, 32) != 0) {
-        ::close(fd);
-        return 0;
-    }
-    sockaddr_in bound;
-    socklen_t length = sizeof(bound);
-    if (::getsockname(fd, reinterpret_cast<sockaddr *>(&bound),
-                      &length) != 0) {
-        ::close(fd);
-        return 0;
-    }
     std::thread(httpOnlyProxyAcceptLoop, fd).detach();
-    return ntohs(bound.sin_port);
+    return port;
 }
 #endif
 

@@ -27,8 +27,10 @@
 #include "browsertheme.h"
 #include "domainblocklist.h"
 #include "engineinterface.h"
+#include "menufit.h"
 #include "engineregistry.h"
 #include "enginetab.h"
+#include "sitebinding_p.h"
 #include "sitepanel.h"
 #include "trancolist.h"
 #include "webview.h"
@@ -94,10 +96,7 @@ SiteShieldButton::SiteShieldButton(QWidget *parent)
     // TRUST09: a refreshed blocklist or Tranco table can change the
     // verdict for already-seen hosts — drop the level cache and
     // repaint so the badge follows the new data.
-    connect(DomainBlocklist::instance(), &DomainBlocklist::updateFinished,
-            this, [this](bool) { clearTrustCache(); refreshIcon(); });
-    connect(TrancoList::instance(), &TrancoList::updateFinished,
-            this, [this](bool) { clearTrustCache(); refreshIcon(); });
+    wireTrustListRefresh(this, [this] { refreshIcon(); });
 
     refreshIcon();
     // TRUST15: never hide the button.  It rides the navigation bar as
@@ -143,13 +142,7 @@ void SiteShieldButton::populateMenu()
 // "creeping popup" class of bug; spare room is harmless.
 void SiteShieldButton::growMenuToFit()
 {
-    if (!m_menu->isVisible())
-        return;
-    const QSize chrome = m_menu->size() - m_panel->size();
-    const QSize grow = (m_panel->sizeHint() + chrome)
-        .expandedTo(m_menu->size());
-    if (grow != m_menu->size())
-        m_menu->resize(grow);
+    ::growMenuToFit(m_menu, m_panel);
 }
 
 void SiteShieldButton::setWebView(WebView *webView)
@@ -396,20 +389,7 @@ void SiteShieldButton::refreshIcon()
         const qreal s = qreal(pixmap.width()) / 16.0;
         painter.scale(s, s);
         if (blocked > 0) {
-            const QString text = blocked > 999
-                ? QStringLiteral("…") : QString::number(blocked);
-            QFont font = painter.font();
-            font.setPixelSize(8);
-            font.setBold(true);
-            painter.setFont(font);
-            const int w = qMin(15,
-                painter.fontMetrics().horizontalAdvance(text) + 4);
-            const QRect badge(16 - w, 7, w, 9);
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(ArktosStyle::accentFillColor(palette()));
-            painter.drawRoundedRect(badge, 2, 2);
-            painter.setPen(ArktosStyle::onAccentColor(palette()));
-            painter.drawText(badge, Qt::AlignCenter, text);
+            ArktosStyle::drawCountBadge(&painter, palette(), blocked);
             tip += tr(" — %1 requests blocked").arg(blocked);
         }
         // JSCTL: badge the shield when the current page's scripts are

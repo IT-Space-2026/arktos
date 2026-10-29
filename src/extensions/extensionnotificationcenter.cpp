@@ -19,6 +19,8 @@
 
 #include "extensionnotificationcenter.h"
 
+#include "chromecommon.h"
+
 #include "extensionbackgroundhost.h"
 #include "extensionshimbackend.h"
 
@@ -35,23 +37,6 @@
 #endif
 
 namespace {
-
-QJsonObject okReply(const QJsonValue &result = QJsonValue())
-{
-    QJsonObject o;
-    o.insert(QStringLiteral("ok"), true);
-    if (!result.isUndefined())
-        o.insert(QStringLiteral("result"), result);
-    return o;
-}
-
-QJsonObject errReply(const QString &code)
-{
-    QJsonObject o;
-    o.insert(QStringLiteral("ok"), false);
-    o.insert(QStringLiteral("error"), code);
-    return o;
-}
 
 // freedesktop body/summary strings pass through daemon markup when
 // the daemon advertises body-markup — extension text is never

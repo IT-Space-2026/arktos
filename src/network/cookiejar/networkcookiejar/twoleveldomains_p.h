@@ -35,6 +35,9 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include <qstring.h>
+#include <qstringview.h>
+
 // Updated from https://wiki.mozilla.org/TLD_List#External_Links
 // To set a custom list use NetworkCookieJar::setSecondLevelDomains()
 static const char *const twoLevelDomains[] = {
@@ -102,3 +105,16 @@ static const char *const twoLevelDomains[] = {
     "zw",
     nullptr
 };
+
+// CA08: the case-insensitive linear scan over the table — the
+// container host check and the location bar's registrable-domain
+// walk each carried their own copy.
+static inline bool isTwoLevelDomainLabel(const QStringView &tld)
+{
+    for (int i = 0; twoLevelDomains[i]; ++i) {
+        if (!tld.compare(QLatin1String(twoLevelDomains[i]),
+                         Qt::CaseInsensitive))
+            return true;
+    }
+    return false;
+}

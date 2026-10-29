@@ -20,6 +20,7 @@
 #include "extensionrequestwatcher.h"
 
 #include "browsermainwindow.h"
+#include "chromecommon.h"
 #include "extensionbackgroundhost.h"
 #include "extensioneventhub.h"
 #include "extensionshimbackend.h"
@@ -99,65 +100,6 @@ bool knownChromeType(const QString &type)
         QStringLiteral("webidentity"), QStringLiteral("other")
     };
     return known.contains(type);
-}
-
-// Chrome match-pattern check against a concrete URL — the same
-// grammar extensionbackgroundhost.cpp's hostCovers applies to the
-// tabs/url scrub (scheme://host/path, '*' wildcards, '<all_urls>').
-bool patternMatchesUrl(const QString &pattern, const QUrl &url)
-{
-    const QString scheme = url.scheme();
-    if (pattern == QLatin1String("<all_urls>"))
-        return scheme == QLatin1String("http")
-            || scheme == QLatin1String("https")
-            || scheme == QLatin1String("file")
-            || scheme == QLatin1String("ftp");
-    const int sep = pattern.indexOf(QLatin1String("://"));
-    if (sep < 0)
-        return false;
-    const QString pscheme = pattern.left(sep);
-    const QString rest = pattern.mid(sep + 3);
-    const int slash = rest.indexOf(QLatin1Char('/'));
-    QString phost = slash < 0 ? rest : rest.left(slash);
-    const QString ppath =
-        slash < 0 ? QStringLiteral("/*") : rest.mid(slash);
-    // A 'host:port' pattern part — Chrome lets match patterns pin a
-    // port (127.0.0.1:* is the loopback-canary shape).
-    QString pport;
-    const int colon = phost.lastIndexOf(QLatin1Char(':'));
-    if (colon >= 0) {
-        pport = phost.mid(colon + 1);
-        phost = phost.left(colon);
-    }
-    if (pscheme == QLatin1String("*")) {
-        if (scheme != QLatin1String("http")
-                && scheme != QLatin1String("https"))
-            return false;
-    } else if (pscheme != scheme) {
-        return false;
-    }
-    if (!pport.isEmpty() && pport != QLatin1String("*")) {
-        const int defPort = scheme == QLatin1String("https") ? 443
-            : scheme == QLatin1String("http") ? 80 : -1;
-        if (url.port(defPort) != pport.toInt())
-            return false;
-    }
-    const QString host = url.host();
-    if (phost == QLatin1String("*")) {
-        // any host
-    } else if (phost.startsWith(QLatin1String("*."))) {
-        const QString base = phost.mid(2);
-        if (host != base && !host.endsWith(QLatin1Char('.') + base))
-            return false;
-    } else if (phost != host) {
-        return false;
-    }
-    QString path = url.path(QUrl::FullyEncoded);
-    if (url.hasQuery())
-        path += QLatin1Char('?') + url.query(QUrl::FullyEncoded);
-    const QRegularExpression re(
-        QRegularExpression::wildcardToRegularExpression(ppath));
-    return re.match(path).hasMatch();
 }
 
 // Syntactic validity of a match pattern — Chrome rejects a bad one
@@ -486,7 +428,7 @@ bool ExtensionRequestWatcher::filterMatches(
         return false;
     const QUrl qurl(url);
     for (const QString &pattern : reg.urls) {
-        if (patternMatchesUrl(pattern, qurl))
+        if (matchPatternCovers(pattern, qurl))
             return true;
     }
     return false;

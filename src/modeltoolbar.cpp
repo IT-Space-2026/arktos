@@ -20,6 +20,8 @@
 
 #include "modeltoolbar.h"
 
+#include "modeldnd_p.h"
+
 #include "browserapplication.h"
 #include "modelmenu.h"
 #include "safetext.h"
@@ -215,23 +217,9 @@ void ModelToolBar::dropEvent(QDropEvent *event)
         return;
     }
 
-    int row;
-    QAction *action = actionAt(mapFromGlobal(QCursor::pos()));
-    QModelIndex index;
-    QModelIndex parentIndex = m_rootIndex;
-    if (!action) {
-        row = m_model->rowCount(m_rootIndex);
-    } else {
-        index = this->index(action);
-        Q_ASSERT(index.isValid());
-        row = index.row();
-
-        if (m_model->hasChildren(index))
-            parentIndex = index;
-    }
-
-    event->acceptProposedAction();
-    m_model->dropMimeData(event->mimeData(), event->dropAction(), row, 0, parentIndex);
+    modelDropMimeData(event, m_model, m_rootIndex,
+                      actionAt(mapFromGlobal(QCursor::pos())),
+                      [this](QAction *action) { return index(action); });
     QToolBar::dropEvent(event);
 }
 

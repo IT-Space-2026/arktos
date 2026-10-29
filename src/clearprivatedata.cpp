@@ -333,17 +333,7 @@ static QList<QWebEngineProfile*> clearPlanProfiles(const QString &scope)
 // is a separate deferred op.)
 static void clearPlanSiteDataSweep(const QString &scope)
 {
-    const QString wipeScript = QStringLiteral(
-        "try{localStorage.clear()}catch(e){}"
-        "try{sessionStorage.clear()}catch(e){}"
-        "try{if(window.indexedDB&&indexedDB.databases)"
-        "indexedDB.databases().then(function(dbs){dbs.forEach("
-        "function(db){indexedDB.deleteDatabase(db.name)})})}catch(e){}"
-        "try{if(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations)"
-        "navigator.serviceWorker.getRegistrations().then(function(rs){"
-        "rs.forEach(function(r){r.unregister()})})}catch(e){}"
-        "try{if(window.caches&&caches.keys)"
-        "caches.keys().then(function(ns){ns.forEach(function(n){caches.delete(n)})})}catch(e){}");
+    const QString wipeScript = siteStorageWipeScript();
     const QList<QWebEngineProfile*> profiles = clearPlanProfiles(scope);
     const QSet<QWebEngineProfile*> profileSet(profiles.begin(), profiles.end());
     const QWidgetList widgets = qApp->allWidgets();

@@ -23,6 +23,7 @@
 #include "browserpaths.h"
 #include "networkaccessmanager.h"
 #include "profilesettings.h"
+#include "remotelistfetch.h"
 
 #include <qcoreapplication.h>
 #include <qdebug.h>
@@ -102,11 +103,7 @@ void DomainBlocklist::updateIfStale()
     // TELEM01: identical consent gate to the remote filter lists —
     // enabling the blocker or the first-launch prompt is the user's
     // "yes"; until then the vendored seed alone does the blocking.
-    if (!AdBlockManager::remoteListsAllowed())
-        return;
-    const QDateTime last = lastUpdate();
-    if (last.isValid()
-        && last.addDays(RefreshIntervalDays) >= QDateTime::currentDateTime())
+    if (!RemoteListFetch::updateDue(lastUpdate(), RefreshIntervalDays))
         return;
     updateNow();
 }
@@ -122,18 +119,9 @@ void DomainBlocklist::updateNow()
     m_merged.clear();
     for (const QUrl &url : m_sources) {
         // List downloads are HTTPS — a plaintext feed could be
-        // rewritten on the wire to unblock a malicious domain.  A
-        // loopback source is the test fixture's exception.
-        const QHostAddress literal(url.host());
-        const bool loopback = literal.isLoopback()
-            || url.host().compare(QLatin1String("localhost"),
-                                  Qt::CaseInsensitive) == 0;
-        if (url.scheme() != QLatin1String("https") && !loopback) {
-            qWarning() << "DomainBlocklist: refusing non-https source"
-                       << url;
-            continue;
-        }
-        fetch(url);
+        // rewritten on the wire to unblock a malicious domain.
+        if (RemoteListFetch::sourceAllowed(url, "DomainBlocklist"))
+            fetch(url);
     }
     if (m_replies.isEmpty())
         emit updateFinished(false);
@@ -156,17 +144,14 @@ void DomainBlocklist::replyFinished()
         return;
     m_replies.removeAll(reply);
 
-    const QByteArray body = reply->size() <= MaximumListSize
-        ? reply->readAll() : QByteArray();
-    const QUrl redirect = reply->attribute(
-        QNetworkRequest::RedirectionTargetAttribute).toUrl();
-    const QNetworkReply::NetworkError error = reply->error();
-    const QString errorString = reply->errorString();
-    reply->close();
-    reply->deleteLater();
+    const RemoteListFetch::Reply got =
+        RemoteListFetch::take(reply, MaximumListSize);
+    const QByteArray &body = got.body;
+    const QUrl &redirect = got.redirect;
 
-    if (error != QNetworkReply::NoError) {
-        qWarning() << "DomainBlocklist: fetch failed:" << errorString;
+    if (got.failed) {
+        qWarning() << "DomainBlocklist: fetch failed:"
+                   << got.errorString;
     } else if (redirect.isValid()) {
         // One redirect hop, same as AdBlockSubscription — must land
         // on https as well (a downgrade would strip the integrity

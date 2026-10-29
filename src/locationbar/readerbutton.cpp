@@ -19,6 +19,7 @@
 
 #include "readerbutton.h"
 
+#include "arktosicon.h"
 #include "arktosstyle.h"
 #include "browsertheme.h"
 #include "readermode.h"
@@ -41,7 +42,7 @@ namespace {
 // white glyph) instead of the palette's dimmed tone.  refresh()
 // rebakes the snapshot whenever the palette moves (changeEvent), so
 // the glyph still follows light<->dark flips and the tor seed.
-class ReaderIconEngine : public QIconEngine
+class ReaderIconEngine : public ScaledPixmapIconEngine
 {
 public:
     ReaderIconEngine(const QPalette &palette, bool active, bool suggested)
@@ -58,21 +59,6 @@ public:
     QIconEngine *clone() const override
     {
         return new ReaderIconEngine(m_palette, m_active, m_suggested);
-    }
-
-    void paint(QPainter *painter, const QRect &rect, QIcon::Mode mode,
-               QIcon::State state) override
-    {
-        const qreal scale = painter->device()
-            ? painter->device()->devicePixelRatioF() : 1.0;
-        painter->drawPixmap(rect.topLeft(),
-                            scaledPixmap(rect.size(), mode, state, scale));
-    }
-
-    QPixmap pixmap(const QSize &size, QIcon::Mode mode,
-                   QIcon::State state) override
-    {
-        return scaledPixmap(size, mode, state, 1.0);
     }
 
     QPixmap scaledPixmap(const QSize &size, QIcon::Mode mode,

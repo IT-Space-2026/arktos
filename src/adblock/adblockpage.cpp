@@ -418,14 +418,9 @@ static QString rustCosmeticScript(const QJsonObject &cosmetic)
 static void replacePageScript(Engine::Page *page, const QString &name,
         const QString &source)
 {
-    page->removeScript(name);
-    if (source.isEmpty())
-        return;
     // worldId 0 is the page's main world — the payload must run where
     // the document's DOM lives, not an isolated world.
-    page->insertScript(Engine::Script{
-        name, source, Engine::InjectionPoint::DocumentReady,
-        0 /* main world */, false });
+    Engine::replacePageScript(page, name, source, 0 /* main world */);
 }
 
 QString AdBlockPage::cosmeticScriptForUrl(const QUrl &url) const

@@ -18,6 +18,7 @@
  */
 
 #include "popupblocker.h"
+#include "hostmatch.h"
 #include "profilesettings.h"
 
 #include <qapplication.h>
@@ -129,25 +130,14 @@ void PopupBlocker::setEnabled(bool enabled)
 
 QString PopupBlocker::normalizeHost(const QString &host)
 {
-    QString normalized = host.toLower();
-    while (normalized.endsWith(QLatin1Char('.')))
-        normalized.chop(1);
-    // A leading dot is meaningless in this store — the suffix match
-    // already covers "example.com or any subdomain".
-    while (normalized.startsWith(QLatin1Char('.')))
-        normalized = normalized.mid(1);
-    return normalized;
+    return HostMatch::normalize(host);
 }
 
 // CookieJar-style suffix matching: "example.com" governs
 // "example.com" itself and every "www.example.com" under it.
 bool PopupBlocker::matchesHost(const QStringList &list, const QString &host)
 {
-    for (const QString &rule : list) {
-        if (host == rule || host.endsWith(QLatin1Char('.') + rule))
-            return true;
-    }
-    return false;
+    return HostMatch::matchesRule(list, host);
 }
 
 bool PopupBlocker::matchesHost(const QSet<QString> &set, const QString &host)

@@ -53,6 +53,25 @@ public:
     // MPROF05's create flow: display name -> filesystem slug.
     static QString slugify(const QString &displayName);
 
+    // CA08: the profiles.json codec shared with MPROF05's lane store
+    // (ProfileStore) — the two registries read/write the same file
+    // format, so the parse/serialize/sanitize lives here once.
+    static QString sanitizedAvatarName(const QString &name);
+    static QList<ProfileContext> parseProfilesDocument(
+        const QByteArray &json);
+    static QByteArray profilesDocument(
+        const QList<ProfileContext> &profiles);
+    // The "registry always describes at least default" synthesis —
+    // `fallbackName` keeps the caller's translation context.
+    static void ensureDefaultEntry(QList<ProfileContext> *profiles,
+                                   const QString &fallbackName,
+                                   bool *created);
+    // Validate + sanitize + replace-in-list for updateProfile; the
+    // caller owns the persist+notify tail.
+    enum class Upsert { Invalid, NoChange, Replaced, Missing };
+    static Upsert upsertProfile(QList<ProfileContext> *profiles,
+                                const ProfileContext &context);
+
     QList<ProfileContext> profiles() const;
     // Unknown or invalid id -> invalid ProfileContext.
     ProfileContext profile(const QString &id) const;

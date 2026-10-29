@@ -32,6 +32,8 @@
 // routes through these helpers instead of inventing per-widget
 // literals and scattered setStyleSheet() strings.
 //
+class QPainter;
+
 // Two runtime surfaces come out of install():
 //   * a QProxyStyle layered on the app style — metrics polish that
 //     stylesheets cannot reach (zero-width toolbar frames, flat
@@ -99,6 +101,14 @@ QColor selectionTextColor(const QPalette &palette);
 // HighlightedText where it meets AA, the black/white pick below it.
 QColor accentFillColor(const QPalette &palette);
 QColor onAccentColor(const QPalette &palette);
+
+// CA08: the "N blocked" counter badge the location-bar indicator
+// buttons paint over their 16x16 glyph grid (site shield's request
+// tally, the popup blocker's count).  Counts above 999 collapse to
+// "…"; the badge is anchored to the grid's top-right corner —
+// callers that paint scaled keep the 16-unit coordinate space.
+void drawCountBadge(QPainter *painter, const QPalette &palette,
+                    int count);
 
 // --- palette variants -----------------------------------------------
 // One home for the chrome variants: the platform palette is the

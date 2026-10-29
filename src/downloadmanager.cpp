@@ -2091,6 +2091,19 @@ void DownloadManager::save() const
 
 void DownloadManager::load()
 {
+    // A restored record's widget state — a stopped card with the
+    // try-again affordance only when it never finished, no progress
+    // bar and no graph (a restored card carries no live speed series).
+    const auto showRestoredCard = [](DownloadItem *item, bool done) {
+        item->stopButton->setVisible(false);
+        item->stopButton->setEnabled(false);
+        item->tryAgainButton->setVisible(!done);
+        item->tryAgainButton->setEnabled(!done);
+        item->progressBar->setVisible(false);
+        item->downloadGraph->setVisible(false);
+        item->updateDetails();
+    };
+
     QMetaEnum removePolicyEnum = staticMetaObject.enumerator(staticMetaObject.indexOfEnumerator("RemovePolicy"));
 #if defined(ARKTOS_RUSTCORE)
     // MD04: the policy + record reads go through dlwpolicy — the
@@ -2150,15 +2163,7 @@ void DownloadManager::load()
                     item->m_finishedTime = parseStamp(o, "finished");
                     item->m_restoredTotalBytes =
                         o.value(QLatin1String("size")).toInteger(-1);
-                    item->stopButton->setVisible(false);
-                    item->stopButton->setEnabled(false);
-                    item->tryAgainButton->setVisible(!done);
-                    item->tryAgainButton->setEnabled(!done);
-                    item->progressBar->setVisible(false);
-                    // A restored card shows what is known but has no
-                    // live speed series — omit the graph outright.
-                    item->downloadGraph->setVisible(false);
-                    item->updateDetails();
+                    showRestoredCard(item, done);
                     addItem(item);
                 }
             }
@@ -2201,15 +2206,7 @@ void DownloadManager::load()
             item->m_startedTime = settings.value(key + QLatin1String("started")).toDateTime();
             item->m_finishedTime = settings.value(key + QLatin1String("finished")).toDateTime();
             item->m_restoredTotalBytes = settings.value(key + QLatin1String("size"), -1).toLongLong();
-            item->stopButton->setVisible(false);
-            item->stopButton->setEnabled(false);
-            item->tryAgainButton->setVisible(!done);
-            item->tryAgainButton->setEnabled(!done);
-            item->progressBar->setVisible(false);
-            // A restored card shows what is known but has no live
-            // speed series — omit the graph outright.
-            item->downloadGraph->setVisible(false);
-            item->updateDetails();
+            showRestoredCard(item, done);
             addItem(item);
         }
         key = QString(QLatin1String("download_%1_")).arg(++i);

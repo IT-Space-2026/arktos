@@ -326,6 +326,15 @@ bool extensionChromeClipboardGranted(const QString &extensionId);
 // Chromium answer — navigator.clipboard rejects with
 // NotAllowedError, execCommand returns false — a typed failure,
 // never a silent no-op.
+// CA08: the chrome-page ctor rules every extension-hosted
+// QWebEnginePage applies — PRIV07's self-registering tracking probe
+// and BW13's permission-request + clipboard-grant wiring (declared
+// clipboardRead/clipboardWrite map onto
+// JavascriptCanAccessClipboard; a hidden context still hits Blink's
+// own focus gate, Chrome parity crbug.com/1404835).
+void applyExtensionChromePageRules(QWebEnginePage *page,
+                                   const QString &extensionId);
+
 void resolveExtensionChromePermission(
         const QString &extensionId,
         const QWebEnginePermission &permission);
@@ -348,30 +357,8 @@ public:
         : QWebEnginePage(profile, parent)
         , m_extensionId(extensionId)
     {
-        // PRIV07 bookkeeping — extensions refuse OTR loads outright,
-        // so this is a no-op today; the self-registering rule keeps
-        // every QWebEnginePage subclass covered if that ever changes.
-        BrowserProfile::trackPrivateProfilePage(this);
-        // BW13: extension chrome resolves its own permission
-        // requests — see the comment above.
-        connect(this, &QWebEnginePage::permissionRequested, this,
-                [this](const QWebEnginePermission &permission) {
-            resolveExtensionChromePermission(m_extensionId,
-                                             permission);
-        });
-        // BW13: Chrome wires an extension's declared clipboardRead/
-        // clipboardWrite to the renderer's AllowReadFromClipboard/
-        // AllowWriteToClipboard content-settings hooks; Qt's per-page
-        // attribute is the same switch.  Grant-holders' chrome gets
-        // it so execCommand('copy') — the offscreen-document path
-        // Bitwarden actually uses — reaches the real clipboard and a
-        // FOCUSED extension page (the popup) auto-grants
-        // navigator.clipboard.  navigator.clipboard in a hidden
-        // context still hits Blink's focus gate — Chrome parity
-        // (crbug.com/1404835), never silently faked.
-        settings()->setAttribute(
-            QWebEngineSettings::JavascriptCanAccessClipboard,
-            extensionChromeClipboardGranted(m_extensionId));
+        // PRIV07 + BW13 wiring — shared with HostedBackgroundPage.
+        applyExtensionChromePageRules(this, m_extensionId);
     }
 
     static bool navigationAllowed(const QUrl &url,
@@ -990,6 +977,9 @@ private:
                              const QString &portId);
     void dropParkedPortMsgs(const QString &chan, QObject *sender,
                             const QString &portId);
+    // Notifies every live end on `ends` that its port disconnected
+    // (each addressed by its own local port id).
+    void emitPortDisconnects(const QList<PortEnd> &ends);
 
     // ER01/ER02: host->page deliveries awaiting the page agent's
     // 'respond' — mid -> {the page asked, the context awaiting the

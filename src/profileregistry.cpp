@@ -78,7 +78,7 @@ bool ProfileRegistry::isValidProfileId(const QString &id)
 // profiles/<id>/ — a registry value carrying separators or dot
 // segments would turn avatar reads, the PNG write and the remove
 // into path traversal.  Only a plain basename survives.
-static QString sanitizedAvatarName(const QString &name)
+QString ProfileRegistry::sanitizedAvatarName(const QString &name)
 {
     if (name.isEmpty() || name.size() > 255
         || name.contains(QLatin1Char('/'))
@@ -110,50 +110,108 @@ QString ProfileRegistry::slugify(const QString &displayName)
     return slug.left(64);
 }
 
-void ProfileRegistry::load()
+QList<ProfileContext> ProfileRegistry::parseProfilesDocument(
+    const QByteArray &json)
 {
-    m_profiles.clear();
-    const bool hadFile = QFile::exists(m_filePath);
-    QFile file(m_filePath);
-    if (file.open(QIODevice::ReadOnly)) {
-        const QJsonObject root = QJsonDocument::fromJson(file.readAll())
-            .object();
-        const QJsonArray entries = root.value(QLatin1String("profiles"))
-            .toArray();
-        for (const QJsonValue &value : entries) {
-            const QJsonObject entry = value.toObject();
-            ProfileContext context;
-            context.id = entry.value(QLatin1String("id")).toString();
-            context.name = entry.value(QLatin1String("name")).toString();
-            context.avatar = sanitizedAvatarName(
-                entry.value(QLatin1String("avatar")).toString());
-            context.createdAt = QDateTime::fromString(
-                entry.value(QLatin1String("createdAt")).toString(),
-                Qt::ISODate);
-            if (isValidProfileId(context.id))
-                m_profiles.append(context);
+    QList<ProfileContext> out;
+    const QJsonObject root = QJsonDocument::fromJson(json).object();
+    const QJsonArray entries = root.value(QLatin1String("profiles"))
+        .toArray();
+    for (const QJsonValue &value : entries) {
+        const QJsonObject entry = value.toObject();
+        ProfileContext context;
+        context.id = entry.value(QLatin1String("id")).toString();
+        context.name = entry.value(QLatin1String("name")).toString();
+        context.avatar = sanitizedAvatarName(
+            entry.value(QLatin1String("avatar")).toString());
+        context.createdAt = QDateTime::fromString(
+            entry.value(QLatin1String("createdAt")).toString(),
+            Qt::ISODate);
+        if (isValidProfileId(context.id))
+            out.append(context);
+    }
+    return out;
+}
+
+QByteArray ProfileRegistry::profilesDocument(
+    const QList<ProfileContext> &profiles)
+{
+    QJsonArray entries;
+    for (const ProfileContext &context : profiles) {
+        QJsonObject entry;
+        entry.insert(QLatin1String("id"), context.id);
+        entry.insert(QLatin1String("name"), context.name);
+        entry.insert(QLatin1String("avatar"), context.avatar);
+        entry.insert(QLatin1String("createdAt"),
+                     context.createdAt.toString(Qt::ISODate));
+        entries.append(entry);
+    }
+    QJsonObject root;
+    root.insert(QLatin1String("version"), 1);
+    root.insert(QLatin1String("profiles"), entries);
+    return QJsonDocument(root).toJson(QJsonDocument::Indented);
+}
+
+void ProfileRegistry::ensureDefaultEntry(
+    QList<ProfileContext> *profiles, const QString &fallbackName,
+    bool *created)
+{
+    for (const ProfileContext &context : *profiles) {
+        if (context.id == defaultProfileId()) {
+            *created = false;
+            return;
         }
     }
-
-    // The registry always describes at least the default profile.
-    // Seed its display name from the PROF02-era QSettings key when the
-    // entry is first synthesized — that import is one-shot; the key
-    // stays readable-only afterwards (MPROF04 owns QSettings).
-    if (profile(defaultProfileId()).isValid())
-        return;
     ProfileContext fallback;
     fallback.id = defaultProfileId();
     fallback.name = QSettings()
         .value(QLatin1String("profile/name")).toString();
     if (fallback.name.isEmpty())
-        fallback.name = tr("Profile");
+        fallback.name = fallbackName;
     fallback.avatar = QStringLiteral("profile-avatar.png");
     fallback.createdAt = QDateTime::currentDateTime();
-    m_profiles.append(fallback);
+    profiles->append(fallback);
+    *created = true;
+}
+
+ProfileRegistry::Upsert ProfileRegistry::upsertProfile(
+    QList<ProfileContext> *profiles, const ProfileContext &context)
+{
+    if (!isValidProfileId(context.id))
+        return Upsert::Invalid;
+    // A traversal-shaped avatar must never reach the file even when a
+    // caller hands updateProfile one directly.
+    ProfileContext clean = context;
+    clean.avatar = sanitizedAvatarName(clean.avatar);
+    for (int i = 0; i < profiles->size(); ++i) {
+        if (profiles->at(i).id == clean.id) {
+            if (profiles->at(i) == clean)
+                return Upsert::NoChange;
+            (*profiles)[i] = clean;
+            return Upsert::Replaced;
+        }
+    }
+    return Upsert::Missing;
+}
+
+void ProfileRegistry::load()
+{
+    m_profiles.clear();
+    const bool hadFile = QFile::exists(m_filePath);
+    QFile file(m_filePath);
+    if (file.open(QIODevice::ReadOnly))
+        m_profiles = parseProfilesDocument(file.readAll());
+
+    // The registry always describes at least the default profile.
+    // Seed its display name from the PROF02-era QSettings key when the
+    // entry is first synthesized — that import is one-shot; the key
+    // stays readable-only afterwards (MPROF04 owns QSettings).
+    bool created = false;
+    ensureDefaultEntry(&m_profiles, tr("Profile"), &created);
     // A fresh install materializes the registry on first read; a
     // corrupt file is kept on disk untouched — the next updateProfile
     // rewrites it cleanly.
-    if (!hadFile)
+    if (created && !hadFile)
         save();
 }
 
@@ -188,24 +246,17 @@ ProfileContext ProfileRegistry::activeProfile() const
 
 bool ProfileRegistry::updateProfile(const ProfileContext &context)
 {
-    if (!isValidProfileId(context.id))
+    switch (upsertProfile(&m_profiles, context)) {
+    case Upsert::Replaced:
+        if (!save())
+            return false;
+        emit profileChanged(context.id);
+        return true;
+    case Upsert::NoChange:
+        return true;
+    default:
         return false;
-    // A traversal-shaped avatar must never reach the file even when a
-    // caller hands updateProfile one directly.
-    ProfileContext clean = context;
-    clean.avatar = sanitizedAvatarName(clean.avatar);
-    for (int i = 0; i < m_profiles.size(); ++i) {
-        if (m_profiles.at(i).id == clean.id) {
-            if (m_profiles.at(i) == clean)
-                return true;
-            m_profiles[i] = clean;
-            if (!save())
-                return false;
-            emit profileChanged(context.id);
-            return true;
-        }
     }
-    return false;
 }
 
 QString ProfileRegistry::filePath() const
@@ -215,24 +266,10 @@ QString ProfileRegistry::filePath() const
 
 bool ProfileRegistry::save()
 {
-    QJsonArray entries;
-    for (const ProfileContext &context : m_profiles) {
-        QJsonObject entry;
-        entry.insert(QLatin1String("id"), context.id);
-        entry.insert(QLatin1String("name"), context.name);
-        entry.insert(QLatin1String("avatar"), context.avatar);
-        entry.insert(QLatin1String("createdAt"),
-                     context.createdAt.toString(Qt::ISODate));
-        entries.append(entry);
-    }
-    QJsonObject root;
-    root.insert(QLatin1String("version"), 1);
-    root.insert(QLatin1String("profiles"), entries);
-
     QSaveFile file(m_filePath);
     if (!file.open(QIODevice::WriteOnly))
         return false;
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    file.write(profilesDocument(m_profiles));
     return file.commit();
 }
 

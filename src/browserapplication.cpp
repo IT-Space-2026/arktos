@@ -1171,59 +1171,13 @@ static void sessionClearFor(const QString &persona)
     rc_session_clear();
 }
 
-// MD08: one granular call into rustcore's sesspolicy module — the
-// session snapshot/restore decision layer (debounce timing,
-// dirty-on-what, retention caps, crash-restore, startup fallback)
-// lives there now; this file keeps the timers, the prompt and the
-// manifest truncation.  The profile-bound AcSession is minted per
-// call — cheap, and a mid-process settings write lands without a
-// stale cached document.  With no bridge serving the rc_* spelling
-// runs against a bound RcSettings (an empty id binds "default" like
-// every other store consumer).  An empty verdict means "run the
-// compiled-in consult" — an FFI failure can never silently change
-// session behavior.
-static QJsonObject sessionPolicyCall(const QString &persona,
-                                     const QJsonObject &request)
-{
-    AcSession *h = nullptr;
-    if (RustCoreBridge *bridge = RustCoreBridge::serving())
-        h = bridge->session(persona);
-    RcSettings *s = nullptr;
-    if (!h) {
-        const QByteArray root = BrowserPaths::dataRoot().toUtf8();
-        const QByteArray id = persona.isEmpty()
-            ? QByteArrayLiteral("default") : persona.toUtf8();
-        s = rc_settings_open(root.constData(), id.constData());
-        if (!s)
-            return QJsonObject();
-    }
-    const QByteArray json =
-        QJsonDocument(request).toJson(QJsonDocument::Compact);
-    char *raw = h
-        ? ac_session_policy(h,
-                            reinterpret_cast<const uint8_t *>(json.constData()),
-                            size_t(json.size()))
-        : rc_sesspolicy_call(s,
-                             reinterpret_cast<const uint8_t *>(json.constData()),
-                             size_t(json.size()));
-    ac_session_close(h);
-    if (s)
-        rc_settings_close(s);
-    if (!raw)
-        return QJsonObject();
-    QByteArray out = QByteArray::fromRawData(raw, int(strlen(raw)));
-    out.detach();
-    rc_string_free(raw);
-    return QJsonDocument::fromJson(out).object();
-}
-
 // MD08: the persona's session.dat aged past session/maxAgeDays —
 // stale files are skipped on restore but never deleted (the user's
 // snapshot stays on disk; only the auto-restore stops offering it).
 // A failed consult reads "not stale" — fail toward restoring.
 static bool sessionStaleFor(const QString &persona)
 {
-    const QJsonObject verdict = sessionPolicyCall(
+    const QJsonObject verdict = rustCoreSessionPolicyCall(
         persona, QJsonObject{
             {QLatin1String("op"), QLatin1String("stale")}});
     return verdict.value(QLatin1String("stale")).toBool(false);
@@ -1238,7 +1192,7 @@ static bool sessionStaleFor(const QString &persona)
 static void applySessionCaps(const QString &persona,
                              QJsonArray *windows)
 {
-    const QJsonObject caps = sessionPolicyCall(
+    const QJsonObject caps = rustCoreSessionPolicyCall(
         persona, QJsonObject{
             {QLatin1String("op"), QLatin1String("retention")}});
     if (caps.isEmpty())
@@ -1493,7 +1447,7 @@ bool BrowserApplication::restoreLastSession()
         // restore decision is app-level across all manifests.
         QString crashPolicy = QLatin1String("ask");
 #if defined(ARKTOS_RUSTCORE)
-        const QJsonObject restore = sessionPolicyCall(
+        const QJsonObject restore = rustCoreSessionPolicyCall(
             QStringLiteral("default"),
             QJsonObject{
                 {QLatin1String("op"), QLatin1String("restore")}});
@@ -2090,7 +2044,7 @@ int BrowserApplication::startupMode()
     // session/startupModeDefault on the ambient persona, resolved by
     // the facade (StartPageStartup when unset or unreachable, same
     // as the compiled-in value it replaces).
-    const QJsonObject restore = sessionPolicyCall(
+    const QJsonObject restore = rustCoreSessionPolicyCall(
         BrowserPaths::activeProfileId(),
         QJsonObject{
             {QLatin1String("op"), QLatin1String("restore")}});

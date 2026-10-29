@@ -21,6 +21,7 @@
 
 #include "adblockrequestinterceptor.h"
 #include "navigationpolicy.h"
+#include "policyrequestmarshal.h"
 #include "privacyrequestinterceptor.h"
 #include "scriptcontrolmanager.h"
 
@@ -37,15 +38,6 @@ using Engine::NavigationPolicy;
 using Engine::PolicyRequest;
 using Engine::PolicyVerdict;
 
-static HeaderList toHeaderList(const QHash<QByteArray, QByteArray> &headers)
-{
-    HeaderList list;
-    list.reserve(headers.size());
-    for (auto it = headers.cbegin(); it != headers.cend(); ++it)
-        list.append(qMakePair(it.key(), it.value()));
-    return list;
-}
-
 TorRequestInterceptor::TorRequestInterceptor(AdBlockNetwork *network, QObject *parent)
     : QWebEngineUrlRequestInterceptor(parent)
     , m_adBlock(new AdBlockRequestInterceptor(network, this))
@@ -59,25 +51,9 @@ void TorRequestInterceptor::interceptRequest(QWebEngineUrlRequestInfo &info)
     // request (the marked follow-up of a cleaning redirect keeps it).
     if (info.resourceType() == QWebEngineUrlRequestInfo::ResourceTypeMainFrame)
         PrivacyRequestInterceptor::noteMainFrameRequest(info.requestUrl());
-    PolicyRequest req;
-    req.url = info.requestUrl();
-    req.firstPartyUrl = info.firstPartyUrl();
-    req.resourceType = static_cast<int>(info.resourceType());
-    req.method = info.requestMethod();
-    req.headers = toHeaderList(info.httpHeaders());
+    PolicyRequest req = PolicyRequestMarshal::fromRequestInfo(info);
     req.torMode = true;
     req.minRefererLevel = PrivacyRequestInterceptor::RefererTrimmed;
-    switch (info.resourceType()) {
-    case QWebEngineUrlRequestInfo::ResourceTypeScript:
-    case QWebEngineUrlRequestInfo::ResourceTypeWorker:
-    case QWebEngineUrlRequestInfo::ResourceTypeSharedWorker:
-    case QWebEngineUrlRequestInfo::ResourceTypeServiceWorker:
-        req.scriptAllowed = ScriptControlManager::isAllowedHostSnapshot(
-            req.firstPartyUrl.host());
-        break;
-    default:
-        break;
-    }
 
     const PolicyVerdict verdict = NavigationPolicy::evaluate(req);
     switch (verdict.action) {

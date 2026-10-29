@@ -790,15 +790,11 @@ QString AutoFillManager::scriptForPage(Engine::Page *page,
 static void replacePageScript(Engine::Page *page, const QString &name,
         const QString &source)
 {
-    page->removeScript(name);
-    if (source.isEmpty())
-        return;
     // SEC24: the bundle runs in ArktosChannelWorld — the isolated
     // world the page's QWebChannel is bound to — where the
     // __arktosChannel bootstrap lives and page script cannot follow.
-    page->insertScript(Engine::Script{
-        name, source, Engine::InjectionPoint::DocumentReady,
-        Engine::ArktosChannelWorld, false });
+    Engine::replacePageScript(page, name, source,
+                              Engine::ArktosChannelWorld);
 }
 
 // form.submit() bypasses the 'submit' DOM event, so scripted

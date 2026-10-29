@@ -19,6 +19,8 @@
 
 #include "pdfworker.h"
 
+#include "workerio.h"
+
 #include <qfile.h>
 #include <qfileinfo.h>
 #include <qjsonarray.h>
@@ -44,16 +46,6 @@
 
 namespace {
 
-std::mutex g_outMutex;
-
-void emitLine(const QJsonObject &obj)
-{
-    const QByteArray data =
-        QJsonDocument(obj).toJson(QJsonDocument::Compact) + '\n';
-    std::lock_guard<std::mutex> lock(g_outMutex);
-    std::fwrite(data.constData(), 1, size_t(data.size()), stdout);
-    std::fflush(stdout);
-}
 
 // Only the ARKTOS_RUSTCORE path reports errors; in the no-rust build
 // this helper is intentionally idle.
@@ -65,7 +57,7 @@ void emitLine(const QJsonObject &obj)
         out.insert(QLatin1String("req"), double(req));
     out.insert(QLatin1String("code"), code);
     out.insert(QLatin1String("message"), message);
-    emitLine(out);
+    WorkerIO::emitLine(out);
 }
 
 } // namespace
@@ -74,33 +66,13 @@ int pdfWorkerMain()
 {
 #ifdef ARKTOS_RUSTCORE
     // The job description arrives on the first stdin line.
-    std::string jobLine;
-    if (!std::getline(std::cin, jobLine)) {
-        std::fprintf(stderr, "arktos: pdf worker got no job\n");
+    QJsonObject job;
+    if (!WorkerIO::readJob("pdf", &job))
         return 2;
-    }
-    const QJsonObject job = QJsonDocument::fromJson(
-        QByteArray::fromStdString(jobLine)).object();
-    if (job.value(QLatin1String("cmd")).toString()
-        != QLatin1String("job")) {
-        std::fprintf(stderr, "arktos: pdf worker got bad job\n");
-        return 2;
-    }
 
     // Diagnostic/test hook: report whether each requested path is
     // visible inside this sandbox before any work starts.
-    const QJsonArray probes =
-        job.value(QLatin1String("probe_paths")).toArray();
-    for (const QJsonValue &entry : probes) {
-        const QString path = entry.toString();
-        const QFileInfo info(path);
-        QJsonObject out;
-        out.insert(QLatin1String("ev"), QLatin1String("probe"));
-        out.insert(QLatin1String("path"), path);
-        out.insert(QLatin1String("readable"),
-                   info.exists() && info.isReadable());
-        emitLine(out);
-    }
+    WorkerIO::emitPathProbes(job);
 
     const QString pdfPath = job.value(QLatin1String("pdf")).toString();
     const QString workDir =
@@ -148,7 +120,7 @@ int pdfWorkerMain()
             sizes.append(QJsonArray{0.0, 0.0});
     }
     meta.insert(QLatin1String("sizes"), sizes);
-    emitLine(meta);
+    WorkerIO::emitLine(meta);
 
     std::string line;
     while (std::getline(std::cin, line)) {
@@ -203,7 +175,7 @@ int pdfWorkerMain()
             ev.insert(QLatin1String("file"), name);
             ev.insert(QLatin1String("w"), w);
             ev.insert(QLatin1String("h"), h);
-            emitLine(ev);
+            WorkerIO::emitLine(ev);
         } else if (op == QLatin1String("find")) {
             const QByteArray needle =
                 cmd.value(QLatin1String("needle")).toString().toUtf8();
@@ -217,7 +189,7 @@ int pdfWorkerMain()
             ev.insert(QLatin1String("req"), double(req));
             ev.insert(QLatin1String("page"), hit);
             ev.insert(QLatin1String("total"), total);
-            emitLine(ev);
+            WorkerIO::emitLine(ev);
         }
         // Unknown commands are ignored — the parent only sends the
         // documented set.

@@ -751,6 +751,19 @@ void WebView::openPageUrlInTarget(const QUrl &linkUrl,
     openUrlInTarget(linkUrl, target);
 }
 
+// Detached-view fallback (no TabWidget above us): a standalone OTR
+// WebView.  privateWebEngineProfile() is always the CLEARNET
+// off-the-record profile — a tor process hands out its own profile.
+static WebView *detachedPrivateView()
+{
+    WebView *view = new WebView(BrowserApplication::isTorMode()
+        ? BrowserApplication::webEngineProfile()
+        : BrowserApplication::privateWebEngineProfile());
+    view->setAttribute(Qt::WA_DeleteOnClose);
+    view->show();
+    return view;
+}
+
 void WebView::openPageUrlInPrivateTab(const QUrl &linkUrl)
 {
     if (!isUrlAllowedFromPageLink(linkUrl))
@@ -766,11 +779,7 @@ void WebView::openPageUrlInPrivateTab(const QUrl &linkUrl)
         // WebView.  privateWebEngineProfile() is always the CLEARNET
         // off-the-record profile — a tor process must hand out its
         // own profile here.
-        newView = new WebView(BrowserApplication::isTorMode()
-            ? BrowserApplication::webEngineProfile()
-            : BrowserApplication::privateWebEngineProfile());
-        newView->setAttribute(Qt::WA_DeleteOnClose);
-        newView->show();
+        newView = detachedPrivateView();
     }
     loadUrlInView(newView, linkUrl);
 }
@@ -807,11 +816,7 @@ void WebView::openPageUrlInPrivateWindow(const QUrl &linkUrl)
         // fall through to the standalone OTR view below.
     }
     if (!newView) {
-        newView = new WebView(BrowserApplication::isTorMode()
-            ? BrowserApplication::webEngineProfile()
-            : BrowserApplication::privateWebEngineProfile());
-        newView->setAttribute(Qt::WA_DeleteOnClose);
-        newView->show();
+        newView = detachedPrivateView();
     }
     loadUrlInView(newView, linkUrl);
 }

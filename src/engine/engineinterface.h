@@ -649,6 +649,23 @@ public:
     virtual QWidget *createView(Page *page, QWidget *parent = nullptr) = 0;
 };
 
+// CA08: the named per-page user-script swap the autofill and adblock
+// bundles each carried privately — removing the script entirely when
+// the payload is empty so a disabled feature leaves nothing armed.
+// `worldId` stays explicit at the call site: the isolated channel
+// world (ArktosChannelWorld) and the main world (0) are
+// deliberately different homes.
+inline void replacePageScript(Engine::Page *page, const QString &name,
+                              const QString &source, quint32 worldId)
+{
+    page->removeScript(name);
+    if (source.isEmpty())
+        return;
+    page->insertScript(Engine::Script{
+        name, source, Engine::InjectionPoint::DocumentReady,
+        worldId, false });
+}
+
 } // namespace Engine
 
 // Signal payloads need metatypes for queued delivery + QSignalSpy.

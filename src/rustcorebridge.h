@@ -306,6 +306,20 @@ void rustCoreEnsureDataDir();
 // matching BrowserPaths::profileDataDir.
 void rustCoreEnsureDataDirFor(const QString &profileId);
 
+// MD08: one granular call into rustcore's sesspolicy module — the
+// session snapshot/restore decision layer (debounce + ceiling,
+// dirty-on-what, retention caps, crash-restore, startup fallback)
+// lives there; the consumers keep their own timers and fallbacks.
+// The profile-bound AcSession is minted per call — cheap, and a
+// mid-process settings write lands without a stale cached document.
+// With no bridge serving, the rc_* spelling runs against a bound
+// RcSettings (an empty id binds "default" like every other store
+// consumer).  An empty verdict means "run the caller's own
+// consult" — an FFI failure can never silently change session
+// behavior.
+QJsonObject rustCoreSessionPolicyCall(const QString &profileId,
+                                      const QJsonObject &request);
+
 // RC02: thin Qt wrapper over the rc_settings_* typed per-profile
 // store — the QSettings-shaped surface RC08 swaps in for
 // ProfileSettings' persistence.  The scope binds at construction:
