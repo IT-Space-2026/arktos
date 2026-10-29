@@ -5122,3 +5122,12 @@ Code audit (CA01-CA04, no code changes):
   rename semantics; Windows reserved/illegal filename handling in
   profile slugs and download names) plus lower-severity items;
   remediations are queued under CA12.
+- macOS-portability audit pass appended to .devin/CODE-AUDIT.md:
+  12 findings for the future macOS port (top: native-messaging host
+  discovery uses the Linux XDG directories; Info.plist declares no
+  http/https URL schemes and no version keys; the style-painted
+  check-indicator class from MAC04 still has three live instances
+  including the newer Suggestions column; fetch-tor.sh breaks on
+  macOS twice; QSettings file ops race cfprefsd; hardened-runtime
+  constraints on spawned helpers undocumented) plus lower-severity
+  toolbar/Retina/shortcut items; remediations are queued under CA12.

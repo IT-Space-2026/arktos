@@ -1245,3 +1245,311 @@ before the qmake port; if synctor fails to build, ship Windows with
   `C:/…` as local files before host-guessing (tabwidget.cpp:
   4578-4598's address-shape check only governs *search*, and
   `QDir::isAbsolutePath` catches them earlier).
+
+## MACOS (CA06)
+
+Generated 2026-10-29. Method: read-only source audit on this Linux
+tree — there is no macOS host or SDK here, so every finding is a
+static-evidence porting gap, not an on-target diagnostic (MAC01 stays
+`needs:macos`; the MAC02–17 dmg fixes are all still "blind fixes —
+runtime verify owed", which constrains how strongly the recurring
+classes below can be stated).  Sweeps: every Q_OS_MACOS/Q_OS_MAC block
+in src/, .app-bundle path probes (applicationDirPath-relative),
+Retina/DPR in pixmap and measure paths, unified-NSToolbar item
+visibility (the MAC03/14 class), style-metric-dependent sizing (the
+MAC04/10/13 class), Info_mac.plist key inventory vs LaunchServices/
+TCC requirements, hardened-runtime/notarization constraints on every
+spawned helper (tor, native-messaging hosts, self-respawns,
+QtWebEngineProcess, servo cdylib), shortcut/menu-role mapping, and the
+fetch/install scripts' POSIX assumptions.  Severity by impact on a
+real macOS 13+ port: **high / med / low**.
+
+The tree is already far more macOS-aware than a straight Qt4 port —
+unified toolbar, menu-role discipline, lifecycle (no quit-on-last-
+window + activate-respawn), `open -R` reveal, Mach VM stats, per-
+platform autoscroll default — so the findings are the residual class,
+plus three instances proving the MAC04 "style-painted check
+indicator" class is NOT closed (one was reintroduced after the fix).
+Findings only — no code changes.
+
+### M1 — NativeMessaging host discovery uses the Linux directory layout — **HIGH**
+
+`NativeMessagingSession::searchDirs()` (extensionbackgroundhost.cpp:
+376-390) builds on `QStandardPaths::GenericConfigLocation` — which on
+macOS resolves to `~/Library/Preferences`, not `~/.config` — plus
+`/etc/{arktos,chromium,opt/chrome}` which simply do not exist there.
+Chrome-family browsers on macOS register hosts under
+`~/Library/Application Support/{Google/Chrome,Chromium}/
+NativeMessagingHosts` (user scope) and `/Library/{Google/Chrome,
+Chromium}/NativeMessagingHosts` (system scope).  Result: every host a
+Chrome/Chromium-targeted app installs is unresolvable —
+`resolve()` returns `not-found` and `chrome.runtime.connectNative` /
+`sendNativeMessage` (extensionbackgroundhost.cpp:624+) is dead on
+macOS, same end-state as W2 on Windows but with a filesystem fix, not
+a registry one.  `userHostsDir()` (line 369-374) also lands at
+`~/Library/Preferences/arktos/NativeMessagingHosts` — functional but
+wrong-family; AppConfigLocation (`~/Library/Application Support/
+Arktos`) is the idiomatic root.  Fix direction: `#ifdef Q_OS_MACOS`
+dir list using `~/Library/Application Support/{arktos,chromium,
+google-chrome}` + `/Library/...` roots, same manifest parser.
+
+### M2 — Info_mac.plist: no URL-scheme registration, no version keys — **HIGH**
+
+`BuildProcess/Info_mac.plist` carries icon/identifier/executable/
+NSPrincipalClass/NSHighResolutionCapable/LSMinimumSystemVersion and
+one document type — but:
+
+- **No `CFBundleURLTypes`** for http/https.  LaunchServices decides
+  default-browser candidates from the declared schemes, so Arktos can
+  never appear in the default-web-browser picker or receive
+  `open -a`/link activations.  `QDesktopServices::setUrlHandler`
+  (browserapplication.cpp:328) only routes URLs opened *from inside*
+  the app — the external direction has no plumbing at all.
+- **No `CFBundleShortVersionString` / `CFBundleVersion` /
+  `CFBundleName` / `CFBundleInfoDictionaryVersion`.**  A custom
+  QMAKE_INFO_PLIST is copied verbatim with only @ICON@/@EXECUTABLE@
+  substitution — qmake injects nothing — so the dmg shows no version
+  in Finder/Get Info and any future notarization/Sparkle check has
+  nothing to compare.
+- Document types use only the legacy `CFBundleTypeOSTypes`/`Viewer`
+  shape — no `LSItemContentTypes` (public.html UTI) and no
+  `LSHandlerRank`, which is what modern macOS consults for the
+  "Open With" ranking.
+- Conditional-low: no `NSCameraUsageDescription` /
+  `NSMicrophoneUsageDescription`.  Today this is *safe* — SEC05's
+  WebPermissionManager hard-denies media before Chromium asks TCC —
+  but it is a trap: the first future code path that lets a getUserMedia
+  request reach AVFoundation gets the process SIGKILLed (not denied —
+  killed) for a missing usage string.  Either add the keys with honest
+  strings or pin a comment in the plist saying media is intentionally
+  un-grantable.
+
+### M3 — Style-painted check indicators: the MAC04/10 class is NOT closed — **MED-HIGH**
+
+MAC04 (extensions list) and MAC10 (checkable QGroupBoxes) converted
+their controls to real widgets because the style-painted check path
+(sheet → ChromeProxyStyle → QMacStyle → PE_Indicator*Check) was the
+one unverifiable-on-Linux render step failing on the dmg.  Three live
+instances of the identical class remain — including one introduced
+*after* the fix, which is how the class recurs:
+
+- `adblock/adblockdialog.cpp:290-293` — subscription rows are
+  `ItemIsUserCheckable` tree items; enable/disable rides
+  `setCheckState(0, …)` on the painted indicator.
+- `settings.cpp:553-556` — `sidebarPanelsList` checkable
+  QListWidgetItems gate every sidebar panel's visibility.
+- `opensearch/opensearchenginemodel.cpp:92,149-171` — the SEC11
+  per-engine "Suggestions" column (column 2, CheckStateRole +
+  `ItemIsUserCheckable`) — added after MAC04, proving the defect
+  family keeps re-entering through new features.
+
+If the MAC04 hypothesis holds on target all three show invisible or
+inert toggles.  The CA12 fix should be systemic — one shared
+index-widget-checkbox helper (the MAC04 ExtensionEnableBoxDelegate
+pattern generalized) applied to every CheckStateRole-bearing view —
+not three more per-site conversions.
+
+### M4 — fetch-tor.sh broken on macOS twice; `/opt/homebrew/bin` unsearched — **MED**
+
+- `BuildProcess/fetch-tor.sh:43` uses `sha256sum`, which does not
+  exist on macOS (`shasum -a 256` is the BSD tool) — the script dies
+  at the checksum step on the very platform that supports it
+  (`Darwin` is mapped at line 17).
+- Its default DEST is `${XDG_DATA_HOME:-~/.local/share}/Arktos/
+  Arktos/tor`, but `QStandardPaths::AppDataLocation` on macOS is
+  `~/Library/Application Support/Arktos/Arktos` — so even a
+  successful fetch installs tor where `TorManager::binarySearchPaths`
+  (tormanager.cpp:65-88) never looks.  Tor mode on macOS is then
+  silent-dead unless ARKTOS_TOR_PREFIX is hand-set.
+- `binarySearchPaths` enumerates /usr/bin, /usr/local/bin, /usr/sbin
+  and the bundle/data dirs — but a Finder-launched .app gets the
+  minimal launchd PATH, so `findExecutable` covers nothing extra, and
+  `/opt/homebrew/bin` (the Apple-Silicon Homebrew prefix; /usr/local
+  covers Intel only) is absent — a Homebrew `tor` on an M-series Mac
+  is invisible.  Also note the .app ships no bundled tor at all: the
+  only QMAKE_BUNDLE_DATA entries (src.pro:15-24) are the Bitwarden
+  files, so `Contents/{Resources,lib}/tor` candidates can never hit.
+
+### M5 — `QSettings()` resolves to CFPreferences on macOS; the fileName()-as-path uses misfire — **MED**
+
+Sibling of W1, different failure shape: `QSettings::setDefaultFormat`
+is forced to IniFormat only inside the smoke-isolation block
+(main.cpp:6022-6029), so a normal macOS run writes the app-level
+`QSettings()` keys into the CFPreferences domain
+(`~/Library/Preferences/com.arktos-browser.Arktos.plist`) — while
+ProfileSettings already pins IniFormat (profilesettings.cpp:181) and
+the codebase broadly assumes ini semantics.  The places that treat
+`QSettings().fileName()` as an owned file misbehave there:
+
+- `browserpaths.cpp:331-345` — identity migration moves the plist,
+  racing cfprefsd's cached copy (the moved content can be dropped or
+  clobbered back).
+- `profilemenuactions.cpp:405-410` — profile wipe `clear()` +
+  `QFile::remove(fileName)` — removing the plist under a live
+  cfprefsd lets the daemon resurrect cached keys (wipe can undo
+  itself).
+- `profilesettings.cpp:261-263` — `importLegacyIni(QSettings().
+  fileName())` hands a binary/XML plist to the Rust ini importer —
+  parses nothing; legacy keys silently never fold.
+- `main.cpp:6630-6637` — wipe verification reads the plist file
+  directly; cfprefsd write-back timing makes the "key is gone" check
+  unreliable.
+
+Fix: force `QSettings::setDefaultFormat(QSettings::IniFormat)`
+unconditionally early in `main()` on macOS too — same recommendation
+as W1 for Windows — so every plain `QSettings()` lands on the ini
+backend the surrounding code was written against.
+
+### M6 — Hardened-runtime / notarization constraints on spawned helpers — **MED**
+
+No `.entitlements` file, signing script, or notarization note exists
+anywhere in the tree — the whole recipe is owed to MAC01.  Specific
+spawned-helper surfaces that break or silently no-op once the app is
+hardened-runtime signed:
+
+- **tor child gets `DYLD_FALLBACK_LIBRARY_PATH`** (tormanager.cpp:
+  760-767, the TOR17 fix).  dyld strips `DYLD_*` for a
+  hardened-runtime target lacking
+  `com.apple.security.cs.allow-dyld-environment-variables` — if the
+  shipped tor binary is signed that way the fix no-ops and tor dies at
+  exec exactly as before.  Verify the expert-bundle tor's entitlements
+  on target; the honest fallback is `@rpath`/`install_name_tool` on
+  the shipped binary, not env.
+- **`libservo_embed.dylib` is dlopen'd** (servobackend.cpp:1602+).
+  In-process dlopen of a foreign-team or unsigned dylib needs
+  `com.apple.security.cs.disable-library-validation` *on the arktos
+  binary* — a notarized build without it loads nothing and the servo
+  backend silently vanishes.
+- **QtWebEngineProcess** under hardened runtime needs the Chromium JIT
+  entitlements (`allow-unsigned-executable-memory` /
+  `disable-executable-memory-protection` depending on macOS version);
+  macdeployqt does not add these automatically — the entitlements
+  file must exist for MAC01's sign step.
+- **Native-messaging hosts** spawn via plain `QProcess::start`
+  (extensionbackgroundhost.cpp:483+) which survives hardened runtime
+  (exec is not library-validated), but a quarantined host binary
+  (e.g., inside a user-unzipped download) fails at exec with a
+  Gatekeeper denial surfaced only as `spawn-failed` — worth one line
+  of user-facing guidance.
+- Self-respawns (`applicationFilePath()` — pdfview.cpp:192/481,
+  browserapplication.cpp:2243 tor windows, profilemenuactions.cpp:484
+  relaunch, plus the ~8 smoke children in main.cpp) are the same
+  signed binary — safe under Gatekeeper — but a detached sibling never
+  registers with LaunchServices: `open`-document events and Dock
+  routing always land on the bundle's primary instance.  Fine for
+  worker roles; for the tor *window* it means the second process has
+  no LaunchServices identity (low).
+
+### M7 — "Hide Menu Bar" is meaningless on macOS and its ⌘M collides with Minimize — **MED**
+
+`applyMenuBarVisibility` (browsermainwindow.cpp:3255-3267) calls
+`menuBar()->setVisible(m_menuBarVisible)` on non-tor windows — on
+macOS the QMenuBar IS the global system menubar, so the toggle either
+empties the app's menus for every window or no-ops entirely; there is
+no per-window menu row to hide (the tor branch's removeAction walk is
+the only honest variant, and it would still blank the shared bar).
+Its shortcut `Ctrl+M` (browsermainwindow.cpp:1297) maps to ⌘M —
+macOS's own Minimize accelerator — so the menu item shadows/conflicts
+with window minimize.  Gate the action off on Q_OS_MACOS like the
+icon discipline already does, or rebind to a non-reserved key.
+
+### M8 — Nav-bar drag reorder runs on Qt-side geometry under a native NSToolbar — **MED-LOW**
+
+`applyNavBarOrder`, `commitNavBarDrag` and the drop-indicator path
+(browsermainwindow.cpp:2860-3070) drive the custom reorder through
+`QToolBar::actionGeometry()` + `removeAction`/`addAction` reinsert.
+Under `setUnifiedTitleAndToolBarOnMac` the items are native
+NSToolbarItems — actionGeometry reflects the hidden Qt layout, not
+the native bar, so drop geometry can be meaningless; and re-adding a
+QWidgetAction has a long Qt-history of detaching the embedded widget
+from its native item view (the reader-button/tor-badge/splitter/
+profile items are all widget items).  Same "Qt-side bookkeeping vs
+native bar" family as MAC03/14.  Needs on-target verify; if broken,
+reorder should rebuild the bar's item list wholesale on macOS or be
+disabled there.
+
+### M9 — Translations, useragents.xml and the rest of the payload never enter the .app — **MED-LOW**
+
+`src/src.pro:42` gates the whole INSTALLS payload (translations/*.qm,
+useragents.xml, icons, man, sandbox launcher) behind `!mac`;
+QMAKE_BUNDLE_DATA ships only the four Bitwarden entries.  So the dmg
+has no compiled translations at all — and LanguageManager
+(languagemanager.cpp:67-78) probes `appDir/src/.qm/locale`,
+`appDir/../share/arktos/locale` (→ `Contents/share/…`, the wrong
+root) and `appDir/locale`, but never `Contents/Resources/share/
+arktos/locale` — so even a hand-bundled locale dir wouldn't be found.
+useragents.xml has the compiled-in qrc fallback (useragentmenu.cpp:
+76-80) so it degrades gracefully; translations degrade to
+English-only.  Fix: QMAKE_BUNDLE_DATA (or macdeployqt install-name
+step) for `.qm/locale` + useragents.xml under Contents/Resources/
+share/arktos, plus the Resources probe in LanguageManager.
+
+### M10 — 19px hard cap on the macOS bookmarks toolbar — **LOW**
+
+`m_bookmarksToolbar->setMaximumHeight(19)` (browsermainwindow.cpp:
+568) is a Qt4-era metric clamp — 19 DIP against current qmacstyle
+item metrics + 16px icons clips bookmark text at normal font sizes.
+This is the MAC13 under-measure class in reverse (the widget is
+force-shrunk rather than the style under-measuring) and the
+`w->setMaximumHeight(0)` spacer beside it (line 571) is a documented
+OS X style hack with no remaining justification recorded.
+
+### M11 — Retina stragglers in composite pixmaps — **LOW**
+
+`privateBadgedPixmap` (tabwidget.cpp:4260-4272): the null-icon
+fallback `QPixmap(16,16)` carries no devicePixelRatio, and both
+`icon.pixmap(16,16)` and the `:graphics/private.png` badge are
+requested without a paint-device DPR context — on Retina the
+composite renders at 1x (the device-pixel math itself is consistent,
+so position is right; sharpness is what's lost).  Same class,
+smaller: `fileaccesshandler.cpp:121-129` favicon composites for
+file:// listings, `tabwidget.cpp:1484/2543` favicon labels
+`.pixmap(16,16)` (non-mac paths anyway).  All cosmetic.
+
+### M12 — macOS shortcut/feature gaps — **LOW**
+
+- "Show All History" has NO binding on macOS — `history.cpp:381-383`
+  compiles the Ctrl+H out with no substitute (Safari convention is
+  ⌘Y / ⌘⇧H).
+- `Qt::Key_F11` fullscreen (browsermainwindow.cpp:1449) — F11 is
+  Mission Control's Show-Desktop default and ⌃⌘F is the platform
+  fullscreen convention; the action should carry both on macOS.
+- `sandbox-exec` seatbelt apply (sandboxmanager.cpp:205-243) is opt-in
+  with an explicit UNTESTED warning — Apple deprecated the interface
+  years ago but still ships it; fine as recorded, noted for
+  completeness.
+
+### Honest negatives — checked, not findings
+
+- **All `Qt::ControlModifier` / `Ctrl+…` shortcuts are CORRECT** —
+  Qt maps `Qt::CTRL` to Command on macOS automatically; the ~25
+  hardcoded bindings (Quit ⌘Q, Close Window, zoom, bookmarks,
+  downloads, view-source) resolve properly.  Only the ⌘M conflict
+  (M7) and the mac-missing bindings (M12) are real.
+- Menu roles: `PreferencesRole` explicit (browsermainwindow.cpp:
+  1189); About/Quit relocate to the app menu via TextHeuristicRole
+  ("About %1" / "&Quit" match the heuristics).  `setIconVisibleInMenu
+  (false)` applied consistently on mac.
+- Lifecycle: `setQuitOnLastWindowClosed(false)` + ApplicationActivate
+  respawn (browserapplication.cpp:323,1673+), unified-title toggled
+  off in fullscreen (3789), `setWindowIcon(QIcon())`, tor-window title
+  without app-name duplication — all correct conventions.
+- Bundle path probes: `installedDataDirectory()` checks Resources
+  then Contents/share (browserapplication.cpp:1954-1965);
+  `bundledExtensionsPath()` probes both roots + dev layouts
+  (extensionmanager.cpp:969-986); servo dylib probes Frameworks/+lib
+  (servobackend.cpp:1615-1621).  The remaining probe gap is M9's
+  locale dir.
+- `/usr/bin/open -R` for reveal-in-Finder (downloadmanager.cpp:938+);
+  Mach `hw.memsize`+HOST_VM_INFO64 memory stats (extensionshimbackend
+  .cpp:5726+); `chrome.runtime.getPlatformInfo` reports "mac"
+  (9120-9131); fetch-tor.sh does have a Darwin branch.
+- MAC02–17 fixes hold up as the right shape on re-read — action-vs-
+  widget visibility for the reader button, real-widget checkboxes,
+  doc-fit measurement, popup anchor lock, tab close-side styleHint,
+  first-show size bounce, completer rebinding.  The residual
+  instances of each class are M3/M7/M8/M10 above.
+- `privateBadgedPixmap` device-pixel geometry is internally
+  consistent (only the 1x fallback is soft — M11); pdfview renders at
+  zoom × devicePixelRatioF; ArktosIcon/searchbutton/sidebarpanel/
+  tortitlebar all resolve painter DPR correctly.
