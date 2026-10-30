@@ -296,8 +296,8 @@ void SiteShieldButton::refreshIcon()
     // stylesheet lifts ButtonText to the light chrome text color, so
     // the shield stays legible there and on a forced dark theme
     // alike, instead of painting the app's dark glyph.
-    const QIcon shield = ArktosIcon::getChrome(
-        QLatin1String("security-high"), palette());
+    const QIcon shield = ArktosIcon::getCircledChrome(
+        QLatin1String("security-high"), QColor(QLatin1String("#C8E6C9")));
 
     m_trustLevel.clear();
     // TRUST15: unbound (widget tab, or a window before its first

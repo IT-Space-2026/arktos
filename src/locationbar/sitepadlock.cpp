@@ -19,6 +19,7 @@
 
 #include "sitepadlock.h"
 
+#include "arktosicon.h"
 #include "browserapplication.h"
 #include "browsertheme.h"
 #include "domainblocklist.h"
@@ -297,7 +298,19 @@ QIcon SitePadlockButton::makeIcon(State state) const
 
     // The glyph is painted, not themed — the bundled icon sets carry no
     // padlock, and a painted glyph follows the verdict color directly
-    // (same convention as ReaderButton).
+    // (same convention as ReaderButton).  The verdict ALSO picks the
+    // pastel disc the glyph rides inside (pastel-circle icon style).
+    QColor disc;
+    switch (state) {
+    case State::LockedGreen: case State::UnlockedGreen:
+        disc = QColor(QLatin1String("#C8E6C9")); break;
+    case State::LockedYellow: case State::UnlockedYellow:
+        disc = QColor(QLatin1String("#FFE0B2")); break;
+    case State::LockedRed: case State::UnlockedRed:
+        disc = QColor(QLatin1String("#FFCDD2")); break;
+    case State::PlainLocked: case State::PlainUnlocked:
+        disc = QColor(QLatin1String("#ECEFF1")); break;
+    }
     const int px = qMax(16, iconSize().width());
     QPixmap pixmap(px, px);
     pixmap.fill(Qt::transparent);
@@ -329,12 +342,12 @@ QIcon SitePadlockButton::makeIcon(State state) const
     // Keyhole punched in the field color so the body reads as a lock,
     // not a blob — only meaningful while the shackle is closed.
     if (locked) {
-        painter.setBrush(palette().color(QPalette::Base));
+        painter.setBrush(disc);
         painter.drawEllipse(QPointF(8.0, 10.2), 1.0, 1.0);
         painter.drawRect(QRectF(7.5, 10.2, 1.0, 2.4));
     }
     painter.end();
-    return QIcon(pixmap);
+    return ArktosIcon::circledIcon(QIcon(pixmap), disc);
 }
 
 void SitePadlockButton::refresh()

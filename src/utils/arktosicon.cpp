@@ -252,12 +252,64 @@ private:
     const QColor m_circleColor;
 };
 
+// Same pastel-circle treatment but wraps an already-painted icon —
+// for the URL-bar indicators whose glyphs are drawn in code (padlock
+// verdict colors, reader states) rather than resolved by name.
+class CircledPixmapIconEngine : public ScaledPixmapIconEngine
+{
+public:
+    CircledPixmapIconEngine(const QIcon &inner,
+                            const QColor &circleColor)
+        : m_inner(inner)
+        , m_circleColor(circleColor)
+    {
+    }
+
+    QIconEngine *clone() const override
+    {
+        return new CircledPixmapIconEngine(m_inner, m_circleColor);
+    }
+
+    QPixmap scaledPixmap(const QSize &size, QIcon::Mode mode,
+                         QIcon::State state, qreal scale) override
+    {
+        const int glyphExtent =
+            qMax(1, qRound(size.width() * 2.0 / 3.0));
+        const QPixmap glyph = m_inner.pixmap(
+            QSize(glyphExtent, glyphExtent), scale, mode, state);
+        QPixmap out(size * scale);
+        out.setDevicePixelRatio(scale);
+        out.fill(Qt::transparent);
+        QPainter painter(&out);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(m_circleColor);
+        painter.drawEllipse(QRectF(0.5, 0.5,
+                                   size.width() - 1.0,
+                                   size.height() - 1.0));
+        painter.drawPixmap((size.width() - glyphExtent) / 2,
+                           (size.height() - glyphExtent) / 2, glyph);
+        painter.end();
+        return out;
+    }
+
+private:
+    const QIcon m_inner;
+    const QColor m_circleColor;
+};
+
 } // namespace
 
 QIcon ArktosIcon::get(const QString &name)
 {
     init();
     return QIcon::fromTheme(name);
+}
+
+QIcon ArktosIcon::circledIcon(const QIcon &inner,
+                              const QColor &circleColor)
+{
+    return QIcon(new CircledPixmapIconEngine(inner, circleColor));
 }
 
 QIcon ArktosIcon::getOnDark(const QString &name)

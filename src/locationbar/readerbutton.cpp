@@ -203,10 +203,24 @@ QIcon ReaderButton::makeIcon(bool active, bool suggested) const
     // paints at whatever size the surface asks for — a single baked
     // pixmap upscaled and blurred next to the theme-crisp siblings
     // (TRUST21).
+    // Pastel-circle icon style: the glyph rides inside a disc tinted
+    // by the button's state — active gets the deeper tint, suggested
+    // a lighter hint, plain the neutral grey.  The engine ink is
+    // pinned dark so it reads on the pastel disc on light AND dark
+    // palettes alike (same contract as ArktosIcon::getCircledChrome).
+    const QColor disc = active
+        ? QColor(QLatin1String("#BBDEFB"))
+        : suggested
+            ? QColor(QLatin1String("#E3F2FD"))
+            : QColor(QLatin1String("#ECEFF1"));
     QPalette palette = this->palette();
+    const QColor ink = ArktosStyle::contrastTextColor(disc);
+    palette.setColor(QPalette::Text, ink);
+    palette.setColor(QPalette::ButtonText, ink);
     if (m_accentOverride.isValid())
         palette.setColor(QPalette::Accent, m_accentOverride);
-    return QIcon(new ReaderIconEngine(palette, active, suggested));
+    return ArktosIcon::circledIcon(
+        QIcon(new ReaderIconEngine(palette, active, suggested)), disc);
 }
 
 void ReaderButton::refresh()

@@ -149,6 +149,11 @@ QIcon getChrome(const QString &name, const QPalette &palette);
 // palette flips reach already-installed icons.
 QIcon getCircledChrome(const QString &name, const QColor &circleColor);
 
+// Wraps an already-painted icon (URL-bar indicators like the padlock
+// or reader glyph) inside the same pastel circle — keeps the caller's
+// glyph and lets the disc carry the state color.
+QIcon circledIcon(const QIcon &inner, const QColor &circleColor);
+
 // Selectable sets — the bundled ids only (ICONS12: "native" is
 // retired).
 QStringList themeIds();
