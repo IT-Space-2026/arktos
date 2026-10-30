@@ -8,11 +8,13 @@ com.arktos_browser.Arktos / com.arktos_browser.ArktosNoServo, Windows
 Arktos-1.3.dmg / Arktos-NoServo-1.3.dmg. The bundled tor expert bundle
 is updated to 16.0.
 
-Arktos 1.2 — full code audit plus two engine flavors on every desktop package.
+Arktos 1.2 — full code audit, engine flavors on every desktop package, and the Servo backend reaching the flatpak build.
 
-Every platform ships a servo build and a NoServo (QtWebEngine-only) sibling that installs side-by-side: flatpak com.arktos_browser.Arktos / com.arktos_browser.ArktosNoServo, Windows "Arktos"/"Arktos NoServo" installers plus portable zips, and macOS Arktos-1.2.dmg / Arktos-NoServo-1.2.dmg. The bundled tor expert bundle is 15.0.25 on this tag (16.0 ships in 1.3).
+Engine flavors: every platform ships two side-by-side-installable builds — the default servo flavor and a generated NoServo (QtWebEngine-only) sibling. Flatpak carries distinct app-ids (com.arktos_browser.Arktos / com.arktos_browser.ArktosNoServo, "Arktos" / "Arktos (No Servo)" launchers, generated manifest + metainfo drift-checked in CI; the servo flavor builds libservo_embed.so inside the KDE 6.11 SDK from the vendored sha256-pinned crate set with llvm21 clang for mozjs-sys bindgen). Windows gets "Arktos"/"Arktos NoServo" NSIS installers (distinct product name, install dir and uninstall key) plus per-flavor portable zips. macOS gets Arktos-1.2.dmg / Arktos-NoServo-1.2.dmg with the NoServo bundle renamed ArktosNoServo.app. The engine selector lists webengine + Servo 0.7.0 in the servo flavor and webengine only in the NoServo one; the backend is dlopen'd at runtime so a missing cdylib degrades honestly.
 
-The CA01–CA13 code audit removed dead code, consolidated duplicated blocks, fixed eight security findings (extension bridge subframe isolation, PDF path traversal, certificate persistence), repaired dying-object/lifetime bugs, and applied performance fixes (adblock rebuild coalescing, DNR candidate index). Preferences gained the Arktos-Mobile pastel-circle category icons.
+Code audit (CA01–CA13, .devin/CODE-AUDIT.md): dead code removed, ~20 cross-file duplicate families consolidated, eight security findings fixed (extension bridge subframe isolation, PDF worker path traversal, NAM certificate persistence, DNR redirect re-gating, native-messaging host anchoring), three dying-object/lifetime crashes fixed, performance work (adblock rebuild coalescing, DNR candidate index, cold-start), and Windows/macOS platform remediations (pinned IniFormat QSettings, registry/AppData paths, NTFS-reserved filename screening, ASFW_ANY, longPathAware, entitlements, menubar/navbar-drag gates, DPR pixmaps).
+
+Other changes: pastel-circle settings icons from Arktos-Mobile; packaging pipeline fixes (macOS IOKit link, arti-client vendoring, rpm tarball naming, MSVC far-macro, smoke-helper platform guards, NSIS license path + overridable PRODUCT_NAME, clang vexing-parse, generated-manifest drift check); bundled tor expert bundle 15.0.25 (16.0 ships in 1.3); the flatpak app-id is read from /.flatpak-info instead of hardcoded.
 
 Experimental software, provided as is.
 
