@@ -7,19 +7,26 @@
 # also where QtWebEngineProcess and the webengine resources are picked up
 # at runtime.
 #
-# Rust crates (src/rustdl, src/rustcore, src/adblock/rust) are built inside
-# the SDK via the freedesktop rust-stable SDK extension.
-# flatpak/cargo-sources.json vendors every crates.io dependency
-# (sha256-pinned, generated from the committed Cargo.locks by
-# flatpak/gen-cargo-sources.py) and flatpak/cargo-config.toml redirects
-# crates.io to the vendor dir, so the build is offline and lockfile-exact —
-# CARGO_NET_OFFLINE makes cargo enforce it.
-# Servo note: servo-embed exists in-tree (spikes/servo/servo-embed, shipped
-# by the deb/rpm/dmg/exe legs) but this manifest does not build it — its
-# sysdeps (clang/mozjs) and its own vendored crate set are far beyond the
-# three locks cargo-sources.json covers. ServoBackend probes for the
-# cdylib at runtime and honestly reports the engine unavailable inside the
-# flatpak — same as a servo-less desktop build.
+# Rust crates (src/rustdl, src/rustcore, src/adblock/rust and
+# spikes/servo/servo-embed) are built inside the SDK via the freedesktop
+# rust-stable SDK extension; org.freedesktop.Sdk.Extension.llvm21 feeds
+# clang/libclang to mozjs-sys's bindgen (SRV01).
+# flatpak/cargo-sources.json (arktos module) and
+# flatpak/cargo-sources-servo.json (servo-embed module) vendor every
+# crates.io dependency — sha256-pinned, generated from the committed
+# Cargo.locks by flatpak/gen-cargo-sources.py. servo-embed's lock also
+# pins libservo + sibling crates to one servo.git commit, so the servo
+# fragment clones that repo (type: git) and stages each member crate
+# into cargo/vendor/ the way `cargo vendor` would.  Each fragment ends
+# with the generated .cargo/config.toml redirecting crates.io and the
+# servo git source to the vendored tree, so the build is offline and
+# lockfile-exact — CARGO_NET_OFFLINE makes cargo enforce it.
+# Servo note: servo-embed builds FIRST (its own module, so the expensive
+# ~700-crate build caches independently of app changes) and installs to
+# /app/lib — ServoBackend::artifactPath()'s <bindir>/../lib candidate.
+# The arktos module then stages the artifact at
+# spikes/servo/servo-embed/target/release/ before qmake, so .qmake.conf
+# auto-enables CONFIG+=servo exactly like a desktop build does.
 #
 # Sandbox policy (honest, minimal for a browser):
 #   ipc/network          — X/Qt shared memory; this is a web browser, and
@@ -52,6 +59,8 @@ base: io.qt.qtwebengine.BaseApp
 base-version: '6.11'
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
+  # clang + libclang for mozjs-sys's bindgen (servo-embed module)
+  - org.freedesktop.Sdk.Extension.llvm21
 command: arktos
 rename-desktop-file: arktos.desktop
 rename-icon: arktos
@@ -83,6 +92,46 @@ build-options:
     CARGO_NET_OFFLINE: 'true'
 
 modules:
+  # servo-embed cdylib (SRV01) — the dlopen'd Servo backend.  Built as its
+  # own module so flatpak-builder's per-module cache skips the ~700-crate
+  # rebuild whenever only the app tree moved.  x86_64 only (the crate's
+  # .cargo/config.toml pins an x86_64 linker wrapper); on other arches the
+  # module is skipped and the app simply builds servo-less.
+  - name: servo-embed
+    buildsystem: simple
+    only-arches:
+      - x86_64
+    build-options:
+      append-path: /usr/lib/sdk/llvm21/bin
+      env:
+        # the top-level CARGO_HOME is keyed to the arktos module dir —
+        # keep this module's cargo state in its own build dir
+        CARGO_HOME: cargo-home
+        # mozjs-sys bindgen finds libclang here (llvm21 SDK ext)
+        LIBCLANG_PATH: /usr/lib/sdk/llvm21/lib
+    build-commands:
+      # The crate's .cargo/config.toml pins a machine-local lld wrapper —
+      # override it for the in-tree script, same as the deb/rpm legs.
+      # (export survives: flatpak-builder runs build-commands in one
+      # script.)
+      - export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$PWD/servo-embed/cc-lld.sh"
+      # --manifest-path keeps the CWD on the module dir (a `cd` would
+      # persist — flatpak-builder runs these as one script — and break
+      # the relative test/install paths below).  env -u scrubs
+      # flatpak-builder's exported *FLAGS — they leak into cc-rs and
+      # -O2 overrides aws-lc-sys jitterentropy's mandatory -O0 (same
+      # scrub rustdl.pri/rustcore.pri apply).
+      - env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS cargo build --release --locked --manifest-path servo-embed/Cargo.toml
+      - test -f servo-embed/target/release/libservo_embed.so
+      # ServoBackend::artifactPath() resolves <bindir>/../lib — /app/lib
+      # for the flatpak layout.
+      - install -Dm755 servo-embed/target/release/libservo_embed.so /app/lib/libservo_embed.so
+    sources:
+      - type: dir
+        path: spikes/servo/servo-embed
+        dest: servo-embed
+      - flatpak/cargo-sources-servo.json
+
   # Tor expert bundle (tor + pluggable transports + geoip), pinned to the
   # sha256 published on dist.torproject.org — same artifact
   # BuildProcess/fetch-tor.sh would fetch per-user. Staged at
@@ -109,6 +158,11 @@ modules:
   - name: arktos
     buildsystem: simple
     build-commands:
+      # Stage the servo-embed artifact where .qmake.conf probes it — its
+      # presence auto-enables CONFIG+=servo, the same signal a desktop
+      # build gets (SRV01; the servo-embed module above guarantees the
+      # artifact on x86_64, other arches skip it and stay servo-less).
+      - if [ "$(uname -m)" = x86_64 ]; then mkdir -p spikes/servo/servo-embed/target/release && cp -a /app/lib/libservo_embed.so spikes/servo/servo-embed/target/release/; fi
       - cd src && qmake src.pro PREFIX=/app CONFIG+=rustdl CONFIG+=rustcore
       - make -C src -j${FLATPAK_BUILDER_N_JOBS}
       - make -C src install
@@ -117,12 +171,14 @@ modules:
       # that launches clean. ac_init is the arktos_core.h facade entry;
       # "ac_init" bytes only enter the binary via the rustcore objects.
       - grep -q ac_init /app/bin/arktos
+      # Servo link-proof (SRV01): an ARKTOS_SERVO build embeds the cdylib
+      # name in its artifactPath() candidates — a build where CONFIG+=servo
+      # silently dropped would ship neither.  (x86_64 only.  QStringLiteral
+      # stores the name UTF-16, which plain grep can't see — strings -e l
+      # recovers the 16-bit string table; binutils is in the SDK.)
+      - test ! "$(uname -m)" = x86_64 || { test -f /app/lib/libservo_embed.so && strings -e l /app/bin/arktos | grep -q libservo_embed; }
       - install -Dm644 flatpak/com.arktos_browser.Arktos.metainfo.xml /app/share/metainfo/com.arktos_browser.Arktos.metainfo.xml
     sources:
       - type: dir
         path: .
       - flatpak/cargo-sources.json
-      - type: file
-        path: flatpak/cargo-config.toml
-        dest: .cargo/
-        dest-filename: config.toml

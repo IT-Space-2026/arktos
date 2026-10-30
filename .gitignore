@@ -92,3 +92,8 @@ spikes/cef/qcefprobe/*.o
 spikes/cef/qcefprobe/moc_*.cpp
 spikes/cef/qcefprobe/cef-*.png
 spikes/cef/qcefprobe/extensions/
+
+# flatpak-builder local build state + output dirs (SRV01 verification)
+.flatpak-builder/
+fp-build/
+fp-repo/

@@ -184,13 +184,22 @@ jobs:
         # flatpak-builder handles the KDE 6.11 runtime + qtwebengine
         # baseapp + rust SDK extension declared in the manifest; the
         # vendored cargo-sources.json keeps the build offline-exact.
+        # SRV01: the manifest's servo-embed module compiles
+        # libservo_embed.so inside the SDK (mirroring the deb leg's
+        # pre-package cargo build — the in-sandbox build is also what
+        # makes the artifact link against the runtime's glibc, not the
+        # runner's).  The rust-cache analog is flatpak-builder's own
+        # state dir: the action restores any cache matching the
+        # flatpak-builder-${arch} prefix, so arch-prefixing the key
+        # lets an unchanged servo-embed module skip its ~700-crate
+        # rebuild on the next commit.
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6.8
         with:
           manifest-path: com.arktos_browser.Arktos.yaml
           bundle: com.arktos_browser.Arktos.flatpak
           repository-name: flathub
           repository-url: https://flathub.org/repo/flathub.flatpakrepo
-          cache-key: flatpak-builder-${{ github.sha }}
+          cache-key: flatpak-builder-x86_64-${{ github.sha }}
           verbose: true
 
       - uses: actions/upload-artifact@v7

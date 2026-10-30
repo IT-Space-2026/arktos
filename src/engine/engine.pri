@@ -33,10 +33,17 @@ SERVO_EMBED_DIR = $$PWD/../../spikes/servo/servo-embed
 isEmpty(ARKTOS_SERVO_ARTIFACTS) {
     # .qmake.conf normally computes this first; repeat it so the .pri
     # still resolves correctly when parsed without the project root.
-    for(dir, $$files($$SERVO_EMBED_DIR/target/*)) {
-        for(libname, libservo_embed.so libservo_embed.dylib servo_embed.dll) {
-            exists($$dir/$$libname): \
-                ARKTOS_SERVO_ARTIFACTS += $$dir/$$libname
+    # for() iterates a bare variable name only — a literal list or a
+    # $$files() expansion loops over nothing under qmake 6.12, which is
+    # why the profile dirs are named through ARKTOS_SERVO_PROFILES.
+    ARKTOS_SERVO_PROFILES = debug release
+    ARKTOS_SERVO_LIBNAMES = \
+        libservo_embed.so libservo_embed.dylib servo_embed.dll
+    for(profile, ARKTOS_SERVO_PROFILES) {
+        for(libname, ARKTOS_SERVO_LIBNAMES) {
+            exists($$SERVO_EMBED_DIR/target/$$profile/$$libname): \
+                ARKTOS_SERVO_ARTIFACTS += \
+                    $$SERVO_EMBED_DIR/target/$$profile/$$libname
         }
     }
 }

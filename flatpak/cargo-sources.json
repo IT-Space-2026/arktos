@@ -9322,5 +9322,11 @@
     "contents": "{\"package\": \"27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296\", \"files\": {}}",
     "dest": "cargo/vendor/zune-jpeg-0.5.15",
     "dest-filename": ".cargo-checksum.json"
+  },
+  {
+    "type": "inline",
+    "contents": "[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n",
+    "dest": ".cargo/",
+    "dest-filename": "config.toml"
   }
 ]

@@ -423,6 +423,9 @@ WebEngine runtime note: QtWebEngineProcess + resources ship inside
 | CA13 | Code audit close-out — re-run detectors, full suite green, CODE-AUDIT.md finalized with fixed/deferred dispositions — details below | done | 0 | Detector re-run: dead syms 13->10 (all verified-live), clone groups 127->65, clippy dead_code 0; all deferred B leftovers applied (shim FFI/boilerplate vocab, cookieRecordJson->cookierecord.h, session/tab/sanitize/opensearch/bidi/statusbar/extensionmanager helpers, main.cpp smokeFinish/smokeRespond/smokeServer/smokePollUntil); CODE-AUDIT.md finalized w/ fixed+deferred+wontfix dispositions; make 0 warnings, quit-after-load rc=0, suite reds = documented pre-existing stale legs |
 | THEME01 | Desktop preferences: mobile-style colored-circle category icons — pastel circle + monochrome glyph per settings section — details below | done | 0 | getCircledChrome pastel-circle engine in the icon path; settings nav table maps each category to a mobile icon_circle_* color; Sync icon fixed (network-server resolved nowhere -> document-revert). Verified: 0-warning build, --quit-after-load rc=0, tst_arktosicon 15/15, new circledSidebarIcons PASS on light+forced-dark palettes + PNG dumps; sidebarPanelsListGeometry failure is pre-existing on clean master |
 | CI01 | Fix v1.2 pipeline: 4 platform build failures — macOS IOKit link, flatpak arti-client vendor, rpm tarball name, MSVC probeTicks — details below | done | 0 | 4 legs fixed: IOKit framework link for rustcore consumers (app+tst_acprobe), cargo-sources.json regenerated (371->666 crates incl arti-client tree), pkg-rpm VER derived from spec Version (arktos-1.2.tar.gz produced), windef.h far-macro collision renamed farFrame+#undef guard (CA12 regression). Verified: qmake6+make 0 warnings, --quit-after-load rc=0 offscreen |
+| SRV01 | Servo on all desktop OSes: flatpak leg — vendor servo-embed crates into the offline manifest + build step — details below | in_progress | 0 | needs:task:CI01 — manifest+vendor+qmake-probe done; local legs green (engine-list shows servo); in-sandbox flatpak-builder verify running detached — flatpak/.build/build.log |
+| SRV02 | Servo on all desktop OSes: windows leg — MSVC servo-embed build (clang for mozjs-sys bindgen), CI step + cache — details below | pending | 0 | needs:task:SRV01 |
+| SRV03 | Servo on all desktop OSes: macos leg — brew/vendored fontconfig+freetype+expat deps, servo-embed build + bundle staging — details below | pending | 0 | needs:task:SRV02 |
 
 ## Task details
 
@@ -5631,3 +5634,82 @@ rc=0 offscreen (about:blank loadFinished). Note: job logs require
 repo-admin so the windows diagnosis is inferred from the CA12 diff +
 macro semantics, not the raw cl output — the `far` collision is a
 guaranteed MSVC compile error in that TU regardless.
+
+### SRV01
+Flatpak leg: the servo-embed crates must join the vendored --offline
+cargo manifest (the arti-client staleness in CI01 is the precedent —
+follow the same regen path the manifest was produced with) and the
+flatpak job needs the servo-embed build step (mirror the deb job's
+step + rust-cache key pattern). Done = flatpak job builds
+libservo_embed.so, CONFIG+=servo lights up, the engine selector shows
+the Servo row in the flatpak build.
+
+
+Run notes:
+- Resumed an interrupted run that had already: added the servo-embed
+  module (llvm21 SDK ext for mozjs-sys bindgen, isolated CARGO_HOME,
+  cc-lld.sh linker override, install to /app/lib), generated
+  flatpak/cargo-sources-servo.json via a rewritten
+  gen-cargo-sources.py (711 registry archives + 55 servo.git member
+  crates staged from one commit-pinned clone with cargo-vendor-
+  normalized Cargo.tomls + nested mozjs_* cbindgen locks), folded
+  cargo-config.toml into the generated fragments, staged the artifact
+  where .qmake.conf's probe looks + a libservo_embed link-proof,
+  arch-prefixed the CI cache key, updated README.
+- Fixed three bugs the staging exposed:
+  (a) .qmake.conf/engine.pri artifact probes used
+      `for(profile, debug release)` / `for(dir, $$files(...))` —
+      qmake 6.12 for() iterates a bare variable name only, so both
+      loops were dead and CONFIG+=servo never auto-engaged (the Oct-29
+      binary carries no libservo_embed strings — auto-enable has never
+      worked under this qmake). Replaced with ARKTOS_SERVO_PROFILES /
+      ARKTOS_SERVO_LIBNAMES variable lists. Without this the arktos
+      module's link-proof would fail the whole flatpak build.
+  (b) the module's `cd servo-embed` persisted into the following
+      test/install commands (one-script semantics) — switched to
+      --manifest-path.
+  (c) flatpak-builder's exported CFLAGS/CXXFLAGS/CPPFLAGS/LDFLAGS leak
+      into cc-rs — -O2 overrides aws-lc-sys jitterentropy's mandatory
+      -O0 and the module build dies. Same env -u scrub as
+      rustdl.pri/rustcore.pri, written as a single YAML line (a plain-
+      scalar continuation keeps the backslash literal and env chokes).
+- Generator verified deterministic: re-run reproduces both fragments
+  byte-identically (666 app crates, 711 servo + 55 git crates; nested
+  mozjs locks: 5 cbindgen-shim lockfiles vendored).
+- flatpak-builder --download-only PASS: servo.git clone + all 1377
+  crate archives fetch + sha256-verify.
+
+- Resume 3 (post-reboot): attempt-2's in-sandbox cargo build was
+  killed by a host reboot ~09:35 while compiling mozjs_sys.  Verified
+  already-green legs this run: ./arktos --engine-list lists both
+  "webengine" and "servo" (CONFIG+=servo probe + ServoBackend
+  registration working in the local build), YAML parses.
+- Relaunched the build detached (setsid; log at
+  flatpak/.build/build.log) against a clean git-ls-files export at
+  flatpak/.build/src — NOT the dirty tree root, because the arktos
+  module's `type: dir path: .` would otherwise copy the 50G
+  .flatpak-builder state dir into the module.  Seeded the export's
+  spikes/servo/servo-embed/target with attempt-2's sandbox target so
+  cargo resumes the dep graph (the sandbox always sees
+  /run/build/servo-embed regardless of the host -N suffix, so the
+  SDK-rustc fingerprints still resolve).
+- Next run: check flatpak/.build/build.log.  Done-criteria evidence
+  = "Committing stage cleanup" reached + fp-repo/refs exists +
+  fp-build/files/lib/libservo_embed.so present and the arktos
+  module's strings/grep link-proofs passed (they run in-sandbox).
+
+### SRV02
+Windows leg: compile servo-embed under MSVC on the windows runner —
+mozjs-sys bindgen needs clang (runner has it); resolve any Linux-isms
+in the crate that surface. Mirror the cache-keyed rust-cache step +
+the pre-qmake artifact ordering (CONFIG+=servo only lights while the
+artifact exists). Done = windows job produces the embed lib, Servo
+row selectable in the packaged build.
+
+### SRV03
+macOS leg: the workflow comment documents fontconfig/freetype/expat
+coming from yeslogic-*-sys pkg-config lookups — on macOS those need
+brew installs or vendored builds; then servo-embed compiles, the
+artifact lands where the .app bundle expects it (check
+QMAKE_BUNDLE_DATA staging for the dylib), and the selector offers
+Servo. Done = macos job green with the backend compiled in.
