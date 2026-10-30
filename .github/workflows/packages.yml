@@ -238,6 +238,16 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two flavors, like flatpak: servo builds servo_embed.dll (the
+        # .qmake.conf probe auto-enables CONFIG+=servo), noservo skips
+        # it and ships QtWebEngine-only.  Distinct PRODUCT_NAME keeps
+        # installer filename/install dir/uninstall key side-by-side.
+        include:
+          - { flavor: servo,   product_name: 'Arktos',         zip: arktos-windows-servo.zip }
+          - { flavor: noservo, product_name: 'Arktos NoServo', zip: arktos-windows-noservo.zip }
     env:
       # rustdl's reqwest -> rustls -> aws-lc-sys chain compiles C+asm
       # via the cc crate; NASM is not on windows-latest by default and
@@ -245,6 +255,7 @@ jobs:
       # env stays as the C-fallback escape hatch (constant-time, just
       # no asm speedups) if the install ever regresses.
       AWS_LC_SYS_NO_ASM: '0'
+      FLAVOR: ${{ matrix.flavor }}
     steps:
       - uses: actions/checkout@v7
 
@@ -253,12 +264,14 @@ jobs:
         run: choco install nasm -y --no-progress
 
       - name: Cache servo-embed cargo target
+        if: matrix.flavor == 'servo'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: spikes/servo/servo-embed
           key: servo-windows
 
       - name: Build servo-embed cdylib
+        if: matrix.flavor == 'servo'
         # servo-embed's .cargo/config.toml only pins a linker for the
         # linux triple — windows-msvc links plain.  Built BEFORE qmake
         # so .qmake.conf auto-enables CONFIG+=servo off servo_embed.dll.
@@ -350,8 +363,10 @@ jobs:
           findstr /m /c:"panic inside rustcore" deploy\arktos.exe | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "rustcore marker absent from arktos.exe — staticlib not linked" }
           # servo_embed.dll is the one rust artifact shipped as a file —
-          # the build step above guarantees it, so it must be staged.
-          if (-not (Test-Path deploy\servo_embed.dll)) { throw "servo_embed.dll missing from deploy payload" }
+          # the servo leg's build step guarantees it, so it must be
+          # staged there; the noservo leg must NOT carry it.
+          if ($env:FLAVOR -eq 'servo' -and -not (Test-Path deploy\servo_embed.dll)) { throw "servo_embed.dll missing from deploy payload" }
+          if ($env:FLAVOR -eq 'noservo' -and (Test-Path deploy\servo_embed.dll)) { throw "noservo payload carries servo_embed.dll" }
           # Arktos data payload — installedDataDirectory() resolves to
           # the exe dir on Windows, so stage beside it.
           Copy-Item -Recurse src\.qm\locale deploy\locale
@@ -370,7 +385,7 @@ jobs:
           tar -xzf $tb
           Copy-Item -Recurse tor deploy\tor
           Copy-Item -Recurse data deploy\data
-          Compress-Archive -Path deploy\* -DestinationPath arktos-windows.zip
+          Compress-Archive -Path deploy\* -DestinationPath "${{ matrix.zip }}"
 
       - name: Installer (NSIS)
         shell: pwsh
@@ -390,7 +405,8 @@ jobs:
             "/DDEPLOYDIR=$PWD\deploy",
             "/DICONFILE=$PWD\BuildProcess\browser.ico",
             "/DOUTDIR=$PWD",
-            "/DSRCDIR=$PWD\src"
+            "/DSRCDIR=$PWD\src",
+            "/DPRODUCT_NAME=${{ matrix.product_name }}"
           )
           if ($crt) { $nsisArgs += "/DVCREDIST=$($crt.FullName)" }
           & $makensis @nsisArgs BuildProcess\windowsinstaller.nsi
@@ -398,16 +414,29 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arktos-windows
+          name: arktos-windows-${{ matrix.flavor }}
           path: |
-            arktos-windows.zip
+            ${{ matrix.zip }}
             *Installer*.exe
 
   macos:
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Same flavor split as flatpak/windows: the noservo leg skips
+        # the servo-embed build so .qmake.conf's artifact probe leaves
+        # CONFIG+=servo off; the bundle is renamed ArktosNoServo.app +
+        # dmg gets a -NoServo suffix for side-by-side installs.
+        include:
+          - { flavor: servo,   app: 'Arktos.app',        dmg: 'Arktos-${VERSION}.dmg' }
+          - { flavor: noservo, app: 'ArktosNoServo.app', dmg: 'Arktos-NoServo-${VERSION}.dmg' }
     # NOTE: do NOT set AWS_LC_SYS_NO_ASM here — aws-lc-sys panics on it
     # for release builds ("only allowed for debug builds"), and the
     # aarch64-apple-darwin target has pregenerated clang asm anyway.
+    env:
+      FLAVOR: ${{ matrix.flavor }}
+      APP: ${{ matrix.app }}
     steps:
       - uses: actions/checkout@v7
 
@@ -426,12 +455,14 @@ jobs:
           echo "QTDIR=$QTDIR" >> "$GITHUB_ENV"
 
       - name: Cache servo-embed cargo target
+        if: matrix.flavor == 'servo'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: spikes/servo/servo-embed
           key: servo-macos
 
       - name: Build servo-embed cdylib
+        if: matrix.flavor == 'servo'
         # The linux-only linker wrapper in .cargo/config.toml is a
         # target-triple match — aarch64-apple-darwin ignores it, no
         # override needed here.  Built BEFORE qmake so .qmake.conf
@@ -444,6 +475,7 @@ jobs:
         run: |
           "$QTDIR/bin/qmake" -o Makefile arktos.pro
           make -j"$(sysctl -n hw.ncpu)"
+          [ "$FLAVOR" = servo ] || mv Arktos.app "$APP"
 
       - name: Stage payload + bundled tor into the .app
         run: |
@@ -451,23 +483,23 @@ jobs:
           # (compiled translations, useragents.xml, bundled extensions)
           # straight from the source tree into the bundle-relative path
           # installedDataDirectory() resolves.
-          mkdir -p Arktos.app/Contents/Resources/share/arktos
-          cp -a src/.qm/locale Arktos.app/Contents/Resources/share/arktos/
+          mkdir -p "$APP/Contents/Resources/share/arktos"
+          cp -a src/.qm/locale "$APP/Contents/Resources/share/arktos/"
           cp -a src/useragent/useragents.xml \
-                Arktos.app/Contents/Resources/share/arktos/
+                "$APP/Contents/Resources/share/arktos/"
           cp -a src/data/extensions \
-                Arktos.app/Contents/Resources/share/arktos/
+                "$APP/Contents/Resources/share/arktos/"
           # tor expert bundle where TorManager's bundled-layout
           # search (<bindir>/../lib/tor, binaryDir/../data) finds it.
           ARKTOS_TOR_PREFIX="$PWD/torpayload" sh BuildProcess/fetch-tor.sh
-          mkdir -p Arktos.app/Contents/lib
-          cp -a torpayload/tor Arktos.app/Contents/lib/tor
-          cp -a torpayload/data Arktos.app/Contents/lib/data
+          mkdir -p "$APP"/Contents/lib
+          cp -a torpayload/tor "$APP"/Contents/lib/tor
+          cp -a torpayload/data "$APP"/Contents/lib/data
           # Adhoc-sign the tor helper + its bundled dylibs — an
           # unsigned Mach-O inside a quarantined app gets exec-killed
           # by Gatekeeper on modern macOS ("Failed to launch tor").
-          codesign -s - --force Arktos.app/Contents/lib/tor/tor
-          find Arktos.app/Contents/lib/tor -name '*.dylib' \
+          codesign -s - --force "$APP"/Contents/lib/tor/tor
+          find "$APP"/Contents/lib/tor -name '*.dylib' \
                -exec codesign -s - --force {} +
           # servo-embed dylib — ServoBackend::artifactPath() resolves
           # <bindir>/../lib/ (= Contents/lib, beside bundled tor).
@@ -475,33 +507,38 @@ jobs:
           # it like the rest of the unsigned bundle.
           if [ -f spikes/servo/servo-embed/target/release/libservo_embed.dylib ]; then
             cp -a spikes/servo/servo-embed/target/release/libservo_embed.dylib \
-                  Arktos.app/Contents/lib/
-            codesign -s - --force Arktos.app/Contents/lib/libservo_embed.dylib
+                  "$APP"/Contents/lib/
+            codesign -s - --force "$APP"/Contents/lib/libservo_embed.dylib
           fi
 
       - name: Package .dmg
         run: |
-          "$QTDIR/bin/macdeployqt" Arktos.app -verbose=1
+          "$QTDIR/bin/macdeployqt" "$APP" -verbose=1
           # Launch smoke on the DEPLOYED bundle: macdeployqt shipped a
           # dmg once with an unresolved @rpath/QtSerialPort inside
           # QtWebEngineProcess — silent quit on the user's Mac.
           # Missing frameworks must kill CI, not the dock icon.
           QT_QPA_PLATFORM=offscreen QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu \
             perl -e 'alarm 120; exec @ARGV' \
-            Arktos.app/Contents/MacOS/Arktos --quit-after-load
+            "$APP"/Contents/MacOS/Arktos --quit-after-load
           # RC10 link-proof: macdeployqt never sees the statically
           # linked rustcore — prove the facade is inside the deployed
           # binary.  Cargo is guaranteed on this leg (the servo-embed
           # build hard-fails without it), so a missing ac_init means
           # qmake silently shipped the no-rust fallback.  Byte-grep, not
           # nm|grep -q: grep -q's early exit SIGPIPEs nm under pipefail.
-          grep -q 'ac_init' Arktos.app/Contents/MacOS/Arktos \
+          grep -q 'ac_init' "$APP"/Contents/MacOS/Arktos \
             || { echo "facade symbol ac_init missing — rustcore not linked" >&2; exit 1; }
           # libservo_embed.dylib is the one rust artifact shipped as a
-          # file (dlopen'd) — the build step guarantees it, so the bundle
-          # must carry it.
-          test -f Arktos.app/Contents/lib/libservo_embed.dylib \
-            || { echo "libservo_embed.dylib missing from bundle" >&2; exit 1; }
+          # file (dlopen'd) — the servo leg's build step guarantees it;
+          # the noservo bundle must NOT carry it.
+          if [ "$FLAVOR" = servo ]; then
+            test -f "$APP"/Contents/lib/libservo_embed.dylib \
+              || { echo "libservo_embed.dylib missing from bundle" >&2; exit 1; }
+          else
+            test ! -e "$APP"/Contents/lib/libservo_embed.dylib \
+              || { echo "noservo bundle carries libservo_embed.dylib" >&2; exit 1; }
+          fi
           # macdeployqt's own -dmg output is a bare volume — no
           # /Applications link, no install affordance. Build the
           # classic drag-to-Applications layout ourselves: a staging
@@ -509,20 +546,20 @@ jobs:
           # a compressed UDZO image of it.
           # Trim what we own: strip the app binary (Qt frameworks ship
           # pre-stripped) and drop .dSYM/debug droppings if any slipped in.
-          strip -x Arktos.app/Contents/MacOS/Arktos 2>/dev/null || true
-          find Arktos.app -name '*.dSYM' -exec rm -rf {} + 2>/dev/null || true
+          strip -x "$APP"/Contents/MacOS/Arktos 2>/dev/null || true
+          find "$APP" -name '*.dSYM' -exec rm -rf {} + 2>/dev/null || true
           mkdir dmg-root
-          cp -R Arktos.app dmg-root/
+          cp -R "$APP" dmg-root/
           ln -s /Applications dmg-root/Applications
           # ULFO = lzfse (macOS 10.11+): ~10-15% smaller than UDZO zlib
           # on binary payloads.  The floor is QtWebEngineCore (~300MB
           # of Chromium) — compression can't shrink the engine itself.
           VERSION=${GITHUB_REF_NAME#v}
-          hdiutil create -volname "Arktos" -srcfolder dmg-root -ov -format ULFO "Arktos-${VERSION}.dmg"
+          hdiutil create -volname "Arktos" -srcfolder dmg-root -ov -format ULFO "${{ matrix.dmg }}"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arktos-macos
+          name: arktos-macos-${{ matrix.flavor }}
           path: '*.dmg'
 
   release:
@@ -548,6 +585,7 @@ jobs:
           shopt -s nullglob
           assets=(release-assets/*.deb release-assets/*.rpm \
                   release-assets/*.flatpak release-assets/*.dmg \
+                  release-assets/*.zip \
                   release-assets/*Installer*.exe)
           # Belt for the spec fix: never ship -debuginfo/-debugsource rpms.
           filtered=()
