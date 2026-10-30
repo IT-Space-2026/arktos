@@ -59,6 +59,7 @@ private:
     bool m_inviter;
     QString m_profileId;
     quint64 m_pairId = 0;
+    bool m_pollInFlight = false;
     QLabel *m_qrLabel;
     QLineEdit *m_codeLabel = nullptr;
     QPushButton *m_copyButton = nullptr;

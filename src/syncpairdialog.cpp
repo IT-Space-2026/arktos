@@ -156,10 +156,17 @@ SyncPairDialog::SyncPairDialog(bool inviter, const QString &profileId,
     connect(m_cancelButton, &QPushButton::clicked,
             this, &SyncPairDialog::onCancel);
 
-    m_thread = new QThread(this);
+    // Unparented: ~QThread() would block the GUI thread waiting for
+    // an in-flight Rust call (a tor connect can hang for tens of
+    // seconds) — the dialog must be closable at any point. The
+    // thread instead outlives the dialog briefly, quits when the
+    // current call returns, then deletes itself + the worker.
+    m_thread = new QThread;
     auto *worker = new SyncPairWorker;
     worker->moveToThread(m_thread);
     connect(m_thread, &QThread::finished, worker, &QObject::deleteLater);
+    connect(m_thread, &QThread::finished,
+            m_thread, &QThread::deleteLater);
     connect(this, &SyncPairDialog::destroyed,
             m_thread, &QThread::quit);
     m_thread->start();
@@ -212,8 +219,12 @@ void SyncPairDialog::onJoinStarted()
 
 void SyncPairDialog::poll()
 {
-    if (!m_pairId)
+    // Worker calls are serialized — don't pile queued calls onto a
+    // stuck one; a hung Rust call would otherwise grow the queue
+    // every 800ms for the life of the dialog.
+    if (!m_pairId || m_pollInFlight)
         return;
+    m_pollInFlight = true;
     mwCall(0, AcMw::SyncPairPoll,
            QJsonObject{{QStringLiteral("pair_id"),
                         QString::number(m_pairId)}});
@@ -221,6 +232,7 @@ void SyncPairDialog::poll()
 
 void SyncPairDialog::onWorkerResult(int kind, const QJsonObject &doc)
 {
+    m_pollInFlight = false;
     if (doc.contains(QStringLiteral("code"))
         && doc.value(QStringLiteral("code")).isString()
         && doc.contains(QStringLiteral("status"))) {

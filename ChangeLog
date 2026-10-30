@@ -1,3 +1,9 @@
+1.4 — Sync pairing fixes
+- Pairing code rendered in a read-only copyable field + Copy button.
+- Closing the pair dialog no longer blocks the GUI thread on an
+  in-flight tor worker call (unparented QThread, self-cleans).
+- Pair poll no longer stacks queued calls on a hung worker.
+
 1.3 — Engine flavors + tor 16.0
 - Two flatpak/windows/macos flavors per release: servo +
   generated NoServo sibling (distinct app-ids/product names,
