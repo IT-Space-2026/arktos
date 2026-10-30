@@ -60,7 +60,8 @@ private:
     QString m_profileId;
     quint64 m_pairId = 0;
     QLabel *m_qrLabel;
-    QLabel *m_codeLabel;
+    QLineEdit *m_codeLabel = nullptr;
+    QPushButton *m_copyButton = nullptr;
     QPlainTextEdit *m_payloadEdit;
     QPushButton *m_startButton;
     QLabel *m_statusLabel;

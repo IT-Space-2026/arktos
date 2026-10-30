@@ -18,6 +18,9 @@
 #include "rustcorebridge.h"
 
 #include <qboxlayout.h>
+#include <qclipboard.h>
+#include <qfontdatabase.h>
+#include <qguiapplication.h>
 #include <qgroupbox.h>
 #include <qjsonarray.h>
 #include <qjsonvalue.h>
@@ -83,14 +86,28 @@ SyncPairDialog::SyncPairDialog(bool inviter, const QString &profileId,
         m_qrLabel = new QLabel(this);
         m_qrLabel->setAlignment(Qt::AlignCenter);
         m_qrLabel->setMinimumSize(240, 240);
-        m_codeLabel = new QLabel(this);
-        m_codeLabel->setWordWrap(true);
-        m_codeLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        m_codeLabel->setStyleSheet(QStringLiteral("font-family:monospace"));
+        m_codeLabel = new QLineEdit(this);
+        m_codeLabel->setReadOnly(true);
+        m_codeLabel->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+        m_codeLabel->setAlignment(Qt::AlignCenter);
+        m_codeLabel->setMinimumHeight(30);
         lay->addWidget(new QLabel(
-            tr("Have the other device scan this code or type the pairing code:"), this));
+            tr("Have the other device scan this code:"), this));
         lay->addWidget(m_qrLabel, 0, Qt::AlignCenter);
-        lay->addWidget(m_codeLabel);
+        auto *codeLbl = new QLabel(tr("…or type the pairing code:"), this);
+        lay->addWidget(codeLbl);
+        auto *codeRow = new QHBoxLayout;
+        codeRow->addWidget(m_codeLabel, 1);
+        m_copyButton = new QPushButton(tr("Copy"), this);
+        codeRow->addWidget(m_copyButton);
+        lay->addLayout(codeRow);
+        connect(m_copyButton, &QPushButton::clicked, this, [this] {
+            QGuiApplication::clipboard()->setText(m_codeLabel->text());
+            m_copyButton->setText(tr("Copied"));
+            QTimer::singleShot(1500, this, [this] {
+                m_copyButton->setText(tr("Copy"));
+            });
+        });
         mwCall(CallTransport, AcMw::SyncTransportStart,
                QJsonObject{{QStringLiteral("backend"), QStringLiteral("tor")}});
     } else {
