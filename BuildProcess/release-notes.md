@@ -8,13 +8,36 @@ com.arktos_browser.Arktos / com.arktos_browser.ArktosNoServo, Windows
 Arktos-1.3.dmg / Arktos-NoServo-1.3.dmg. The bundled tor expert bundle
 is updated to 16.0.
 
-Arktos 1.2 — full code audit, engine flavors on every desktop package, and the Servo backend reaching the flatpak build.
+Arktos 1.2 — a maintained continuation of the 2009 Qt/WebKit Arora, rebuilt on Qt 6 + QtWebEngine (Chromium) around privacy hardening, per-site containers, optional Tor windows and a Vivaldi-style UI. This release lands the full CA01–CA13 code audit and ships two engine flavors on every desktop package.
 
-Engine flavors: every platform ships two side-by-side-installable builds — the default servo flavor and a generated NoServo (QtWebEngine-only) sibling. Flatpak carries distinct app-ids (com.arktos_browser.Arktos / com.arktos_browser.ArktosNoServo, "Arktos" / "Arktos (No Servo)" launchers, generated manifest + metainfo drift-checked in CI; the servo flavor builds libservo_embed.so inside the KDE 6.11 SDK from the vendored sha256-pinned crate set with llvm21 clang for mozjs-sys bindgen). Windows gets "Arktos"/"Arktos NoServo" NSIS installers (distinct product name, install dir and uninstall key) plus per-flavor portable zips. macOS gets Arktos-1.2.dmg / Arktos-NoServo-1.2.dmg with the NoServo bundle renamed ArktosNoServo.app. The engine selector lists webengine + Servo 0.7.0 in the servo flavor and webengine only in the NoServo one; the backend is dlopen'd at runtime so a missing cdylib degrades honestly.
+## Features
 
-Code audit (CA01–CA13, .devin/CODE-AUDIT.md): dead code removed, ~20 cross-file duplicate families consolidated, eight security findings fixed (extension bridge subframe isolation, PDF worker path traversal, NAM certificate persistence, DNR redirect re-gating, native-messaging host anchoring), three dying-object/lifetime crashes fixed, performance work (adblock rebuild coalescing, DNR candidate index, cold-start), and Windows/macOS platform remediations (pinned IniFormat QSettings, registry/AppData paths, NTFS-reserved filename screening, ASFW_ANY, longPathAware, entitlements, menubar/navbar-drag gates, DPR pixmaps).
+- **Two engine flavors on every platform.** The default servo build and a generated NoServo (QtWebEngine-only) sibling install side-by-side:
+  - **Flatpak** — `com.arktos_browser.Arktos` and `com.arktos_browser.ArktosNoServo`, distinct app-ids and launchers ("Arktos" / "Arktos (No Servo)"); the NoServo manifest + metainfo are generated from the canonical servo manifest by `flatpak/gen-flavor-manifest.py` and drift-checked in CI.
+  - **Windows** — "Arktos" and "Arktos NoServo" NSIS installers (distinct product name, install directory and uninstall registry key) plus per-flavor portable zips.
+  - **macOS** — `Arktos-1.2.dmg` and `Arktos-NoServo-1.2.dmg`; the NoServo bundle is renamed `ArktosNoServo.app` so both can live in /Applications.
+- **Servo backend reaches the flatpak build.** `libservo_embed.so` now compiles inside the KDE 6.11 SDK as its own flatpak-builder module — ~700 crates plus the 55 libservo member crates vendored offline-exact from `flatpak/cargo-sources-servo.json` (commit-pinned servo.git, cargo-vendor-normalized manifests, nested mozjs_* cbindgen locks), with clang/libclang from the llvm21 SDK extension feeding mozjs-sys bindgen. The engine selector lists `webengine` + `Servo 0.7.0`; the backend is dlopen'd at runtime so a missing cdylib degrades honestly rather than showing a dead entry.
+- **Per-flavor CI matrix.** flatpak, windows and macos jobs each build both flavors with per-flavor cache keys, artifact names and payload assertions (servo cdylib present iff servo flavor).
+- **Pastel-circle settings icons** ported from Arktos-Mobile — one colored disc + monochrome glyph per settings category, including the Sync section icon fix.
+- **Flatpak Wayland association** reads the app-id from `/.flatpak-info`, so engine flavors get the correct desktop-file match automatically.
 
-Other changes: pastel-circle settings icons from Arktos-Mobile; packaging pipeline fixes (macOS IOKit link, arti-client vendoring, rpm tarball naming, MSVC far-macro, smoke-helper platform guards, NSIS license path + overridable PRODUCT_NAME, clang vexing-parse, generated-manifest drift check); bundled tor expert bundle 15.0.25 (16.0 ships in 1.3); the flatpak app-id is read from /.flatpak-info instead of hardcoded.
+## Fixes
+
+- **Security (CA02):** extension chromeBridge confined to its own subframe; PDF worker filename pinned against path traversal; NAM session cert whitelist host+fingerprint scoped (no CA-store planting); DNR redirect re-gated with file/ftp coverage removed; native-messaging host name anchored to an absolute allow-list path; header value validation hardened.
+- **Lifetime (CA03):** CookieJar mirror is now a QPointer (store can die during WebEngine teardown — real segfault), event-hub destroyed-lambda member access, removeMainWindow downcast at window-manager entry; 13-leg ASan/UBSan/LSan smoke run shows zero our-code blocks.
+- **Windows (CA12 + CI):** IniFormat QSettings pinned globally, nativeMessaging registry+Filesystem discovery, profile-vault rename-with-open-handles retry, NTFS reserved-name and invalid-char screening, win32 console attach + NOMINMAX/LEAN, ASFW_ANY + self-raise, case-insensitive suffix checks, NSIS StartMenuInternet + VCREDIST warn + GPL page, longPathAware manifest, MSVC far-macro collision, smoke-helper platform guards, NSIS license path, overridable PRODUCT_NAME.
+- **macOS (CA12 + CI):** App Support + homebrew tor fetch paths, arktos.entitlements, menubar/navbar-drag gates + shortcuts, locale/useragents bundle data, DPR pixmaps, 19px icon cap removed, IOKit framework link for rustcore consumers, clang vexing-parse in tst_settingsdialog.
+- **Packaging:** flatpak cargo-sources regenerated (371→666 crates, arti-client 0.47.0 tree), rpm tarball name matches spec Version, generated NoServo manifest drift-check, `*.zip` + per-flavor artifacts in the release glob, `git ls-files` deleted-paths export fix.
+
+## Improvements
+
+- **Performance (CA04):** adblock rule rebuilds coalesced (11/13/12 → 3/5/3 rebuilds per session), DNR gram/domain candidate index (~4400x faster per eval), site whitelist folded into the matcher snapshot, AutoSaver policy memoized, process-global NetIndicator pid scan, history url-membership fast path.
+- **Maintainability (CA01/CA07/CA08/CA13):** dead functions/constants/includes/lambda captures removed, ~20 cross-file duplicate families consolidated (shim FFI vocabulary, cookie record JSON, session/tab/sanitize/opensearch/bidi/statusbar helpers), clippy dead_code at zero.
+
+## Notes
+
+- Bundled tor expert bundle: **15.0.25** on this tag (16.0 ships in 1.3).
+- Assets: debs for ubuntu-24.04 + ubuntu-26.04, an openSUSE-compatible rpm, both flatpak flavors, both Windows installers + portable zips, both macOS dmgs.
 
 Experimental software, provided as is.
 
