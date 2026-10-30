@@ -332,7 +332,8 @@ TabBar::TabBar(QWidget *parent)
         m_newTabButton->setStyleSheet(
             ArktosStyle::torToolButtonStyleSheet());
     } else {
-        m_newTabButton->setIcon(ArktosIcon::getChrome(QLatin1String("tab-new")));
+        m_newTabButton->setIcon(ArktosIcon::getCircledChrome(
+            QLatin1String("tab-new"), QColor(QLatin1String("#B2DFDB"))));
     }
     connect(m_newTabButton, &QAbstractButton::clicked,
             this, &TabBar::newTab);
@@ -418,7 +419,8 @@ void TabBar::installCloseButton(int index)
     // Resolves through ArktosIcon: the active icon theme first, the
     // bundled sets' dark variants when the palette is dark, and the
     // bundled Tabler set as the last-resort fallback.
-    button->setIcon(ArktosIcon::getChrome(QLatin1String("window-close")));
+    button->setIcon(ArktosIcon::getCircledChrome(
+        QLatin1String("window-close"), QColor(QLatin1String("#FFCDD2"))));
     button->setIconSize(QSize(12, 12));
     // TABS07: an uncapped QToolButton hints ~19px tall, and QTabBar
     // stretches the strip to max(text, widget) + padding — the button

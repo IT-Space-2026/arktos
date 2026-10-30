@@ -231,7 +231,8 @@ TabWidget::TabWidget(QWidget *parent)
     m_closeTabAction->setShortcuts(QKeySequence::Close);
     // ICONS10: tab-close, not window-close — File > Close Tab and
     // Close Window shared the same glyph.
-    m_closeTabAction->setIcon(ArktosIcon::getChrome(QLatin1String("tab-close")));
+    m_closeTabAction->setIcon(ArktosIcon::getCircledChrome(
+        QLatin1String("tab-close"), QColor(QLatin1String("#F8BBD0"))));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_closeTabAction->setIconVisibleInMenu(false);
 #endif
@@ -240,7 +241,8 @@ TabWidget::TabWidget(QWidget *parent)
     m_bookmarkTabsAction = new QAction(this);
     connect(m_bookmarkTabsAction, &QAction::triggered, this, &TabWidget::bookmarkTabs);
 
-    m_newTabAction->setIcon(ArktosIcon::getChrome(QLatin1String("tab-new")));
+    m_newTabAction->setIcon(ArktosIcon::getCircledChrome(
+        QLatin1String("tab-new"), QColor(QLatin1String("#B2DFDB"))));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_newTabAction->setIconVisibleInMenu(false);
 #endif

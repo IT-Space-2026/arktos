@@ -1506,8 +1506,12 @@ void BrowserMainWindow::setupMenu()
     connect(m_viewTextEncodingMenu, &QMenu::triggered,
             this, &BrowserMainWindow::viewTextEncoding);
 
-    m_stopIcon = ArktosIcon::getChrome(QLatin1String("process-stop"));
-    m_reloadIcon = ArktosIcon::getChrome(QLatin1String("view-refresh"));
+    m_stopIcon = BrowserApplication::isTorMode()
+            ? ArktosIcon::getChrome(QLatin1String("process-stop"))
+            : ArktosIcon::getCircledChrome(QLatin1String("process-stop"), QColor(QLatin1String("#FFCDD2")));
+    m_reloadIcon = BrowserApplication::isTorMode()
+            ? ArktosIcon::getChrome(QLatin1String("view-refresh"))
+            : ArktosIcon::getCircledChrome(QLatin1String("view-refresh"), QColor(QLatin1String("#C8E6C9")));
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     m_viewStopAction->setIcon(m_stopIcon);
     m_viewReloadAction->setIcon(m_reloadIcon);
@@ -1563,7 +1567,9 @@ void BrowserMainWindow::setupMenu()
     m_historyHomeAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::Key_H));
     // HOME01: the nav-bar Home button reuses this action, so the icon
     // is unconditional — platform convention only hides it in menus.
-    m_historyHomeAction->setIcon(ArktosIcon::getChrome(QLatin1String("go-home")));
+    m_historyHomeAction->setIcon(BrowserApplication::isTorMode()
+        ? ArktosIcon::getChrome(QLatin1String("go-home"))
+        : ArktosIcon::getCircledChrome(QLatin1String("go-home"), QColor(QLatin1String("#FFE0B2"))));
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     m_historyHomeAction->setIconVisibleInMenu(false);
 #endif
@@ -2238,7 +2244,9 @@ void BrowserMainWindow::setupToolBar()
     m_navigationBar->addWidget(m_appMenuButton)
         ->setProperty(kNavBarItemIdProperty, QLatin1String("appMenu"));
 
-    m_historyBackAction->setIcon(ArktosIcon::getChrome(QLatin1String("go-previous")));
+    m_historyBackAction->setIcon(BrowserApplication::isTorMode()
+        ? ArktosIcon::getChrome(QLatin1String("go-previous"))
+        : ArktosIcon::getCircledChrome(QLatin1String("go-previous"), QColor(QLatin1String("#BBDEFB"))));
     m_historyBackMenu = new QMenu(this);
     m_historyBackAction->setMenu(m_historyBackMenu);
     connect(m_historyBackMenu, &QMenu::aboutToShow,
@@ -2249,7 +2257,9 @@ void BrowserMainWindow::setupToolBar()
     m_historyBackAction->setProperty(kNavBarItemIdProperty,
                                      QLatin1String("back"));
 
-    m_historyForwardAction->setIcon(ArktosIcon::getChrome(QLatin1String("go-next")));
+    m_historyForwardAction->setIcon(BrowserApplication::isTorMode()
+        ? ArktosIcon::getChrome(QLatin1String("go-next"))
+        : ArktosIcon::getCircledChrome(QLatin1String("go-next"), QColor(QLatin1String("#BBDEFB"))));
     m_historyForwardMenu = new QMenu(this);
     connect(m_historyForwardMenu, &QMenu::aboutToShow,
             this, &BrowserMainWindow::aboutToShowForwardMenu);
