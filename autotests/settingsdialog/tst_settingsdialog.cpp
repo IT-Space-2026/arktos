@@ -2053,7 +2053,7 @@ void tst_SettingsDialog::circledSidebarIcons()
             // clear of the glyph box.
             const QColor ring = QColor::fromRgba(image.pixel(
                 image.width() / 2, qRound(image.height() * 0.12)));
-            const QColor want(QLatin1String(expected[i]));
+            const QColor want{QLatin1String(expected[i])};
             QVERIFY2(qAbs(ring.red() - want.red()) <= 3
                      && qAbs(ring.green() - want.green()) <= 3
                      && qAbs(ring.blue() - want.blue()) <= 3
