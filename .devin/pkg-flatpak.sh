@@ -165,11 +165,11 @@ cmd_verify() {
 
     # -- icons: rename-icon must have produced app-id-named icons ---------
     fp_run --command=/bin/sh "$APPID" -c \
-        'ls /app/share/icons/hicolor/*/apps/com.arktos_browser.Arktos.* >/dev/null 2>&1' \
-        || fail "no com.arktos_browser.Arktos icons in the flatpak (rename-icon failed)"
+        "ls /app/share/icons/hicolor/*/apps/$APPID.* >/dev/null 2>&1" \
+        || fail "no $APPID icons in the flatpak (rename-icon failed)"
     fp_run --command=/bin/sh "$APPID" -c \
-        'grep -q "^Icon=com.arktos_browser.Arktos$" /app/share/applications/com.arktos_browser.Arktos.desktop' \
-        || fail "desktop file Icon= not rewritten to com.arktos_browser.Arktos"
+        "grep -q '^Icon=$APPID\$' /app/share/applications/$APPID.desktop" \
+        || fail "desktop file Icon= not rewritten to $APPID"
     note "icons + desktop Icon= present (renamed to $APPID)"
 
     # -- rust link-proof (RC10): the facade must be inside the binary ------

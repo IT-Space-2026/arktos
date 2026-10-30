@@ -172,6 +172,21 @@ jobs:
           name: arktos-rpm
           path: dist/*.rpm
 
+  # The generated NoServo manifest + metainfo must track the canonical
+  # servo manifest — verified on the host runner because the flatpak
+  # container image ships python3 but neither pip nor PyYAML.
+  manifest-check:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check generated NoServo manifest is in sync
+        run: |
+          python3 -c 'import yaml' 2>/dev/null \
+              || python3 -m pip install --quiet pyyaml \
+              || pip3 install --quiet pyyaml
+          python3 flatpak/gen-flavor-manifest.py --check
+
   flatpak:
     runs-on: ubuntu-26.04
     container:
@@ -193,14 +208,6 @@ jobs:
             bundle: com.arktos_browser.ArktosNoServo.flatpak
     steps:
       - uses: actions/checkout@v7
-
-      - name: Check generated NoServo manifest is in sync
-        if: matrix.flavor == 'noservo'
-        run: |
-          python3 -c 'import yaml' 2>/dev/null \
-              || python3 -m pip install --quiet pyyaml \
-              || pip3 install --quiet pyyaml
-          python3 flatpak/gen-flavor-manifest.py --check
 
       - name: Build flatpak bundle
         # flatpak-builder handles the KDE 6.11 runtime + qtwebengine
