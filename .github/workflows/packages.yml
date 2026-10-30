@@ -595,6 +595,11 @@ jobs:
           assets=("${filtered[@]}")
           [ ${#assets[@]} -gt 0 ] || { echo "no release assets collected" >&2; exit 1; }
           ls -la release-assets/
+          # The notes file is cumulative across versions — feed gh only
+          # the top section (up to the next "Arktos X.Y" heading) so the
+          # release body isn't every version's notes concatenated.
+          awk '/^Arktos [0-9]+\.[0-9]+/{n++} n>=2{exit} {print}' \
+            BuildProcess/release-notes.md > /tmp/notes-current.md
           gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
             --title "Arktos ${GITHUB_REF_NAME#v}" \
-            --notes-file BuildProcess/release-notes.md
+            --notes-file /tmp/notes-current.md
