@@ -1,3 +1,9 @@
+Arktos 1.4.1 — pastel-circle chrome icons.
+
+The nav bar (back/forward/stop/reload/home), tab-strip buttons and the popup-blocker URL-bar button now use the same pastel-circle icon style as the preferences sidebar. The app logo, profile button and the state-painted indicators (site padlock, trust shield, reader, engine, privacy) keep their existing visuals; tor mode keeps its violet identity tint. Bundled tor expert bundle: 16.0.
+
+Experimental software, provided as is.
+
 Arktos 1.4 — sync pairing fixes.
 
 The pairing code now displays in a read-only, copyable monospace field with a Copy button (previously a clipped, unselectable label under the QR). Closing the pairing dialog can no longer freeze the app — the worker thread previously blocked the GUI on destruction while a tor call was in flight — and the 800ms pair-poll no longer piles queued calls onto a hung worker. Bundled tor expert bundle: 16.0.

@@ -254,7 +254,7 @@ BrowserApplication::BrowserApplication(int &argc, char **argv)
     QCoreApplication::setOrganizationName(QLatin1String("Arktos"));
     QCoreApplication::setOrganizationDomain(QLatin1String("arktos-browser.com"));
     QCoreApplication::setApplicationName(QLatin1String("Arktos"));
-    QCoreApplication::setApplicationVersion(QLatin1String("1.4"
+    QCoreApplication::setApplicationVersion(QLatin1String("1.4.1"
 #ifdef GITVERSION
     " (Git: " GITCHANGENUMBER " " GITVERSION ")"
 #endif

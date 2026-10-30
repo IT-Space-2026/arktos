@@ -1,3 +1,10 @@
+1.4.1 — Pastel-circle chrome icons
+- Nav bar (back/forward/stop/reload/home), tab strip buttons and
+  the popup-blocker URL-bar button now use the pastel-circle icon
+  style from preferences; logo, profile and state-painted indicators
+  unchanged; tor-mode violet tint preserved.
+- Release notes slicing fixed so each tag ships only its own notes.
+
 1.4 — Sync pairing fixes
 - Pairing code rendered in a read-only copyable field + Copy button.
 - Closing the pair dialog no longer blocks the GUI thread on an
