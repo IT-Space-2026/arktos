@@ -177,35 +177,57 @@ jobs:
     container:
       image: bilelmoussaoui/flatpak-github-actions:freedesktop-24.08
       options: --privileged
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two flavors, distinct app-ids (side-by-side installs):
+        #   servo   — canonical manifest, builds the servo-embed module
+        #   noservo — generated QtWebEngine-only sibling
+        #             (flatpak/gen-flavor-manifest.py, committed)
+        include:
+          - flavor: servo
+            manifest: com.arktos_browser.Arktos.yaml
+            bundle: com.arktos_browser.Arktos.flatpak
+          - flavor: noservo
+            manifest: com.arktos_browser.ArktosNoServo.yaml
+            bundle: com.arktos_browser.ArktosNoServo.flatpak
     steps:
       - uses: actions/checkout@v7
+
+      - name: Check generated NoServo manifest is in sync
+        if: matrix.flavor == 'noservo'
+        run: |
+          python3 -c 'import yaml' 2>/dev/null \
+              || python3 -m pip install --quiet pyyaml \
+              || pip3 install --quiet pyyaml
+          python3 flatpak/gen-flavor-manifest.py --check
 
       - name: Build flatpak bundle
         # flatpak-builder handles the KDE 6.11 runtime + qtwebengine
         # baseapp + rust SDK extension declared in the manifest; the
         # vendored cargo-sources.json keeps the build offline-exact.
-        # SRV01: the manifest's servo-embed module compiles
+        # SRV01: the servo manifest's servo-embed module compiles
         # libservo_embed.so inside the SDK (mirroring the deb leg's
         # pre-package cargo build — the in-sandbox build is also what
         # makes the artifact link against the runtime's glibc, not the
         # runner's).  The rust-cache analog is flatpak-builder's own
         # state dir: the action restores any cache matching the
-        # flatpak-builder-${arch} prefix, so arch-prefixing the key
-        # lets an unchanged servo-embed module skip its ~700-crate
-        # rebuild on the next commit.
+        # flatpak-builder-${arch}-${flavor} prefix, so flavor+arch-
+        # prefixing the key lets an unchanged servo-embed module skip
+        # its ~700-crate rebuild on the next commit.
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6.8
         with:
-          manifest-path: com.arktos_browser.Arktos.yaml
-          bundle: com.arktos_browser.Arktos.flatpak
+          manifest-path: ${{ matrix.manifest }}
+          bundle: ${{ matrix.bundle }}
           repository-name: flathub
           repository-url: https://flathub.org/repo/flathub.flatpakrepo
-          cache-key: flatpak-builder-x86_64-${{ github.sha }}
+          cache-key: flatpak-builder-x86_64-${{ matrix.flavor }}-${{ github.sha }}
           verbose: true
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arktos-flatpak
-          path: com.arktos_browser.Arktos.flatpak
+          name: arktos-flatpak-${{ matrix.flavor }}
+          path: ${{ matrix.bundle }}
 
   windows:
     runs-on: windows-latest

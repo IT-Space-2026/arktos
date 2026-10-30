@@ -5698,6 +5698,29 @@ Run notes:
   fp-build/files/lib/libservo_embed.so present and the arktos
   module's strings/grep link-proofs passed (they run in-sandbox).
 
+- Resume 4 (post-reboot): attempt-3's in-sandbox build was killed by a
+  second host reboot at 10:15 (uptime 0min at resume; the box rebooted
+  ~09:44 and ~10:15 — reboots are host events, not build failures).
+  Confirmed no flatpak-builder/cargo survived; attempt-3's sandbox
+  target (.flatpak-builder/build/servo-embed-1, 22G, last write 10:00,
+  dep-graph tail: stylo/webrender/mozjs_* compiling) rsync'd over the
+  export seed; the stale Oct-20 libservo_embed.so was REMOVED from the
+  seed so the module's `test -f` link-proof can only pass on a real
+  in-sandbox link. Stale attempt-2 dir deleted (22G freed). Local legs
+  re-verified green: --engine-list lists webengine + servo rows.
+  Relaunched detached (attempt-4; servo-embed-2 dir, same log path).
+- Takeover session: two flatpak FLAVORS with distinct app-ids —
+  canonical servo manifest stays com.arktos_browser.Arktos.yaml;
+  flatpak/gen-flavor-manifest.py derives + commits
+  com.arktos_browser.ArktosNoServo.yaml (side-by-side install, Name=
+  suffixed, metainfo id/launchable/name rewritten). pkg-flatpak.sh
+  gains ARKTOS_FLAVOR + per-flavor export/build-dir/repo +
+  ARKTOS_PKG_STATE override + servo presence/absence verify +
+  `flavors` subcommand; CI flatpak job matrixed over both manifests;
+  main.cpp reads the app-id from /.flatpak-info instead of hardcoding
+  it. noservo leg delegated to GitHub CI; detached local servo build
+  continues into fp-repo.
+
 ### SRV02
 Windows leg: compile servo-embed under MSVC on the windows runner —
 mozjs-sys bindgen needs clang (runner has it); resolve any Linux-isms

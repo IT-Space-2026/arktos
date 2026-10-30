@@ -1,4 +1,9 @@
-# com.arktos_browser.Arktos — flatpak manifest (PKG02).
+# com.arktos_browser.Arktos — flatpak manifest (PKG02), servo flavor.
+#
+# This is the CANONICAL manifest: the QtWebEngine-only sibling
+# com.arktos_browser.ArktosNoServo.yaml (distinct app-id, side-by-side
+# install) is GENERATED from this file by
+# flatpak/gen-flavor-manifest.py — edit here, re-run the generator.
 #
 # Builds Arktos inside the KDE 6.11 runtime/SDK (Qt 6.11 — the newest Qt 6
 # series flathub ships; the dev tree compiles warning-free against the
@@ -121,7 +126,10 @@ modules:
       # flatpak-builder's exported *FLAGS — they leak into cc-rs and
       # -O2 overrides aws-lc-sys jitterentropy's mandatory -O0 (same
       # scrub rustdl.pri/rustcore.pri apply).
-      - env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS cargo build --release --locked --manifest-path servo-embed/Cargo.toml
+      # -j honors flatpak-builder's --jobs (FLATPAK_BUILDER_N_JOBS) instead
+      # of cargo's default all-core build — the ~700-crate servo tree at
+      # NCPU keeps smaller hosts pegged for the whole module.
+      - env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS cargo build -j "${FLATPAK_BUILDER_N_JOBS:-4}" --release --locked --manifest-path servo-embed/Cargo.toml
       - test -f servo-embed/target/release/libservo_embed.so
       # ServoBackend::artifactPath() resolves <bindir>/../lib — /app/lib
       # for the flatpak layout.

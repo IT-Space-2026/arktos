@@ -1281,6 +1281,16 @@ driver verifies the bundle by installing it and running the offscreen
 `--quit-after-load` + `--tor --tor-window-smoke` paths inside the
 sandbox.
 
+Two flavors exist, with distinct app-ids so they install side-by-side:
+the default **servo** build (`com.arktos_browser.Arktos`, above) and a
+**noservo** build (`com.arktos_browser.ArktosNoServo` — QtWebEngine
+only). The NoServo manifest and metainfo are generated from the
+canonical servo manifest by `flatpak/gen-flavor-manifest.py` (committed;
+re-run it — or let `pkg-flatpak.sh verify`'s drift check fail — after
+editing `com.arktos_browser.Arktos.yaml`). `ARKTOS_FLAVOR=noservo
+./.devin/pkg-flatpak.sh` builds it; `./.devin/pkg-flatpak.sh flavors`
+builds and verifies both.
+
 `make pkg-rpm` (driver: `./.devin/pkg-rpm.sh`, spec: `rpm/arktos.spec`)
 builds an **openSUSE-compatible RPM** at `dist/arktos_1.0-0.*.rpm`.
 Same artifact policy as the deb — identical staged payload

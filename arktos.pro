@@ -107,6 +107,13 @@ pkg-flatpak.target = pkg-flatpak
 pkg-flatpak.commands = ./.devin/pkg-flatpak.sh
 QMAKE_EXTRA_TARGETS += pkg-flatpak
 
+# `make pkg-flatpak-flavors` builds + verifies BOTH flavors
+# (com.arktos_browser.Arktos servo + com.arktos_browser.ArktosNoServo
+# QtWebEngine-only — distinct app-ids, side-by-side installs).
+pkg-flatpak-flavors.target = pkg-flatpak-flavors
+pkg-flatpak-flavors.commands = ./.devin/pkg-flatpak.sh flavors
+QMAKE_EXTRA_TARGETS += pkg-flatpak-flavors
+
 # `make pkg-rpm` builds the RPM via rpm/arktos.spec (driver:
 # ./.devin/pkg-rpm.sh) — same bundled-runtime payload as the deb, laid
 # out on the FHS under /usr/bin + /usr/lib/arktos. Needs rpmbuild for

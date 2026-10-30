@@ -6020,8 +6020,17 @@ int main(int argc, char **argv)
     // PKG02: inside flatpak the desktop entry is the app id — set it so
     // the Wayland app_id / taskbar association matches
     // com.arktos_browser.Arktos.desktop instead of a bare "arktos".
-    if (QFileInfo::exists(QLatin1String("/.flatpak-info")))
-        QGuiApplication::setDesktopFileName(QLatin1String("com.arktos_browser.Arktos"));
+    // The id comes from flatpak's own /.flatpak-info ([Application]
+    // name=) so the engine flavors (com.arktos_browser.ArktosNoServo)
+    // pick up their renamed desktop file too.
+    if (QFileInfo::exists(QLatin1String("/.flatpak-info"))) {
+        QString flatpakAppId = QSettings(QLatin1String("/.flatpak-info"),
+                                         QSettings::IniFormat)
+            .value(QLatin1String("Application/name")).toString();
+        if (flatpakAppId.isEmpty())
+            flatpakAppId = QLatin1String("com.arktos_browser.Arktos");
+        QGuiApplication::setDesktopFileName(flatpakAppId);
+    }
 
     // SMOKE01: a smoke run must never write to the user's real
     // config — QSettings ignores QStandardPaths' test mode, so the
