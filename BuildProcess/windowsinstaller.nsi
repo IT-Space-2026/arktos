@@ -54,7 +54,7 @@ SetCompressor /SOLID /FINAL lzma
 !define MUI_UNICON "${ICONFILE}"
 
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "..\..\LICENSE.GPL2"
+!insertmacro MUI_PAGE_LICENSE "..\LICENSE.GPL2"
 !insertmacro MULTIUSER_PAGE_INSTALLMODE
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
