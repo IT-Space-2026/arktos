@@ -1,3 +1,13 @@
+Arktos 1.3 — two engine flavors on every desktop package plus the
+tor 16.0 expert bundle.
+
+Each platform now ships a servo build and a NoServo (QtWebEngine-only)
+sibling that installs side-by-side: flatpak
+com.arktos_browser.Arktos / com.arktos_browser.ArktosNoServo, Windows
+"Arktos"/"Arktos NoServo" installers + portable zips, macOS
+Arktos-1.3.dmg / Arktos-NoServo-1.3.dmg. The bundled tor expert bundle
+is updated to 16.0.
+
 Arktos 1.0 — first release. An experimental cross-platform web browser
 built on Qt 6 and QtWebEngine (Chromium), continuing the 2009 Arora
 browser as a maintained fork — rebuilt around privacy hardening,

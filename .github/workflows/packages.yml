@@ -374,7 +374,7 @@ jobs:
           if (Test-Path src\data\extensions) { Copy-Item -Recurse src\data\extensions deploy\extensions }
           # Tor expert bundle (windows-x86_64) — same artifact+pin as
           # BuildProcess/fetch-tor.sh, which is sh-only.
-          $tv = "15.0.25"
+          $tv = "16.0"
           $tb = "tor-expert-bundle-windows-x86_64-$tv.tar.gz"
           $base = "https://dist.torproject.org/torbrowser/$tv"
           Invoke-WebRequest "$base/$tb" -OutFile $tb

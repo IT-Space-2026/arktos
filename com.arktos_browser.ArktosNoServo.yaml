@@ -45,8 +45,8 @@ modules:
   - cp -a data /app/lib/data
   sources:
   - type: archive
-    url: https://dist.torproject.org/torbrowser/15.0.25/tor-expert-bundle-linux-x86_64-15.0.25.tar.gz
-    sha256: 19cf18726eecb362e0f21d27afa9ea9efe5da928bfdfbb1ceb5fe54519e87f4a
+    url: https://dist.torproject.org/torbrowser/16.0/tor-expert-bundle-linux-x86_64-16.0.tar.gz
+    sha256: cc950ebe9acb80188325c3a2cd8817def7dd7237d6fdcd861bb87b234a0cb2fd
     strip-components: 0
 - name: arktos
   buildsystem: simple
