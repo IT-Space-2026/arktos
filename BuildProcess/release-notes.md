@@ -8,6 +8,14 @@ com.arktos_browser.Arktos / com.arktos_browser.ArktosNoServo, Windows
 Arktos-1.3.dmg / Arktos-NoServo-1.3.dmg. The bundled tor expert bundle
 is updated to 16.0.
 
+Arktos 1.2 — full code audit plus two engine flavors on every desktop package.
+
+Every platform ships a servo build and a NoServo (QtWebEngine-only) sibling that installs side-by-side: flatpak com.arktos_browser.Arktos / com.arktos_browser.ArktosNoServo, Windows "Arktos"/"Arktos NoServo" installers plus portable zips, and macOS Arktos-1.2.dmg / Arktos-NoServo-1.2.dmg. The bundled tor expert bundle is 15.0.25 on this tag (16.0 ships in 1.3).
+
+The CA01–CA13 code audit removed dead code, consolidated duplicated blocks, fixed eight security findings (extension bridge subframe isolation, PDF path traversal, certificate persistence), repaired dying-object/lifetime bugs, and applied performance fixes (adblock rebuild coalescing, DNR candidate index). Preferences gained the Arktos-Mobile pastel-circle category icons.
+
+Experimental software, provided as is.
+
 Arktos 1.0 — first release. An experimental cross-platform web browser
 built on Qt 6 and QtWebEngine (Chromium), continuing the 2009 Arora
 browser as a maintained fork — rebuilt around privacy hardening,
