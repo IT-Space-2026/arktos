@@ -1,4 +1,10 @@
-1.4.2 — LAN sync fast path + URL-bar icons
+1.4.2 — LAN sync fast path, sync scheduling + URL-bar icons
+- Sync scheduling: interval (1/5/15/30 min) + Sync Now button in
+  Sync settings — bounded exchange rounds that start+stop the
+  auto transport per round (no idle Arti/mDNS footprint), skipped
+  while pairing is live.
+- Transport diagnostics: leg-start + mDNS-start failures now log
+  to stderr instead of dying silently.
 - Pair dialog transport backend "tor" -> "auto": mDNS announce +
   QUIC listen while pairing is open, Tor fallback for remote
   networks. Same-WiFi pairing now dials in ~1-2s instead of waiting

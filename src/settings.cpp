@@ -102,6 +102,7 @@
 #include "profilestore.h"
 #include "rustcorebridge.h"
 #include "syncpairdialog.h"
+#include "syncscheduler.h"
 #include "profilevault.h"
 #include "safetext.h"
 #include "scopeshortcuts.h"
@@ -228,7 +229,29 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         m_syncDevicesTree->setMaximumHeight(160);
         m_syncUnpairButton = new QPushButton(tr("Unpair Selected Device…"), syncPage);
         m_syncUnpairButton->setEnabled(false);
+        // SYNC11: cadence + manual round.  The interval persists in
+        // QSettings; the round itself runs on SyncScheduler's worker
+        // thread (an Arti bootstrap would freeze the UI here).
+        auto *intervalRow = new QHBoxLayout;
+        m_syncIntervalCombo = new QComboBox(syncPage);
+        const int intervals[] = {1, 5, 15, 30};
+        for (int m : intervals)
+            m_syncIntervalCombo->addItem(tr("Every %1 min").arg(m), m);
+        const int saved = SyncScheduler::instance()->intervalMinutes();
+        const int idx = m_syncIntervalCombo->findData(saved);
+        m_syncIntervalCombo->setCurrentIndex(idx >= 0 ? idx : 2);
+        m_syncNowButton = new QPushButton(tr("Sync Now"), syncPage);
+        m_syncLastLabel = new QLabel(syncPage);
+        m_syncLastLabel->setWordWrap(true);
+        intervalRow->addWidget(new QLabel(tr("Sync interval:"), syncPage));
+        intervalRow->addWidget(m_syncIntervalCombo);
+        intervalRow->addWidget(m_syncNowButton);
+        intervalRow->addStretch();
+        auto *intervalHolder = new QWidget(syncPage);
+        intervalHolder->setLayout(intervalRow);
         sgLay->addWidget(m_syncStatusLabel);
+        sgLay->addWidget(intervalHolder);
+        sgLay->addWidget(m_syncLastLabel);
         sgLay->addWidget(pairButton);
         sgLay->addWidget(joinButton);
         sgLay->addWidget(m_syncDevicesTree);
@@ -240,6 +263,24 @@ SettingsDialog::SettingsDialog(QWidget *parent)
         });
         connect(m_syncUnpairButton, &QPushButton::clicked,
                 this, &SettingsDialog::unpairSyncDevice);
+        connect(m_syncIntervalCombo,
+                QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int i) {
+            SyncScheduler::instance()->setIntervalMinutes(
+                m_syncIntervalCombo->itemData(i).toInt());
+        });
+        connect(m_syncNowButton, &QPushButton::clicked, this, [this] {
+            m_syncNowButton->setEnabled(false);
+            m_syncLastLabel->setText(tr("Syncing…"));
+            SyncScheduler::instance()->syncNow();
+        });
+        connect(SyncScheduler::instance(), &SyncScheduler::roundStarted,
+                this, [this] {
+            m_syncNowButton->setEnabled(false);
+            m_syncLastLabel->setText(tr("Syncing…"));
+        });
+        connect(SyncScheduler::instance(), &SyncScheduler::roundFinished,
+                this, &SettingsDialog::onSyncRoundFinished);
         syncLay->addWidget(syncGroup);
         syncLay->addStretch();
         connect(pairButton, &QPushButton::clicked, this, [this]() {
@@ -4345,4 +4386,35 @@ void SettingsDialog::unpairSyncDevice()
     }
     refreshSyncStatus();
 #endif
+}
+
+void SettingsDialog::onSyncRoundFinished(const QJsonObject &result)
+{
+    if (m_syncNowButton)
+        m_syncNowButton->setEnabled(true);
+    if (!m_syncLastLabel)
+        return;
+    const QJsonArray errors =
+        result.value(QStringLiteral("errors")).toArray();
+    const QString msg =
+        result.value(QStringLiteral("message")).toString();
+    QString text;
+    if (!errors.isEmpty())
+        text = tr("Sync finished with %1 error(s): %2")
+            .arg(errors.size())
+            .arg(errors.first().toString());
+    else if (result.contains(QStringLiteral("synced")))
+        text = tr("Last sync: %1 — %2 of %3 device(s) reached")
+            .arg(QDateTime::currentDateTime().toString(
+                     QStringLiteral("HH:mm")))
+            .arg(result.value(QStringLiteral("synced")).toInt())
+            .arg(result.value(QStringLiteral("members")).toInt());
+    else if (!msg.isEmpty())
+        text = msg;
+    else
+        text = tr("Last sync: %1").arg(
+            QDateTime::currentDateTime().toString(
+                QStringLiteral("HH:mm")));
+    m_syncLastLabel->setText(text);
+    refreshSyncStatus();
 }

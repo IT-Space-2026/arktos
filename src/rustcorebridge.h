@@ -151,6 +151,9 @@ enum SyncOp : quint16 {
     // profile's group secret).
     SyncDevicesList = 0x0021,
     SyncDeviceRevoke = 0x0022,
+    // SYNC11: one bounded exchange round — dial members, ship +
+    // pull journal ops, stop the transport if the round started it.
+    SyncNow = 0x0024,
 };
 enum OpenSearchOp : quint16 {
     OseList = 0x0001,

@@ -1,12 +1,16 @@
 arktos (1.4.2) unstable; urgency=medium
 
-  * Sync pairing transport now starts with backend "auto" — LAN
-    fast path (mDNS + QUIC) for same-network devices, Tor as the
-    remote fallback; previously tor-only so LAN discovery never ran.
-  * URL-bar indicators (padlock, shield, reader) adopt the
-    pastel-circle icon style with state-colored discs.
+  * Sync scheduling: interval setting (1/5/15/30 min) + Sync Now
+    button on the Sync page; rounds exchange journal ops with paired
+    members over the auto transport and stop it afterwards — no
+    always-on Arti/mDNS cost; rounds skip while pairing is live.
+  * Pair transport backend "tor" -> "auto" (LAN mDNS+QUIC fast path).
+  * Leg-failure + mDNS-start stderr diagnostics in the transports.
+  * Pastel-circle icons on toolbar/tab strip/URL-bar indicators;
+    nav/url icons enlarged; pair-code field fits its text; url-bar
+    domain-highlight repaint fixed.
 
- -- Janos Szenfner <janos.szenfner@it-space.info>  Sat, 31 Oct 2026 10:00:00 +0100
+ -- Janos Szenfner <janos.szenfner@it-space.info>  Sat, 31 Oct 2026 12:00:00 +0100
 
 arktos (1.4.1) unstable; urgency=medium
 

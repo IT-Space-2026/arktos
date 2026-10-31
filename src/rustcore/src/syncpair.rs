@@ -194,6 +194,17 @@ fn sessions() -> std::sync::MutexGuard<'static, HashMap<u64, PairSession>> {
     SESSIONS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// SYNC11 guard: a scheduled sync round must never run while a pair
+/// session is live — both drain the shared transport event queue,
+/// and a round's transport stop would kill an open dialog's link.
+/// Terminal phases don't count (completed sessions linger in the
+/// map until cleanup).
+pub(crate) fn live_pairing() -> bool {
+    sessions().values().any(|s| {
+        !matches!(s.phase, Phase::Done | Phase::Failed | Phase::Cancelled)
+    })
+}
+
 fn hex(data: &[u8]) -> String {
     let mut s = String::with_capacity(data.len() * 2);
     for b in data {

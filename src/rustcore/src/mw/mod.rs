@@ -2880,6 +2880,12 @@ fn op_sync_transport_peers(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
     Ok(json!({ "peers": t.discovered_peers_json() }))
 }
 
+fn op_sync_now(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
+    let scope = facade::effective_profile(profile_arg(p)?.unwrap_or("")).to_string();
+    let root = Path::new(ctx.core.data_root());
+    crate::syncnow::run_once(root, &scope).map_err(OpErr::from)
+}
+
 fn op_sync_transport_poll(ctx: &MwCtx, _p: &Value) -> Result<Value, OpErr> {
     let evs: Vec<Value> = sync_transport(ctx)?
         .poll()
@@ -3164,6 +3170,8 @@ const SYNC_OPS: &[Op] = &[
          profile_scoped: false, since: 7, handler: op_sync_device_revoke },
     Op { id: 0x0023, name: "transport_peers", class: OpClass::Query,
          profile_scoped: false, since: 8, handler: op_sync_transport_peers },
+    Op { id: 0x0024, name: "sync_now", class: OpClass::Command,
+         profile_scoped: false, since: 9, handler: op_sync_now },
 ];
 
 // ---- registry ------------------------------------------------------------------

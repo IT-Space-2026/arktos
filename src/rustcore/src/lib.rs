@@ -233,6 +233,7 @@ mod sync;
 mod syncbookmarks;
 mod synchistory;
 mod syncmeta;
+pub mod syncnow;
 mod syncpasswords;
 mod syncsettings;
 mod synctabs;

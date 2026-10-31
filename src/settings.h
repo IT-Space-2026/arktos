@@ -66,6 +66,7 @@
 
 #include <qwidget.h>
 #include <qhash.h>
+#include <qjsonobject.h>
 #include <qlist.h>
 #include <qset.h>
 #include "extensionmanager.h"
@@ -304,12 +305,16 @@ private:
     // last-seen) + the unpair flow.
     QTreeWidget *m_syncDevicesTree = nullptr;
     QPushButton *m_syncUnpairButton = nullptr;
+    QComboBox *m_syncIntervalCombo = nullptr;
+    QPushButton *m_syncNowButton = nullptr;
+    QLabel *m_syncLastLabel = nullptr;
     // SYNC03: fills the Sync page from the sync engine + transport.
     void refreshSyncStatus();
     // SYNC09: drop the selected device from this profile's sync
     // group — the engine rotates the group secret and revokes the
     // device's client-auth grant.
     void unpairSyncDevice();
+    void onSyncRoundFinished(const QJsonObject &result);
 };
 
 #endif // SETTINGS_H
