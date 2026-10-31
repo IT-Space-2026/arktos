@@ -505,7 +505,7 @@ impl LanTransport {
         if !onion.is_empty() {
             txt.push(format!("on={onion}").into_bytes());
         }
-        let mdns = mdns::MdnsService::start(mdns::MdnsConfig {
+        let mdns = match mdns::MdnsService::start(mdns::MdnsConfig {
             instance: format!("{id16}.{}", mdns::SERVICE_TYPE),
             host: format!("arktos-{id16}.local"),
             port,
@@ -515,8 +515,16 @@ impl LanTransport {
             mport: cfg.mdns_port,
             iface: cfg.mdns_iface,
             query_every: cfg.query_every,
-        })
-        .ok();
+        }) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                // Discovery loss must stay non-fatal, but silent was
+                // the bug: peers:[] + live leg reads as "nothing on
+                // the LAN" when the announce half actually died.
+                eprintln!("arktos-sync: mdns discovery failed to start: {e}");
+                None
+            }
+        };
 
         *t.live.lock().unwrap_or_else(|e| e.into_inner()) = Some(Live {
             endpoint: ep,
