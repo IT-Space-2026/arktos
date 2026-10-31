@@ -252,6 +252,13 @@ void SyncPairDialog::onWorkerResult(int kind, const QJsonObject &doc)
             else
                 m_qrLabel->setText(tr("(payload too large for QR — use the code)"));
             m_codeLabel->setText(doc.value(QStringLiteral("code")).toString());
+            // Size the read-only field to the full code so the
+            // centered text never scrolls/bleeds past its frame —
+            // the dialog grows to accommodate it.
+            m_codeLabel->setMinimumWidth(
+                m_codeLabel->fontMetrics().horizontalAdvance(
+                    m_codeLabel->text()) + 24);
+            adjustSize();
             m_statusLabel->setText(tr("Waiting for the other device…"));
         }
         return;

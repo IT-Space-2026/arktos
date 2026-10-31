@@ -2179,7 +2179,7 @@ void BrowserMainWindow::setupToolBar()
     // UIP02: one icon size for the nav buttons on every platform —
     // was macOS-only, so Linux/Windows fell back to the style's
     // larger default and the row looked uneven.
-    m_navigationBar->setIconSize(QSize(18, 18));
+    m_navigationBar->setIconSize(QSize(22, 22));
     addToolBar(m_navigationBar);
 
     // MENU06: Vivaldi-style application menu — an Arktos logo + name

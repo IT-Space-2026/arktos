@@ -101,7 +101,7 @@ void PopupBlockerButton::refresh()
 
     QPixmap pixmap = ArktosIcon::getCircledChrome(
             QLatin1String("window-new"), QColor(QLatin1String("#D1C4E9")))
-        .pixmap(QSize(16, 16));
+        .pixmap(QSize(22, 22));
     // Count badge at the bottom-right corner — same uBO-style
     // treatment the ad-block button uses.
     QPainter painter(&pixmap);

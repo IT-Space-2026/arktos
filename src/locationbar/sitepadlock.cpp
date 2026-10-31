@@ -60,7 +60,7 @@ SitePadlockButton::SitePadlockButton(QWidget *parent)
     setAutoRaise(true);
     setCursor(Qt::ArrowCursor);
     setFocusPolicy(Qt::ClickFocus);
-    setIconSize(QSize(16, 16));
+    setIconSize(QSize(22, 22));
     setAccessibleName(tr("Connection Security"));
     setAccessibleDescription(
         tr("Shows the connection and site-trust state for this page."));

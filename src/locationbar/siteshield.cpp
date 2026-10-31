@@ -59,7 +59,7 @@ SiteShieldButton::SiteShieldButton(QWidget *parent)
     setFocusPolicy(Qt::ClickFocus);
     // Slightly larger than the stock 16px chrome icons so the shield
     // reads clearly at a glance; still well inside the bar's row.
-    setIconSize(QSize(20, 20));
+    setIconSize(QSize(22, 22));
     setAccessibleName(tr("Site Privacy"));
     setAccessibleDescription(
         tr("Opens the privacy and permissions panel for this site."));
