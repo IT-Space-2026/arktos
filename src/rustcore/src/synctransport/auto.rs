@@ -111,6 +111,7 @@ impl AutoTransport {
         let lan = match LanTransport::start(dir) {
             Ok(l) => Some(l),
             Err(e) => {
+                eprintln!("arktos-sync: lan leg failed to start: {}", e.msg);
                 errors.push(format!("lan leg: {}", e.msg));
                 None
             }
@@ -118,6 +119,7 @@ impl AutoTransport {
         let tor: Option<Arc<dyn SyncTransport>> = match super::tor::TorTransport::start(dir) {
             Ok(t) => Some(t),
             Err(e) => {
+                eprintln!("arktos-sync: tor leg failed to start: {}", e.msg);
                 errors.push(format!("tor leg: {}", e.msg));
                 None
             }
