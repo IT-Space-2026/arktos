@@ -292,11 +292,14 @@ void LocationBar::paintEvent(QPaintEvent *event)
     // 100 (NAVB01) — so the bottom strip below is the loading cue.
     LineEdit::paintEvent(event);
 
+    paintDomainOverlay();
+
     // NAVB01: indeterminate loading cue — Qt 6.12 reports progress 0
     // for the whole in-flight load, so while the page loads with no
     // real progress value a thin loading-colored strip rides the
     // field's bottom edge (the affordance the dead 0<progress<100
-    // gradient used to provide mid-load).
+    // gradient used to provide mid-load).  Drawn last so the domain
+    // overlay's panel repaint can never erase it.
     if (m_webView && m_webView->isLoading()) {
         const QColor stripColor =
             ArktosStyle::loadingProgressColor(palette());
@@ -304,13 +307,16 @@ void LocationBar::paintEvent(QPaintEvent *event)
         stripPainter.fillRect(QRect(1, height() - 3, width() - 2, 2),
                               stripColor);
     }
+}
 
-    // SAFE03: with the url on display (not being edited), repaint the
-    // text dimmed except the registrable domain so the site's real
-    // identity stands out — the paypal.com.evil.tld trick can't hide
-    // the domain inside the subdomain run.  cursorPosition()==0 keeps
-    // the scroll offset at zero so the segment maths below line up
-    // with where QLineEdit painted the text.
+// SAFE03: with the url on display (not being edited), repaint the
+// text dimmed except the registrable domain so the site's real
+// identity stands out — the paypal.com.evil.tld trick can't hide
+// the domain inside the subdomain run.  cursorPosition()==0 keeps
+// the scroll offset at zero so the segment maths below line up
+// with where QLineEdit painted the text.
+void LocationBar::paintDomainOverlay()
+{
     int start = -1;
     int length = 0;
     if (hasFocus() || hasSelectedText() || cursorPosition() != 0
@@ -345,8 +351,16 @@ void LocationBar::paintEvent(QPaintEvent *event)
         + fm.ascent();
 
     QPainter painter(this);
+    // Repaint the field's own panel primitive rather than filling
+    // textRect with QPalette::Base — a flat fill left a visibly
+    // mismatched rectangle whenever the styled background differed
+    // from Base (stylesheet or platform style), which read as "part
+    // of the url bar looking different" on every loaded page.
+    QStyleOptionFrame repanel;
+    initStyleOption(&repanel);
+    style()->drawPrimitive(QStyle::PE_PanelLineEdit, &repanel,
+                           &painter, this);
     painter.setClipRect(textRect);
-    painter.fillRect(textRect, palette().color(QPalette::Base));
     const QColor faded =
         palette().color(QPalette::Disabled, QPalette::Text);
     painter.setPen(faded);
@@ -355,6 +369,7 @@ void LocationBar::paintEvent(QPaintEvent *event)
                      shown.mid(start + length));
     painter.setPen(palette().color(QPalette::Text));
     painter.drawText(domainX, baseline, shown.mid(start, length));
+    painter.end();
 }
 
 void LocationBar::updateClearButtonVisibility()

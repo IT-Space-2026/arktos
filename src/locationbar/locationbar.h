@@ -74,6 +74,7 @@ private slots:
 private:
     void displayUrl(const QUrl &url);
     void updateClearButtonVisibility();
+    void paintDomainOverlay();
 
     QPointer<WebView> m_webView;
 
