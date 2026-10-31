@@ -109,7 +109,7 @@ SyncPairDialog::SyncPairDialog(bool inviter, const QString &profileId,
             });
         });
         mwCall(CallTransport, AcMw::SyncTransportStart,
-               QJsonObject{{QStringLiteral("backend"), QStringLiteral("tor")}});
+               QJsonObject{{QStringLiteral("backend"), QStringLiteral("auto")}});
     } else {
         m_payloadEdit = new QPlainTextEdit(this);
         m_payloadEdit->setPlaceholderText(
@@ -120,7 +120,7 @@ SyncPairDialog::SyncPairDialog(bool inviter, const QString &profileId,
         connect(m_startButton, &QPushButton::clicked,
                 this, &SyncPairDialog::onJoinStarted);
         mwCall(CallTransport, AcMw::SyncTransportStart,
-               QJsonObject{{QStringLiteral("backend"), QStringLiteral("tor")}});
+               QJsonObject{{QStringLiteral("backend"), QStringLiteral("auto")}});
     }
 
     auto *fpBox = new QGroupBox(tr("Confirm the fingerprints match"), this);
