@@ -1,3 +1,13 @@
+arktos (1.4.2) unstable; urgency=medium
+
+  * Sync pairing transport now starts with backend "auto" — LAN
+    fast path (mDNS + QUIC) for same-network devices, Tor as the
+    remote fallback; previously tor-only so LAN discovery never ran.
+  * URL-bar indicators (padlock, shield, reader) adopt the
+    pastel-circle icon style with state-colored discs.
+
+ -- Janos Szenfner <janos.szenfner@it-space.info>  Sat, 31 Oct 2026 10:00:00 +0100
+
 arktos (1.4.1) unstable; urgency=medium
 
   * Pastel-circle chrome icons on the nav bar, tab strip and URL

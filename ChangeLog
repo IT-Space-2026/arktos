@@ -1,3 +1,11 @@
+1.4.2 — LAN sync fast path + URL-bar icons
+- Pair dialog transport backend "tor" -> "auto": mDNS announce +
+  QUIC listen while pairing is open, Tor fallback for remote
+  networks. Same-WiFi pairing now dials in ~1-2s instead of waiting
+  on onion publication.
+- URL-bar indicators (padlock verdict colors, trust shield, reader
+  button) wrapped in pastel discs via new ArktosIcon::circledIcon.
+
 1.4.1 — Pastel-circle chrome icons
 - Nav bar (back/forward/stop/reload/home), tab strip buttons and
   the popup-blocker URL-bar button now use the pastel-circle icon

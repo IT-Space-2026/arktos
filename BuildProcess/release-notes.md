@@ -1,3 +1,11 @@
+Arktos 1.4.2 — LAN sync fast path and pastel URL-bar indicators.
+
+Sync pairing now starts its transport with backend "auto": the desktop announces over mDNS and listens on QUIC while the pair dialog is open, so same-network devices discover and dial it in a second or two with no Tor in the loop. Tor remains the fallback for remote networks — previously the dialog was tor-only, so LAN discovery never ran at all.
+
+The URL-bar state indicators (site padlock, trust shield, reader button) adopt the pastel-circle icon style introduced in 1.4.1, with the disc color following the security/trust state. Bundled tor expert bundle: 16.0.
+
+Experimental software, provided as is.
+
 Arktos 1.4.1 — pastel-circle chrome icons.
 
 The nav bar (back/forward/stop/reload/home), tab-strip buttons and the popup-blocker URL-bar button now use the same pastel-circle icon style as the preferences sidebar. The app logo, profile button and the state-painted indicators (site padlock, trust shield, reader, engine, privacy) keep their existing visuals; tor mode keeps its violet identity tint. Bundled tor expert bundle: 16.0.

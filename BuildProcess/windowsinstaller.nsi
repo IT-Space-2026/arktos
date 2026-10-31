@@ -15,7 +15,7 @@ SetCompressor /SOLID /FINAL lzma
   !define PRODUCT_NAME "Arktos"
 !endif
 !ifndef PRODUCT_VERSION
-  !define PRODUCT_VERSION "1.4.1"
+  !define PRODUCT_VERSION "1.4.2"
 !endif
 !ifndef DEPLOYDIR
   !define DEPLOYDIR "deploy"
