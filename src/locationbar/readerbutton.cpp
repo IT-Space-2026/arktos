@@ -88,32 +88,29 @@ public:
         // Stroke weight follows the themed siblings (~1.35px on the
         // 16px grid): the first pass drew noticeably thinner than
         // every neighboring glyph, which read as a faint/wrong icon.
-        QPainterPath page;
-        page.moveTo(3.0, 1.5);
-        page.lineTo(10.0, 1.5);
-        page.lineTo(13.5, 5.0);
-        page.lineTo(13.5, 14.5);
-        page.lineTo(3.0, 14.5);
-        page.closeSubpath();
-        QPainterPath fold;
-        fold.moveTo(10.0, 1.5);
-        fold.lineTo(10.0, 5.0);
-        fold.lineTo(13.5, 5.0);
-        if (m_active) {
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(ArktosStyle::accentFillColor(m_palette));
-            painter.drawPath(page);
-        }
+        // Open book: center spine with two outward-curving page
+        // outlines — instantly reads "reading" where the dog-eared
+        // document just fuzzed at url-bar size.
+        QPainterPath book;
+        book.moveTo(8.0, 4.2);
+        book.cubicTo(6.2, 3.4, 4.3, 3.7, 2.6, 4.4);
+        book.lineTo(2.6, 12.6);
+        book.cubicTo(4.3, 11.9, 6.2, 11.6, 8.0, 12.4);
+        book.lineTo(8.0, 4.2);
+        QPainterPath bookR;
+        bookR.moveTo(8.0, 4.2);
+        bookR.cubicTo(9.8, 3.4, 11.7, 3.7, 13.4, 4.4);
+        bookR.lineTo(13.4, 12.6);
+        bookR.cubicTo(11.7, 11.9, 9.8, 11.6, 8.0, 12.4);
         QPen pen(fg, m_suggested ? 1.5 : 1.35);
         pen.setCapStyle(Qt::RoundCap);
         pen.setJoinStyle(Qt::RoundJoin);
         painter.setPen(pen);
         painter.setBrush(Qt::NoBrush);
-        painter.drawPath(page);
-        painter.drawPath(fold);
-        painter.drawLine(QPointF(5.2, 8.0), QPointF(11.3, 8.0));
-        painter.drawLine(QPointF(5.2, 10.6), QPointF(11.3, 10.6));
-        painter.drawLine(QPointF(5.2, 13.2), QPointF(9.6, 13.2));
+        if (m_active)
+            painter.setBrush(ArktosStyle::accentFillColor(m_palette));
+        painter.drawPath(book);
+        painter.drawPath(bookR);
         painter.end();
         return pixmap;
     }
@@ -203,14 +200,24 @@ QIcon ReaderButton::makeIcon(bool active, bool suggested) const
     // paints at whatever size the surface asks for — a single baked
     // pixmap upscaled and blurred next to the theme-crisp siblings
     // (TRUST21).
-    // Flat painted glyph — the pastel-disc wrap read as a badge at
-    // url-bar size.  State stays in the glyph itself: accent-filled
-    // page when active, accent outline+dot when suggested, chrome
-    // text color otherwise.
+    // Pastel-circle icon: state-tinted disc (active deeper blue,
+    // suggested lighter, plain neutral) with the open-book glyph in
+    // the disc's contrast ink — the disc carries the state so the
+    // glyph itself stays monochrome.
+    const QColor disc = active
+        ? QColor(QLatin1String("#BBDEFB"))
+        : suggested
+            ? QColor(QLatin1String("#E3F2FD"))
+            : QColor(QLatin1String("#ECEFF1"));
     QPalette palette = this->palette();
-    if (m_accentOverride.isValid())
-        palette.setColor(QPalette::Accent, m_accentOverride);
-    return QIcon(new ReaderIconEngine(palette, active, suggested));
+    const QColor ink = ArktosStyle::contrastTextColor(disc);
+    palette.setColor(QPalette::Text, ink);
+    palette.setColor(QPalette::ButtonText, ink);
+    palette.setColor(QPalette::Accent, ink);
+    palette.setColor(QPalette::Highlight, ink);
+    return ArktosIcon::circledIcon(
+        QIcon(new ReaderIconEngine(palette, /*active*/ false, suggested)),
+        disc);
 }
 
 void ReaderButton::refresh()
