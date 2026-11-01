@@ -193,7 +193,10 @@ int LineEdit::textMargin(WidgetPosition position) const
     else
         w = m_rightWidget->sizeHint().width();
     if (w == 0)
-        return 0;
+        // No side widgets (e.g. internal pages hide the padlock) —
+        // still keep a left-edge inset so the text doesn't hug the
+        // frame the way it did on the Preferences tab.
+        return position == LeftSide ? qMax(6, spacing) : 0;
     return w + spacing * 2;
 }
 

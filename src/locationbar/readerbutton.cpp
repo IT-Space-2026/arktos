@@ -215,12 +215,17 @@ QIcon ReaderButton::makeIcon(bool active, bool suggested) const
             : QColor(QLatin1String("#ECEFF1"));
     QPalette palette = this->palette();
     const QColor ink = ArktosStyle::contrastTextColor(disc);
+    // Monochrome glyph on the disc for every state — the disc tint
+    // already carries active/suggested, so the engine's accent fill
+    // and near-white on-accent outline (meant for a plain field)
+    // would just read as a muddy blob inside pastel.
     palette.setColor(QPalette::Text, ink);
     palette.setColor(QPalette::ButtonText, ink);
-    if (m_accentOverride.isValid())
-        palette.setColor(QPalette::Accent, m_accentOverride);
+    palette.setColor(QPalette::Accent, ink);
+    palette.setColor(QPalette::Highlight, ink);
     return ArktosIcon::circledIcon(
-        QIcon(new ReaderIconEngine(palette, active, suggested)), disc);
+        QIcon(new ReaderIconEngine(palette, /*active*/ false, suggested)),
+        disc);
 }
 
 void ReaderButton::refresh()
