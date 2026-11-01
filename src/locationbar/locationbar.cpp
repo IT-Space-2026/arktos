@@ -317,6 +317,14 @@ void LocationBar::paintEvent(QPaintEvent *event)
 // with where QLineEdit painted the text.
 void LocationBar::paintDomainOverlay()
 {
+#if defined(Q_OS_MACOS)
+    // The overlay can only recolor text by repainting the field's
+    // background — and under the native unified NSToolbar neither a
+    // Base fill nor a PE_PanelLineEdit repaint reproduces the field's
+    // translucent look, so every repaint reads as a mismatched patch.
+    // On macOS the padlock carries the trust verdict alone.
+    return;
+#else
     int start = -1;
     int length = 0;
     if (hasFocus() || hasSelectedText() || cursorPosition() != 0
@@ -370,6 +378,7 @@ void LocationBar::paintDomainOverlay()
     painter.setPen(palette().color(QPalette::Text));
     painter.drawText(domainX, baseline, shown.mid(start, length));
     painter.end();
+#endif
 }
 
 void LocationBar::updateClearButtonVisibility()
