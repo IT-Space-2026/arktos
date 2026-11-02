@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, Once};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use arti_client::config::onion_service::OnionServiceConfigBuilder;
 use arti_client::config::TorClientConfigBuilder;
@@ -765,8 +765,20 @@ impl SyncTransport for TorTransport {
                 msg: "tor transport not started".into(),
             });
         }
+        // relay://<onion>/<cmd>/<key> — dial the rendezvous relay and
+        // write its OFFER/CLAIM preamble on the raw stream before the
+        // link registers.  CLAIM waits for the splice ack ("OK\n").
+        let mut cmd: Option<(String, String)> = None;
+        let mut target = endpoint.to_string();
+        if let Some(rest) = endpoint.strip_prefix("relay://") {
+            let mut it = rest.split('/');
+            let onion = it.next().unwrap_or("");
+            target = format!("{onion}:443");
+            if let (Some(c), Some(k)) = (it.next(), it.next()) {
+                cmd = Some((c.to_string(), k.to_string()));
+            }
+        }
         let client = self.client.clone();
-        let target = endpoint.to_string();
         let handle = self.handle.clone();
         let stream = handle.block_on(async move {
             let start = Instant::now();
@@ -819,6 +831,35 @@ impl SyncTransport for TorTransport {
                 }
             }
         })?;
+        if let Some((c, k)) = cmd {
+            let mut stream = stream;
+            let line = format!("{c} {k}\n");
+            handle.block_on(async {
+                futures::AsyncWriteExt::write_all(&mut stream, line.as_bytes()).await
+            })
+            .map_err(|e| io_fail("relay preamble", e))?;
+            if c == "CLAIM" {
+                // The relay answers OK once spliced — bounded so a
+                // stale offer can't hang the dial forever.
+                let mut buf = [0u8; 3];
+                handle.block_on(async {
+                    tokio::time::timeout(
+                        Duration::from_secs(60),
+                        futures::AsyncReadExt::read_exact(&mut stream, &mut buf),
+                    )
+                    .await
+                })
+                .map_err(|_| io_fail("relay splice", "no offer matched"))?
+                .map_err(|e| io_fail("relay splice", e))?;
+                if &buf != b"OK\n" {
+                    return Err(io_fail(
+                        "relay splice",
+                        format!("claim rejected: {}", String::from_utf8_lossy(&buf)),
+                    ));
+                }
+            }
+            return Ok(self.register_link(stream, false));
+        }
         Ok(self.register_link(stream, false))
     }
 

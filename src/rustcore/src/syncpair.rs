@@ -683,6 +683,24 @@ fn transport_for(root: &Path) -> RcResult<Arc<dyn SyncTransport>> {
 /// else (tor builds) the keystore-derived onion so invites work
 /// before the transport has ever started.
 fn our_endpoint(root: &Path) -> RcResult<String> {
+    // A configured rendezvous relay replaces the direct endpoint: the
+    // invite then advertises relay:// and both sides dial out.
+    if let Ok(a) = std::env::var("ARKTOS_RELAY") {
+        let a = a.trim();
+        if !a.is_empty() {
+            let ep = if a.starts_with("relay://") { a.into() } else { format!("relay://{a}") };
+            eprintln!("arktos-sync: our_endpoint → {ep} (relay)");
+            return Ok(ep);
+        }
+    }
+    if let Ok(a) = std::fs::read_to_string(root.join(SYNC_DIR).join("relay")) {
+        let a = a.trim();
+        if !a.is_empty() {
+            let ep = if a.starts_with("relay://") { a.into() } else { format!("relay://{a}") };
+            eprintln!("arktos-sync: our_endpoint → {ep} (relay)");
+            return Ok(ep);
+        }
+    }
     let ep = if let Some(t) = synctransport::running(root) {
         t.endpoint()
     } else {
@@ -740,6 +758,21 @@ pub fn invite_begin(data_root: &Path, scope: &str) -> RcResult<Value> {
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     let qr = invite.qr_text()?;
     let code = invite.manual_code()?;
+    // A relay invite: dial the rendezvous and OFFER H(token) — the
+    // returned stream is this session's link; the CLAIM splices in.
+    let offer_link = if bare.starts_with("relay://") {
+        let key = hex(&Sha256::digest(token));
+        let t = transport_for(data_root)?;
+        match t.connect(&format!("{bare}/OFFER/{key}"), &grant) {
+            Ok(l) => Some(l),
+            Err(e) => {
+                eprintln!("arktos-sync: relay OFFER failed: {}", e.msg);
+                None
+            }
+        }
+    } else {
+        None
+    };
     let s = PairSession {
         id,
         root: data_root.to_path_buf(),
@@ -750,7 +783,7 @@ pub fn invite_begin(data_root: &Path, scope: &str) -> RcResult<Value> {
         grant_nick: grant,
         our_endpoint: endpoint.clone(),
         expected_pk: None,
-        link: None,
+        link: offer_link,
         hs: None,
         sess: None,
         peer: None,
@@ -795,12 +828,23 @@ pub fn join_begin(data_root: &Path, payload_text: &str) -> RcResult<u64> {
             }
         })?;
     let nick = invite_nick(&invite.token);
+    // relay:// invites dial the rendezvous with CLAIM<H(token)> —
+    // the splice ack arrives before the link registers.
+    let dial_ep = if invite.endpoint.starts_with("relay://") {
+        format!(
+            "{}/CLAIM/{}",
+            invite.endpoint,
+            hex(&Sha256::digest(invite.token))
+        )
+    } else {
+        invite.connect_endpoint()
+    };
     // Rendezvous through a degraded intro set is flaky — one fresh
     // retry lets a transient dial fail without killing the ceremony.
     let mut link_err = None;
     let mut link = None;
     for attempt in 0..2 {
-        match t.connect(&invite.connect_endpoint(), &nick) {
+        match t.connect(&dial_ep, &nick) {
             Ok(l) => {
                 link = Some(l);
                 break;
