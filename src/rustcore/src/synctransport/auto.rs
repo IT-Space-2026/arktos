@@ -144,13 +144,14 @@ impl AutoTransport {
     /// the tor slot; anything else is a tor endpoint — resolved
     /// through LAN discovery first when the peer announced its
     /// onion there.
-    fn route(&self, endpoint: &str) -> (u8, String) {
+    fn route(&self, endpoint: &str, as_nickname: &str) -> (u8, String) {
         if endpoint.starts_with("lan://") {
             return (LEG_LAN, endpoint.to_string());
         }
         if endpoint.starts_with("mem:") {
             return (LEG_TOR, endpoint.to_string());
         }
+        let _ = as_nickname;
         if let Some(lan) = &self.lan {
             if let Some(p) = lan.discovered_by_onion(endpoint) {
                 return (LEG_LAN, format!("lan://{}", p.device_id));
@@ -289,7 +290,7 @@ impl SyncTransport for AutoTransport {
     }
 
     fn connect(&self, endpoint: &str, as_nickname: &str) -> RcResult<u64> {
-        let (leg, target) = self.route(endpoint);
+        let (leg, target) = self.route(endpoint, as_nickname);
         let l = self.leg(leg).ok_or_else(|| Fail {
             status: RcStatus::Unavailable,
             msg: format!(

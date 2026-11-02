@@ -40,6 +40,14 @@ QStringList commandLine(const SandboxPolicy &policy,
             << QStringLiteral("--die-with-parent")
             << QStringLiteral("--setenv") << QStringLiteral("ARKTOS_SANDBOXED")
             << QStringLiteral("bwrap")
+            // fs_mistrust can't evaluate trust inside a bwrap mount
+            // namespace (every ancestor looks synthetic) and refuses
+            // the Arti keystore outright — the sandbox itself is the
+            // isolation the check approximates, so Arti documents
+            // this opt-out for container-style mounts.
+            << QStringLiteral("--setenv")
+            << QStringLiteral("ARTI_FS_DISABLE_PERMISSION_CHECKS")
+            << QStringLiteral("1")
             << QStringLiteral("--dev-bind") << QStringLiteral("/")
             << QStringLiteral("/");
     for (const QString &dir : policy.deniedDirs)
@@ -82,6 +90,10 @@ QString launcherScript()
         "nl='\n"
         "'\n"
         "wrap_args=\"--die-with-parent$nl--setenv${nl}ARKTOS_SANDBOXED${nl}bwrap\"\n"
+        // fs_mistrust can't evaluate trust inside a bwrap mount
+        // namespace and refuses the Arti keystore outright — the
+        // sandbox itself is the isolation the check approximates.
+        "wrap_args=\"$wrap_args$nl--setenv${nl}ARTI_FS_DISABLE_PERMISSION_CHECKS${nl}1\"\n"
         "wrap_args=\"$wrap_args$nl--dev-bind${nl}/${nl}/\"\n"
         "denied_dirs=\"\n"
     );

@@ -109,8 +109,6 @@ SyncPairDialog::SyncPairDialog(bool inviter, const QString &profileId,
                 m_copyButton->setText(tr("Copy"));
             });
         });
-        mwCall(CallTransport, AcMw::SyncTransportStart,
-               QJsonObject{{QStringLiteral("backend"), QStringLiteral("auto")}});
     } else {
         m_payloadEdit = new QPlainTextEdit(this);
         m_payloadEdit->setPlaceholderText(
@@ -120,8 +118,6 @@ SyncPairDialog::SyncPairDialog(bool inviter, const QString &profileId,
         lay->addWidget(m_startButton);
         connect(m_startButton, &QPushButton::clicked,
                 this, &SyncPairDialog::onJoinStarted);
-        mwCall(CallTransport, AcMw::SyncTransportStart,
-               QJsonObject{{QStringLiteral("backend"), QStringLiteral("auto")}});
     }
 
     auto *fpBox = new QGroupBox(tr("Confirm the fingerprints match"), this);
@@ -174,6 +170,11 @@ SyncPairDialog::SyncPairDialog(bool inviter, const QString &profileId,
     m_workerHolder = worker;
     connect(worker, &SyncPairWorker::result,
             this, &SyncPairDialog::onWorkerResult);
+
+    // Bring the shared transport up — queued after the worker exists;
+    // earlier call sites fired on an empty holder and dropped the op.
+    mwCall(CallTransport, AcMw::SyncTransportStart,
+           QJsonObject{{QStringLiteral("backend"), QStringLiteral("auto")}});
 
     m_timer = new QTimer(this);
     m_timer->setInterval(800);

@@ -13,6 +13,7 @@ fi
 nl='
 '
 wrap_args="--die-with-parent$nl--setenv${nl}ARKTOS_SANDBOXED${nl}bwrap"
+wrap_args="$wrap_args$nl--setenv${nl}ARTI_FS_DISABLE_PERMISSION_CHECKS${nl}1"
 wrap_args="$wrap_args$nl--dev-bind${nl}/${nl}/"
 denied_dirs="
 .ssh

@@ -2797,6 +2797,12 @@ fn op_sync_transport_start(ctx: &MwCtx, p: &Value) -> Result<Value, OpErr> {
         }));
     }
     let t = synctransport::start(root, backend, name)?;
+    eprintln!(
+        "arktos-sync: transport_start backend={} → {} ({})",
+        backend,
+        t.backend(),
+        t.endpoint().map(|e| e.to_string()).unwrap_or_else(|e| format!("err: {}", e.msg))
+    );
     notify::emit("sync");
     Ok(json!({
         "ok": true,

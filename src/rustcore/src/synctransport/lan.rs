@@ -151,10 +151,20 @@ fn admit_peer(
     }
     let id16 = &id[..16.min(id.len())];
     let nick = format!("member-{id16}");
-    let granted = authorized
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .contains_key(&nick);
+    let granted = {
+        let set = authorized.lock().unwrap_or_else(|e| e.into_inner());
+        // An open pairing window (a `pair-*` invite grant) admits the
+        // cert at TLS — Noise authenticates the one-time token and
+        // pins the inviter's static against the invite, so a `pair-`
+        // link can't be spent by an unrelated device.
+        let pair_open = set.keys().any(|k| k.starts_with("pair-"));
+        if set.contains_key(&nick) || pair_open {
+            eprintln!("arktos-sync: lan admit {id16} (member={}, pair_window={pair_open})", set.contains_key(&nick));
+        } else {
+            eprintln!("arktos-sync: lan deny {id16} (no grant, {} keys)", set.len());
+        }
+        set.contains_key(&nick) || pair_open
+    };
     if !granted {
         return Err(denied(format!(
             "peer device {id16} has no member grant — not a paired device"

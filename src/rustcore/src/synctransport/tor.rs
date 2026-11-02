@@ -66,7 +66,6 @@ const SVC_NICKNAME: &str = "arksync";
 const AUTH_FAIL_LIMIT: u32 = 2;
 
 struct Live {
-    client: Arc<TorClient<PreferredRuntime>>,
     svc: Arc<RunningOnionService>,
 }
 
@@ -80,6 +79,10 @@ pub struct TorTransport {
     endpoint: String,
     rt: Mutex<Option<Runtime>>,
     handle: tokio::runtime::Handle,
+    /// The client from build time — created unbootstrapped, driven to
+    /// readiness by a background task so start() never blocks the mw
+    /// caller on directory fetch.  connect() awaits bootstrap on it.
+    client: Arc<TorClient<PreferredRuntime>>,
     authorized: Mutex<BTreeMap<String, String>>,
     links: Arc<Mutex<Links>>,
     events: Arc<Mutex<VecDeque<TransportEvent>>>,
@@ -102,6 +105,9 @@ fn svc_config_for(
     auth_dir: &Path,
 ) -> RcResult<OnionServiceConfig> {
     let mut b = OnionServiceConfigBuilder::default();
+    // A wider intro-point set: a flapping publish reads as
+    // DegradedUnreachable at three points — eight survives the loss.
+    b.num_intro_points(8);
     b.nickname(
         HsNickname::from_str(SVC_NICKNAME)
             .map_err(|e| io_fail("service nickname", e))?,
@@ -258,7 +264,6 @@ discovery_keys_impl!(arti_client::InertTorClient);
 /// without caring which.
 enum DiscClient {
     Live(Arc<TorClient<PreferredRuntime>>),
-    Inert(arti_client::InertTorClient),
 }
 
 impl DiscoveryKeys for DiscClient {
@@ -269,7 +274,6 @@ impl DiscoveryKeys for DiscClient {
     ) -> arti_client::Result<tor_hscrypto::pk::HsClientDescEncKey> {
         match self {
             DiscClient::Live(c) => c.generate_service_discovery_key(selector, hsid),
-            DiscClient::Inert(c) => c.generate_service_discovery_key(selector, hsid),
         }
     }
     fn get_service_discovery_key(
@@ -278,7 +282,6 @@ impl DiscoveryKeys for DiscClient {
     ) -> arti_client::Result<Option<tor_hscrypto::pk::HsClientDescEncKey>> {
         match self {
             DiscClient::Live(c) => c.get_service_discovery_key(hsid),
-            DiscClient::Inert(c) => c.get_service_discovery_key(hsid),
         }
     }
     fn insert_service_discovery_key(
@@ -289,7 +292,6 @@ impl DiscoveryKeys for DiscClient {
     ) -> arti_client::Result<tor_hscrypto::pk::HsClientDescEncKey> {
         match self {
             DiscClient::Live(c) => c.insert_service_discovery_key(selector, hsid, secret),
-            DiscClient::Inert(c) => c.insert_service_discovery_key(selector, hsid, secret),
         }
     }
     fn remove_service_discovery_key(
@@ -299,7 +301,6 @@ impl DiscoveryKeys for DiscClient {
     ) -> arti_client::Result<Option<()>> {
         match self {
             DiscClient::Live(c) => c.remove_service_discovery_key(selector, hsid),
-            DiscClient::Inert(c) => c.remove_service_discovery_key(selector, hsid),
         }
     }
     fn rotate_service_discovery_key(
@@ -309,7 +310,6 @@ impl DiscoveryKeys for DiscClient {
     ) -> arti_client::Result<tor_hscrypto::pk::HsClientDescEncKey> {
         match self {
             DiscClient::Live(c) => c.rotate_service_discovery_key(selector, hsid),
-            DiscClient::Inert(c) => c.rotate_service_discovery_key(selector, hsid),
         }
     }
 }
@@ -334,13 +334,22 @@ fn install_crypto_provider() {
 }
 
 impl TorTransport {
-    /// Bootstrap Arti and publish the onion service under `dir`
-    /// (`<data root>/sync`).  Blocking — the caller (an mw worker
-    /// thread) waits through bootstrap, which is why progress is
-    /// reported as events the UI can drain concurrently.
+    /// Start Arti under `dir` (`<data root>/sync`) and return
+    /// immediately: bootstrap + onion publish run on the transport's
+    /// runtime in the background, surfaced as Bootstrap/Ready/Failed
+    /// events the UI drains concurrently.  A blocking start used to
+    /// park the mw worker on directory fetch — pair dialogs queued
+    /// behind it rendered nothing while Tor was slow.
     pub fn start(dir: &Path) -> RcResult<Arc<Self>> {
         install_crypto_provider();
         let root = dir.join(TRANSPORT_DIR);
+        // fs_mistrust walks ancestors: a group/other-writable parent
+        // (umask-loosened install, restored backup) makes Arti refuse
+        // the keystore outright — normalize the chain we own.
+        if let Some(parent) = dir.parent() {
+            ensure_dir_700(parent)?;
+        }
+        ensure_dir_700(dir)?;
         ensure_dir_700(&root)?;
         for sub in ["state", "cache", AUTH_DIR_PLACEHOLDER] {
             ensure_dir_700(&root.join(sub))?;
@@ -379,6 +388,7 @@ impl TorTransport {
             endpoint,
             handle,
             rt: Mutex::new(Some(rt)),
+            client: client.clone(),
             authorized: Mutex::new(authorized),
             links: Arc::new(Mutex::new(HashMap::new())),
             events: Arc::new(Mutex::new(VecDeque::new())),
@@ -404,43 +414,75 @@ impl TorTransport {
                 }
             });
         }
-        t.handle
-            .block_on(client.bootstrap())
-            .map_err(|e| io_fail("tor bootstrap", e))?;
-
-        let auth_clone = || {
-            t.authorized
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone()
-        };
-        let (running, rend) = client
-            .launch_onion_service(svc_config_for(
-                &auth_clone(),
-                &root.join(AUTH_DIR_PLACEHOLDER),
-            )?)
-            .map_err(|e| io_fail("launch onion service", e))?
-            .ok_or_else(|| io_fail("launch onion service", "service disabled"))?;
-
-        // Onion publish visibility — the connect deadline is opaque
-        // without it: the terminal prints each state change until the
-        // descriptor reaches the network (Running reachable).
+        // Bootstrap + onion publish run on the transport runtime —
+        // start() returns immediately so the mw caller (pair dialog,
+        // sync round) is never parked on directory fetch.  Progress
+        // arrives as Bootstrap events, readiness as Ready, failure as
+        // Failed; connect() awaits the same bootstrap internally.
         {
-            let svc = running.clone();
-            t.handle.spawn(async move {
-                let mut evs = svc.status_events();
-                while let Some(s) = evs.next().await {
-                    eprintln!("arktos-sync: onion status {:?}", s.state());
+            let t = Arc::clone(&t);
+            let auth_dir = root.join(AUTH_DIR_PLACEHOLDER);
+            let handle = t.handle.clone();
+            handle.spawn(async move {
+                eprintln!("arktos-sync: tor bootstrap started");
+                if let Err(e) = t.client.bootstrap().await {
+                    eprintln!("arktos-sync: tor bootstrap failed: {e}");
+                    push_event(&t.events, TransportEvent::Failed {
+                        reason: format!("tor bootstrap: {e}"),
+                    });
+                    return;
                 }
+                eprintln!("arktos-sync: tor bootstrap done — launching onion service");
+                let auth = t
+                    .authorized
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                let svc_cfg = match svc_config_for(&auth, &auth_dir) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        push_event(&t.events, TransportEvent::Failed {
+                            reason: format!("onion service config: {}", e.msg),
+                        });
+                        return;
+                    }
+                };
+                let (running, rend) = match t.client.launch_onion_service(svc_cfg) {
+                    Ok(Some(l)) => l,
+                    Ok(None) => {
+                        eprintln!("arktos-sync: launch onion service: disabled");
+                        push_event(&t.events, TransportEvent::Failed {
+                            reason: "launch onion service: service disabled".into(),
+                        });
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("arktos-sync: launch onion service failed: {e}");
+                        push_event(&t.events, TransportEvent::Failed {
+                            reason: format!("launch onion service: {e}"),
+                        });
+                        return;
+                    }
+                };
+                eprintln!("arktos-sync: onion service launched — publishing");
+                // Onion publish visibility — the connect deadline is
+                // opaque without it: the terminal prints each state
+                // change until the descriptor reaches the network.
+                {
+                    let svc = running.clone();
+                    t.handle.spawn(async move {
+                        let mut evs = svc.status_events();
+                        while let Some(s) = evs.next().await {
+                            eprintln!("arktos-sync: onion status {:?}", s.state());
+                        }
+                    });
+                }
+                *t.live.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(Live { svc: running });
+                t.spawn_accept(rend);
+                push_event(&t.events, TransportEvent::Ready);
             });
         }
-
-        *t.live.lock().unwrap_or_else(|e| e.into_inner()) = Some(Live {
-            client: client.clone(),
-            svc: running,
-        });
-        t.spawn_accept(rend);
-        push_event(&t.events, TransportEvent::Ready);
         Ok(t)
     }
 
@@ -508,17 +550,13 @@ impl TorTransport {
         id
     }
 
-    /// The keystore-bearing client for discovery-key ops — the live
-    /// client when the transport runs, else a throwaway inert one on
-    /// the same state dir (pairing-time key ops must work before
-    /// the transport is ever started — and need no runtime).
+    /// The keystore-bearing client for discovery-key ops — the
+    /// transport's own client handle, usable for keystore ops even
+    /// while bootstrap is still running (it exists from build time).
+    /// The never-started case goes through the free `discovery_key`
+    /// helper, which builds a throwaway inert client instead.
     fn discovery_client(&self) -> RcResult<DiscClient> {
-        let live = self.live.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(l) = live.as_ref() {
-            return Ok(DiscClient::Live(l.client.clone()));
-        }
-        let cfg = client_config(&self.dir.join(TRANSPORT_DIR))?;
-        Ok(DiscClient::Inert(inert_client(&cfg)?))
+        Ok(DiscClient::Live(self.client.clone()))
     }
 
     /// The client handle when running, else a throwaway inert
@@ -716,20 +754,35 @@ impl SyncTransport for TorTransport {
     }
 
     fn connect(&self, endpoint: &str, _as_nickname: &str) -> RcResult<u64> {
-        let client = self
-            .live
+        if self
+            .rt
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .map(|l| l.client.clone())
-            .ok_or_else(|| Fail {
+            .is_none()
+        {
+            return Err(Fail {
                 status: RcStatus::NotEnabled,
                 msg: "tor transport not started".into(),
-            })?;
+            });
+        }
+        let client = self.client.clone();
         let target = endpoint.to_string();
         let handle = self.handle.clone();
         let stream = handle.block_on(async move {
             let start = Instant::now();
+            // start() returns before bootstrap — a dial placed while
+            // it is still running waits here, inside the same budget.
+            match tokio::time::timeout(CONNECT_DEADLINE, client.bootstrap()).await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => return Err(io_fail("tor bootstrap", e)),
+                Err(_) => {
+                    return Err(io_fail(
+                        "connect deadline",
+                        format!("{target}: bootstrap did not finish"),
+                    ))
+                }
+            }
             let mut attempt = 0u32;
             let mut auth_fails = 0u32;
             loop {

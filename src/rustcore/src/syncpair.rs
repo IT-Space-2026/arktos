@@ -683,20 +683,26 @@ fn transport_for(root: &Path) -> RcResult<Arc<dyn SyncTransport>> {
 /// else (tor builds) the keystore-derived onion so invites work
 /// before the transport has ever started.
 fn our_endpoint(root: &Path) -> RcResult<String> {
-    if let Some(t) = synctransport::running(root) {
-        return t.endpoint();
+    let ep = if let Some(t) = synctransport::running(root) {
+        t.endpoint()
+    } else {
+        #[cfg(feature = "synctor")]
+        {
+            synctransport::tor::endpoint_for(&root.join(SYNC_DIR))
+        }
+        #[cfg(not(feature = "synctor"))]
+        {
+            fail(
+                RcStatus::NotEnabled,
+                "sync transport is not started and no tor backend exists",
+            )
+        }
+    };
+    match &ep {
+        Ok(e) => eprintln!("arktos-sync: our_endpoint → {e} (running={})", synctransport::running(root).is_some()),
+        Err(e) => eprintln!("arktos-sync: our_endpoint → err {}", e.msg),
     }
-    #[cfg(feature = "synctor")]
-    {
-        return synctransport::tor::endpoint_for(&root.join(SYNC_DIR));
-    }
-    #[cfg(not(feature = "synctor"))]
-    {
-        fail(
-            RcStatus::NotEnabled,
-            "sync transport is not started and no tor backend exists",
-        )
-    }
+    ep
 }
 
 // ---- public API -----------------------------------------------------------------
@@ -1154,12 +1160,14 @@ pub fn poll(data_root: &Path, pair_id: u64) -> RcResult<Value> {
     for ev in events {
         match ev {
             TransportEvent::Incoming { link, .. } => {
+                eprintln!("arktos-sync: pair inbound Incoming link {link}");
                 PENDING_LINKS
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .push_back((data_root.to_path_buf(), link));
             }
             TransportEvent::Frame { link, payload } => {
+                eprintln!("arktos-sync: pair inbound Frame link {link} ({} bytes)", payload.len());
                 on_frame(data_root, &t, link, &payload, &mut passthrough)?;
             }
             TransportEvent::LinkClosed { link, reason } => {
@@ -1244,6 +1252,11 @@ fn on_frame(
     let Some(s) = hit else {
         // Wrong invite for this device — drop the link, the
         // pending entry, and any chance of probing further.
+        eprintln!(
+            "arktos-sync: pair inbound link {link} rejected — no WaitLink session (tok {} bytes, {} sessions)",
+            tok.len(),
+            map.len()
+        );
         let _ = t.close_link(link);
         PENDING_LINKS
             .lock()
@@ -1256,6 +1269,7 @@ fn on_frame(
         .unwrap_or_else(|e| e.into_inner())
         .retain(|(r, l)| !(r == root && *l == link));
     s.link = Some(link);
+    eprintln!("arktos-sync: pair inbound link {link} claimed by session {}", s.id);
     drive(s, t, payload)
 }
 
