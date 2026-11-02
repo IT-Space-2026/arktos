@@ -26,9 +26,9 @@
 #include "webview.h"
 
 #include <qevent.h>
+#include <qfont.h>
 #include <qiconengine.h>
 #include <qpainter.h>
-#include <qpainterpath.h>
 
 namespace {
 
@@ -70,47 +70,31 @@ public:
         pixmap.fill(Qt::transparent);
         QPainter painter(&pixmap);
         painter.setRenderHint(QPainter::Antialiasing);
-        // The glyph is drawn on a 16x16 grid, scaled uniformly to the
-        // requested size and centered — page outline + three lines.
-        const qreal k = qMin(pixmap.width(), pixmap.height()) / 16.0;
-        painter.translate((pixmap.width() - 16 * k) / 2.0,
-                          (pixmap.height() - 16 * k) / 2.0);
-        painter.scale(k, k);
         const QColor fg = mode == QIcon::Disabled
             ? m_palette.color(QPalette::Disabled, QPalette::ButtonText)
             : (m_active ? ArktosStyle::onAccentColor(m_palette)
                         : m_palette.color(m_suggested
                                               ? QPalette::Accent
                                               : QPalette::ButtonText));
-        // Dog-eared document: outline with a folded top-right corner
-        // and three round-cap text lines — reads as "article" at
-        // 16px where a plain rounded rect just looks like a square.
-        // Stroke weight follows the themed siblings (~1.35px on the
-        // 16px grid): the first pass drew noticeably thinner than
-        // every neighboring glyph, which read as a faint/wrong icon.
-        // Open book: center spine with two outward-curving page
-        // outlines — instantly reads "reading" where the dog-eared
-        // document just fuzzed at url-bar size.
-        QPainterPath book;
-        book.moveTo(8.0, 4.2);
-        book.cubicTo(6.2, 3.4, 4.3, 3.7, 2.6, 4.4);
-        book.lineTo(2.6, 12.6);
-        book.cubicTo(4.3, 11.9, 6.2, 11.6, 8.0, 12.4);
-        book.lineTo(8.0, 4.2);
-        QPainterPath bookR;
-        bookR.moveTo(8.0, 4.2);
-        bookR.cubicTo(9.8, 3.4, 11.7, 3.7, 13.4, 4.4);
-        bookR.lineTo(13.4, 12.6);
-        bookR.cubicTo(11.7, 11.9, 9.8, 11.6, 8.0, 12.4);
-        QPen pen(fg, m_suggested ? 1.5 : 1.35);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
-        painter.setPen(pen);
+        // The "Aa" typeface mark — the reader affordance Safari and
+        // Chrome settled on: the document/book silhouettes all fuzzed
+        // at the ~12px the disc's inner glyph box leaves, where two
+        // letterforms stay crisp at any size.  The painter works in
+        // device-independent units (the pixmap's dpr is applied
+        // automatically), so the em box is sized off the logical
+        // extent — 80% of it puts the cap height at the siblings'
+        // optical size.  Suggested keeps the slightly-heavier
+        // treatment the glyph stroke used to carry — now just weight.
+        const QSizeF logical(pixmap.width() / pixmap.devicePixelRatio(),
+                             pixmap.height() / pixmap.devicePixelRatio());
+        QFont font = painter.font();
+        font.setWeight(m_suggested ? QFont::Bold : QFont::Medium);
+        font.setPixelSize(qMax(1, qRound(logical.height() * 0.8)));
+        painter.setFont(font);
+        painter.setPen(fg);
         painter.setBrush(Qt::NoBrush);
-        if (m_active)
-            painter.setBrush(ArktosStyle::accentFillColor(m_palette));
-        painter.drawPath(book);
-        painter.drawPath(bookR);
+        painter.drawText(QRectF(0, 0, logical.width(), logical.height()),
+                         Qt::AlignCenter, QStringLiteral("Aa"));
         painter.end();
         return pixmap;
     }
@@ -193,17 +177,14 @@ void ReaderButton::setAccentOverride(const QColor &color)
 
 QIcon ReaderButton::makeIcon(bool active, bool suggested) const
 {
-    // A page-with-lines glyph, painted so no icon theme is required.
-    // Active state fills the page with the accent color; suggested
-    // pages get an accent outline + dot so availability still hints
-    // at reader mode without gating the button itself.  The engine
-    // paints at whatever size the surface asks for — a single baked
-    // pixmap upscaled and blurred next to the theme-crisp siblings
-    // (TRUST21).
+    // The "Aa" typeface mark, painted so no icon theme is required.
+    // The engine paints at whatever size the surface asks for — a
+    // single baked pixmap upscaled and blurred next to the
+    // theme-crisp siblings (TRUST21).
     // Pastel-circle icon: state-tinted disc (active deeper blue,
-    // suggested lighter, plain neutral) with the open-book glyph in
-    // the disc's contrast ink — the disc carries the state so the
-    // glyph itself stays monochrome.
+    // suggested lighter, plain neutral) with the "Aa" glyph in the
+    // disc's contrast ink — the disc carries the state so the glyph
+    // itself stays monochrome.
     const QColor disc = active
         ? QColor(QLatin1String("#BBDEFB"))
         : suggested
