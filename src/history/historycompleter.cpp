@@ -40,6 +40,7 @@
 #include <qevent.h>
 #include <qfontmetrics.h>
 #include <qheaderview.h>
+#include <qwindow.h>
 
 HistoryCompletionView::HistoryCompletionView(QWidget *parent)
     : QTableView(parent)
@@ -710,6 +711,10 @@ HistoryCompleter::HistoryCompleter(QAbstractItemModel *m, QObject *parent)
 void HistoryCompleter::init()
 {
     setPopup(new HistoryCompletionView());
+    // MAC18: see the popup-QEvent::Show leg in eventFilter — on macOS
+    // the dropdown must be re-anchored at show time or it stacks
+    // under the window's own chrome.
+    popup()->installEventFilter(this);
 
     // we want to complete against our own faked role
     setCompletionRole(HistoryCompletionModel::HistoryCompletionRole);
@@ -774,6 +779,21 @@ QStringList HistoryCompleter::splitPath(const QString &path) const
 
 bool HistoryCompleter::eventFilter(QObject *obj, QEvent *event)
 {
+#ifdef Q_OS_MACOS
+    // MAC18: under the unified NSToolbar the dropdown can stack
+    // BELOW the window — it renders "behind the tab bar" — when its
+    // transient parent resolves through a stale or native-detached
+    // bar (the same widget-binding class MAC16 fixed for geometry).
+    // QCompleter parents the popup at setWidget() time; by show time
+    // that bind can already be stale, so re-anchor the popup's
+    // transient parent to the bound bar's window and order it front.
+    if (obj == popup() && event->type() == QEvent::Show && widget()) {
+        if (QWindow *popupWindow = popup()->windowHandle())
+            popupWindow->setTransientParent(
+                widget()->window()->windowHandle());
+        popup()->raise();
+    }
+#endif
     if (event->type() == QEvent::KeyPress && popup()->isVisible()) {
         QKeyEvent *keyEvent = static_cast<QKeyEvent*>(event);
         if (keyEvent->key() == Qt::Key_Tab) {
