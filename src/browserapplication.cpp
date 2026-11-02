@@ -106,6 +106,7 @@
 #ifdef ARKTOS_RUSTCORE
 #include "rustcore.h"
 #include "rustcorebridge.h"
+#include "syncscheduler.h"
 #include "synctabpresence.h"
 
 #include <arktos_core.h>
@@ -1725,6 +1726,10 @@ BrowserMainWindow *BrowserApplication::newMainWindow(const QString &profileId)
     // SYNC06: presence publishing watches this window's tab set —
     // changes debounce into a whole-doc "tabs" op per profile scope.
     SyncTabPresence::instance()->watchWindow(browser);
+    // SYNC11: the scheduler is a lazy singleton — it must exist from
+    // app start or no sync round ever runs (it used to come up only
+    // when the Sync settings page was opened).
+    SyncScheduler::instance();
 #endif
 #ifndef AUTOTESTS
     // SESS02: if this turns out to be the last browser window, a stray

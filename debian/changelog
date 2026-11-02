@@ -2,15 +2,20 @@ arktos (1.4.2) unstable; urgency=medium
 
   * Sync scheduling: interval setting (1/5/15/30 min) + Sync Now
     button on the Sync page; rounds exchange journal ops with paired
-    members over the auto transport and stop it afterwards — no
-    always-on Arti/mDNS cost; rounds skip while pairing is live.
+    members over the auto transport, which now stays published
+    between rounds so peers can reach this device (the old
+    stop-after-round model made every dial time out). Scheduler now
+    lives from app start, kicks a round ~20s after launch and after
+    pairing; a serve thread answers inbound sync frames between
+    rounds; rounds skip while pairing is live.
   * Pair transport backend "tor" -> "auto" (LAN mDNS+QUIC fast path).
   * Leg-failure + mDNS-start stderr diagnostics in the transports.
   * Pastel-circle icons on toolbar/tab strip/URL-bar indicators;
-    nav/url icons enlarged; pair-code field fits its text; url-bar
-    domain-highlight repaint fixed.
+    nav/url icons enlarged; reader button shows the "Aa" mark;
+    pair-code field fits its text; url-bar domain-highlight repaint
+    fixed.
 
- -- Janos Szenfner <janos.szenfner@it-space.info>  Sat, 31 Oct 2026 12:00:00 +0100
+ -- Janos Szenfner <janos.szenfner@it-space.info>  Mon, 02 Nov 2026 12:00:00 +0100
 
 arktos (1.4.1) unstable; urgency=medium
 

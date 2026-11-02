@@ -422,6 +422,19 @@ impl TorTransport {
             .map_err(|e| io_fail("launch onion service", e))?
             .ok_or_else(|| io_fail("launch onion service", "service disabled"))?;
 
+        // Onion publish visibility — the connect deadline is opaque
+        // without it: the terminal prints each state change until the
+        // descriptor reaches the network (Running reachable).
+        {
+            let svc = running.clone();
+            t.handle.spawn(async move {
+                let mut evs = svc.status_events();
+                while let Some(s) = evs.next().await {
+                    eprintln!("arktos-sync: onion status {:?}", s.state());
+                }
+            });
+        }
+
         *t.live.lock().unwrap_or_else(|e| e.into_inner()) = Some(Live {
             client: client.clone(),
             svc: running,

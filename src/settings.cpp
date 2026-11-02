@@ -4283,7 +4283,7 @@ void SettingsDialog::refreshSyncStatus()
         lines << tr("Endpoint: %1").arg(
             so.value(QStringLiteral("endpoint")).toString());
     } else {
-        lines << tr("Transport: not running (starts when pairing).");
+        lines << tr("Transport: not running (starts on the next sync round or when pairing).");
     }
     m_syncStatusLabel->setText(lines.join(QLatin1Char('\n')));
 

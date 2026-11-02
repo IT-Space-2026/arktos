@@ -16,6 +16,7 @@
 
 #include "qrcodedialog.h"
 #include "rustcorebridge.h"
+#include "syncscheduler.h"
 
 #include <qboxlayout.h>
 #include <qclipboard.h>
@@ -311,6 +312,10 @@ void SyncPairDialog::applyStatus(const QJsonObject &doc)
         m_cancelButton->setText(tr("Close"));
         if (m_timer)
             m_timer->stop();
+        // First exchange right away: the ceremony kept the transport
+        // up on both ends, so the round's dial lands and the inbound
+        // serve thread starts on this side too.
+        SyncScheduler::instance()->syncNow();
     } else if (state == QLatin1String("failed")
                || state == QLatin1String("cancelled")) {
         m_statusLabel->setText(tr("Pairing failed: %1")

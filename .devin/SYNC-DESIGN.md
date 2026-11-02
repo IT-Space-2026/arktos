@@ -31,7 +31,7 @@ the honest limitations at the end.
 
 ## Exchange model
 
-There is deliberately **no background scheduler** in the engine. The
+There is deliberately **no scheduler inside the engine**. The
 exchange is the domain-19 ops themselves:
 
 ```
@@ -45,6 +45,21 @@ peer: sync.drain {store}               -> retry deferred ops
 The Qt shell and the integration tests ship `{"ops":[...]}` docs as
 opaque frames. `since_seq` is the per-log cursor; a stateless client
 can always export `0` — dedup makes resends free.
+
+At the app layer, `sync_now` (`syncnow.rs`) runs a **round**: it
+starts the `auto` transport when none is running, dials every member
+of the scope, sends our export and imports the reply. Serverless
+reachability requires the listener to outlive the round — a peer can
+only connect while our onion service is published — so once started
+the transport **stays up for the life of the process**, and a
+per-data-root serve thread keeps draining the transport queue
+between rounds, importing inbound `sync_ops` frames and answering
+each with our export. A device is therefore reachable whenever its
+browser is open; two devices sync when both are open at once (or one
+catches the other's round window). The serve thread never drains
+while a pair session is live — `pair_poll` owns the queue then — and
+a round holds a drain lock so the background loop cannot steal a
+reply frame mid-exchange.
 
 ## Transport tiers
 
@@ -193,6 +208,12 @@ device — not a sync member") — by signature, never silently dropped.
 - **No clock discipline**: `lamport` is the ordering truth;
   `wall_ms` is informational — a wrong-device clock does not poison
   merge order but skews "last synced" displays.
-- **No automatic scheduler**: the engine exposes export/import and
-  the transport exposes links; *when* to sync is the caller's policy
-  (Qt shell drives rounds on change/interval today).
+- **Both apps must be open**: with no relay, exchange needs both
+  transports up at once. The transport now stays published while the
+  process runs, so overlap = both browsers open; a round against an
+  offline peer still ends in a dial timeout, just a bounded one
+  (~30s, not the full connect deadline).
+- **No engine scheduler**: the engine exposes export/import and the
+  transport exposes links; cadence is the caller's policy (the Qt
+  `SyncScheduler` drives rounds on an interval + after pairing, and
+  the serve thread handles everything inbound in between).

@@ -1,8 +1,15 @@
 1.4.2 — LAN sync fast path, sync scheduling + URL-bar icons
 - Sync scheduling: interval (1/5/15/30 min) + Sync Now button in
-  Sync settings — bounded exchange rounds that start+stop the
-  auto transport per round (no idle Arti/mDNS footprint), skipped
-  while pairing is live.
+  Sync settings — exchange rounds dial paired members, and the
+  transport now stays published between rounds so peers can reach
+  this device whenever the browser is open. The previous
+  stop-after-round model made rendezvous a coincidence: every dial
+  burned the 120s connect deadline and inbound frames went
+  unanswered between rounds. The scheduler now lives from app start
+  (was settings-page-only, so rounds never ran for most users),
+  fires a first round ~20s after launch and right after pairing,
+  and a background serve thread answers inbound sync frames between
+  rounds; rounds still skip while pairing is live.
 - Transport diagnostics: leg-start + mDNS-start failures now log
   to stderr instead of dying silently.
 - Pair dialog transport backend "tor" -> "auto": mDNS announce +
@@ -10,7 +17,8 @@
   networks. Same-WiFi pairing now dials in ~1-2s instead of waiting
   on onion publication.
 - URL-bar indicators (padlock verdict colors, trust shield, reader
-  button) wrapped in pastel discs via new ArktosIcon::circledIcon.
+  button) wrapped in pastel discs via new ArktosIcon::circledIcon;
+  the reader button's mark is the "Aa" typeface glyph.
 
 1.4.1 — Pastel-circle chrome icons
 - Nav bar (back/forward/stop/reload/home), tab strip buttons and

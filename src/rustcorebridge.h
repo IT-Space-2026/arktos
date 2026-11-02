@@ -152,7 +152,8 @@ enum SyncOp : quint16 {
     SyncDevicesList = 0x0021,
     SyncDeviceRevoke = 0x0022,
     // SYNC11: one bounded exchange round — dial members, ship +
-    // pull journal ops, stop the transport if the round started it.
+    // pull journal ops; the transport stays up once started so
+    // peers can reach us between rounds.
     SyncNow = 0x0024,
 };
 enum OpenSearchOp : quint16 {

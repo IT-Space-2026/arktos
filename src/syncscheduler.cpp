@@ -67,8 +67,14 @@ SyncScheduler::SyncScheduler(QObject *parent)
         QSettings().value(QStringLiteral("sync/intervalMin"), 15).toInt(),
         24 * 60);
     connect(m_timer, &QTimer::timeout, this, [this] { requestRound(); });
-    if (m_intervalMinutes > 0)
+    if (m_intervalMinutes > 0) {
         m_timer->start(m_intervalMinutes * 60 * 1000);
+        // A first round well before the first interval: it brings the
+        // transport up and publishes our onion so peers can reach us
+        // without waiting a full period.  On an unpaired device
+        // sync_now is a cheap no-op — the transport is never started.
+        QTimer::singleShot(20 * 1000, this, [this] { requestRound(); });
+    }
 
     m_thread = new QThread(this);
     auto *worker = new SyncRoundWorker;

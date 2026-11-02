@@ -194,15 +194,22 @@ fn sessions() -> std::sync::MutexGuard<'static, HashMap<u64, PairSession>> {
     SESSIONS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// SYNC11 guard: a scheduled sync round must never run while a pair
-/// session is live — both drain the shared transport event queue,
-/// and a round's transport stop would kill an open dialog's link.
-/// Terminal phases don't count (completed sessions linger in the
-/// map until cleanup).
-pub(crate) fn live_pairing() -> bool {
-    sessions().values().any(|s| {
-        !matches!(s.phase, Phase::Done | Phase::Failed | Phase::Cancelled)
-    })
+/// SYNC11 guard: a scheduled sync round or the inbound serve loop
+/// must never drain the transport queue while a pair session is
+/// live — pair_poll owns it, and a foreign drain would eat Noise
+/// handshake frames.  Terminal phases don't count (completed
+/// sessions linger in the map until cleanup).
+fn session_live(s: &PairSession) -> bool {
+    !matches!(s.phase, Phase::Done | Phase::Failed | Phase::Cancelled)
+}
+
+/// A live pair session rooted at `root` — the sync serve loop and
+/// rounds key on this so another profile's ceremony doesn't stall
+/// this one's inbound service.
+pub(crate) fn live_pairing_for(root: &Path) -> bool {
+    sessions()
+        .values()
+        .any(|s| s.root == root && session_live(s))
 }
 
 fn hex(data: &[u8]) -> String {
@@ -1133,7 +1140,16 @@ pub fn poll(data_root: &Path, pair_id: u64) -> RcResult<Value> {
                 .unwrap_or_else(|| json!({ "pair_id": id, "state": "gone" })),
         });
     };
-    let events = t.poll();
+    // A sync round owns the queue for its whole window — drain only
+    // when it isn't, else the round's serve loop could eat Noise
+    // handshake frames.  Skipping this tick stalls the ceremony one
+    // poll interval, never loses a frame.
+    let _drain_guard = crate::syncnow::try_drain(data_root);
+    let events = if _drain_guard.is_some() {
+        t.poll()
+    } else {
+        Vec::new()
+    };
     let mut passthrough: Vec<Value> = Vec::new();
     for ev in events {
         match ev {
