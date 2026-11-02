@@ -106,8 +106,8 @@ fn svc_config_for(
 ) -> RcResult<OnionServiceConfig> {
     let mut b = OnionServiceConfigBuilder::default();
     // A wider intro-point set: a flapping publish reads as
-    // DegradedUnreachable at three points — eight survives the loss.
-    b.num_intro_points(8);
+    // DegradedUnreachable at three points — twelve survives the loss.
+    b.num_intro_points(12);
     b.nickname(
         HsNickname::from_str(SVC_NICKNAME)
             .map_err(|e| io_fail("service nickname", e))?,

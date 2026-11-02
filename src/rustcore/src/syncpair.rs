@@ -795,7 +795,23 @@ pub fn join_begin(data_root: &Path, payload_text: &str) -> RcResult<u64> {
             }
         })?;
     let nick = invite_nick(&invite.token);
-    let link = t.connect(&invite.connect_endpoint(), &nick)?;
+    // Rendezvous through a degraded intro set is flaky — one fresh
+    // retry lets a transient dial fail without killing the ceremony.
+    let mut link_err = None;
+    let mut link = None;
+    for attempt in 0..2 {
+        match t.connect(&invite.connect_endpoint(), &nick) {
+            Ok(l) => {
+                link = Some(l);
+                break;
+            }
+            Err(e) => {
+                eprintln!("arktos-sync: join connect attempt {} failed: {}", attempt + 1, e.msg);
+                link_err = Some(e);
+            }
+        }
+    }
+    let link = link.ok_or_else(|| link_err.unwrap())?;
     let (noise_s, _noise_p) = noise_keypair(&data_root.join(SYNC_DIR))?;
     let mut hs = Handshake::initiator(&invite.token, noise_s);
     // msg1's plaintext payload carries the token so the inviter can
