@@ -8,6 +8,9 @@ arktos (1.4.2) unstable; urgency=medium
     lives from app start, kicks a round ~20s after launch and after
     pairing; a serve thread answers inbound sync frames between
     rounds; rounds skip while pairing is live.
+  * relay:// pairing invites via ARKTOS_RELAY or <data>/sync/relay —
+    both sides dial the rendezvous, no onion hosting needed.
+  * macOS omnibox dropdown stays above the window chrome.
   * Pair transport backend "tor" -> "auto" (LAN mDNS+QUIC fast path).
   * Leg-failure + mDNS-start stderr diagnostics in the transports.
   * Pastel-circle icons on toolbar/tab strip/URL-bar indicators;

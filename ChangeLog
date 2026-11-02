@@ -10,6 +10,14 @@
   fires a first round ~20s after launch and right after pairing,
   and a background serve thread answers inbound sync frames between
   rounds; rounds still skip while pairing is live.
+- Pairing over a rendezvous relay: ARKTOS_RELAY=<onion> (or a
+  <data>/sync/relay file) makes invites advertise relay:// — the
+  inviter OFFERs and the joiner CLAIMs sha256(token), the relay
+  splices the two streams, so both devices only dial out and no
+  device-side onion hosting is needed at all.
+- macOS: the omnibox suggestion dropdown stays above the window
+  chrome — under the unified NSToolbar it could stack behind the
+  tab strip.
 - Transport diagnostics: leg-start + mDNS-start failures now log
   to stderr instead of dying silently.
 - Pair dialog transport backend "tor" -> "auto": mDNS announce +
